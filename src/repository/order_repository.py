@@ -1,10 +1,12 @@
 from sqlalchemy.orm import Session
 from .address_repository import AddressRepository
 from .customer_repository import CustomerRepository
+from .order_package_repository import OrderPackageRepository
+from .order_state_repository import OrderStateRepository
 from .sectional_repository import SectionalRepository
 from .shipping_repository import ShippingRepository
 from .tax_repository import TaxRepository
-from .. import AddressSchema, SectionalSchema, ShippingSchema
+from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema
 from ..models import Order
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema
@@ -24,9 +26,10 @@ class OrderRepository:
         self.address_repository = AddressRepository(session)
         self.shipping_repository = ShippingRepository(session)
         self.sectional_repository = SectionalRepository(session)
-        self.order_state_repository = OrderRepository(session)
+        self.order_state_repository = OrderStateRepository(session)
         self.tax_repository = TaxRepository(session)
         self.customer_repository = CustomerRepository(session)
+        self.order_package_repository = OrderPackageRepository(session)
 
     # def get_all(self,
     #             page: int = 1, limit: int = 10
@@ -116,6 +119,16 @@ class OrderRepository:
 
         self.session.add(order)
         self.session.commit()
+        self.session.refresh(order)
+        # Creazione di Order Package
+        self.order_package_repository.create(
+            OrderPackageSchema(id_order=order.id_order,
+                               height=0.0,
+                               width=0.0,
+                               depth=0.0,
+                               weight=0.0,
+                               value=0.0)
+        )
 
     # def update_order_status(self, id_order: int, id_order_state: int):
     #     order_history = OrderHistory(id_order=id_order, id_order_state=id_order_state)

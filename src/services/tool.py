@@ -16,7 +16,6 @@ def edit_entity(entity, entity_schema):
 
 @staticmethod
 def document_number_generator(last_document_number):
-    print(last_document_number)
     if last_document_number is None:
         return 1
     return last_document_number + 1

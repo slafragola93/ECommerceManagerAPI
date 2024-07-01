@@ -3,7 +3,7 @@ from fastapi import APIRouter, Path, HTTPException, Query, Depends
 from starlette import status
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from .. import CustomerSchema, AllCustomerResponseSchema, CustomerResponseSchema
-from src.services.wrap import check_authentication, timing_decorator
+from src.services.wrap import check_authentication
 from ..repository.customer_repository import CustomerRepository
 from ..services.auth import authorize
 
@@ -20,7 +20,6 @@ def get_repository(db: db_dependency) -> CustomerRepository:
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCustomerResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-@timing_decorator
 async def get_all_customers(
         user: user_dependency,
         cr: CustomerRepository = Depends(get_repository),

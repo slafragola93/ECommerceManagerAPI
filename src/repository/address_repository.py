@@ -177,7 +177,6 @@ class AddressRepository:
             firstname=address_data.firstname,
             lastname=address_data.lastname
         )
-        print(existing_address)
         if existing_address:
             return existing_address.id_address
         else:
