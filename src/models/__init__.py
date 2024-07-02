@@ -23,3 +23,4 @@ from .shipping import Shipping
 from .order import Order
 from .invoice import Invoice
 from .order_package import OrderPackage
+from .order_detail import OrderDetail

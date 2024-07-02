@@ -1,0 +1,114 @@
+from datetime import date
+from fastapi import HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from ..models import OrderDetail
+from src.schemas.order_detail_schema import *
+from src.services import QueryUtils
+
+
+class OrderDetailRepository:
+
+    def __init__(self, session: Session):
+        """
+        Inizializza la repository con la sessione del DB
+
+        Args:
+            session (Session): Sessione del DB
+        """
+        self.session = session
+
+    def get_all(self,
+                page: int = 1, limit: int = 10,
+                **kwargs
+                ) -> AllOrderDetailsResponseSchema:
+
+        order_ids = kwargs.get('order_ids')
+        invoice_ids = kwargs.get('invoice_ids')
+        document_ids = kwargs.get('document_ids')
+        origin_ids = kwargs.get('origin_ids')
+        product_ids = kwargs.get('product_ids')
+        search_value = kwargs.get('search_value')
+        rda = kwargs.get('rda')
+
+        query = self.session.query(OrderDetail)
+
+        try:
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_invoice', invoice_ids) if invoice_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
+                                            document_ids) if document_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_origin', origin_ids) if origin_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_product', product_ids) if product_ids else query
+            query = QueryUtils.search_in_every_field(query, OrderDetail, search_value, "product_name",
+                                                     "product_reference", "rda") if search_value else query
+            query = QueryUtils.filter_by_string(query, OrderDetail, 'rda', rda) if rda else query
+
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
+
+        return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+
+    def get_count(self,
+                  **kwargs,
+                  ) -> AllOrderDetailsResponseSchema:
+
+        order_ids = kwargs.get('order_ids')
+        invoice_ids = kwargs.get('invoice_ids')
+        document_ids = kwargs.get('document_ids')
+        origin_ids = kwargs.get('origin_ids')
+        product_ids = kwargs.get('product_ids')
+        search_value = kwargs.get('search_value')
+        rda = kwargs.get('rda')
+
+        query = self.session.query(OrderDetail)
+
+        try:
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_invoice', invoice_ids) if invoice_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
+                                            document_ids) if document_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_origin', origin_ids) if origin_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_product', product_ids) if product_ids else query
+            query = QueryUtils.search_in_every_field(query, OrderDetail, search_value, "product_name",
+                                                     "product_reference", "rda") if search_value else query
+            query = QueryUtils.filter_by_string(query, OrderDetail, 'rda', rda) if rda else query
+
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
+
+        return query.scalar()
+
+    def get_by_id(self, _id: int) -> OrderDetailResponseSchema:
+        return self.session.query(OrderDetail).filter(OrderDetail.id_order_detail == _id).first()
+
+    def create(self, data: OrderDetailSchema):
+        order_detail = OrderDetail(**data.model_dump())
+        self.session.add(order_detail)
+        self.session.commit()
+        self.session.refresh(order_detail)
+
+    def create_and_get_id(self, data: OrderDetailSchema):
+        """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
+        order_detail = OrderDetail(**data.model_dump())
+        self.session.add(order_detail)
+        self.session.commit()
+        self.session.refresh(order_detail)
+        return order_detail.id_customer
+
+    def update(self, edited_order_detail: OrderDetail, data: OrderDetailSchema):
+
+        entity_updated = data.dict(exclude_unset=True) # Esclude i campi non impostati
+
+        for key, value in entity_updated.items():
+            if hasattr(edited_order_detail, key) and value is not None:
+                setattr(edited_order_detail, key, value)
+
+        self.session.add(edited_order_detail)
+        self.session.commit()
+
+    def delete(self, order_detail: OrderDetail) -> bool:
+        self.session.delete(order_detail)
+        self.session.commit()
+
+        return True
