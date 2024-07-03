@@ -1,15 +1,18 @@
-from datetime import date
 from fastapi import HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
+
+from .product_repository import ProductRepository
 from ..models import OrderDetail
 from src.schemas.order_detail_schema import *
 from src.services import QueryUtils
+from ..services.model_services.product_service import ProductService
 
 
 class OrderDetailRepository:
 
-    def __init__(self, session: Session):
+    def __init__(self,
+                 session: Session,
+                 ):
         """
         Inizializza la repository con la sessione del DB
 
@@ -17,12 +20,15 @@ class OrderDetailRepository:
             session (Session): Sessione del DB
         """
         self.session = session
+        self.product_service = ProductService(session)
+        self.product_repository = ProductRepository(session)
 
     def get_all(self,
                 page: int = 1, limit: int = 10,
                 **kwargs
                 ) -> AllOrderDetailsResponseSchema:
 
+        order_details_ids = kwargs.get('order_details_ids')
         order_ids = kwargs.get('order_ids')
         invoice_ids = kwargs.get('invoice_ids')
         document_ids = kwargs.get('document_ids')
@@ -34,6 +40,7 @@ class OrderDetailRepository:
         query = self.session.query(OrderDetail)
 
         try:
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail', order_details_ids) if order_details_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_invoice', invoice_ids) if invoice_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
@@ -53,6 +60,7 @@ class OrderDetailRepository:
                   **kwargs,
                   ) -> AllOrderDetailsResponseSchema:
 
+        order_details_ids = kwargs.get('order_details_ids')
         order_ids = kwargs.get('order_ids')
         invoice_ids = kwargs.get('invoice_ids')
         document_ids = kwargs.get('document_ids')
@@ -64,6 +72,7 @@ class OrderDetailRepository:
         query = self.session.query(OrderDetail)
 
         try:
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail', order_details_ids) if order_details_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_invoice', invoice_ids) if invoice_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
@@ -84,6 +93,12 @@ class OrderDetailRepository:
 
     def create(self, data: OrderDetailSchema):
         order_detail = OrderDetail(**data.model_dump())
+
+        # Caso in cui non è stato inserito il prezzo
+        if order_detail.product_price == 0.0:
+            # Check se prodotto esiste
+            order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+
         self.session.add(order_detail)
         self.session.commit()
         self.session.refresh(order_detail)
@@ -91,14 +106,18 @@ class OrderDetailRepository:
     def create_and_get_id(self, data: OrderDetailSchema):
         """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
         order_detail = OrderDetail(**data.model_dump())
+        if order_detail.product_price == 0.0:
+            # Check se prodotto esiste
+            order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+
         self.session.add(order_detail)
         self.session.commit()
         self.session.refresh(order_detail)
-        return order_detail.id_customer
+        return order_detail.id_order_detail
 
     def update(self, edited_order_detail: OrderDetail, data: OrderDetailSchema):
 
-        entity_updated = data.dict(exclude_unset=True) # Esclude i campi non impostati
+        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
 
         for key, value in entity_updated.items():
             if hasattr(edited_order_detail, key) and value is not None:

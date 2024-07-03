@@ -1,2 +1,103 @@
-.pytest_cache
-venv
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cython debug symbols
+cython_debug/
+
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Pipenv
+# Ignore virtual environment directories created by Pipenv
+pipenv/
+pipenv/*
+
+# Poetry
+# Ignore virtual environment directories created by Poetry
+poetry/
+poetry/*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Pytest
+.cache
+
+# Pyre type checker
+.pyre/
+
+# Caches
+*.log
+*.log.*
+*.out
+*.dat
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyright
+.pyright
+
+# Environments
+.env
+.env.*
+.venv
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+*.lnk
+
+# Linux
+*~
+
+# pytest
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# FastAPI
+instance/
+*.db
+
+# SQLAlchemy
+alembic/versions
+alembic.ini
+
+# VS Code
+.vscode/
+
+# Pydantic settings
+settings.json
+
+# Logs
+logs/
+*.log
+
+# Local development files
+local_settings.py

@@ -12,7 +12,7 @@ class OrderDetailSchema(BaseModel):
     id_product: int = Field(..., gt=0)
     product_name: str = Field(..., max_length=100)
     product_reference: str = Field(..., max_length=100)
-    product_quantity: int = Field(..., gt=0)
+    product_qty: int = Field(..., ge=0)
     product_price: Optional[float] = 0.0
     reduction_percent: Optional[float] = 0.0
     reduction_amount: Optional[float] = 0.0
@@ -27,7 +27,7 @@ class OrderDetailResponseSchema(BaseModel):
     id_product: int
     product_name: str
     product_reference: str
-    product_quantity: int
+    product_qty: int
     product_price: float
     reduction_percent: float
     reduction_amount: float

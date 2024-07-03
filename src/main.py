@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from src.schemas import *
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
-    api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, payment, tax, user, order_state, order, invoice, order_package
+    api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, payment, tax, user, \
+    order_state, order, invoice, order_package, order_detail
 from src.database import Base, engine
 
 app = FastAPI(
@@ -50,6 +51,7 @@ app.include_router(order_state.router)
 app.include_router(shipping.router)
 app.include_router(invoice.router)
 app.include_router(order_package.router)
+app.include_router(order_detail.router)
 
 
 @app.on_event("startup")

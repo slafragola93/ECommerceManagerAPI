@@ -21,3 +21,4 @@ class OrderDetail(Base):
     reduction_amount = Column(Float)
     rda = Column(String(10))
 
+
