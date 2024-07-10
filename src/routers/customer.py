@@ -46,6 +46,7 @@ async def get_all_customers(
     return {"customers": customers, "total": total_count, "page": page, "limit": limit}
 
 
+
 @router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])

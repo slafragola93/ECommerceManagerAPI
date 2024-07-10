@@ -1,5 +1,5 @@
 from fastapi import HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.sql import expression
 
 
@@ -37,6 +37,18 @@ class QueryUtils:
                     conditions.append(getattr(model, field_name).ilike(f"%{value}%"))
             if conditions:
                 query = query.filter(or_(*conditions))
+        return query
+
+    @staticmethod
+    def search_customer_in_every_field_and_firstname_and_lastname(query: Query, model, value: str) -> Query:
+        if value:
+            query = query.filter(
+                (func.lower(func.trim(model.firstname)) + ' ' + func.lower(func.trim(model.lastname))).like(
+                    f'%{value}%') |
+                func.lower(model.email).like(f'%{value}%') | (
+                    func.lower(model.id_customer).in_([value.lower()])
+                )
+            )
         return query
 
     @staticmethod

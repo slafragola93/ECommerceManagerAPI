@@ -38,10 +38,7 @@ class CustomerRepository:
 
         try:
             query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids) if lang_ids else query
-            query = QueryUtils.search_in_every_field(query,
-                                                     Customer,
-                                                     param,
-                                                     "firstname", "lastname", "email") if param else query
+            query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer, param) if param else query
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
@@ -65,10 +62,8 @@ class CustomerRepository:
 
         try:
             query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids) if lang_ids else query
-            query = QueryUtils.search_in_every_field(query,
-                                                     Customer,
-                                                     param,
-                                                     "firstname", "lastname", "email") if param else query
+            query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer,
+                                                                                         param) if param else query
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")

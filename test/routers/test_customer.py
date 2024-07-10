@@ -102,6 +102,30 @@ def test_get_customer_by_id_customer(test_customer):
     }
 
 
+def test_get_customer_by_param(test_customer):
+    # Ricerca per nome e cognome
+    response = client.get("/api/v1/customers/?param=Enzo%20Cristiano")
+
+    # Verifica della risposta
+    assert response.status_code == 200
+    assert response.json() ==  {
+        "customers": [
+            {
+                'id_customer': 1,
+                'id_origin': 0,
+                'id_lang': 1,
+                'firstname': "Enzo",
+                'lastname': "Cristiano",
+                'email': 'enzocristiano@elettronew.com',
+                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+            }
+        ],
+        "total": 1,
+        "page": 1,
+        "limit": LIMIT_DEFAULT
+    }
+
+
 # Test creazione customer
 def test_create_customer(test_customer):
     """

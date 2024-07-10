@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
-from src import Country, Role, OrderState, Invoice
+from src import Country, Role, OrderState, Invoice, OrderPackage
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
@@ -796,4 +796,41 @@ def test_invoices():
     yield queries
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM invoices;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_order_package():
+    queries = [
+        OrderPackage(
+            id_order=1,
+            height=15.0,
+            width=30.0,
+            depth=9.5,
+            weight=8,
+            value=500.0
+        ),
+        OrderPackage(
+            id_order=2,
+            height=15.0,
+            width=30.0,
+            depth=9.5,
+            weight=8,
+            value=500.0
+        ),
+        OrderPackage(
+            id_order=2,
+            height=15.0,
+            width=30.0,
+            depth=9.5,
+            weight=8,
+            value=500.0
+        )
+    ]
+    db = TestingSessionLocal()
+    db.add_all(queries)
+    db.commit()
+    yield queries
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM order_packages;"))
         conn.commit()
