@@ -17,6 +17,8 @@ router = APIRouter(
 
 def get_repository(db: db_dependency):
     return OrderDetailRepository(db)
+
+
 def get_order_repository(db: db_dependency):
     return OrderRepository(db)
 
@@ -85,7 +87,6 @@ async def create_order_detail(user: user_dependency,
                               ods: OrderDetailSchema,
                               odr: OrderDetailRepository = Depends(get_repository),
                               order_r: OrderRepository = Depends(get_order_repository)):
-
     odr.create(data=ods)
 
     # Aggiornamento prezzo e peso di Order
@@ -96,7 +97,6 @@ async def create_order_detail(user: user_dependency,
 
         if ods.real_weight is True:
             order_r.set_weight(id_order=ods.id_order, order_details=order_details)
-
 
 
 @router.put("/{order_detail_id}", status_code=status.HTTP_200_OK,

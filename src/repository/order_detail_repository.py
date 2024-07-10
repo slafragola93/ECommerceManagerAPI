@@ -106,10 +106,9 @@ class OrderDetailRepository:
 
     def create_and_get_id(self, data: OrderDetailSchema):
         """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
-        order_detail = OrderDetail(**data.model_dump())
-        if order_detail.product_price == 0.0:
-            # Check se prodotto esiste
-            order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+        order_detail = OrderDetail(**data.model_dump(exclude=['real_price', 'real_weight']))
+        order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+        order_detail.product_weight = self.product_service.get_live_weight(product_id=order_detail.id_product)
 
         self.session.add(order_detail)
         self.session.commit()
