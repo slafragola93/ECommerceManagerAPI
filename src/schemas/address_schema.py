@@ -2,8 +2,7 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
-from .customer_schema import CustomerResponseSchema, CustomerSchema
-from .country_schema import CountryResponseSchema
+from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerResponseWithoutAddressSchema
 
 
 class AddressSchema(BaseModel):
@@ -26,10 +25,16 @@ class AddressSchema(BaseModel):
     sdi: str = Field(..., max_length=128)
 
 
+class CountryResponseSchema(BaseModel):
+    id_country: int
+    name: str
+    iso_code: str
+
+
 class AddressResponseSchema(BaseModel):
     id_address: int
     id_origin: int
-    customer: CustomerResponseSchema
+    customer: CustomerResponseWithoutAddressSchema
     country: CountryResponseSchema
     company: str
     firstname: str

@@ -3,14 +3,15 @@ from src import get_db
 from src.main import app
 from src.models import Customer
 from src.services.auth import get_current_user
-from ..utils import client, test_customer, override_get_db, override_get_current_user, TestingSessionLocal, \
+from ..utils import client, test_customer, test_address, override_get_db, override_get_current_user, \
+    TestingSessionLocal, \
     LIMIT_DEFAULT, override_get_current_user_read_only
 
 app.dependency_overrides[get_db] = override_get_db
 app.dependency_overrides[get_current_user] = override_get_current_user
 
 
-def test_get_all_customers(test_customer):
+def test_get_all_customers(test_customer, test_address):
     """
     A function to test the retrieval of all customers from the API endpoint.
     """
@@ -27,7 +28,8 @@ def test_get_all_customers(test_customer):
                 'firstname': "Enzo",
                 'lastname': "Cristiano",
                 'email': 'enzocristiano@elettronew.com',
-                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00'),
+                'addresses': []
             }
         ],
         "total": 1,
@@ -35,7 +37,7 @@ def test_get_all_customers(test_customer):
         "limit": LIMIT_DEFAULT
     }
 
-    response = client.get("/api/v1/customers/?id_lang=2,1")
+    response = client.get("/api/v1/customers/?with_address=true&lang_ids=1%2C2")
 
     # Verifica della risposta
     assert response.status_code == 200
@@ -48,7 +50,30 @@ def test_get_all_customers(test_customer):
                 'firstname': "Enzo",
                 'lastname': "Cristiano",
                 'email': 'enzocristiano@elettronew.com',
-                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00'),
+                'addresses': [{
+                    "id_address": 1,
+                    "id_origin": 0,
+                    "country": {
+                        "id_country": 1,
+                        "name": "Italia",
+                        "iso_code": "IT"
+                    },
+                    "company": "Elettronew",
+                    "firstname": "Enzo",
+                    "lastname": "Cristiano",
+                    "address1": "Via Roma",
+                    "address2": "Casa",
+                    "state": "Campania",
+                    "postcode": "80010",
+                    "city": "Napoli",
+                    "phone": "34567890",
+                    "mobile_phone": "34567890",
+                    "vat": "02469660209",
+                    "dni": "dni",
+                    "pec": "enzocristiano@pec.it",
+                    "sdi": "sdi"
+                }]
             }
         ],
         "total": 1,
@@ -57,7 +82,7 @@ def test_get_all_customers(test_customer):
     }
 
 
-def test_get_customer_by_id_lang(test_customer):
+def test_get_customer_by_id_lang(test_customer, test_address):
     """
     Get customer by ID and language, and verify the response.
     """
@@ -74,7 +99,8 @@ def test_get_customer_by_id_lang(test_customer):
                 'firstname': "Enzo",
                 'lastname': "Cristiano",
                 'email': 'enzocristiano@elettronew.com',
-                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00'),
+                'addresses': []
             }
         ],
         "total": 1,
@@ -83,7 +109,7 @@ def test_get_customer_by_id_lang(test_customer):
     }
 
 
-def test_get_customer_by_id_customer(test_customer):
+def test_get_customer_by_id_customer(test_customer, test_address):
     """
     Get a customer by their ID and verify the response status code and JSON data.
     """
@@ -98,17 +124,40 @@ def test_get_customer_by_id_customer(test_customer):
         'firstname': "Enzo",
         'lastname': "Cristiano",
         'email': 'enzocristiano@elettronew.com',
-        'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+        'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00'),
+        'addresses': [{
+                    "id_address": 1,
+                    "id_origin": 0,
+                    "country": {
+                        "id_country": 1,
+                        "name": "Italia",
+                        "iso_code": "IT"
+                    },
+                    "company": "Elettronew",
+                    "firstname": "Enzo",
+                    "lastname": "Cristiano",
+                    "address1": "Via Roma",
+                    "address2": "Casa",
+                    "state": "Campania",
+                    "postcode": "80010",
+                    "city": "Napoli",
+                    "phone": "34567890",
+                    "mobile_phone": "34567890",
+                    "vat": "02469660209",
+                    "dni": "dni",
+                    "pec": "enzocristiano@pec.it",
+                    "sdi": "sdi"
+                }]
     }
 
 
-def test_get_customer_by_param(test_customer):
+def test_get_customer_by_param(test_customer, test_address):
     # Ricerca per nome e cognome
     response = client.get("/api/v1/customers/?param=Enzo%20Cristiano")
 
     # Verifica della risposta
     assert response.status_code == 200
-    assert response.json() ==  {
+    assert response.json() == {
         "customers": [
             {
                 'id_customer': 1,
@@ -117,7 +166,8 @@ def test_get_customer_by_param(test_customer):
                 'firstname': "Enzo",
                 'lastname': "Cristiano",
                 'email': 'enzocristiano@elettronew.com',
-                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+                'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00'),
+                'addresses': []
             }
         ],
         "total": 1,
@@ -127,7 +177,7 @@ def test_get_customer_by_param(test_customer):
 
 
 # Test creazione customer
-def test_create_customer(test_customer):
+def test_create_customer(test_customer, test_address):
     """
     A function to test the creation of a customer with the provided test_customer data.
     """
@@ -151,7 +201,7 @@ def test_create_customer(test_customer):
     assert model.email == request_body.get('email')
 
 
-def test_create_customer_with_error(test_customer):
+def test_create_customer_with_error(test_customer, test_address):
     """
     A test function to create a customer with an error using the provided test_customer data.
     """
@@ -255,7 +305,7 @@ def test_get_customer_by_id_lang_with_user_permissions(test_customer):
     assert response.status_code == 200
 
 
-def test_get_customer_by_id_customer_with_user_permissions(test_customer):
+def test_get_customer_by_id_customer_with_user_permissions(test_customer, test_address):
     response = client.get("/api/v1/customers/1")
 
     # Verifica della risposta
@@ -267,7 +317,30 @@ def test_get_customer_by_id_customer_with_user_permissions(test_customer):
         'firstname': "Enzo",
         'lastname': "Cristiano",
         'email': 'enzocristiano@elettronew.com',
-        'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00')
+        'date_add': datetime.today().strftime('%Y-%m-%dT00:00:00'),
+        'addresses': [{
+                    "id_address": 1,
+                    "id_origin": 0,
+                    "country": {
+                        "id_country": 1,
+                        "name": "Italia",
+                        "iso_code": "IT"
+                    },
+                    "company": "Elettronew",
+                    "firstname": "Enzo",
+                    "lastname": "Cristiano",
+                    "address1": "Via Roma",
+                    "address2": "Casa",
+                    "state": "Campania",
+                    "postcode": "80010",
+                    "city": "Napoli",
+                    "phone": "34567890",
+                    "mobile_phone": "34567890",
+                    "vat": "02469660209",
+                    "dni": "dni",
+                    "pec": "enzocristiano@pec.it",
+                    "sdi": "sdi"
+                }]
     }
 
 

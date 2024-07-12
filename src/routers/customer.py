@@ -24,6 +24,7 @@ async def get_all_customers(
         user: user_dependency,
         cr: CustomerRepository = Depends(get_repository),
         param: Optional[str] = None,
+        with_address: Optional[bool] = False,
         lang_ids: Optional[str] = None,
         page: int = Query(1, gt=0),
         limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
@@ -36,15 +37,13 @@ async def get_all_customers(
     - **limit**: Il numero massimo di risultati per pagina.
     """
 
-    customers = cr.get_all(page=page, limit=limit, lang_ids=lang_ids, param=param)
-
+    customers = cr.get_all(page=page, limit=limit, with_address=with_address, lang_ids=lang_ids, param=param)
     if not customers:
         raise HTTPException(status_code=404, detail="Nessun cliente trovato")
 
     total_count = cr.get_count(lang_ids=lang_ids, param=param)
 
     return {"customers": customers, "total": total_count, "page": page, "limit": limit}
-
 
 
 @router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)

@@ -1,7 +1,8 @@
 from datetime import date
 from fastapi import HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
+
 from ..models import Customer
 from src.schemas.customer_schema import *
 from src.services import QueryUtils
@@ -22,7 +23,9 @@ class CustomerRepository:
         self.session = session
 
     def get_all(self,
-                page: int = 1, limit: int = 10,
+                with_address: bool = False,
+                page: int = 1,
+                limit: int = 100,
                 **kwargs
                 ) -> AllCustomerResponseSchema:
         """
@@ -35,17 +38,19 @@ class CustomerRepository:
         param = kwargs.get('param')
 
         query = self.session.query(Customer)
-
+        if not with_address:
+            query = query.options(noload(Customer.addresses))
         try:
+
             query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids) if lang_ids else query
-            query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer, param) if param else query
+            query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer,
+                                                                                         param) if param else query
+
+            return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
 
-        customers_result = query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-        return customers_result
 
     def get_count(self,
                   **kwargs,
@@ -58,9 +63,11 @@ class CustomerRepository:
         """
         lang_ids = kwargs.get('lang_ids')
         param = kwargs.get('param')
+
         query = self.session.query(func.count(Customer.id_customer))
 
         try:
+
             query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids) if lang_ids else query
             query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer,
                                                                                          param) if param else query
@@ -68,9 +75,7 @@ class CustomerRepository:
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
 
-        customers_result = query.scalar()
-
-        return customers_result
+        return query.scalar()
 
     def get_by_id(self, _id: int) -> CustomerResponseSchema:
         return self.session.query(Customer).filter(Customer.id_customer == _id).first()

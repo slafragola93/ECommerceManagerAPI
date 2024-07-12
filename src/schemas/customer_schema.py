@@ -29,7 +29,44 @@ class CustomerSchema(BaseModel):
     email: EmailStr
 
 
+class CountryResponseSchema(BaseModel):
+    id_country: int
+    name: str
+    iso_code: str
+
+
+class AddressResponseSchema(BaseModel):
+    id_address: int
+    id_origin: int
+    country: Optional[CountryResponseSchema] = None
+    company: str
+    firstname: str
+    lastname: str
+    address1: str
+    address2: str
+    state: str
+    postcode: str
+    city: str
+    phone: str
+    mobile_phone: str
+    vat: str
+    dni: str
+    pec: str
+    sdi: str
+
+
 class CustomerResponseSchema(BaseModel):
+    id_customer: int
+    id_origin: int
+    id_lang: int
+    firstname: str
+    lastname: str
+    email: str
+    date_add: datetime
+    addresses: Optional[list[AddressResponseSchema]] = None
+
+
+class CustomerResponseWithoutAddressSchema(BaseModel):
     id_customer: int
     id_origin: int
     id_lang: int
