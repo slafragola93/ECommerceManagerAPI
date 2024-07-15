@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .product_repository import ProductRepository
@@ -37,7 +38,7 @@ class OrderDetailRepository:
         search_value = kwargs.get('search_value')
         rda = kwargs.get('rda')
 
-        query = self.session.query(OrderDetail)
+        query = self.session.query(OrderDetail).order_by(desc(OrderDetail.id_order_detail))
 
         try:
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail',

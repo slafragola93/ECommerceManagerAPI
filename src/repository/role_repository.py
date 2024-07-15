@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 from ..models import Role
 from src.schemas.role_schema import *
@@ -30,7 +30,7 @@ class RoleRepository:
             AllRoleResponseSchema: Tutti i ruoli
         """
 
-        return self.session.query(Role).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        return self.session.query(Role).order_by(desc(Role.id_role)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
     def get_count(self) -> AllRolesResponseSchema:
 

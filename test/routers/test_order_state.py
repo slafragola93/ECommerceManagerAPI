@@ -16,21 +16,22 @@ def test_get_all_order_state(test_order_state):
     assert response.status_code == 200
     assert response.json() == [
         {
-            'id_order_state': 1,
-            'name': "In attesa di conferma",
+            'id_order_state': 4,
+            'name': "Annullata",
+        },
+
+        {
+            'id_order_state': 3,
+            'name': "Confermata",
         },
         {
             'id_order_state': 2,
             'name': "In corso",
         },
         {
-            'id_order_state': 3,
-            'name': "Confermata",
+            'id_order_state': 1,
+            'name': "In attesa di conferma",
         },
-        {
-            'id_order_state': 4,
-            'name': "Annullata",
-        }
     ]
 
 

@@ -10,19 +10,9 @@ app.dependency_overrides[get_current_user] = override_get_current_user
 
 expected_results = [
     {
-        "id_message": 1,
+        "id_message": 5,
         "id_user": 1,
-        "message": "Necessary breakfast he attention expenses resolution. Outward general passage another as it. Very his are come man walk one next. mN8dM T72cEAfKWGeiA2j4cKpJBClC66m0M0D0fBc7GAZdQqjfZuiDM0K8LwZ3kSd",
-    },
-    {
-        "id_message": 2,
-        "id_user": None,
-        "message": "Sense child do state to defer mr of forty. Become latter but nor abroad wisdom waited. Was delivered gentleman acuteness but daughters. MCBRPh0Vx0tK6aQD6hhKkEOPxsVZ4O4CWIbI0Wl1MhKJA8RKu1RdmG1VQJr",
-    },
-    {
-        "id_message": 3,
-        "id_user": None,
-        "message": "Carriage quitting securing be appetite it declared. High eyes kept so busy feel call in. Would day nor ask walls known. But preserved advantage. 8G4rAsZmzgDV0sDJYwzrBrhXEFXsi1ZtNDbU5GgxD5rj2uHcXV0Dg54AAX9WpnNFUya8IM3EowysKvX",
+        "message": "Admiration stimulated cultivated reasonable be projection possession of. Real no near room ye bred sake if some. Is arranging furnished knowledge. t27CnFwQbbK0uSn1w8iNFrLldmdV2RmXnflQ",
     },
     {
         "id_message": 4,
@@ -30,9 +20,19 @@ expected_results = [
         "message": "Started his hearted any civilly. So me by marianne admitted speaking. Men bred fine call ask. Cease one miles truth day above seven. lCG5XSxlDzXaJf6gIOGD4htTn2FV5I8bCQdYBlQb3Z9nJAp1xS7KdZC9xhUHXL",
     },
     {
-        "id_message": 5,
+        "id_message": 3,
+        "id_user": None,
+        "message": "Carriage quitting securing be appetite it declared. High eyes kept so busy feel call in. Would day nor ask walls known. But preserved advantage. 8G4rAsZmzgDV0sDJYwzrBrhXEFXsi1ZtNDbU5GgxD5rj2uHcXV0Dg54AAX9WpnNFUya8IM3EowysKvX",
+    },
+    {
+        "id_message": 2,
+        "id_user": None,
+        "message": "Sense child do state to defer mr of forty. Become latter but nor abroad wisdom waited. Was delivered gentleman acuteness but daughters. MCBRPh0Vx0tK6aQD6hhKkEOPxsVZ4O4CWIbI0Wl1MhKJA8RKu1RdmG1VQJr",
+    },
+    {
+        "id_message": 1,
         "id_user": 1,
-        "message": "Admiration stimulated cultivated reasonable be projection possession of. Real no near room ye bred sake if some. Is arranging furnished knowledge. t27CnFwQbbK0uSn1w8iNFrLldmdV2RmXnflQ",
+        "message": "Necessary breakfast he attention expenses resolution. Outward general passage another as it. Very his are come man walk one next. mN8dM T72cEAfKWGeiA2j4cKpJBClC66m0M0D0fBc7GAZdQqjfZuiDM0K8LwZ3kSd",
     }
 ]
 
@@ -51,7 +51,7 @@ def test_get_message_by_id(test_message):
     # Verifica della risposta
     assert response.status_code == 200
 
-    assert response.json() == expected_results[1]
+    assert response.json() == expected_results[3]
 
     response = client.get('/api/v1/message/10')
     assert response.status_code == 404
@@ -63,7 +63,7 @@ def test_get_message_by_user(test_message):
     # Verifica della risposta
     assert response.status_code == 200
 
-    assert response.json()["messages"] == [expected_results[0], expected_results[3], expected_results[4]]
+    assert response.json()["messages"] == [expected_results[0], expected_results[1], expected_results[4]]
 
     response = client.get('/api/v1/message/10')
     assert response.status_code == 404

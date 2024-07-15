@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 from .. import AllCategoryResponseSchema, CategoryResponseSchema, CategorySchema
 from ..models import Category
@@ -17,7 +17,7 @@ class CategoryRepository:
         self.session = session
 
     def get_all(self, page: int = 1, limit: int = 10) -> AllCategoryResponseSchema:
-        return self.session.query(Category).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        return self.session.query(Category).order_by(desc(Category.id_category)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
     def get_count(self) -> int:
         return self.session.query(func.count(Category.id_category)).scalar()

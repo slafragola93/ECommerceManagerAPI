@@ -1,6 +1,6 @@
 from datetime import date
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session, noload
 
 from ..models import Customer
@@ -37,7 +37,7 @@ class CustomerRepository:
         lang_ids = kwargs.get('lang_ids')
         param = kwargs.get('param')
 
-        query = self.session.query(Customer)
+        query = self.session.query(Customer).order_by(desc(Customer.id_customer))
         if not with_address:
             query = query.options(noload(Customer.addresses))
         try:

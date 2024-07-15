@@ -1,6 +1,6 @@
 from datetime import date
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
 from .customer_repository import CustomerRepository
@@ -37,7 +37,7 @@ class AddressRepository:
             Address,
             Country,
             Customer
-        ).join(Country, Address.id_country == Country.id_country).join(Customer,
+        ).order_by(desc(Address.id_address)).join(Country, Address.id_country == Country.id_country).join(Customer,
                                                                        Address.id_customer == Customer.id_customer)
         try:
             query = QueryUtils.filter_by_id(query, Address, 'id_address', kwargs.get('addresses_ids'))

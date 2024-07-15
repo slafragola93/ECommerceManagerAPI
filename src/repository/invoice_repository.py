@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from fastapi import HTTPException
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, desc
 from sqlalchemy.orm import Session
 
 from .. import AllInvoiceResponseSchema, InvoiceResponseSchema, InvoiceSchema
@@ -39,7 +39,7 @@ class InvoiceRepository:
         date_to = kwargs.get('date_to') if kwargs.get('date_to') else None
         order_id = kwargs.get('order_id')
 
-        query = self.session.query(Invoice)
+        query = self.session.query(Invoice).order_by(desc(Invoice.id_invoice))
         if not kwargs:
             return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 

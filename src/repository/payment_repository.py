@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, asc
 from sqlalchemy.orm import Session
 from ..models import Payment
 from src.services import QueryUtils
@@ -18,7 +18,7 @@ class PaymentRepository:
         self.session = session
 
     def get_all(self, page: int = 1, limit: int = 10) -> AllPaymentsResponseSchema:
-        return self.session.query(Payment).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        return self.session.query(Payment).order_by(asc(Payment.name)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
     def get_count(self) -> int:
         return self.session.query(func.count(Payment.id_payment)).scalar()

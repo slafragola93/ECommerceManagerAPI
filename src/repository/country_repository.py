@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, asc
 from sqlalchemy.orm import Session
 from .. import AllCountryResponseSchema, CountryResponseSchema, CountrySchema
 from ..models import Country
@@ -17,7 +17,7 @@ class CountryRepository:
         self.session = session
 
     def get_all(self, page: int = 1, limit: int = 10) -> AllCountryResponseSchema:
-        return self.session.query(Country).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        return self.session.query(Country).order_by(asc(Country.name)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
     def get_count(self) -> AllCountryResponseSchema:
         return self.session.query(func.count(Country.id_country)).scalar()

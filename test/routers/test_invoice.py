@@ -1,5 +1,4 @@
-from datetime import datetime, date
-
+from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 from src import get_db
@@ -12,7 +11,72 @@ from ..utils import client, test_invoices, override_get_db, override_get_current
 app.dependency_overrides[get_db] = override_get_db
 app.dependency_overrides[get_current_user] = override_get_current_user
 
-anno_precedente = date.today() - relativedelta(years=1)
+anno_precedente = datetime.now() - relativedelta(years=1)
+due_anni_precedenti = datetime.now() - relativedelta(years=2)
+
+results = [
+
+    {
+        "id_invoice": 5,
+        "id_order": 1,
+        "id_address_delivery": 1,
+        "id_address_invoice": 2,
+        "invoice_status": "payed",
+        "id_customer": 1,
+        "payed": True,
+        "note": "test note",
+        "document_number": 1,
+        "date_add": due_anni_precedenti.strftime('%Y-%m-%d')
+    },
+    {
+        "id_invoice": 4,
+        "id_order": 1,
+        "id_address_delivery": 1,
+        "id_address_invoice": 2,
+        "invoice_status": "payed",
+        "id_customer": 1,
+        "payed": True,
+        "note": "test note",
+        "document_number": 1,
+        "date_add": anno_precedente.strftime('%Y-%m-%d')
+    },
+    {
+        "id_invoice": 3,
+        "id_order": 1,
+        "id_address_delivery": 1,
+        "id_address_invoice": 2,
+        "invoice_status": "payed",
+        "id_customer": 1,
+        "payed": True,
+        "note": "test note",
+        "document_number": 1,
+        "date_add": datetime.today().strftime('%Y-%m-%d')
+    },
+    {
+        "id_invoice": 2,
+        "id_order": 10,
+        "id_address_delivery": 9,
+        "id_address_invoice": 2,
+        "invoice_status": "payed",
+        "id_customer": 5,
+        "payed": True,
+        "note": "test note",
+        "document_number": 2,
+        "date_add": datetime.today().strftime('%Y-%m-%d')
+    },
+    {
+        "id_invoice": 1,
+        "id_order": 1,
+        "id_address_delivery": 1,
+        "id_address_invoice": 2,
+        "invoice_status": "payed",
+        "id_customer": 1,
+        "payed": True,
+        "note": "test note",
+        "document_number": 1,
+        "date_add": datetime.today().strftime('%Y-%m-%d')
+    }
+]
 
 
 def test_get_all_invoices(test_invoices):
@@ -20,74 +84,11 @@ def test_get_all_invoices(test_invoices):
     A function to test the retrieval of all invoices from the API endpoint.
     """
     response = client.get("/api/v1/invoices/")
-    anno_precedente = datetime.now() - relativedelta(years=1)
-    due_anni_precedenti = datetime.now() - relativedelta(years=2)
     # Verifica della risposta
     assert response.status_code == 200
     # test classico
     assert response.json() == {
-        "invoices": [
-            {
-                "id_invoice": 1,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": datetime.today().strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 2,
-                "id_order": 10,
-                "id_address_delivery": 9,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 5,
-                "payed": True,
-                "note": "test note",
-                "document_number": 2,
-                "date_add": datetime.today().strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 3,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": datetime.today().strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 4,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": anno_precedente.strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 5,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": due_anni_precedenti.strftime('%Y-%m-%d')
-            }
-        ],
+        "invoices":  results,
         "total": 5,
         "page": 1,
         "limit": LIMIT_DEFAULT
@@ -99,57 +100,9 @@ def test_get_all_invoices(test_invoices):
     # Verifica della risposta
 
     assert response.status_code == 200
+    results.pop(3)
     assert response.json() == {
-        "invoices": [
-            {
-                "id_invoice": 1,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": datetime.today().strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 3,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": datetime.today().strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 4,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": anno_precedente.strftime('%Y-%m-%d')
-            },
-            {
-                "id_invoice": 5,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": due_anni_precedenti.strftime('%Y-%m-%d')
-            }
-        ],
+        "invoices": results,
         "total": 4,
         "page": 1,
         "limit": LIMIT_DEFAULT
@@ -189,18 +142,6 @@ def test_get_all_invoices(test_invoices):
     assert response.json() == {
         "invoices": [
             {
-                "id_invoice": 4,
-                "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
-                "invoice_status": "payed",
-                "id_customer": 1,
-                "payed": True,
-                "note": "test note",
-                "document_number": 1,
-                "date_add": anno_precedente.strftime('%Y-%m-%d')
-            },
-            {
                 "id_invoice": 5,
                 "id_order": 1,
                 "id_address_delivery": 1,
@@ -211,6 +152,18 @@ def test_get_all_invoices(test_invoices):
                 "note": "test note",
                 "document_number": 1,
                 "date_add": due_anni_precedenti.strftime('%Y-%m-%d')
+            },
+            {
+                "id_invoice": 4,
+                "id_order": 1,
+                "id_address_delivery": 1,
+                "id_address_invoice": 2,
+                "invoice_status": "payed",
+                "id_customer": 1,
+                "payed": True,
+                "note": "test note",
+                "document_number": 1,
+                "date_add": anno_precedente.strftime('%Y-%m-%d')
             }
         ],
         "total": 2,
@@ -302,7 +255,6 @@ def test_update_invoice(test_invoices):
 
 
 def test_delete_invoice(test_invoices):
-
     response = client.delete('/api/v1/invoices/1')
     assert response.status_code == 204
 
@@ -311,4 +263,3 @@ def test_delete_invoice(test_invoices):
     invoice = db.query(Invoice).filter(Invoice.id_invoice == 1).first()
 
     assert invoice is None
-

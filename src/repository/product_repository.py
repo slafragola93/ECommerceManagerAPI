@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
 from .. import Brand, Category
@@ -38,7 +38,7 @@ class ProductRepository:
                                    Category.name.label("category_name"),
                                    Category.id_origin.label("category_id_origin")
 
-                                   ) \
+                                   ).order_by(desc(Product.id_product)) \
             .join(Brand, Product.id_brand == Brand.id_brand) \
             .join(Category, Product.id_category == Category.id_category)
 
