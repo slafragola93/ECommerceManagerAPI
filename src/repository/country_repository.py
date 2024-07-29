@@ -16,8 +16,12 @@ class CountryRepository:
         """
         self.session = session
 
-    def get_all(self, page: int = 1, limit: int = 10) -> AllCountryResponseSchema:
-        return self.session.query(Country).order_by(asc(Country.name)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+    def get_all(self, page: int = 1, limit: int = 0) -> AllCountryResponseSchema:
+        query = self.session.query(Country).order_by(asc(Country.name))
+        if limit == 0:
+            return query.all()
+        query = query.offset(QueryUtils.get_offset(limit, page)).limit(limit)
+        return query
 
     def get_count(self) -> AllCountryResponseSchema:
         return self.session.query(func.count(Country.id_country)).scalar()

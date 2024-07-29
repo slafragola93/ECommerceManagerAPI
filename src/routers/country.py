@@ -1,6 +1,8 @@
+import string
+from typing import Optional
+
 from fastapi import APIRouter, Path, HTTPException, Query, Depends
 from starlette import status
-from src.models.country import Country
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from .. import CountryResponseSchema, AllCountryResponseSchema
 from src.services.wrap import check_authentication
@@ -22,12 +24,13 @@ def get_repository(db: db_dependency) -> CountryRepository:
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_countries(user: user_dependency,
                             cr: CountryRepository = Depends(get_repository),
+                            no_limit: Optional[bool] = False,
                             page: int = Query(1, gt=0),
-                            limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
+                            limit: int = Query(default=LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
     """
     Restituisce l'elenco di tutti i paesi disponibili.
     """
-
+    limit = 0 if no_limit else limit
     countries = cr.get_all(page, limit)
 
     if not countries:

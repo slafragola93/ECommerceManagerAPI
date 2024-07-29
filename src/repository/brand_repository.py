@@ -1,4 +1,4 @@
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, asc
 from sqlalchemy.orm import Session
 from ..models import Brand
 from src.schemas.brand_schema import *
@@ -25,6 +25,9 @@ class BrandRepository:
             AllBrandsResponseSchema: Tutti i brand
         """
         return self.session.query(Brand).order_by(desc(Brand.id_brand)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+
+    def list_all(self):
+        return self.session.query(Brand).order_by(asc(Brand.name)).all()
 
     def get_count(self):
         return self.session.query(func.count(Brand.id_brand)).scalar()
