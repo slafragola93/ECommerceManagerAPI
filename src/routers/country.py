@@ -24,13 +24,12 @@ def get_repository(db: db_dependency) -> CountryRepository:
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_countries(user: user_dependency,
                             cr: CountryRepository = Depends(get_repository),
-                            no_limit: Optional[bool] = False,
                             page: int = Query(1, gt=0),
                             limit: int = Query(default=LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
     """
     Restituisce l'elenco di tutti i paesi disponibili.
     """
-    limit = 0 if no_limit else limit
+
     countries = cr.get_all(page, limit)
 
     if not countries:
@@ -40,7 +39,18 @@ async def get_all_countries(user: user_dependency,
 
     return {"countries": countries, "total": total_count, "page": page, "limit": limit}
 
+@router.get("/all", status_code=status.HTTP_200_OK)
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+async def get_list_all_countries(user: user_dependency,
+                                 cr: CountryRepository = Depends(get_repository)):
 
+    countries = cr.list_all()
+
+    if countries is None:
+        raise HTTPException(status_code=404, detail="Paesi non trovati")
+
+    return countries
 @router.get("/{country_id}", status_code=status.HTTP_200_OK, response_model=CountryResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
@@ -54,3 +64,6 @@ async def get_country(user: user_dependency,
         raise HTTPException(status_code=404, detail="Paese non trovato")
 
     return country
+
+
+

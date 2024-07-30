@@ -53,9 +53,7 @@ class AddressRepository:
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
-
         addresses_result = query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
         return addresses_result
 
     def get_by_address(self,

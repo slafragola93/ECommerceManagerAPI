@@ -56,7 +56,7 @@ async def get_list_all_categories(user: user_dependency,
     categories = cr.list_all()
 
     if categories is None:
-        raise HTTPException(status_code=404, detail="Brands non trovati")
+        raise HTTPException(status_code=404, detail="Categoria non trovate")
 
     return categories
 
