@@ -4,7 +4,7 @@ from fastapi import APIRouter, Path, HTTPException, Query, Depends
 from starlette import status
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from src.services.wrap import check_authentication, timing_decorator
-from .. import InvoiceSchema
+from .. import InvoiceSchema, AllInvoiceResponseSchema
 from ..repository.invoice_repository import InvoiceRepository
 from ..services import tool
 from ..services.auth import authorize
@@ -19,7 +19,7 @@ def get_repository(db: db_dependency) -> InvoiceRepository:
     return InvoiceRepository(db)
 
 
-@router.get("/", status_code=status.HTTP_200_OK)
+@router.get("/", status_code=status.HTTP_200_OK, response_model=AllInvoiceResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 @timing_decorator
@@ -54,8 +54,10 @@ async def get_all_invoices(
                                date_from=date_from,
                                date_to=date_to,
                                document_number=document_number)
-
-    return {"invoices": invoices, "total": total_count, "page": page, "limit": limit}
+    results = []
+    for invoice, payment in invoices:
+        results.append(ir.formatted_output(invoice=invoice, payment=payment))
+    return {"invoices": results, "total": total_count, "page": page, "limit": limit}
 
 
 @router.get("/{invoice_id}", status_code=status.HTTP_200_OK)

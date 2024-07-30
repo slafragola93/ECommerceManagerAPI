@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, extract, desc
 from sqlalchemy.orm import Session
 
-from .. import AllInvoiceResponseSchema, InvoiceResponseSchema, InvoiceSchema
+from .. import AllInvoiceResponseSchema, InvoiceResponseSchema, InvoiceSchema, Payment
 from ..models.invoice import Invoice
 from ..services import QueryUtils
 
@@ -39,11 +39,17 @@ class InvoiceRepository:
         date_to = kwargs.get('date_to') if kwargs.get('date_to') else None
         order_id = kwargs.get('order_id')
 
-        query = self.session.query(Invoice).order_by(desc(Invoice.id_invoice))
+        query = self.session.query(
+            Invoice,
+            Payment) \
+            .order_by(desc(Invoice.id_invoice)) \
+            .outerjoin(Payment, Invoice.id_payment == Payment.id_payment)
+
         if not kwargs:
             return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
-        query = QueryUtils.filter_by_string(query, Invoice, 'document_number', document_number) if document_number else query
+        query = QueryUtils.filter_by_string(query, Invoice, 'document_number',
+                                            document_number) if document_number else query
         query = QueryUtils.filter_by_date(query, Invoice, 'date_add', date_from, date_to)
         query = query.filter(Invoice.id_order == order_id) if order_id else query
         query = query.filter(Invoice.payed == payed) if payed else query
@@ -68,7 +74,8 @@ class InvoiceRepository:
         if not kwargs:
             return query.scalar()
 
-        query = QueryUtils.filter_by_string(query, Invoice, 'document_number', document_number) if document_number else query
+        query = QueryUtils.filter_by_string(query, Invoice, 'document_number',
+                                            document_number) if document_number else query
         query = QueryUtils.filter_by_date(query, Invoice, 'date_add', date_from, date_to)
         query = query.filter(Invoice.id_order == order_id) if order_id else query
         query = query.filter(Invoice.payed == payed) if payed else query
@@ -120,3 +127,21 @@ class InvoiceRepository:
         self.session.commit()
 
         return True
+
+    @staticmethod
+    def formatted_output(invoice: Invoice,
+                         payment: Payment = None) -> dict:
+        return {
+            "id_invoice": invoice.id_invoice,
+            "id_order": invoice.id_order,
+            "id_customer": invoice.id_customer,
+            "id_address_delivery": invoice.id_address_delivery,
+            "id_address_invoice": invoice.id_address_invoice,
+            "id_payment": payment.id_payment if payment else None,
+            "payment_name": payment.name if payment else None,
+            "invoice_status": invoice.invoice_status,
+            "note": invoice.note,
+            "document_number": invoice.document_number,
+            "payed": invoice.payed,
+            "date_add": invoice.date_add,
+        }
