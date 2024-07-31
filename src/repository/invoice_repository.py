@@ -82,6 +82,11 @@ class InvoiceRepository:
 
         return query.scalar()
 
+    def get_by_id_with_payment(self, _id: int) -> InvoiceResponseSchema:
+        return self.session.query(Invoice, Payment) \
+            .outerjoin(Payment, Invoice.id_payment == Payment.id_payment) \
+            .filter(Invoice.id_invoice == _id).first()
+
     def get_by_id(self, _id: int) -> InvoiceResponseSchema:
         return self.session.query(Invoice).filter(Invoice.id_invoice == _id).first()
 
@@ -97,28 +102,12 @@ class InvoiceRepository:
         self.session.commit()
         self.session.refresh(invoice)
 
-    # def create_and_get_id(self, data: InvoiceSchema):
-    #     """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
-    #     invoice_new = Invoice(**data.model_dump())
-    #     invoice = self.get_by_email(invoice_new.email)
-    #     if invoice is None:
-    #         invoice_new.date_add = date.today()
-    #
-    #         self.session.add(invoice_new)
-    #         self.session.commit()
-    #         self.session.refresh(invoice_new)
-    #         return invoice_new.id_invoice
-    #     else:
-    #         return invoice.id_invoice
-    #
     def update(self, edited_invoice: Invoice, data: InvoiceSchema):
-
         entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
         for key, value in entity_updated.items():
+
             if hasattr(edited_invoice, key) and value is not None:
                 setattr(edited_invoice, key, value)
-
         self.session.add(edited_invoice)
         self.session.commit()
 

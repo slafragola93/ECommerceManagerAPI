@@ -72,12 +72,13 @@ async def get_invoice_by_id(user: user_dependency,
     - **invoice_id**: Identificativo del cliente da ricercare.
     """
 
-    invoice = ir.get_by_id(_id=invoice_id)
+    result = ir.get_by_id_with_payment(_id=invoice_id)
 
-    if invoice is None:
+    if result is None:
         raise HTTPException(status_code=404, detail="Fattura non trovata.")
 
-    return invoice
+    invoice, payment = result
+    return ir.formatted_output(invoice, payment)
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Fattura creato correttamente")
@@ -86,6 +87,7 @@ async def get_invoice_by_id(user: user_dependency,
 async def create_invoice(user: user_dependency,
                          invoice: InvoiceSchema,
                          ir: InvoiceRepository = Depends(get_repository)):
+
     last_document_number = ir.get_last_document_number()
 
     invoice.document_number = tool.document_number_generator(last_document_number)
@@ -125,7 +127,6 @@ async def update_invoice(user: user_dependency,
 
     - **invoice_id**: Identificativo del cliente da aggiornare.
     """
-
     invoice = ir.get_by_id(_id=invoice_id)
 
     if invoice is None:
