@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
-from src import Country, Role, OrderState, Invoice, OrderPackage
+from src import Country, Role, OrderState, Invoice, OrderPackage, Tag
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
@@ -246,6 +246,8 @@ def test_product():
     Yields:
         Product: Un'istanza del prodotto inserito, utile per accedere ai suoi dati nei test.
     """
+
+
     product_test = Product(
         id_origin=0,
         id_brand=1,
@@ -261,6 +263,7 @@ def test_product():
     yield product_test
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM products;"))
+        conn.execute(text("DELETE FROM product_tags;"))
         conn.commit()
 
 
@@ -710,6 +713,28 @@ def test_tax():
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM taxes;"))
         conn.commit()
+
+
+@pytest.fixture()
+def test_tag():
+    queries = [
+        Tag(
+            id_origin=0,
+            name="r32"
+        ),
+        Tag(
+            id_origin=0,
+            name="tag_generico"
+        ),
+    ]
+    db = TestingSessionLocal()
+    db.add_all(queries)
+    db.commit()
+    yield queries
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM tags;"))
+        conn.commit()
+
 
 
 @pytest.fixture()

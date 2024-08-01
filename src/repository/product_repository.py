@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
-from .. import Brand, Category
+from .. import Brand, Category, Tag
 from ..models import Product
 from src.schemas.product_schema import *
 from src.services import QueryUtils
@@ -28,6 +28,7 @@ class ProductRepository:
                 brands_ids: Optional[str] = None,
                 product_name: Optional[str] = None,
                 products_ids: Optional[str] = None,
+                tags_ids: Optional[str] = None,
                 sku: Optional[str] = None,
                 page: int = 1, limit: int = LIMIT_DEFAULT
                 ) -> AllProductsResponseSchema:
@@ -49,6 +50,10 @@ class ProductRepository:
 
             query = QueryUtils.filter_by_string(query, Product, 'name', product_name)
             query = QueryUtils.filter_by_string(query, Product, 'sku', sku)
+            # query = query.where(Product.tags.any(id_tag=QueryUtils.parse_int_list(tags_ids))) if tags_ids else query
+            query = query.filter(
+                Product.tags.any(Tag.id_tag.in_(QueryUtils.parse_int_list(tags_ids)))) if tags_ids else query
+
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
@@ -62,6 +67,7 @@ class ProductRepository:
                   brands_ids: Optional[str] = None,
                   product_name: Optional[str] = None,
                   products_ids: Optional[str] = None,
+                  tags_ids: Optional[str] = None,
                   sku: Optional[str] = None,
                   ) -> int:
 
@@ -76,6 +82,8 @@ class ProductRepository:
 
             query = QueryUtils.filter_by_string(query, Product, 'name', product_name)
             query = QueryUtils.filter_by_string(query, Product, 'sku', sku)
+            query = query.filter(
+                Product.tags.any(Tag.id_tag.in_(QueryUtils.parse_int_list(tags_ids)))) if tags_ids else query
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
@@ -107,6 +115,19 @@ class ProductRepository:
         self.session.commit()
         self.session.refresh(product)
 
+    def associate_tag(self, data: AssociateTagToProductSchema):
+        try:
+            product = self.session.query(Product).filter(Product.id_product == data.id_product).first()
+            tag = self.session.query(Tag).filter(Tag.id_tag == data.id_tag).first()
+        except AttributeError:
+            raise HTTPException(status_code=404, detail="Prodotto o Tag non trovato")
+
+        if tag in product.tags:
+            raise HTTPException(status_code=400, detail="Tag già associato al prodotto")
+
+        product.tags.append(tag)
+        self.session.commit()
+
     def update(self, edited_product: Product, data: ProductSchema):
 
         entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
@@ -129,7 +150,8 @@ class ProductRepository:
                          category_id_origin: int,
                          category_name: str,
                          brand_name: str,
-                         brand_id_origin: int
+                         brand_id_origin: int,
+                         tags: list
                          ):
         return {
             "id_product": product.id_product,
@@ -147,4 +169,5 @@ class ProductRepository:
                 "id_origin": brand_id_origin,
                 "name": brand_name
             },
+            "tags": tags
         }

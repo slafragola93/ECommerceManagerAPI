@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from .category_schema import CategoryResponseSchema
 from .brand_schema import BrandResponseSchema
+from .tag_schema import TagResponseSchema
 
 
 class ProductSchema(BaseModel):
@@ -41,6 +42,12 @@ class ProductResponseSchema(BaseModel):
     type: str
     category: CategoryResponseSchema
     brand: BrandResponseSchema
+    tags: list[TagResponseSchema] = []
+
+
+class AssociateTagToProductSchema(BaseModel):
+    id_product: int = Field(..., gt=0)
+    id_tag: int = Field(..., gt=0)
 
 
 class AllProductsResponseSchema(BaseModel):
@@ -48,6 +55,7 @@ class AllProductsResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
 
 class ConfigDict:
     from_attributes = True

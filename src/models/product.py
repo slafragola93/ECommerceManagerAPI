@@ -26,7 +26,6 @@ class Product(Base):
     id_origin = Column(Integer, default=0, index=True)
     id_category = Column(Integer, index=True)
     id_brand = Column(Integer, index=True)
-    id_tag = Column(Integer, ForeignKey('tags.id_tag'), index=True, nullable=True)
     name = Column(String(128))
     sku = Column(String(32))
     type = Column(String(32), default='', index=True)

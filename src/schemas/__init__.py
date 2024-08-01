@@ -24,3 +24,4 @@ from .order_schema import *
 from .invoice_schema import *
 from .order_package_schema import *
 from .order_detail_schema import *
+from .tag_schema import *
