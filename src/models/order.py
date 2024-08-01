@@ -2,13 +2,14 @@ from datetime import datetime
 
 from sqlalchemy import Integer, Column, Text, ForeignKey, Boolean, Date, Float, Table
 from sqlalchemy.orm import relationship
+from .relations.relations import orders_history
 
 from src import Base
 
-orders_history = Table('orders_history', Base.metadata,
-                       Column('id_order', Integer, ForeignKey('orders.id_order')),
-                       Column('id_order_state', Integer, ForeignKey('order_states.id_order_state'))
-                       )
+# orders_history = Table('orders_history', Base.metadata,
+#                        Column('id_order', Integer, ForeignKey('orders.id_order')),
+#                        Column('id_order_state', Integer, ForeignKey('order_states.id_order_state'))
+#                        )
 
 
 

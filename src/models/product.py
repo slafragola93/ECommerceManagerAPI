@@ -1,6 +1,8 @@
 from sqlalchemy import Integer, Column, ForeignKey, String
+from sqlalchemy.orm import relationship
 
 from src import Base
+from .relations.relations import product_tags
 
 
 class Product(Base):
@@ -24,6 +26,10 @@ class Product(Base):
     id_origin = Column(Integer, default=0, index=True)
     id_category = Column(Integer, index=True)
     id_brand = Column(Integer, index=True)
+    id_tag = Column(Integer, ForeignKey('tags.id_tag'), index=True, nullable=True)
     name = Column(String(128))
     sku = Column(String(32))
     type = Column(String(32), default='', index=True)
+
+    tags = relationship("Tag", secondary="product_tags", back_populates='products')
+

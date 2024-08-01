@@ -4,11 +4,12 @@ from sqlalchemy.orm import relationship
 
 from ..database import Base
 from sqlalchemy import Column, Integer, String, Boolean, Date, Table, ForeignKey
+from .relations.relations import user_roles
 
-user_roles = Table('user_roles', Base.metadata,
-                   Column('id_user', Integer, ForeignKey('users.id_user')),
-                   Column('id_role', Integer, ForeignKey('roles.id_role'))
-                   )
+# user_roles = Table('user_roles', Base.metadata,
+#                    Column('id_user', Integer, ForeignKey('users.id_user')),
+#                    Column('id_role', Integer, ForeignKey('roles.id_role'))
+#                    )
 
 
 class User(Base):
@@ -45,4 +46,4 @@ class User(Base):
     email = Column(String(100), unique=True, index=True)
     is_active = Column(Boolean, default=True)
     date_add = Column(Date, default=datetime.now)
-    roles = relationship('Role', secondary=user_roles, back_populates='users')
+    roles = relationship('Role', secondary="user_roles", back_populates='users')

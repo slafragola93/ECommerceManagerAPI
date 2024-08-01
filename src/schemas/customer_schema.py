@@ -22,7 +22,7 @@ class CustomerSchema(BaseModel):
             email (EmailStr): Indirizzo email del cliente. Viene automaticamente validato per assicurarsi che rispetti
                               il formato standard degli indirizzi email.
     """
-    id_origin: Optional[int] = None
+    id_origin: Optional[int] = 0
     id_lang: int = Field(..., gt=0)
     firstname: str = Field(..., min_length=1, max_length=100)
     lastname: str = Field(..., min_length=1, max_length=100)
@@ -58,7 +58,7 @@ class AddressResponseSchema(BaseModel):
 class CustomerResponseSchema(BaseModel):
     id_customer: int
     id_origin: int
-    id_lang: int
+    id_lang: int | None
     firstname: str
     lastname: str
     email: str
