@@ -16,7 +16,7 @@ def healthy():
     return {"status": "ok"}
 
 
-origins = ["http://192.168.130.119:8000", "http://localhost:60530", "http://localhost:4200"]
+origins = ["http://192.168.130.119:8000", "http://localhost:60530", "http://localhost:4200", "http://localhost:55654"]
 
 app.add_middleware(
     CORSMiddleware,

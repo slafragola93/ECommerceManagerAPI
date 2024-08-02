@@ -145,6 +145,7 @@ class AddressRepository:
         self.session.add(address)
         self.session.commit()
         self.session.refresh(address)
+        return address
 
     def create_and_get_id(self, data: AddressSchema):
         address = Address(**data.model_dump(exclude=["customer"]))
