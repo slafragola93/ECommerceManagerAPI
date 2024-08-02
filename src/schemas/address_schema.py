@@ -7,8 +7,8 @@ from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerRes
 
 class AddressSchema(BaseModel):
     id_origin: Optional[int] = None
-    id_country: Optional[int] = 0
-    customer: CustomerSchema | int = 0
+    id_country: Optional[int] = None
+    customer: CustomerSchema | int | None = None
     company: Optional[str] = None
     firstname: str = Field(..., max_length=255)
     lastname: str = Field(..., max_length=255)
@@ -26,31 +26,31 @@ class AddressSchema(BaseModel):
 
 
 class CountryResponseSchema(BaseModel):
-    id_country: int
-    name: str
-    iso_code: str
+    id_country: int | None
+    name: str | None
+    iso_code: str | None
 
 
 class AddressResponseSchema(BaseModel):
-    id_address: int
-    id_origin: int
-    customer: CustomerResponseWithoutAddressSchema
-    country: CountryResponseSchema
-    company: str
-    firstname: str
-    lastname: str
-    address1: str
-    address2: str
-    state: str
-    postcode: str
-    city: str
-    phone: str
-    mobile_phone: str
-    vat: str
-    dni: str
-    pec: str
-    sdi: str
-    date_add: Union[datetime, str]
+    id_address: int | None
+    id_origin: int | None
+    customer: CustomerResponseWithoutAddressSchema | None
+    country: CountryResponseSchema | None
+    company: str | None
+    firstname: str | None
+    lastname: str | None
+    address1: str | None
+    address2: str | None
+    state: str | None
+    postcode: str | None
+    city: str | None
+    phone: str | None
+    mobile_phone: str | None
+    vat: str | None
+    dni: str | None
+    pec: str | None
+    sdi: str | None
+    date_add: Union[datetime, str] | None
 
     @validator('date_add', pre=True, allow_reuse=True)
     def format_date(cls, value):
