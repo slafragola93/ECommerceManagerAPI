@@ -6,7 +6,7 @@ class OrderPackage(Base):
     __tablename__ = "order_packages"
 
     id_order_package = Column(Integer, primary_key=True, index=True)
-    id_order = Column(Integer, index=True, nullable=True)
+    id_order = Column(Integer, index=True, nullable=True, default=None)
     height = Column(Float)
     width = Column(Float)
     depth = Column(Float)

@@ -8,11 +8,11 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id_invoice = Column(Integer, primary_key=True, index=True)
-    id_order = Column(Integer, index=True, nullable=True)
-    id_address_delivery = Column(Integer, index=True, nullable=True)
-    id_address_invoice = Column(Integer, index=True, nullable=True)
-    id_customer = Column(Integer, index=True, nullable=True)
-    id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True)
+    id_order = Column(Integer, index=True, nullable=True, default=None)
+    id_address_delivery = Column(Integer, index=True, nullable=True, default=None)
+    id_address_invoice = Column(Integer, index=True, nullable=True, default=None)
+    id_customer = Column(Integer, index=True, nullable=True, default=None)
+    id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=None)
     invoice_status = Column(String(50), nullable=True)
     note = Column(String(150), nullable=True)
     payed = Column(Boolean, nullable=True)
