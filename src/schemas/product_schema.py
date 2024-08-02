@@ -40,8 +40,8 @@ class ProductResponseSchema(BaseModel):
     name: str
     sku: str
     type: str
-    category: CategoryResponseSchema
-    brand: BrandResponseSchema
+    category: CategoryResponseSchema | None
+    brand: BrandResponseSchema | None
     tags: list[TagResponseSchema] = []
 
 

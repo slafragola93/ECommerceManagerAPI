@@ -6,10 +6,10 @@ class OrderDetail(Base):
     __tablename__ = "order_details"
 
     id_order_detail = Column(Integer, primary_key=True, index=True)
+    id_origin = Column(Integer, index=True)
     id_order = Column(Integer, index=True)
     id_invoice = Column(Integer, index=True)
     id_order_document = Column(Integer, index=True)
-    id_origin = Column(Integer, index=True)
     id_product = Column(Integer, index=True)
     id_tax = Column(Integer, index=True)
     product_name = Column(String(100))

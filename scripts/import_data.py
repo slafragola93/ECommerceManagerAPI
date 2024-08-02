@@ -192,8 +192,8 @@ else:
                 type = "ALTRO"
             new_product = Product(
                 id_origin=product.id_origin,
-                id_category=id_category,
-                id_brand=id_brand,
+                id_category=id_category if id_category != 0 else None,
+                id_brand=id_brand if id_brand != 0 else None,
                 name=product.name,
                 sku=product.reference,
                 type=type

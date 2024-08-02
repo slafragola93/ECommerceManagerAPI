@@ -17,16 +17,15 @@ class Order(Base):
     __tablename__ = "orders"
 
     id_order = Column(Integer, primary_key=True, index=True)
+    id_origin = Column(Integer, index=True, nullable=True)
     id_address_delivery = Column(Integer, index=True, nullable=True)
     id_address_invoice = Column(Integer, index=True, nullable=True)
     id_customer = Column(Integer, index=True, nullable=True)
     id_platform = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=1)
     id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True)
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'))
-    shipments = relationship("Shipping", back_populates="order")
     id_sectional = Column(Integer, ForeignKey('sectionals.id_sectional'), index=True, nullable=True)
     id_order_state = Column(Integer, ForeignKey('order_states.id_order_state'), default=1)
-    id_origin = Column(Integer, index=True, nullable=True)
     is_invoice_requested = Column(Boolean, default=False)
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
@@ -38,5 +37,7 @@ class Order(Base):
     general_note = Column(Text, nullable=True)
     delivery_date = Column(Date, nullable=True)
     date_add = Column(Date, default=datetime.today)
+
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")
+    shipments = relationship("Shipping", back_populates="order")
 

@@ -40,8 +40,8 @@ class ProductRepository:
                                    Category.id_origin.label("category_id_origin")
 
                                    ).order_by(desc(Product.id_product)) \
-            .join(Brand, Product.id_brand == Brand.id_brand) \
-            .join(Category, Product.id_category == Category.id_category)
+            .outerjoin(Brand, Product.id_brand == Brand.id_brand) \
+            .outerjoin(Category, Product.id_category == Category.id_category)
 
         try:
             query = QueryUtils.filter_by_id(query, Product, 'id_category', categories_ids)
@@ -50,7 +50,6 @@ class ProductRepository:
 
             query = QueryUtils.filter_by_string(query, Product, 'name', product_name)
             query = QueryUtils.filter_by_string(query, Product, 'sku', sku)
-            # query = query.where(Product.tags.any(id_tag=QueryUtils.parse_int_list(tags_ids))) if tags_ids else query
             query = query.filter(
                 Product.tags.any(Tag.id_tag.in_(QueryUtils.parse_int_list(tags_ids)))) if tags_ids else query
 
@@ -99,8 +98,8 @@ class ProductRepository:
             Brand.id_origin.label("brand_id_origin"),
             Category.name.label("category_name"),
             Category.id_origin.label("category_id_origin")
-        ).join(Brand, Product.id_brand == Brand.id_brand) \
-            .join(Category, Product.id_category == Category.id_category) \
+        ).outerjoin(Brand, Product.id_brand == Brand.id_brand) \
+            .outerjoin(Category, Product.id_category == Category.id_category) \
             .filter(Product.id_product == _id) \
             .first()
         return product

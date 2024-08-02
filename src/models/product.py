@@ -24,11 +24,12 @@ class Product(Base):
 
     id_product = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, default=0, index=True)
-    id_category = Column(Integer, index=True)
-    id_brand = Column(Integer, index=True)
+    id_category = Column(Integer, ForeignKey("categories.id_category"), index=True, default=None)
+    id_brand = Column(Integer, ForeignKey("brands.id_brand"), index=True, default=None)
     name = Column(String(128))
     sku = Column(String(32))
     type = Column(String(32), default='', index=True)
 
     tags = relationship("Tag", secondary="product_tags", back_populates='products')
-
+    brand = relationship("Brand", back_populates="products")
+    category = relationship("Category", back_populates="products")

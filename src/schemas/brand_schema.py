@@ -19,9 +19,9 @@ class BrandSchema(BaseModel):
 
 
 class BrandResponseSchema(BaseModel):
-    id_brand: int
-    id_origin: int
-    name: str
+    id_brand: int | None
+    id_origin: int | None
+    name: str | None
 
 
 class AllBrandsResponseSchema(BaseModel):

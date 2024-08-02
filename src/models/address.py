@@ -26,5 +26,6 @@ class Address(Base):
     pec = Column(String(128), default=None)
     sdi = Column(String(128), default=None)
     date_add = Column(Date, default=func.now())
+
     customers = relationship("Customer", back_populates="addresses")
     country = relationship("Country", back_populates="addresses")
