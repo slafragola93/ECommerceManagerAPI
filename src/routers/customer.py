@@ -76,7 +76,7 @@ async def create_customer(user: user_dependency,
     Crea un nuovo cliente con i dati forniti.
     """
 
-    cr.create(data=customer)
+    return cr.create(data=customer)
 
 
 @router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Cliente eliminato.")
