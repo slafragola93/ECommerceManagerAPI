@@ -125,8 +125,7 @@ async def create_address(user: user_dependency,
     - `address`: Schema dell'indirizzo da creare.
     """
 
-    new_address = ar.create(data=address)
-    return new_address.id_address
+    return ar.create(data=address)
 
 
 @router.delete("/{address_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Indirizzo eliminato correttamente")

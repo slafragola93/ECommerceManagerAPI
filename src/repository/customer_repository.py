@@ -91,6 +91,7 @@ class CustomerRepository:
             self.session.add(customer)
             self.session.commit()
             self.session.refresh(customer)
+            return customer.id_customer
         else:
             raise HTTPException(status_code=409, detail="Email già presente in database")
 
