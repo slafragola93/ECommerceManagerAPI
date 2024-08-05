@@ -10,4 +10,6 @@ class Country(Base):
     id_country = Column(Integer, primary_key=True, index=True)
     name = Column(String(200))
     iso_code = Column(String(5))
+
     addresses = relationship("Address", back_populates="country")
+    taxes = relationship("Tax", back_populates="country")
