@@ -17,3 +17,4 @@ class Tax(Base):
     electronic_code = Column(String(10), default="")
 
     country = relationship("Country", back_populates="taxes")
+    orders_document = relationship("OrderDocument", back_populates="tax")

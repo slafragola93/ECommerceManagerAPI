@@ -37,3 +37,4 @@ class Customer(Base):
     date_add = Column(Date, default=func.now())
 
     addresses = relationship("Address", back_populates="customers")
+    orders_document = relationship("OrderDocument", back_populates="customer")

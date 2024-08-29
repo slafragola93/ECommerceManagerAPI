@@ -22,3 +22,4 @@ class OrderDetail(Base):
     rda = Column(String(10))
 
 
+    

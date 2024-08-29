@@ -39,5 +39,5 @@ class Order(Base):
     date_add = Column(Date, default=datetime.today)
 
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")
-    shipments = relationship("Shipping", back_populates="order")
-
+    shipments = relationship("Shipping", back_populates="orders")
+    orders_document = relationship("OrderDocument", back_populates="order")

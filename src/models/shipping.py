@@ -20,4 +20,4 @@ class Shipping(Base):
     shipping_message = Column(Text)
     date_add = Column(Date, default=datetime.today)
 
-    order = relationship("Order", back_populates="shipments")
+    orders = relationship("Order", back_populates="shipments")

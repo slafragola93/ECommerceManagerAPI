@@ -24,4 +24,5 @@ from .order import Order
 from .invoice import Invoice
 from .order_package import OrderPackage
 from .order_detail import OrderDetail
+from .order_document import OrderDocument
 from .relations import *

@@ -92,7 +92,8 @@ class OrderDetailRepository:
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
 
-        return query.scalar()
+        total_count = query.scalar()
+        return total_count
 
     def get_by_id(self, _id: int) -> OrderDetailResponseSchema:
         return self.session.query(OrderDetail).filter(OrderDetail.id_order_detail == _id).first()
