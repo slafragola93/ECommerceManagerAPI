@@ -6,11 +6,11 @@ from .relations.relations import orders_history
 
 from src import Base
 
+
 # orders_history = Table('orders_history', Base.metadata,
 #                        Column('id_order', Integer, ForeignKey('orders.id_order')),
 #                        Column('id_order_state', Integer, ForeignKey('order_states.id_order_state'))
 #                        )
-
 
 
 class Order(Base):
@@ -38,6 +38,7 @@ class Order(Base):
     delivery_date = Column(Date, nullable=True)
     date_add = Column(Date, default=datetime.today)
 
+    order_packages = relationship("OrderPackage", back_populates="orders")
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")
     shipments = relationship("Shipping", back_populates="orders")
     orders_document = relationship("OrderDocument", back_populates="order")
