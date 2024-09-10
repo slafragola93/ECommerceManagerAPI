@@ -1,10 +1,15 @@
 from sqlalchemy import Table, select, Column, Integer
 
-from .functions import get_ids_origin, retrieve_brand_by_id_origin, retrieve_category_by_id_origin, retrieve_customer_by_id_origin
+from src import Tag
+from .functions import get_ids_origin, retrieve_brand_by_id_origin, retrieve_category_by_id_origin, \
+    retrieve_customer_by_id_origin, retrieve_product_tags, retrieve_tags, get_id_by_id_origin, insert_product_tags
 from .setup import *
 from tqdm import tqdm
 from src.models import Customer, Category, Brand, Product, Address, Carrier
 from sqlalchemy import literal_column
+
+#python -m scripts.import_data
+
 
 feature_product_ps_table = Table('ww_ps_feature_product', metadata,
                                  Column('id', Integer, primary_key=True),
@@ -29,6 +34,7 @@ customer_ps_table = Table('ww_ps_customer', metadata, autoload_with=src_engine)
 connessione_ps = src_engine.connect()
 
 #### IMPORT CUSTOMER #####
+counter = 0
 query = select(
     customer_ps_table.c.id_customer.label('id_origin'),
     customer_ps_table.c.id_lang,
@@ -47,15 +53,16 @@ else:
         for customer in tqdm(customers_prestashop, desc="Processing customers", unit="customer"):
             new_customer = Customer(
                 id_origin=customer.id_origin,
+                id_lang=customer.id_lang,
                 firstname=customer.firstname,
                 lastname=customer.lastname,
                 email=customer.email
             )
             dest_session.add(new_customer)
-
+            counter += 1
         dest_session.commit()
         print(
-            f"Numero di clienti importati: {len(customers_prestashop)}")
+            f"Numero di clienti importati: {counter}")
     except Exception as e:
         # In caso di errore, esegue il rollback delle modifiche
         dest_session.rollback()
@@ -64,6 +71,7 @@ else:
     #     dest_session.close()
 ###############################################
 ################# CATEGORIES ###############
+counter = 0
 categories_ids_origin_already_added = get_ids_origin(dest_session, Category)
 category_ps_table = Table('ww_ps_category_lang', metadata, autoload_with=src_engine)
 query = select(
@@ -86,7 +94,7 @@ else:
                 name=category.name
             )
             dest_session.add(new_category)
-
+            counter += 1
         dest_session.commit()
         print(
             f"Numero di categorie importate: {len(categories_prestashop)}")
@@ -97,6 +105,7 @@ else:
 
 ###############################################
 ################# BRANDS ###############
+counter = 0
 brands_ids_origin_already_added = get_ids_origin(dest_session, Brand)
 brand_ps_table = Table('ww_ps_manufacturer', metadata, autoload_with=src_engine)
 query = select(
@@ -118,6 +127,7 @@ else:
                 id_origin=brand.id_origin,
                 name=brand.name
             )
+            counter += 1
             dest_session.add(new_brand)
 
         dest_session.commit()
@@ -129,6 +139,7 @@ else:
 
 ###############################################
 ################# PRODUCT ###############
+counter = 0
 products_ids_origin_already_added = get_ids_origin(dest_session, Product)
 
 product_ps_table = Table('ww_ps_product', metadata, autoload_with=src_engine)
@@ -181,22 +192,24 @@ else:
                 type = "ALTRO"
             new_product = Product(
                 id_origin=product.id_origin,
-                id_category=id_category,
-                id_brand=id_brand,
+                id_category=id_category if id_category != 0 else None,
+                id_brand=id_brand if id_brand != 0 else None,
                 name=product.name,
                 sku=product.reference,
                 type=type
             )
             dest_session.add(new_product)
+            counter += 1
 
         dest_session.commit()
-        print(f"Numero di prodotti importati: {len(products_prestashop)}")
+        print(f"Numero di prodotti importati: {counter}")
     except Exception as e:
         # In caso di errore, esegue il rollback delle modifiche
         dest_session.rollback()
         print(f"Si è verificato un errore durante l'importazione dei prodotti: {e}")
 
 #### ADDRESS #######
+counter = 0
 address_ids_origin_already_added = get_ids_origin(dest_session, Address)
 
 address_ps_table = Table('ww_ps_address', metadata, autoload_with=src_engine)
@@ -255,27 +268,91 @@ else:
                 sdi=address.sdi
             )
             dest_session.add(new_address)
+            counter += 1
 
         dest_session.commit()
-        print(f"Numero di indirizzi importati: {len(addresses_prestashop)}")
+        print(f"Numero di indirizzi importati: {counter}")
     except Exception as e:
         # In caso di errore, esegue il rollback delle modifiche
         dest_session.rollback()
         print(f"Si è verificato un errore durante l'importazione degli indirizzi: {e}")
 
 ##### IMPORT CORRIERI #################
-carrier_ids_origin_already_added = get_ids_origin(dest_session, Carrier)
+# carrier_ids_origin_already_added = get_ids_origin(dest_session, Carrier)
+#
+# carrier_ps_table = Table('ww_ps_carrier', metadata, autoload_with=src_engine)
+#
+# query = select(
+#     carrier_ps_table.id_reference.label('id_origin'),
+#     carrier_ps_table.name,
+#     literal_column("0.0").label("min_weight"),
+#     literal_column("0.0").label("max_weight"),
+#     price
+# ).where(
+#     carrier_ps_table.id_carrier.not_in(carrier_ids_origin_already_added)
+# )
 
-carrier_ps_table = Table('ww_ps_carrier', metadata, autoload_with=src_engine)
+
+##### IMPORT TAG ###############
+counter = 0
+tag_ps_table = Table('ww_ps_tag', metadata, autoload_with=src_engine)
+tag_already_added = retrieve_tags(dest_session)
 
 query = select(
-    carrier_ps_table.id_reference.label('id_origin'),
-    carrier_ps_table.name,
-    literal_column("0.0").label("min_weight"),
-    literal_column("0.0").label("max_weight"),
-    price
+    tag_ps_table.c.id_tag.label('id_origin'),
+    tag_ps_table.c.name
 ).where(
-    carrier_ps_table.id_carrier.not_in(carrier_ids_origin_already_added)
+    tag_ps_table.c.id_lang == 1
+).where(tag_ps_table.c.name.not_in(tag_already_added))
+
+tags_prestashop = connessione_ps.execute(query).fetchall()
+
+if not tags_prestashop:
+    print("Nessun tag da importare.")
+else:
+    try:
+        for tag in tqdm(tags_prestashop, desc="Processing tags", unit="tag"):
+            if tag.name in tag_already_added:
+                continue
+
+            new_tag = Tag(
+                id_origin=tag.id_origin,
+                name=tag.name
+            )
+            dest_session.add(new_tag)
+            counter += 1
+
+        dest_session.commit()
+        print(f"Numero di tag importati: {counter}")
+    except Exception as e:
+        # In caso di errore, esegue il rollback delle modifiche
+        dest_session.rollback()
+        print(f"Si è verificato un errore durante l'importazione dei tag: {e}")
+
+######### ACCOPPIAMENTO PRODUCT E TAG #######################
+counter = 0
+product_tag_ps_table = Table('ww_ps_product_tag', metadata, autoload_with=src_engine)
+product_tag_already_added = retrieve_product_tags(dest_session)
+print(product_tag_already_added)
+
+
+query = select(
+    product_tag_ps_table.c.id_product,
+    product_tag_ps_table.c.id_tag
+).where(
+    product_tag_ps_table.c.id_lang == 1
 )
+product_tags_prestashop = connessione_ps.execute(query).fetchall()
+for product_tag in tqdm(product_tags_prestashop, desc="Processing product tags", unit="product tag"):
+    id_origin_product = product_tag[0]
+    id_origin_tag = product_tag[1]
+    # Conversione dell'id_origin in id attuale
+    id_product = get_id_by_id_origin(dest_session, Product, 'id_product', id_origin_product)
+    id_tag = get_id_by_id_origin(dest_session, Tag, 'id_tag', id_origin_tag)
+    if (id_product, id_tag) not in product_tag_already_added:
+        insert_product_tags(dest_session, id_product, id_tag)
+        counter += 1
+
+print(f"Numero di tag importati: {counter}")
 
 print("Trasferimento completato.")

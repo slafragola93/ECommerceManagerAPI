@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 from ..models import Configuration
 from src.schemas.configuration_schema import *
@@ -25,7 +25,7 @@ class ConfigurationRepository:
             AllConfigurationsResponseSchema: Tutti le configurazioni
         """
 
-        return self.session.query(Configuration).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        return self.session.query(Configuration).order_by(desc(Configuration.id_configuration)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
     def get_count(self) -> int:
         return self.session.query(func.count(Configuration.id_configuration)).scalar()

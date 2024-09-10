@@ -1,6 +1,8 @@
-from sqlalchemy import func
+from typing import List, Type
+
+from sqlalchemy import func, asc
 from sqlalchemy.orm import Session
-from .. import AllCountryResponseSchema, CountryResponseSchema, CountrySchema
+from .. import AllCountryResponseSchema, CountryResponseSchema, CountrySchema, Country
 from ..models import Country
 from src.services import QueryUtils
 
@@ -16,8 +18,16 @@ class CountryRepository:
         """
         self.session = session
 
-    def get_all(self, page: int = 1, limit: int = 10) -> AllCountryResponseSchema:
-        return self.session.query(Country).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+    def get_all(self, page: int = 1, limit: int = 0) -> AllCountryResponseSchema:
+        query = self.session.query(Country).order_by(asc(Country.name))
+        if limit == 0:
+            return query.all()
+        query = query.offset(QueryUtils.get_offset(limit, page)).limit(limit)
+        return query
+
+    def list_all(self) -> list[CountryResponseSchema]:
+        results = self.session.query(Country.id_country, Country.name).order_by(asc(Country.name)).all()
+        return [{"id_country": id_country, "name": name} for id_country, name in results]
 
     def get_count(self) -> AllCountryResponseSchema:
         return self.session.query(func.count(Country.id_country)).scalar()
@@ -35,7 +45,7 @@ class CountryRepository:
 
     def update(self,
                edited_country: Country,
-               data: CountrySchema  ):
+               data: CountrySchema):
 
         entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
 

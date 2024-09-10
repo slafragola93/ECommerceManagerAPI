@@ -73,15 +73,3 @@ class CarrierApiRepository:
 
         return True
 
-    @staticmethod
-    def formatted_output(carrier: CarrierApi):
-        return {
-            "id_carrier_api": carrier.id_carrier_api,
-            "name": carrier.name,
-            "account_number": carrier.account_number,
-            "site_id": carrier.site_id,
-            "national_service": carrier.national_service,
-            "international_service": carrier.international_service,
-            "is_active": carrier.is_active,
-            "api_key": carrier.api_key
-        }

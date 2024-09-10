@@ -1,22 +1,41 @@
 from fastapi import FastAPI
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+
 from starlette.middleware.cors import CORSMiddleware
-from src.schemas import *
+
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, payment, tax, user, \
     order_state, order, invoice, order_package, order_detail
 from src.database import Base, engine
 
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from fastapi_cache.decorator import cache
+
+from redis import asyncio as aioredis
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    redis = aioredis.from_url("redis://localhost")
+    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+    yield
+
 app = FastAPI(
-    title="Elettronew API"
+    title="Elettronew API",
+    lifespan=lifespan
 )
 
+@cache()
+async def get_cache():
+    return 1
 
-@app.get("/", tags=["Healthy Check"])
-def healthy():
-    return {"status": "ok"}
 
 
-origins = ["http://192.168.130.119:8000", "http://localhost:60530", "http://localhost:4200"]
+origins = ["http://localhost:4200","http://localhost:63297"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,3 +76,4 @@ app.include_router(order_detail.router)
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
+

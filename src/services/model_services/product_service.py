@@ -26,12 +26,28 @@ class ProductService:
         # (nel caso si volesse modulare dinamicamente la chiamata api verso un X e commerce,
         # identificare la sorgente del prodotto con l'id platform
         if product is not None and product.id_origin != 0:
-            price = self.ecommerce_api_service.retrieve_live_price(
+            price = self.ecommerce_api_service.get_product_value(
                 product_id=product.id_origin,
                 price_field_name="wholesale_price")
             if not price:
                 raise HTTPException(status_code=404, detail="Prezzo live non trovato.")
 
             return price
+
+        return 0.0
+
+    def get_live_weight(self, product_id:int) -> float:
+        product = self.product_repository.get_by_id(_id=product_id)
+        # TODO: Se esiste e l'id origin non è zero, quindi deriva da e commerce esterno
+        # (nel caso si volesse modulare dinamicamente la chiamata api verso un X e commerce,
+        # identificare la sorgente del prodotto con l'id platform
+        if product is not None and product.id_origin != 0:
+            weight = self.ecommerce_api_service.get_product_value(
+                product_id=product.id_origin,
+                price_field_name="weight")
+            if not weight:
+                raise HTTPException(status_code=404, detail="Peso live non trovato.")
+
+            return weight
 
         return 0.0

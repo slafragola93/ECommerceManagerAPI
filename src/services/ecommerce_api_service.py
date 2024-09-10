@@ -18,9 +18,9 @@ class ECommerceApiService:
             "Content-Type": "application/json"
         }
 
-    def retrieve_live_price(self,
-                            product_id: int,
-                            price_field_name: str = "wholesale_price")-> float:
+    def get_product_value(self,
+                          product_id: int,
+                          price_field_name: str = "wholesale_price") -> float:
         url = f"{self.base_url}/api/products/?ws_key={self.api_key}&filter[id]=[{product_id}]&display=[{price_field_name}]&output_format={self.formatted_output}"
         response = requests.get(url, headers=self._get_headers())
         response.raise_for_status()

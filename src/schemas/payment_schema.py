@@ -7,6 +7,7 @@ class PaymentSchema(BaseModel):
 
 
 class PaymentResponseSchema(BaseModel):
+    id_payment: int
     name: str
     is_complete_payment: bool
 

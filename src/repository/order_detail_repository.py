@@ -1,4 +1,5 @@
 from fastapi import HTTPException
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .product_repository import ProductRepository
@@ -37,10 +38,11 @@ class OrderDetailRepository:
         search_value = kwargs.get('search_value')
         rda = kwargs.get('rda')
 
-        query = self.session.query(OrderDetail)
+        query = self.session.query(OrderDetail).order_by(desc(OrderDetail.id_order_detail))
 
         try:
-            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail', order_details_ids) if order_details_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail',
+                                            order_details_ids) if order_details_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_invoice', invoice_ids) if invoice_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
@@ -55,6 +57,9 @@ class OrderDetailRepository:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
 
         return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+
+    def get_by_id_order(self, id_order: int) -> list[OrderDetail]:
+        return self.session.query(OrderDetail).filter(OrderDetail.id_order == id_order).all()
 
     def get_count(self,
                   **kwargs,
@@ -72,7 +77,8 @@ class OrderDetailRepository:
         query = self.session.query(OrderDetail)
 
         try:
-            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail', order_details_ids) if order_details_ids else query
+            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail',
+                                            order_details_ids) if order_details_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_invoice', invoice_ids) if invoice_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
@@ -86,29 +92,25 @@ class OrderDetailRepository:
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
 
-        return query.scalar()
+        total_count = query.scalar()
+        return total_count
 
     def get_by_id(self, _id: int) -> OrderDetailResponseSchema:
         return self.session.query(OrderDetail).filter(OrderDetail.id_order_detail == _id).first()
 
     def create(self, data: OrderDetailSchema):
-        order_detail = OrderDetail(**data.model_dump())
-
-        # Caso in cui non è stato inserito il prezzo
-        if order_detail.product_price == 0.0:
-            # Check se prodotto esiste
-            order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+        order_detail = OrderDetail(**data.model_dump(exclude=['real_price', 'real_weight']))
+        order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+        order_detail.product_weight = self.product_service.get_live_weight(product_id=order_detail.id_product)
 
         self.session.add(order_detail)
         self.session.commit()
-        self.session.refresh(order_detail)
 
     def create_and_get_id(self, data: OrderDetailSchema):
         """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
-        order_detail = OrderDetail(**data.model_dump())
-        if order_detail.product_price == 0.0:
-            # Check se prodotto esiste
-            order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+        order_detail = OrderDetail(**data.model_dump(exclude=['real_price', 'real_weight']))
+        order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
+        order_detail.product_weight = self.product_service.get_live_weight(product_id=order_detail.id_product)
 
         self.session.add(order_detail)
         self.session.commit()

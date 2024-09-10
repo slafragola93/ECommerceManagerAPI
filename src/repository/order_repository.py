@@ -1,12 +1,14 @@
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from .address_repository import AddressRepository
 from .customer_repository import CustomerRepository
+from .order_detail_repository import OrderDetailRepository
 from .order_package_repository import OrderPackageRepository
 from .order_state_repository import OrderStateRepository
 from .sectional_repository import SectionalRepository
 from .shipping_repository import ShippingRepository
 from .tax_repository import TaxRepository
-from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema
+from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
 from ..models import Order
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema
@@ -30,6 +32,7 @@ class OrderRepository:
         self.tax_repository = TaxRepository(session)
         self.customer_repository = CustomerRepository(session)
         self.order_package_repository = OrderPackageRepository(session)
+        self.order_detail_repository = OrderDetailRepository(session)
 
     # def get_all(self,
     #             page: int = 1, limit: int = 10
@@ -60,8 +63,8 @@ class OrderRepository:
     #
     #     return customers_result
 
-    # def get_by_id(self, _id: int) -> OrderResponseSchema:
-    #     return self.session.query(Order).filter(Order.id_customer == _id).first()
+    def get_by_id(self, _id: int) -> OrderSchema:
+        return self.session.query(Order).filter(Order.id_order == _id).first()
 
     def create(self, data: OrderSchema):
         order = Order(
@@ -137,17 +140,38 @@ class OrderRepository:
     #     self.session.commit()
     #     self.session.refresh(order_history)
 
-    # def update(self, edited_customer: Order, data: OrderSchema):
-    #
-    #     entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-    #
-    #     for key, value in entity_updated.items():
-    #         if hasattr(edited_customer, key) and value is not None:
-    #             setattr(edited_customer, key, value)
-    #
-    #     self.session.add(edited_customer)
-    #     self.session.commit()
-    #
+    def update(self, edited_order: Order, data: OrderSchema):
+
+        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
+
+        for key, value in entity_updated.items():
+            if hasattr(edited_order, key) and value is not None:
+                setattr(edited_order, key, value)
+
+        self.session.add(edited_order)
+        self.session.commit()
+
+    def set_price(self, id_order: int, order_details: list[OrderDetail]):
+        order = self.get_by_id(_id=id_order)
+
+        if order is None:
+            raise HTTPException(status_code=404, detail="Ordine non trovato")
+
+        order.total_price = sum(order_detail.product_price * order_detail.product_qty for order_detail in order_details)
+
+        self.session.add(order)
+        self.session.commit()
+
+    def set_weight(self, id_order: int, order_details: list[OrderDetail]):
+        order = self.get_by_id(_id=id_order)
+
+        if order_details is None:
+            raise HTTPException(status_code=404, detail="Ordine non trovato")
+        order.total_weight = sum(order_detail.product_weight * order_detail.product_qty for order_detail in order_details)
+
+        self.session.add(order)
+        self.session.commit()
+
     # def delete(self, customer: Order) -> bool:
     #     self.session.delete(customer)
     #     self.session.commit()

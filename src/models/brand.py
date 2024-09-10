@@ -1,4 +1,6 @@
 from sqlalchemy import Integer, Column, String
+from sqlalchemy.orm import relationship
+
 from src.database import Base
 
 
@@ -19,5 +21,7 @@ class Brand(Base):
     __tablename__ = "brands"
 
     id_brand = Column(Integer, primary_key=True, index=True)
-    id_origin = Column(Integer, default=0)
+    id_origin = Column(Integer, default=None)
     name = Column(String(200))
+
+    products = relationship("Product", back_populates="brand")

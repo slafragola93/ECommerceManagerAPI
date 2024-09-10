@@ -1,23 +1,39 @@
-from datetime import datetime
-
 from src import get_db
 from src.main import app
 from src.models import Product
 from src.services.auth import get_current_user
-from ..utils import client, test_product, test_brand, test_category, override_get_db, override_get_current_user, \
+from ..utils import client, test_product, test_brand, test_category, test_tag, override_get_db, \
+    override_get_current_user, \
     TestingSessionLocal, override_get_current_user_read_only
 
 app.dependency_overrides[get_db] = override_get_db
 app.dependency_overrides[get_current_user] = override_get_current_user
 
 
-def test_get_all_products(test_product, test_brand, test_category):
+
+
+def test_get_all_products(test_product, test_brand, test_category,test_tag):
     """
     Testa la funzionalità di recupero di tutti i prodotti dall'endpoint API.
     Verifica che la risposta includa il prodotto inserito attraverso il fixture di test e
     che i dettagli del prodotto corrispondano a quanto atteso.
     """
+    # Associazione tag a prodotti
+    request_body = {
+        "id_product": 1,
+        "id_tag": 1,
+    }
 
+    client.post("/api/v1/products/add_tag", json=request_body)
+    # Verifica della risposta
+
+    request_body = {
+        "id_product": 1,
+        "id_tag": 2,
+    }
+    client.post("/api/v1/products/add_tag", json=request_body)
+
+    # Verifica della risposta
     response = client.get("/api/v1/products/")
 
     # Verifica della risposta
@@ -38,15 +54,38 @@ def test_get_all_products(test_product, test_brand, test_category):
             'id_origin': 1,
             'name': 'Samsung'
         },
+        'tags': [
+            {
+                'id_tag': 1,
+                'name': 'r32'
+            }, {
+                'id_tag': 2,
+                'name': 'tag_generico'
+            }
+        ]
     }]
 
 
-def test_get_products_by_filters(test_product, test_brand, test_category):
+def test_get_products_by_filters(test_product, test_brand, test_category, test_tag):
     """
     Testa l'endpoint API per il recupero dei prodotti utilizzando vari filtri.
     Prima verifica che la risposta sia 400 per una richiesta con filtro non valido.
     Successivamente, verifica che l'uso di filtri validi restituisca il prodotto corretto.
     """
+    # Associazione tag a prodotti
+    request_body = {
+        "id_product": 1,
+        "id_tag": 1,
+    }
+
+    client.post("/api/v1/products/add_tag", json=request_body)
+    # Verifica della risposta
+
+    request_body = {
+        "id_product": 1,
+        "id_tag": 2,
+    }
+    client.post("/api/v1/products/add_tag", json=request_body)
 
     response = client.get("/api/v1/products/?product_ids=asasdsd")
 
@@ -74,15 +113,71 @@ def test_get_products_by_filters(test_product, test_brand, test_category):
             'id_origin': 1,
             'name': 'Samsung'
         },
+        'tags': [
+            {
+                'id_tag': 1,
+                'name': 'r32'
+            }, {
+                'id_tag': 2,
+                'name': 'tag_generico'
+            }
+        ]
+
+    }]
+
+    response = client.get("/api/v1/products/?tags_ids=1,2")
+
+    # Verifica della risposta
+    assert response.status_code == 200
+
+    assert response.json()["products"] == [{
+        'id_product': 1,
+        'id_origin': 0,
+        'name': 'Climatizzatore Daikin',
+        'sku': '123456',
+        'type': 'DUAL',
+        'category': {
+            'id_category': 1,
+            'id_origin': 702,
+            'name': 'Climatizzatori'
+        },
+        'brand': {
+            'id_brand': 1,
+            'id_origin': 1,
+            'name': 'Samsung'
+        },
+        'tags': [
+            {
+                'id_tag': 1,
+                'name': 'r32'
+            }, {
+                'id_tag': 2,
+                'name': 'tag_generico'
+            }
+        ]
+
     }]
 
 
-def test_get_product_by_id(test_product, test_brand, test_category):
+def test_get_product_by_id(test_product, test_brand, test_category, test_tag):
     """
     Testa il recupero di un singolo prodotto tramite il suo ID dall'endpoint API.
     Verifica che la richiesta di un ID inesistente restituisca uno status code 404.
     Per un ID esistente, verifica che i dettagli del prodotto restituito corrispondano a quanto atteso.
     """
+    request_body = {
+        "id_product": 1,
+        "id_tag": 1,
+    }
+
+    client.post("/api/v1/products/add_tag", json=request_body)
+    # Verifica della risposta
+
+    request_body = {
+        "id_product": 1,
+        "id_tag": 2,
+    }
+    client.post("/api/v1/products/add_tag", json=request_body)
 
     response = client.get('/api/v1/products/100')
     assert response.status_code == 404
@@ -108,6 +203,15 @@ def test_get_product_by_id(test_product, test_brand, test_category):
             'id_origin': 1,
             'name': 'Samsung'
         },
+        'tags': [
+            {
+                'id_tag': 1,
+                'name': 'r32'
+            }, {
+                'id_tag': 2,
+                'name': 'tag_generico'
+            }
+        ]
     }
 
 
@@ -219,6 +323,7 @@ def test_get_all_products_with_user_permissions(test_product, test_brand, test_c
             'id_origin': 1,
             'name': 'Samsung'
         },
+        'tags': []
     }]
 
 
@@ -249,6 +354,7 @@ def test_get_products_by_filters_with_user_permissions(test_product, test_brand,
             'id_origin': 1,
             'name': 'Samsung'
         },
+        'tags': []
     }]
 
 
@@ -277,6 +383,7 @@ def test_get_product_by_id_with_user_permissions(test_product, test_brand, test_
             'id_origin': 1,
             'name': 'Samsung'
         },
+        'tags': []
     }
 
 

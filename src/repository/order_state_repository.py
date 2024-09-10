@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 from ..models import OrderState
 from src.schemas.order_state_schema import *
@@ -18,7 +18,7 @@ class OrderStateRepository:
         self.session = session
 
     def get_all(self, page: int = 1, limit: int = 10) -> AllOrdersStateResponseSchema:
-        return self.session.query(OrderState).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        return self.session.query(OrderState).order_by(desc(OrderState.id_order_state)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
 
     def get_count(self):
         return self.session.query(func.count(OrderState.id_order_state)).scalar()

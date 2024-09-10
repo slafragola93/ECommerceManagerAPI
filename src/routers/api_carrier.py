@@ -48,7 +48,7 @@ async def get_api_carrier_by_id(user: user_dependency,
     if carrier is None:
         raise HTTPException(status_code=404, detail="Corriere non trovata")
 
-    return car.formatted_output(carrier)
+    return carrier
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Corriere creato correttamente")

@@ -1,3 +1,4 @@
+from sqlalchemy import asc
 from sqlalchemy.orm import Session
 from ..models import Lang
 from src.schemas.lang_schema import *

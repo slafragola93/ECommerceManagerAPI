@@ -10,13 +10,14 @@ class Shipping(Base):
     __tablename__ = "shipments"
 
     id_shipping = Column(Integer, primary_key=True, index=True)
-    id_carrier_api = Column(Integer, index=True)
-    id_shipping_state = Column(Integer, index=True)
+    id_carrier_api = Column(Integer, index=True, default=None)
+    id_shipping_state = Column(Integer, index=True, default=None)
     id_tax = Column(Integer)
-    tracking = Column(String(100), default="", index=True)
+    tracking = Column(String(100), default=None, index=True)
     weight = Column(Float, default=0)
     price_tax_incl = Column(Float, default=0)
     price_tax_excl = Column(Float, default=0)
     shipping_message = Column(Text)
     date_add = Column(Date, default=datetime.today)
-    order = relationship("Order", back_populates="shipments")
+
+    orders = relationship("Order", back_populates="shipments")

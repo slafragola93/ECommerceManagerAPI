@@ -12,9 +12,14 @@ app.dependency_overrides[get_current_user] = override_get_current_user
 
 expected_carrier = [
     {
-        "id_carrier": 1,
-        "id_origin": 10,
-        "name": "Fedex",
+        "id_carrier": 4,
+        "id_origin": 22,
+        "name": "Mondial Relay",
+    }
+    , {
+        "id_carrier": 3,
+        "id_origin": 21,
+        "name": "UPS",
     },
     {
         "id_carrier": 2,
@@ -22,15 +27,11 @@ expected_carrier = [
         "name": "DHL",
     },
     {
-        "id_carrier": 3,
-        "id_origin": 21,
-        "name": "UPS",
+        "id_carrier": 1,
+        "id_origin": 10,
+        "name": "Fedex",
     },
-    {
-        "id_carrier": 4,
-        "id_origin": 22,
-        "name": "Mondial Relay",
-    }
+
 ]
 
 
@@ -50,7 +51,7 @@ def test_get_carriers_by_filters(test_carriers):
 
     assert response.status_code == 200
     assert response.json()["total"] == 1
-    assert response.json()["carriers"][0] == expected_carrier[1]
+    assert response.json()["carriers"][0] == expected_carrier[2]
 
 
 def test_get_carrier_by_id(test_carriers):
@@ -59,7 +60,7 @@ def test_get_carrier_by_id(test_carriers):
     # Verifica della risposta
     assert response.status_code == 200
 
-    assert response.json() == expected_carrier[3]
+    assert response.json() == expected_carrier[0]
 
     response = client.get('/api/v1/carriers/10')
     assert response.status_code == 404

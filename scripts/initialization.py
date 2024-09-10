@@ -228,3 +228,4 @@ except Exception as e:
     # In caso di errore, esegue il rollback delle modifiche
     dest_session.rollback()
     print(f"Si è verificato un errore durante l'importazione delle Configurazioni: {e}")
+

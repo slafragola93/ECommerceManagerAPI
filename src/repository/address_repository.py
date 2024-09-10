@@ -1,6 +1,6 @@
 from datetime import date
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
 from .customer_repository import CustomerRepository
@@ -37,8 +37,11 @@ class AddressRepository:
             Address,
             Country,
             Customer
-        ).join(Country, Address.id_country == Country.id_country).join(Customer,
+        ).order_by(desc(Address.id_address)).outerjoin(Country, Address.id_country == Country.id_country).outerjoin(Customer,
                                                                        Address.id_customer == Customer.id_customer)
+
+
+
         try:
             query = QueryUtils.filter_by_id(query, Address, 'id_address', kwargs.get('addresses_ids'))
             query = QueryUtils.filter_by_id(query, Address, 'id_origin', kwargs.get('origin_ids'))
@@ -53,9 +56,7 @@ class AddressRepository:
 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
-
         addresses_result = query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
         return addresses_result
 
     def get_by_address(self,
@@ -87,7 +88,7 @@ class AddressRepository:
 
         query = self.session.query(
             func.count(Address.id_address)
-        ).join(Country, Address.id_country == Country.id_country).join(Customer,
+        ).outerjoin(Country, Address.id_country == Country.id_country).outerjoin(Customer,
                                                                        Address.id_customer == Customer.id_customer)
         try:
             query = QueryUtils.filter_by_id(query, Address, 'id_address', addresses_ids)
@@ -118,11 +119,12 @@ class AddressRepository:
         Returns:
             AddressResponseSchema: Istanza dell'indirizzo.
         """
+
         return self.session.query(
             Address,
             Country,
             Customer
-        ).join(Country, Address.id_country == Country.id_country).join(Customer,
+        ).outerjoin(Country, Address.id_country == Country.id_country).outerjoin(Customer,
                                                                        Address.id_customer == Customer.id_customer).filter(
             Address.id_address == _id).first()
 
@@ -147,6 +149,7 @@ class AddressRepository:
         self.session.add(address)
         self.session.commit()
         self.session.refresh(address)
+        return address.id_address
 
     def create_and_get_id(self, data: AddressSchema):
         address = Address(**data.model_dump(exclude=["customer"]))
@@ -205,23 +208,12 @@ class AddressRepository:
     def formatted_output(address: Address,
                          country: Country,
                          customer: Customer):
+
         return {
             "id_address": address.id_address,
             "id_origin": address.id_origin,
-            "customer": {
-                "id_customer": customer.id_customer if customer else 0,
-                "id_origin": customer.id_origin if customer else None,
-                "id_lang": customer.id_lang if customer else 0,
-                "firstname": customer.firstname if customer else None,
-                "lastname": customer.lastname if customer else None,
-                "email": customer.email if customer else None,
-                "date_add": customer.date_add.isoformat() if customer else None
-            },
-            "country": {
-                "id_country": country.id_country if country else None,
-                "name": country.name if country else None,
-                "iso_code": country.iso_code if country else None,
-            },
+            "customer": customer if customer else None,
+            "country": country if country else None,
             "company": address.company,
             "firstname": address.firstname,
             "lastname": address.lastname,

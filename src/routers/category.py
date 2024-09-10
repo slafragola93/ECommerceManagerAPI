@@ -11,6 +11,7 @@ router = APIRouter(
     tags=['Category'],
 )
 
+
 def get_repository(db: db_dependency) -> CategoryRepository:
     return CategoryRepository(db)
 
@@ -44,6 +45,20 @@ async def get_all_categories(user: user_dependency,
     total_count = cr.get_count()
 
     return {"categories": categories, "total": total_count, "page": page, "limit": limit}
+
+
+@router.get("/all", status_code=status.HTTP_200_OK)
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+async def get_list_all_categories(user: user_dependency,
+                                  cr: CategoryRepository = Depends(get_repository)):
+
+    categories = cr.list_all()
+
+    if categories is None:
+        raise HTTPException(status_code=404, detail="Categoria non trovate")
+
+    return categories
 
 
 @router.get("/{category_id}", status_code=status.HTTP_200_OK, response_model=CategoryResponseSchema)
@@ -99,7 +114,8 @@ async def create_category(user: user_dependency,
     cr.create(data=cs)
 
 
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Categoria eliminata correttamente")
+@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT,
+               response_description="Categoria eliminata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
 async def delete_category(user: user_dependency,

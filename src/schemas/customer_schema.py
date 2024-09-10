@@ -22,21 +22,58 @@ class CustomerSchema(BaseModel):
             email (EmailStr): Indirizzo email del cliente. Viene automaticamente validato per assicurarsi che rispetti
                               il formato standard degli indirizzi email.
     """
-    id_origin: Optional[int] = None
+    id_origin: Optional[int] = 0
     id_lang: int = Field(..., gt=0)
     firstname: str = Field(..., min_length=1, max_length=100)
     lastname: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
 
 
+class CountryResponseSchema(BaseModel):
+    id_country: int | None
+    name: str | None
+    iso_code: str | None
+
+
+class AddressResponseSchema(BaseModel):
+    id_address: int | None
+    id_origin: int | None
+    country: Optional[CountryResponseSchema] = None
+    company: str | None
+    firstname: str | None
+    lastname: str | None
+    address1: str | None
+    address2: str | None
+    state: str | None
+    postcode: str | None
+    city: str | None
+    phone: str | None
+    mobile_phone: str | None
+    vat: str | None
+    dni: str | None
+    pec: str | None
+    sdi: str | None
+
+
 class CustomerResponseSchema(BaseModel):
-    id_customer: int
-    id_origin: int
-    id_lang: int
-    firstname: str
-    lastname: str
-    email: str
-    date_add: datetime
+    id_customer: int | None
+    id_origin: int | None
+    id_lang: int | None
+    firstname: str | None
+    lastname: str | None
+    email: str | None
+    date_add: datetime | None
+    addresses: Optional[list[AddressResponseSchema]] = None
+
+
+class CustomerResponseWithoutAddressSchema(BaseModel):
+    id_customer: int | None
+    id_origin: int | None
+    id_lang: int | None
+    firstname: str | None
+    lastname: str | None
+    email: str | None
+    date_add: datetime | None
 
 
 class AllCustomerResponseSchema(BaseModel):

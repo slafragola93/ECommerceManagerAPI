@@ -24,7 +24,7 @@ async def get_all_address(user: user_dependency,
                           ar: AddressRepository = Depends(get_repository),
                           addresses_ids: Optional[str] = None,
                           origin_ids: Optional[str] = None,
-                          customers: Optional[str] = None,
+                          customers_ids: Optional[str] = None,
                           countries: Optional[str] = None,
                           state: Optional[str] = None,
                           vat: Optional[str] = None,
@@ -51,10 +51,9 @@ async def get_all_address(user: user_dependency,
      - `page`: Pagina corrente per la paginazione.
      - `limit`: Numero di record per pagina.
      """
-
     addresses = ar.get_all(addresses_ids=addresses_ids,
                            origin_ids=origin_ids,
-                           customers_ids=customers,
+                           customers_ids=customers_ids,
                            countries_ids=countries,
                            state=state,
                            vat=vat,
@@ -69,7 +68,7 @@ async def get_all_address(user: user_dependency,
 
     total_count = ar.get_count(addresses_ids=addresses_ids,
                                origin_ids=origin_ids,
-                               customers_ids=customers,
+                               customers_ids=customers_ids,
                                countries_ids=countries,
                                state=state,
                                vat=vat,
@@ -126,7 +125,7 @@ async def create_address(user: user_dependency,
     - `address`: Schema dell'indirizzo da creare.
     """
 
-    ar.create(data=address)
+    return ar.create(data=address)
 
 
 @router.delete("/{address_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Indirizzo eliminato correttamente")

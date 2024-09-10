@@ -1,29 +1,33 @@
 from datetime import datetime, date
-from typing import Optional, Union
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 
 class InvoiceSchema(BaseModel):
     id_order: Optional[int] = None
-    id_address_delivery: int = Field(gt=-1)
-    id_address_invoice: int = Field(gt=-1)
-    id_customer: int = Field(gt=-1)
-    invoice_status: Optional[str] = Field(None, min_length=1, max_length=100)
+    id_address_delivery: int | None = Field(gt=-1)
+    id_address_invoice: int | None = Field(gt=-1)
+    id_customer: int | None = Field(gt=-1)
+    id_payment: int | None
+    invoice_status: Optional[str] = Field(None, max_length=100)
     note: str = Field(max_length=100)
-    document_number: Optional[str] = None
+    document_number: Optional[int] = None
     payed: bool
     date_add: Optional[date] = None
 
 
 class InvoiceResponseSchema(BaseModel):
+    id_invoice: int
     id_order: Optional[int]
-    id_address_delivery: int = Field(gt=-1)
-    id_address_invoice: int = Field(gt=-1)
-    id_customer: int = Field(gt=-1)
-    invoice_status: Optional[str] = Field(None, min_length=1, max_length=100)
-    note: str = Field(max_length=100)
-    document_number: str
+    id_address_delivery: int | None
+    id_address_invoice: int | None
+    id_customer: int | None
+    id_payment: int | None
+    payment_name: str | None
+    invoice_status: str | None
+    note: str | None
+    document_number: int
     payed: bool
     date_add: datetime
 

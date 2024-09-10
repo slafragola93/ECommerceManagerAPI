@@ -1,6 +1,6 @@
 from http.client import HTTPException
 
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
 from .. import AllCarriersResponseSchema, CarrierResponseSchema, CarrierSchema
@@ -32,7 +32,7 @@ class CarrierRepository:
         Returns:
             AllBrandsResponseSchema: Tutti i brand
         """
-        query = self.session.query(Carrier)
+        query = self.session.query(Carrier).order_by(desc(Carrier.id_carrier))
 
         try:
             query = QueryUtils.filter_by_id(query, Carrier, 'id_carrier', carriers_ids)

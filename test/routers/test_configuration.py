@@ -10,10 +10,10 @@ app.dependency_overrides[get_current_user] = override_get_current_user
 
 expected_results = [
     {
-        "id_configuration": 1,
-        "id_lang": 1,
-        "name": "ECOMMERCE_PS",
-        "value": "1",
+        "id_configuration": 3,
+        "id_lang": 0,
+        "name": "Tipo Caricamento",
+        "value": "Cron"
     },
     {
         "id_configuration": 2,
@@ -22,10 +22,10 @@ expected_results = [
         "value": "1"
     },
     {
-        "id_configuration": 3,
-        "id_lang": 0,
-        "name": "Tipo Caricamento",
-        "value": "Cron"
+        "id_configuration": 1,
+        "id_lang": 1,
+        "name": "ECOMMERCE_PS",
+        "value": "1",
     }
 ]
 

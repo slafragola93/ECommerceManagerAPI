@@ -1,4 +1,4 @@
-from sqlalchemy import or_
+from sqlalchemy import or_, desc
 from sqlalchemy.orm import Session
 from ..models import Message
 from src.schemas.message_schema import *
@@ -29,7 +29,7 @@ class MessageRepository:
         Returns:
             AllMessagesResponseSchema: Tutte i messaggi disponibili
         """
-        query = self.session.query(Message)
+        query = self.session.query(Message).order_by(desc(Message.id_message))
 
         if user_id is not None:
             query = query.filter(or_(Message.id_user == user_id))

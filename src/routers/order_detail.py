@@ -6,6 +6,7 @@ from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIM
 from .. import OrderDetailSchema, AllOrderDetailsResponseSchema, OrderDetailResponseSchema
 from src.services.wrap import check_authentication
 from ..repository.order_detail_repository import OrderDetailRepository
+from ..repository.order_repository import OrderRepository
 from ..services.auth import authorize
 
 router = APIRouter(
@@ -16,6 +17,10 @@ router = APIRouter(
 
 def get_repository(db: db_dependency):
     return OrderDetailRepository(db)
+
+
+def get_order_repository(db: db_dependency):
+    return OrderRepository(db)
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllOrderDetailsResponseSchema)
@@ -57,7 +62,7 @@ async def get_all_order_details(
                                 product_ids=product_ids,
                                 search_value=search_value,
                                 rda=rda)
-
+    print(order_details)
     return {"order_details": order_details, "total": total_count, "page": page, "limit": limit}
 
 
@@ -80,8 +85,18 @@ async def get_order_detail_by_id(user: user_dependency,
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
 async def create_order_detail(user: user_dependency,
                               ods: OrderDetailSchema,
-                              odr: OrderDetailRepository = Depends(get_repository)):
+                              odr: OrderDetailRepository = Depends(get_repository),
+                              order_r: OrderRepository = Depends(get_order_repository)):
     odr.create(data=ods)
+
+    # Aggiornamento prezzo e peso di Order
+    if ods.real_price is True or ods.real_weight is True:
+        order_details = odr.get_by_id_order(id_order=ods.id_order)
+        if ods.real_price is True:
+            order_r.set_price(id_order=ods.id_order, order_details=order_details)
+
+        if ods.real_weight is True:
+            order_r.set_weight(id_order=ods.id_order, order_details=order_details)
 
 
 @router.put("/{order_detail_id}", status_code=status.HTTP_200_OK,

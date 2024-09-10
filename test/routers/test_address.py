@@ -12,39 +12,6 @@ app.dependency_overrides[get_current_user] = override_get_current_user
 
 expected_address = [
     {
-        "id_address": 1,
-        "id_origin": 0,
-        "customer": {
-            "id_customer": 1,
-            "id_origin": 0,
-            "id_lang": 1,
-            "firstname": "Enzo",
-            "lastname": "Cristiano",
-            "email": "enzocristiano@elettronew.com",
-            "date_add": datetime.today().strftime('%Y-%m-%dT00:00:00')
-        },
-        "country": {
-            "id_country": 1,
-            "name": "Italia",
-            "iso_code": "IT"
-        },
-        "company": "Elettronew",
-        "firstname": "Enzo",
-        "lastname": "Cristiano",
-        "address1": "Via Roma",
-        "address2": "Casa",
-        "state": "Campania",
-        "postcode": "80010",
-        "city": "Napoli",
-        "phone": "34567890",
-        "mobile_phone": "34567890",
-        "vat": "02469660209",
-        "dni": "dni",
-        "pec": "enzocristiano@pec.it",
-        "sdi": "sdi",
-        "date_add": datetime.today().strftime('%d-%m-%Y')
-    },
-    {
         'id_address': 2,
         'id_origin': 150,
         'customer':
@@ -78,6 +45,39 @@ expected_address = [
         'pec': 'enzocristiano@pec.it',
         'sdi': 'sdi',
         'date_add': date.today().strftime('%d-%m-%Y')
+    },
+    {
+        "id_address": 1,
+        "id_origin": 0,
+        "customer": {
+            "id_customer": 1,
+            "id_origin": 0,
+            "id_lang": 1,
+            "firstname": "Enzo",
+            "lastname": "Cristiano",
+            "email": "enzocristiano@elettronew.com",
+            "date_add": datetime.today().strftime('%Y-%m-%dT00:00:00')
+        },
+        "country": {
+            "id_country": 1,
+            "name": "Italia",
+            "iso_code": "IT"
+        },
+        "company": "Elettronew",
+        "firstname": "Enzo",
+        "lastname": "Cristiano",
+        "address1": "Via Roma",
+        "address2": "Casa",
+        "state": "Campania",
+        "postcode": "80010",
+        "city": "Napoli",
+        "phone": "34567890",
+        "mobile_phone": "34567890",
+        "vat": "02469660209",
+        "dni": "dni",
+        "pec": "enzocristiano@pec.it",
+        "sdi": "sdi",
+        "date_add": datetime.today().strftime('%d-%m-%Y')
     }
 ]
 
@@ -90,7 +90,7 @@ def test_get_all_addresses(test_customer, test_address):
     response = client.get("/api/v1/addresses/")
     # Verifica della risposta
     assert response.status_code == 200
-    assert response.json()["addresses"] == [expected_address[0]]
+    assert response.json()["addresses"] == [expected_address[1]]
 
 
 def test_get_addresses_by_filters(test_customer, test_addresses):
@@ -125,7 +125,7 @@ def test_get_address_by_id(test_customer, test_addresses):
     # Verifica della risposta
     assert response.status_code == 200
 
-    assert response.json() == expected_address[1]
+    assert response.json() == expected_address[0]
 
     response = client.get('/api/v1/addresses/3')
     assert response.status_code == 404
@@ -185,7 +185,6 @@ def test_create_address(test_customer, test_address):
     response = client.post("/api/v1/addresses/", json=request_body)
     assert response.status_code == 422
 
-
     # request_body = {
     #     "id_origin": 0,
     #     "id_country": 1,
@@ -221,6 +220,7 @@ def test_create_address(test_customer, test_address):
     # assert address.firstname == request_body.get('firstname')
     # assert address.address1 == request_body.get('address1')
     # assert address.city == request_body.get('city')
+
 
 def test_delete_address(test_customer, test_addresses):
     """

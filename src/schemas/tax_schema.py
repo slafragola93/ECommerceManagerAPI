@@ -20,6 +20,7 @@ class TaxResponseSchema(BaseModel):
     percentage: int
     electronic_code: str
 
+
 class AllTaxesResponseSchema(BaseModel):
     taxes: list[TaxResponseSchema]
     total: int

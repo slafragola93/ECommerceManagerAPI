@@ -21,9 +21,9 @@ class CategorySchema(BaseModel):
 
 
 class CategoryResponseSchema(BaseModel):
-    id_category: int
-    id_origin: int
-    name: str
+    id_category: int | None
+    id_origin: int | None
+    name: str | None
 
 
 class AllCategoryResponseSchema(BaseModel):

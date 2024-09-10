@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
-from src import Country, Role, OrderState, Invoice
+from src import Country, Role, OrderState, Invoice, OrderPackage, Tag
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
@@ -246,6 +246,8 @@ def test_product():
     Yields:
         Product: Un'istanza del prodotto inserito, utile per accedere ai suoi dati nei test.
     """
+
+
     product_test = Product(
         id_origin=0,
         id_brand=1,
@@ -261,6 +263,7 @@ def test_product():
     yield product_test
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM products;"))
+        conn.execute(text("DELETE FROM product_tags;"))
         conn.commit()
 
 
@@ -713,6 +716,28 @@ def test_tax():
 
 
 @pytest.fixture()
+def test_tag():
+    queries = [
+        Tag(
+            id_origin=0,
+            name="r32"
+        ),
+        Tag(
+            id_origin=0,
+            name="tag_generico"
+        ),
+    ]
+    db = TestingSessionLocal()
+    db.add_all(queries)
+    db.commit()
+    yield queries
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM tags;"))
+        conn.commit()
+
+
+
+@pytest.fixture()
 def test_shipping_state():
     """
     Crea un record di prova per lo stato della spedizione nel database fittizio.
@@ -742,6 +767,7 @@ def test_invoices():
             id_address_delivery=1,
             id_address_invoice=2,
             id_customer=1,
+            id_payment=1,
             invoice_status="payed",
             note="test note",
             payed=True,
@@ -751,6 +777,7 @@ def test_invoices():
             id_order=10,
             id_address_delivery=9,
             id_address_invoice=2,
+            id_payment=None,
             invoice_status="payed",
             id_customer=5,
             note="test note",
@@ -763,6 +790,7 @@ def test_invoices():
             id_address_invoice=2,
             invoice_status="payed",
             id_customer=1,
+            id_payment=1,
             note="test note",
             payed=True,
             document_number=1
@@ -771,6 +799,7 @@ def test_invoices():
             id_order=1,
             id_address_delivery=1,
             id_address_invoice=2,
+            id_payment=1,
             invoice_status="payed",
             id_customer=1,
             note="test note",
@@ -783,6 +812,7 @@ def test_invoices():
             id_address_delivery=1,
             id_address_invoice=2,
             invoice_status="payed",
+            id_payment=1,
             id_customer=1,
             note="test note",
             payed=True,
@@ -796,4 +826,41 @@ def test_invoices():
     yield queries
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM invoices;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_order_package():
+    queries = [
+        OrderPackage(
+            id_order=1,
+            height=15.0,
+            width=30.0,
+            depth=9.5,
+            weight=8,
+            value=500.0
+        ),
+        OrderPackage(
+            id_order=2,
+            height=15.0,
+            width=30.0,
+            depth=9.5,
+            weight=8,
+            value=500.0
+        ),
+        OrderPackage(
+            id_order=2,
+            height=15.0,
+            width=30.0,
+            depth=9.5,
+            weight=8,
+            value=500.0
+        )
+    ]
+    db = TestingSessionLocal()
+    db.add_all(queries)
+    db.commit()
+    yield queries
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM order_packages;"))
         conn.commit()
