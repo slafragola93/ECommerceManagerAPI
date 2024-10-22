@@ -2,9 +2,9 @@ from datetime import date, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import func, extract, desc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from .. import AllInvoiceResponseSchema, InvoiceResponseSchema, InvoiceSchema, Payment
+from .. import AllInvoiceResponseSchema, InvoiceResponseSchema, InvoiceSchema, Payment, Address
 from ..models.invoice import Invoice
 from ..services import QueryUtils
 
@@ -83,10 +83,8 @@ class InvoiceRepository:
         return query.scalar()
 
     def get_by_id_with_payment(self, _id: int) -> InvoiceResponseSchema:
-        return self.session.query(Invoice, Payment) \
-            .outerjoin(Payment, Invoice.id_payment == Payment.id_payment) \
-            .filter(Invoice.id_invoice == _id).first()
-
+        return self.session.query(Invoice) \
+        .filter(Invoice.id_invoice == _id)
     def get_by_id(self, _id: int) -> InvoiceResponseSchema:
         return self.session.query(Invoice).filter(Invoice.id_invoice == _id).first()
 
@@ -124,8 +122,8 @@ class InvoiceRepository:
             "id_invoice": invoice.id_invoice,
             "id_order": invoice.id_order,
             "id_customer": invoice.id_customer,
-            "id_address_delivery": invoice.id_address_delivery,
-            "id_address_invoice": invoice.id_address_invoice,
+            "address_delivery": {invoice.id_address_delivery} if invoice.id_address_delivery else None,
+            "address_invoice": {invoice.id_address_invoice} if invoice.id_address_invoice else None,
             "id_payment": payment.id_payment if payment else None,
             "payment_name": payment.name if payment else None,
             "invoice_status": invoice.invoice_status,

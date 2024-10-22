@@ -1,13 +1,14 @@
 from datetime import datetime, date
 from typing import Optional
+from .address_schema import AddressResponseSchema
 
 from pydantic import BaseModel, Field
 
 
 class InvoiceSchema(BaseModel):
     id_order: Optional[int] = None
-    id_address_delivery: int | None = Field(gt=-1)
-    id_address_invoice: int | None = Field(gt=-1)
+    id_address_delivery: Optional[int] = 0
+    id_address_invoice: Optional[int] = 0
     id_customer: int | None = Field(gt=-1)
     id_payment: int | None
     invoice_status: Optional[str] = Field(None, max_length=100)
@@ -20,8 +21,8 @@ class InvoiceSchema(BaseModel):
 class InvoiceResponseSchema(BaseModel):
     id_invoice: int
     id_order: Optional[int]
-    id_address_delivery: int | None
-    id_address_invoice: int | None
+    address_delivery: AddressResponseSchema | None
+    address_invoice: AddressResponseSchema | None
     id_customer: int | None
     id_payment: int | None
     payment_name: str | None

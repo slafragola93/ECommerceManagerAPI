@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
 from src import get_db, Payment
 from src.main import app
 from src.models import Invoice
 from src.services.auth import get_current_user
-from ..utils import client, test_invoices, test_payment, override_get_db, override_get_current_user, TestingSessionLocal, \
+from ..utils import client, test_invoices,test_address, test_payment, override_get_db, override_get_current_user, TestingSessionLocal, \
     LIMIT_DEFAULT, override_get_current_user_read_only
 
 app.dependency_overrides[get_db] = override_get_db
@@ -14,13 +14,83 @@ app.dependency_overrides[get_current_user] = override_get_current_user
 anno_precedente = datetime.now() - relativedelta(years=1)
 due_anni_precedenti = datetime.now() - relativedelta(years=2)
 
+results_address = [
+    {
+        "id_address": 1,
+        "id_origin": 0,
+        "customer": {
+            "id_customer": 1,
+            "id_origin": 0,
+            "id_lang": 1,
+            "firstname": "Enzo",
+            "lastname": "Cristiano",
+            "email": "enzocristiano@elettronew.com",
+            "date_add": datetime.today().strftime('%Y-%m-%dT00:00:00')
+        },
+        "country": {
+            "id_country": 1,
+            "name": "Italia",
+            "iso_code": "IT"
+        },
+        "company": "Elettronew",
+        "firstname": "Enzo",
+        "lastname": "Cristiano",
+        "address1": "Via Roma",
+        "address2": "Casa",
+        "state": "Campania",
+        "postcode": "80010",
+        "city": "Napoli",
+        "phone": "34567890",
+        "mobile_phone": "34567890",
+        "vat": "02469660209",
+        "dni": "dni",
+        "pec": "enzocristiano@pec.it",
+        "sdi": "sdi",
+        "date_add": datetime.today().strftime('%d-%m-%Y')
+    },
+    {
+        'id_address': 2,
+        'id_origin': 150,
+        'customer':
+            {
+                'id_customer': 1,
+                'id_origin': 0,
+                'id_lang': 1,
+                'firstname': 'Enzo',
+                'lastname': 'Cristiano',
+                'email': 'enzocristiano@elettronew.com',
+                'date_add': date.today().strftime('%Y-%m-%dT00:00:00')
+            },
+        'country':
+            {
+                'id_country': 2,
+                'name': 'Italia',
+                'iso_code': 'IT'
+            },
+        'company': 'Elettronew FR',
+        'firstname': 'Enzo',
+        'lastname': 'Cristiano',
+        'address1': 'Rue Sainte 10',
+        'address2': '',
+        'state': 'Bouche du rhone',
+        'postcode': '13007',
+        'city': 'Marseille',
+        'phone': '34567890',
+        'mobile_phone': '34567890',
+        'vat': '02469660209',
+        'dni': 'dni',
+        'pec': 'enzocristiano@pec.it',
+        'sdi': 'sdi',
+        'date_add': date.today().strftime('%d-%m-%Y')
+    }
+]
 results = [
 
     {
         "id_invoice": 5,
         "id_order": 1,
-        "id_address_delivery": 1,
-        "id_address_invoice": 2,
+        "address_delivery": results_address[0],
+        "address_invoice": results_address[1],
         "id_payment": 1,
         "payment_name": "Bonifico Bancario",
         "invoice_status": "payed",
@@ -33,8 +103,8 @@ results = [
     {
         "id_invoice": 4,
         "id_order": 1,
-        "id_address_delivery": 1,
-        "id_address_invoice": 2,
+        "address_delivery": results_address[0],
+        "address_invoice": results_address[1],
         "id_payment": 1,
         "payment_name": "Bonifico Bancario",
         "invoice_status": "payed",
@@ -47,8 +117,8 @@ results = [
     {
         "id_invoice": 3,
         "id_order": 1,
-        "id_address_delivery": 1,
-        "id_address_invoice": 2,
+        "address_delivery": results_address[0],
+        "address_invoice": results_address[1],
         "id_payment": 1,
         "payment_name": "Bonifico Bancario",
         "invoice_status": "payed",
@@ -61,8 +131,8 @@ results = [
     {
         "id_invoice": 2,
         "id_order": 10,
-        "id_address_delivery": 9,
-        "id_address_invoice": 2,
+        "address_delivery": results_address[0],
+        "address_invoice": results_address[1],
         "id_payment": None,
         "payment_name": None,
         "invoice_status": "payed",
@@ -75,8 +145,8 @@ results = [
     {
         "id_invoice": 1,
         "id_order": 1,
-        "id_address_delivery": 1,
-        "id_address_invoice": 2,
+        "address_delivery": results_address[0],
+        "address_invoice": results_address[1],
         "id_payment": 1,
         "payment_name": "Bonifico Bancario",
         "invoice_status": "payed",
@@ -128,8 +198,8 @@ def test_get_all_invoices(test_invoices, test_payment):
             {
                 "id_invoice": 5,
                 "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
+                "address_delivery": results_address[1],
+                "address_invoice": results_address[0],
                 "invoice_status": "payed",
                 "id_customer": 1,
                 "id_payment": 1,
@@ -156,8 +226,8 @@ def test_get_all_invoices(test_invoices, test_payment):
             {
                 "id_invoice": 5,
                 "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
+                "address_delivery": results_address[1],
+                "address_invoice": results_address[0],
                 "invoice_status": "payed",
                 "id_customer": 1,
                 "id_payment": 1,
@@ -170,8 +240,8 @@ def test_get_all_invoices(test_invoices, test_payment):
             {
                 "id_invoice": 4,
                 "id_order": 1,
-                "id_address_delivery": 1,
-                "id_address_invoice": 2,
+                "address_delivery": results_address[1],
+                "address_invoice": results_address[0],
                 "invoice_status": "payed",
                 "id_customer": 1,
                 "id_payment": 1,
@@ -188,7 +258,7 @@ def test_get_all_invoices(test_invoices, test_payment):
     }
 
 
-def test_get_by_id(test_invoices):
+def test_get_by_id(test_invoices, test_address):
     """
     A function to test the retrieval of all invoices from the API endpoint.
     """
@@ -200,8 +270,8 @@ def test_get_by_id(test_invoices):
     assert response.json() == {
         "id_invoice": 2,
         "id_order": 10,
-        "id_address_delivery": 9,
-        "id_address_invoice": 2,
+        "address_delivery": results_address[0],
+        "address_invoice": results_address[1],
         "invoice_status": "payed",
         "id_customer": 5,
         "id_payment": None,
@@ -225,6 +295,7 @@ def test_create_invoice(test_invoices, test_payment):
         "note": "nota",
         "payed": True
     }
+
     # Creazione OK
     response = client.post('/api/v1/invoices/', json=request_body)
     assert response.status_code == 201
@@ -263,7 +334,7 @@ def test_update_invoice(test_invoices, test_payment):
     db = TestingSessionLocal()
 
     invoice = db.query(Invoice, Payment).join(Payment, Invoice.id_payment == Payment.id_payment).filter(Invoice.id_invoice == 1).first()
-    print(invoice)
+
     assert invoice is not None
 
     assert invoice[0].id_order == request_body.get('id_order')

@@ -35,7 +35,7 @@ async def get_cache():
 
 
 
-origins = ["http://localhost:4200","http://localhost:63297"]
+origins = ["http://localhost:4200","http://localhost:56362"]
 
 app.add_middleware(
     CORSMiddleware,

@@ -9,8 +9,8 @@ class Invoice(Base):
 
     id_invoice = Column(Integer, primary_key=True, index=True)
     id_order = Column(Integer, index=True, nullable=True, default=None)
-    id_address_delivery = Column(Integer, index=True, nullable=True, default=None)
-    id_address_invoice = Column(Integer, index=True, nullable=True, default=None)
+    id_address_delivery = Column(Integer, ForeignKey("addresses.id_address"), index=True, nullable=True, default=None)
+    id_address_invoice = Column(Integer, ForeignKey("addresses.id_address"), index=True, nullable=True, default=None)
     id_customer = Column(Integer, index=True, nullable=True, default=None)
     id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=None)
     invoice_status = Column(String(50), nullable=True)
@@ -20,3 +20,5 @@ class Invoice(Base):
     date_add = Column(Date, default=func.current_date())
 
     payments = relationship("Payment", back_populates="invoice")
+    address_delivery_inv = relationship("Address", foreign_keys=[id_address_delivery])
+    address_invoice_inv = relationship("Address", foreign_keys=[id_address_invoice            ])

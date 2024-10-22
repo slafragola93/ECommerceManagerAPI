@@ -37,10 +37,14 @@ async def get_all_users(user: user_dependency,
         "limit": limit
     }
 
+@router.get("/user-information", status_code=status.HTTP_200_OK)
+@check_authentication
+async def get_user_by_id(user: user_dependency):
+    return user
 
 @router.get("/{user_id}", status_code=status.HTTP_200_OK)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI'], permissions_required=['R'])
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI', 'USER'], permissions_required=['R'])
 async def get_user_by_id(user: user_dependency,
                          ur: UserRepository = Depends(get_repository),
                          user_id: int = Path(gt=0)):
@@ -50,6 +54,7 @@ async def get_user_by_id(user: user_dependency,
         raise HTTPException(status_code=404, detail="Utente non trovato")
 
     return user
+
 
 
 @router.put("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

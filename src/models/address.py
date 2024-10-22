@@ -29,6 +29,8 @@ class Address(Base):
 
     customers = relationship("Customer", back_populates="addresses")
     country = relationship("Country", back_populates="addresses")
+
+    # Order Document
     address_delivery = relationship(
         "OrderDocument",
         foreign_keys="[OrderDocument.id_address_delivery]",  # Explicitly state the FK to use
@@ -39,3 +41,16 @@ class Address(Base):
         foreign_keys="[OrderDocument.id_address_invoice]",  # Explicitly state the FK to use
         back_populates="address_invoice"
     )
+
+    #Invoice
+    address_delivery_inv = relationship(
+        "Invoice",
+        foreign_keys="[Invoice.id_address_delivery]",  # Explicitly state the FK to use
+        back_populates="address_delivery_inv"
+    )
+    address_invoice_inv = relationship(
+        "Invoice",
+        foreign_keys="[Invoice.id_address_invoice]",  # Explicitly state the FK to use
+        back_populates="address_invoice_inv"
+    )
+

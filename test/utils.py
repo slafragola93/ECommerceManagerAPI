@@ -775,7 +775,7 @@ def test_invoices():
         ),
         Invoice(
             id_order=10,
-            id_address_delivery=9,
+            id_address_delivery=1,
             id_address_invoice=2,
             id_payment=None,
             invoice_status="payed",

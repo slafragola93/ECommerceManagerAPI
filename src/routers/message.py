@@ -93,7 +93,8 @@ async def create_message(user: user_dependency,
     """
     if relate_to_user:
         ms.id_user = user.get("id")
-    mr.create(data=ms)
+    return mr.create(data=ms)
+
 
 
 @router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT,

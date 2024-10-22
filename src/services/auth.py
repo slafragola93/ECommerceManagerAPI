@@ -47,7 +47,6 @@ async def get_current_user(token: token_dependency):
         # TODO: aggiungere il controllo sul ruolo + permessi
         return {"username": username, "id": user_id, "roles": roles}
     except JWTError:
-        print(token)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token non valido o scaduto")
 
 

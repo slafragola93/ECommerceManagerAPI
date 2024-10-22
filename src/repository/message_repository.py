@@ -54,6 +54,7 @@ class MessageRepository:
         self.session.add(message)
         self.session.commit()
         self.session.refresh(message)
+        return message.id_message
 
     def update(self, edited_message: Message, data: MessageSchema):
 

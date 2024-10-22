@@ -4,7 +4,7 @@ from fastapi import APIRouter, Path, HTTPException, Query, Depends
 from starlette import status
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from src.services.wrap import check_authentication, timing_decorator
-from .. import InvoiceSchema, AllInvoiceResponseSchema
+from .. import InvoiceSchema, AllInvoiceResponseSchema, InvoiceResponseSchema
 from ..repository.invoice_repository import InvoiceRepository
 from ..services import tool
 from ..services.auth import authorize
@@ -60,7 +60,7 @@ async def get_all_invoices(
     return {"invoices": results, "total": total_count, "page": page, "limit": limit}
 
 
-@router.get("/{invoice_id}", status_code=status.HTTP_200_OK)
+@router.get("/{invoice_id}", status_code=status.HTTP_200_OK, response_model=InvoiceResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def get_invoice_by_id(user: user_dependency,
@@ -73,7 +73,7 @@ async def get_invoice_by_id(user: user_dependency,
     """
 
     result = ir.get_by_id_with_payment(_id=invoice_id)
-
+    
     if result is None:
         raise HTTPException(status_code=404, detail="Fattura non trovata.")
 
