@@ -7,6 +7,7 @@ from starlette import status
 from src.routers.auth import authenticate_user, create_access_token, SECRET_KEY, ALHORITHM
 from src.services.auth import get_current_user
 from ..utils import *
+from ..test_config import *  # Importa la configurazione di test per SECRET_KEY
 import pytest
 from fastapi import HTTPException
 
@@ -96,8 +97,12 @@ async def test_get_current_user_valid_token():
 
         Verifica che, dato un token valido, l'utente corrispondente venga correttamente identificato e restituito.
     """
+    import os
+    # Usa la stessa chiave che usa get_current_user
+    test_secret_key = os.environ.get("SECRET_KEY", "test-secret-key")
+    
     encode = {"sub": "test_user", "id": 1, "roles": [{"name": "ADMIN", "permissions": "CRUD"}]}  # , "roles": "Admin"}
-    token = jwt.encode(encode, SECRET_KEY, algorithm=ALHORITHM)
+    token = jwt.encode(encode, test_secret_key, algorithm=ALHORITHM)
 
     user = await get_current_user(token=token)  # Perchè è async si mette aewait
     assert user == {"username": "test_user", "id": 1, "roles": [{"name": "ADMIN", "permissions": "CRUD"}]}  # , "user_roles": "Admin"}

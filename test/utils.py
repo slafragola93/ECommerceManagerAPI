@@ -8,7 +8,7 @@ from src import Country, Role, OrderState, Invoice, OrderPackage, Tag
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
-    Lang, Sectional, Message, Configuration, Payment, Tax, Shipping
+    Lang, Sectional, Message, Configuration, Payment, Tax, Shipping, Order, OrderDetail
 from src.routers.auth import bcrypt_context
 
 MAX_LIMIT = os.environ.get("MAX_LIMIT")
@@ -863,4 +863,212 @@ def test_order_package():
     yield queries
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM order_packages;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_order():
+    """
+    Crea un record di prova per l'ordine nel database fittizio.
+    Dopo il test, elimina tutti i record dalla tabella degli ordini.
+    """
+    order_test = Order(
+        id_origin=1,
+        id_address_delivery=1,
+        id_address_invoice=1,
+        id_customer=1,
+        id_platform=1,
+        id_payment=1,
+        id_shipping=1,
+        id_sectional=1,
+        id_order_state=1,
+        is_invoice_requested=False,
+        is_payed=False,
+        total_weight=1.5,
+        total_price=99.99,
+        cash_on_delivery=0.0,
+        insured_value=0.0,
+        privacy_note="Privacy note test",
+        general_note="General note test",
+        date_add=datetime.today()
+    )
+    
+    db = TestingSessionLocal()
+    db.add(order_test)
+    db.commit()
+    yield order_test
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM orders;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_orders():
+    """
+    Crea record di prova per gli ordini nel database fittizio.
+    Dopo il test, elimina tutti i record dalla tabella degli ordini.
+    """
+    orders_test = [
+        Order(
+            id_origin=1,
+            id_address_delivery=1,
+            id_address_invoice=1,
+            id_customer=1,
+            id_platform=1,
+            id_payment=1,
+            id_shipping=1,
+            id_sectional=1,
+            id_order_state=1,
+            is_invoice_requested=False,
+            is_payed=False,
+            total_weight=1.5,
+            total_price=99.99,
+            cash_on_delivery=0.0,
+            insured_value=0.0,
+            privacy_note="Privacy note test 1",
+            general_note="General note test 1",
+            date_add=datetime.today()
+        ),
+        Order(
+            id_origin=2,
+            id_address_delivery=2,
+            id_address_invoice=2,
+            id_customer=2,
+            id_platform=2,
+            id_payment=2,
+            id_shipping=1,
+            id_sectional=2,
+            id_order_state=2,
+            is_invoice_requested=True,
+            is_payed=True,
+            total_weight=2.5,
+            total_price=199.99,
+            cash_on_delivery=5.0,
+            insured_value=10.0,
+            privacy_note="Privacy note test 2",
+            general_note="General note test 2",
+            date_add=datetime.today()
+        ),
+        Order(
+            id_origin=3,
+            id_address_delivery=1,
+            id_address_invoice=1,
+            id_customer=1,
+            id_platform=1,
+            id_payment=1,
+            id_shipping=1,
+            id_sectional=1,
+            id_order_state=3,
+            is_invoice_requested=False,
+            is_payed=False,
+            total_weight=0.8,
+            total_price=49.99,
+            cash_on_delivery=0.0,
+            insured_value=0.0,
+            privacy_note="Privacy note test 3",
+            general_note="General note test 3",
+            date_add=datetime.today()
+        )
+    ]
+    
+    db = TestingSessionLocal()
+    db.add_all(orders_test)
+    db.commit()
+    yield orders_test
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM orders;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_order_detail():
+    """
+    Crea un record di prova per il dettaglio ordine nel database fittizio.
+    Dopo il test, elimina tutti i record dalla tabella dei dettagli ordine.
+    """
+    order_detail_test = OrderDetail(
+        id_order=1,
+        id_invoice=None,
+        id_order_document=None,
+        id_origin=1,
+        id_product=1,
+        product_name="Climatizzatore Daikin",
+        product_reference="DAI-123",
+        product_qty=2,
+        product_price=49.99,
+        product_weight=0.75,
+        rda="RDA123",
+        reduction_percent=0.0,
+        reduction_amount=0.0
+    )
+    
+    db = TestingSessionLocal()
+    db.add(order_detail_test)
+    db.commit()
+    yield order_detail_test
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM order_details;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_order_details():
+    """
+    Crea record di prova per i dettagli ordine nel database fittizio.
+    Dopo il test, elimina tutti i record dalla tabella dei dettagli ordine.
+    """
+    order_details_test = [
+        OrderDetail(
+            id_order=1,
+            id_invoice=None,
+            id_order_document=None,
+            id_origin=1,
+            id_product=1,
+            product_name="Climatizzatore Daikin",
+            product_reference="DAI-123",
+            product_qty=2,
+            product_price=49.99,
+            product_weight=0.75,
+            rda="RDA123",
+            reduction_percent=0.0,
+            reduction_amount=0.0
+        ),
+        OrderDetail(
+            id_order=1,
+            id_invoice=None,
+            id_order_document=None,
+            id_origin=2,
+            id_product=2,
+            product_name="Smartphone Samsung",
+            product_reference="SAM-456",
+            product_qty=1,
+            product_price=299.99,
+            product_weight=0.2,
+            rda="RDA456",
+            reduction_percent=10.0,
+            reduction_amount=29.99
+        ),
+        OrderDetail(
+            id_order=2,
+            id_invoice=None,
+            id_order_document=None,
+            id_origin=3,
+            id_product=3,
+            product_name="Laptop Dell",
+            product_reference="DEL-789",
+            product_qty=1,
+            product_price=899.99,
+            product_weight=2.1,
+            rda="RDA789",
+            reduction_percent=0.0,
+            reduction_amount=0.0
+        )
+    ]
+    
+    db = TestingSessionLocal()
+    db.add_all(order_details_test)
+    db.commit()
+    yield order_details_test
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM order_details;"))
         conn.commit()

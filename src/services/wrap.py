@@ -29,8 +29,11 @@ def check_authentication(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
         user = kwargs.get('user', None)
+        
         if user is None:
             raise HTTPException(status_code=401, detail="Utente non autenticato")
+        print(user)
+        
         return await func(*args, **kwargs)
 
     return wrapper

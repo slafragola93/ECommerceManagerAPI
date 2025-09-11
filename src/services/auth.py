@@ -40,14 +40,15 @@ async def get_current_user(token: token_dependency):
         username: str = payload.get("sub")
         user_id: int = payload.get("id")
         roles: list = payload.get("roles")
+        
         # TODO: ottieni anche ruolo + permessi
 
         if username is None or user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenziali non valide")
-        # TODO: aggiungere il controllo sul ruolo + permessi
-        return {"username": username, "id": user_id, "roles": roles}
-    except JWTError:
-        print(token)
+        
+        user_data = {"username": username, "id": user_id, "roles": roles}
+        return user_data
+    except JWTError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token non valido o scaduto")
 
 
@@ -91,19 +92,29 @@ def authorize(roles_permitted: list, permissions_required: list):
         @wraps(func)
         async def wrapper(*args, **kwargs):
             user = kwargs.get("user")
+            
+            if not user:
+                raise HTTPException(status_code=401, detail="Utente non autenticato")
+            
+            if 'roles' not in user:
+                raise HTTPException(status_code=401, detail="Ruoli utente non trovati")
+            
             user_roles = [user_role["name"] for user_role in user['roles']]
             user_permissions = set()
 
             # Estrai i permessi dai ruoli dell'utente
             for role in user['roles']:
-                user_permissions.update(role['permissions'])  # Supponendo che ogni ruolo abbia una lista di permessi
+                role_permissions = role.get('permissions', [])
+                user_permissions.update(role_permissions)
 
             # Verifica i ruoli permessi
-            if not any(role in roles_permitted for role in user_roles):
+            roles_check = any(role in roles_permitted for role in user_roles)
+            if not roles_check:
                 raise HTTPException(status_code=403, detail="Utente non autorizzato.")
 
             # Verifica i permessi richiesti
-            if not all(permission in user_permissions for permission in permissions_required):
+            permissions_check = all(permission in user_permissions for permission in permissions_required)
+            if not permissions_check:
                 raise HTTPException(status_code=403, detail="Permessi insufficienti.")
 
             return await func(*args, **kwargs)

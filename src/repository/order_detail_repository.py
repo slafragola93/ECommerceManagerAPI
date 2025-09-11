@@ -133,3 +133,24 @@ class OrderDetailRepository:
         self.session.commit()
 
         return True
+
+    def formatted_output(self, order_detail: OrderDetail):
+        """
+        Formatta l'output di un order detail
+        """
+        return {
+            "id_order_detail": order_detail.id_order_detail,
+            "id_order": order_detail.id_order,
+            "id_invoice": order_detail.id_invoice,
+            "id_order_document": order_detail.id_order_document,
+            "id_origin": order_detail.id_origin,
+            "id_product": order_detail.id_product,
+            "product_name": order_detail.product_name,
+            "product_reference": order_detail.product_reference,
+            "product_qty": order_detail.product_qty,
+            "product_price": order_detail.product_price,
+            "product_weight": order_detail.product_weight,
+            "rda": order_detail.rda,
+            "reduction_percent": order_detail.reduction_percent,
+            "reduction_amount": order_detail.reduction_amount
+        }

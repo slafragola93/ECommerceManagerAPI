@@ -58,6 +58,8 @@ class TaxRepository:
     def define_tax(self, id_country: int) -> int:
         # Se Italia ritorna quella default
         if id_country == 10:
-            return self.session.query(Tax).filter(Tax.id_country == id_country, Tax.is_default == True).first()
+            tax = self.session.query(Tax).filter(Tax.is_default == True).first()
+            return tax.id_tax if tax else 1  # Fallback a ID 1 se non trovato
         else:
-            return self.session.query(Tax).filter(Tax.id_country == id_country).first()
+            tax = self.session.query(Tax).filter(Tax.id_country == id_country).first()
+            return tax.id_tax if tax else 1  # Fallback a ID 1 se non trovato

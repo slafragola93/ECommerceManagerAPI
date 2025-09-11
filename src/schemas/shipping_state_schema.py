@@ -14,3 +14,21 @@ class ShippingStateSchema(BaseModel):
                     spedizione sia descritto in modo adeguato e comprensibile.
     """
     name: str = Field(..., min_length=1, max_length=100)
+
+
+class ShippingStateResponseSchema(BaseModel):
+    id_shipping_state: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class AllShippingStatesResponseSchema(BaseModel):
+    shipping_states: list[ShippingStateResponseSchema]
+    total: int
+    page: int
+    limit: int
+
+    class Config:
+        from_attributes = True
