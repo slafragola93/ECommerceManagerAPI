@@ -8,7 +8,7 @@ from src import Country, Role, OrderState, Invoice, OrderPackage, Tag
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
-    Lang, Sectional, Message, Configuration, Payment, Tax, Shipping, Order, OrderDetail
+    Lang, Sectional, Message, Configuration, AppConfiguration, Payment, Tax, Shipping, Order, OrderDetail
 from src.routers.auth import bcrypt_context
 
 MAX_LIMIT = os.environ.get("MAX_LIMIT")
@@ -1071,4 +1071,61 @@ def test_order_details():
     yield order_details_test
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM order_details;"))
+        conn.commit()
+
+
+@pytest.fixture()
+def test_app_configuration():
+    """
+    Crea record di prova per le configurazioni app nel database fittizio.
+    Dopo il test, elimina tutti i record dalla tabella app_configurations.
+    """
+    queries = [
+        AppConfiguration(
+            id_lang=0,
+            category="company_info",
+            name="company_name",
+            value="Elettronew S.r.l.",
+            description="Ragione sociale",
+            is_encrypted=False
+        ),
+        AppConfiguration(
+            id_lang=0,
+            category="company_info",
+            name="vat_number",
+            value="02469660209",
+            description="Partita IVA",
+            is_encrypted=False
+        ),
+        AppConfiguration(
+            id_lang=0,
+            category="electronic_invoicing",
+            name="tax_regime",
+            value="RF01",
+            description="Regime fiscale",
+            is_encrypted=False
+        ),
+        AppConfiguration(
+            id_lang=0,
+            category="email_settings",
+            name="sender_email",
+            value="noreply@elettronew.com",
+            description="Email mittente",
+            is_encrypted=False
+        ),
+        AppConfiguration(
+            id_lang=0,
+            category="api_keys",
+            name="app_api_key",
+            value="secret_api_key_123",
+            description="Chiave API App",
+            is_encrypted=True
+        )
+    ]
+    db = TestingSessionLocal()
+    db.add_all(queries)
+    db.commit()
+    yield queries
+    with engine.connect() as conn:
+        conn.execute(text("DELETE FROM app_configurations;"))
         conn.commit()

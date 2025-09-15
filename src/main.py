@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from starlette.middleware.cors import CORSMiddleware
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
-    api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, payment, tax, user, \
+    api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
     order_state, order, invoice, order_package, order_detail
 from src.database import Base, engine
 
@@ -35,7 +35,7 @@ async def get_cache():
 
 
 
-origins = ["http://localhost:4200","http://localhost:63297"]
+origins = ["http://localhost:4200","http://localhost:63297","http://localhost:8000"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,6 +49,7 @@ app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(role.router)
 app.include_router(configuration.router)
+app.include_router(app_configuration.router)
 app.include_router(lang.router)
 app.include_router(customer.router)
 app.include_router(category.router)
