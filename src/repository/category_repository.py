@@ -28,6 +28,41 @@ class CategoryRepository:
 
     def get_by_id(self, _id: int) -> CategoryResponseSchema:
         return self.session.query(Category).filter(Category.id_category == _id).first()
+    
+    def get_by_origin_id(self, origin_id: str) -> Category:
+        """Get category by origin ID"""
+        return self.session.query(Category).filter(Category.id_origin == origin_id).first()
+
+    def bulk_create(self, data_list: list[CategorySchema], batch_size: int = 1000):
+        """Bulk insert categories for better performance"""
+        # Get existing origin IDs to avoid duplicates
+        origin_ids = [str(data.id_origin) for data in data_list]
+        existing_categories = self.session.query(Category).filter(Category.id_origin.in_(origin_ids)).all()
+        existing_origin_ids = {str(category.id_origin) for category in existing_categories}
+        
+        # Filter out existing categories
+        new_categories_data = [data for data in data_list if str(data.id_origin) not in existing_origin_ids]
+        
+        if not new_categories_data:
+            return 0
+        
+        # Process in batches
+        total_inserted = 0
+        for i in range(0, len(new_categories_data), batch_size):
+            batch = new_categories_data[i:i + batch_size]
+            categories = []
+            
+            for data in batch:
+                category = Category(**data.model_dump())
+                categories.append(category)
+            
+            self.session.bulk_save_objects(categories)
+            total_inserted += len(categories)
+            
+            # Commit every batch
+            self.session.commit()
+            
+        return total_inserted
 
     def create(self, data: CategorySchema):
 

@@ -18,14 +18,22 @@ class TagRepository:
 
     def get_by_id(self, _id: int) -> TagResponseSchema:
         return self.session.query(Tag).filter(Tag.id_tag == _id).first()
+    
+    def get_by_name(self, name: str) -> Tag:
+        """Get tag by name"""
+        return self.session.query(Tag).filter(Tag.name == name).first()
 
-    def create(self, data: TagSchema):
+    def get_by_origin_id(self, origin_id: str) -> Tag:
+        """Get tag by origin ID"""
+        return self.session.query(Tag).filter(Tag.id_origin == origin_id).first()
 
-        tag = Tag(**data.model_dump())
-
+    def create(self, name: str, id_origin: int = 0):
+        """Create a new tag"""
+        tag = Tag(name=name, id_origin=id_origin)
         self.session.add(tag)
         self.session.commit()
         self.session.refresh(tag)
+        return tag
 
     def update(self,
                edited_tag: Tag,

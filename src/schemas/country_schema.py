@@ -3,13 +3,14 @@ from pydantic import BaseModel, Field
 
 
 class CountrySchema(BaseModel):
-
+    id_origin: Optional[int] = 0
     name: str = Field(..., max_length=200)
     iso_code: str = Field(..., min_length=2, max_length=5)
 
 
 class CountryResponseSchema(BaseModel):
     id_country: int
+    id_origin: Optional[int]
     name: str
     iso_code: str
 

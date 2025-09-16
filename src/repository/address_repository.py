@@ -130,6 +130,41 @@ class AddressRepository:
 
     def get_by_id(self, _id: int) -> AddressResponseSchema:
         return self.session.query(Address).filter(Address.id_address == _id).first()
+    
+    def get_by_origin_id(self, origin_id: str) -> Address:
+        """Get address by origin ID"""
+        return self.session.query(Address).filter(Address.id_origin == origin_id).first()
+
+    def bulk_create(self, data_list: list[AddressSchema], batch_size: int = 1000):
+        """Bulk insert addresses for better performance"""
+        # Get existing origin IDs to avoid duplicates
+        origin_ids = [str(data.id_origin) for data in data_list]
+        existing_addresses = self.session.query(Address).filter(Address.id_origin.in_(origin_ids)).all()
+        existing_origin_ids = {str(address.id_origin) for address in existing_addresses}
+        
+        # Filter out existing addresses
+        new_addresses_data = [data for data in data_list if str(data.id_origin) not in existing_origin_ids]
+        
+        if not new_addresses_data:
+            return 0
+        
+        # Process in batches
+        total_inserted = 0
+        for i in range(0, len(new_addresses_data), batch_size):
+            batch = new_addresses_data[i:i + batch_size]
+            addresses = []
+            
+            for data in batch:
+                address = Address(**data.model_dump())
+                addresses.append(address)
+            
+            self.session.bulk_save_objects(addresses)
+            total_inserted += len(addresses)
+            
+            # Commit every batch
+            self.session.commit()
+            
+        return total_inserted
 
     def create(self, data: AddressSchema):
         address = Address(**data.model_dump(exclude=['customer']))

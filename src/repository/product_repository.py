@@ -106,6 +106,41 @@ class ProductRepository:
 
     def get_by_id(self, _id: int) -> Product:
         return self.session.query(Product).filter(Product.id_product == _id).first()
+    
+    def get_by_origin_id(self, origin_id: str) -> Product:
+        """Get product by origin ID"""
+        return self.session.query(Product).filter(Product.id_origin == origin_id).first()
+
+    def bulk_create(self, data_list: list[ProductSchema], batch_size: int = 1000):
+        """Bulk insert products for better performance"""
+        # Get existing origin IDs to avoid duplicates
+        origin_ids = [str(data.id_origin) for data in data_list]
+        existing_products = self.session.query(Product).filter(Product.id_origin.in_(origin_ids)).all()
+        existing_origin_ids = {str(product.id_origin) for product in existing_products}
+        
+        # Filter out existing products
+        new_products_data = [data for data in data_list if str(data.id_origin) not in existing_origin_ids]
+        
+        if not new_products_data:
+            return 0
+        
+        # Process in batches
+        total_inserted = 0
+        for i in range(0, len(new_products_data), batch_size):
+            batch = new_products_data[i:i + batch_size]
+            products = []
+            
+            for data in batch:
+                product = Product(**data.model_dump())
+                products.append(product)
+            
+            self.session.bulk_save_objects(products)
+            total_inserted += len(products)
+            
+            # Commit every batch
+            self.session.commit()
+            
+        return total_inserted
 
     def create(self, data: ProductSchema):
         product = Product(**data.model_dump())

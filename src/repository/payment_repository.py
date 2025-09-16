@@ -38,6 +38,10 @@ class PaymentRepository:
             PaymentResponseSchema: Istanza configurazione
         """
         return self.session.query(Payment).filter(Payment.id_payment == _id).first()
+    
+    def get_by_name(self, name: str) -> Payment:
+        """Get payment by name"""
+        return self.session.query(Payment).filter(Payment.name == name).first()
 
     def create(self, data: PaymentSchema):
 

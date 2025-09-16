@@ -8,6 +8,7 @@ class Country(Base):
     __tablename__ = "countries"
 
     id_country = Column(Integer, primary_key=True, index=True)
+    id_origin = Column(Integer, index=True)
     name = Column(String(200))
     iso_code = Column(String(5))
 

@@ -43,6 +43,41 @@ class BrandRepository:
             BrandResponseSchema: Istanza del brand
         """
         return self.session.query(Brand).filter(Brand.id_brand == _id).first()
+    
+    def get_by_origin_id(self, origin_id: str) -> Brand:
+        """Get brand by origin ID"""
+        return self.session.query(Brand).filter(Brand.id_origin == origin_id).first()
+
+    def bulk_create(self, data_list: list[BrandSchema], batch_size: int = 1000):
+        """Bulk insert brands for better performance"""
+        # Get existing origin IDs to avoid duplicates
+        origin_ids = [str(data.id_origin) for data in data_list]
+        existing_brands = self.session.query(Brand).filter(Brand.id_origin.in_(origin_ids)).all()
+        existing_origin_ids = {str(brand.id_origin) for brand in existing_brands}
+        
+        # Filter out existing brands
+        new_brands_data = [data for data in data_list if str(data.id_origin) not in existing_origin_ids]
+        
+        if not new_brands_data:
+            return 0
+        
+        # Process in batches
+        total_inserted = 0
+        for i in range(0, len(new_brands_data), batch_size):
+            batch = new_brands_data[i:i + batch_size]
+            brands = []
+            
+            for data in batch:
+                brand = Brand(**data.model_dump())
+                brands.append(brand)
+            
+            self.session.bulk_save_objects(brands)
+            total_inserted += len(brands)
+            
+            # Commit every batch
+            self.session.commit()
+            
+        return total_inserted
 
     def create(self, data: BrandSchema):
 

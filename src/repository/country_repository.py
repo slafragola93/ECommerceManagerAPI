@@ -34,6 +34,14 @@ class CountryRepository:
 
     def get_by_id(self, _id: int) -> CountryResponseSchema:
         return self.session.query(Country).filter(Country.id_country == _id).first()
+    
+    def get_by_origin_id(self, origin_id: str) -> Country:
+        """Get country by origin ID"""
+        return self.session.query(Country).filter(Country.id_origin == origin_id).first()
+
+    def get_by_iso_code(self, iso_code: str) -> Country:
+        """Get country by ISO code"""
+        return self.session.query(Country).filter(Country.iso_code == iso_code).first()
 
     def create(self, data: CountrySchema):
 

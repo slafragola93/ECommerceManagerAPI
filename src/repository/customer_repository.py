@@ -79,13 +79,17 @@ class CustomerRepository:
 
     def get_by_id(self, _id: int) -> CustomerResponseSchema:
         return self.session.query(Customer).filter(Customer.id_customer == _id).first()
+    
+    def get_by_origin_id(self, origin_id: str) -> Customer:
+        """Get customer by origin ID"""
+        return self.session.query(Customer).filter(Customer.id_origin == origin_id).first()
 
     def get_by_email(self, email: str) -> CustomerResponseSchema:
         return self.session.query(Customer).filter(func.lower(Customer.email) == email.lower()).first()
 
     def create(self, data: CustomerSchema):
         customer = Customer(**data.model_dump())
-        if self.get_by_email(customer.email) is None:
+        if self.get_by_origin_id(str(customer.id_origin)) is None or customer.id_origin == 0:
             customer.date_add = date.today()
 
             self.session.add(customer)
@@ -93,12 +97,12 @@ class CustomerRepository:
             self.session.refresh(customer)
             return customer.id_customer
         else:
-            raise HTTPException(status_code=409, detail="Email già presente in database")
+            raise HTTPException(status_code=409, detail="Customer con questo id_origin già presente in database")
 
     def create_and_get_id(self, data: CustomerSchema):
         """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
         customer_new = Customer(**data.model_dump())
-        customer = self.get_by_email(customer_new.email)
+        customer = self.get_by_origin_id(str(customer_new.id_origin))
         if customer is None:
             customer_new.date_add = date.today()
 
@@ -108,6 +112,40 @@ class CustomerRepository:
             return customer_new.id_customer
         else:
             return customer.id_customer
+
+    def bulk_create(self, data_list: list[CustomerSchema], batch_size: int = 1000):
+        """Bulk insert customers for better performance"""
+        from datetime import date
+        
+        # Get existing origin IDs to avoid duplicates
+        origin_ids = [str(data.id_origin) for data in data_list]
+        existing_customers = self.session.query(Customer).filter(Customer.id_origin.in_(origin_ids)).all()
+        existing_origin_ids = {str(customer.id_origin) for customer in existing_customers}
+        
+        # Filter out existing customers
+        new_customers_data = [data for data in data_list if str(data.id_origin) not in existing_origin_ids]
+        
+        if not new_customers_data:
+            return 0
+        
+        # Process in batches
+        total_inserted = 0
+        for i in range(0, len(new_customers_data), batch_size):
+            batch = new_customers_data[i:i + batch_size]
+            customers = []
+            
+            for data in batch:
+                customer = Customer(**data.model_dump())
+                customer.date_add = date.today()
+                customers.append(customer)
+            
+            self.session.bulk_save_objects(customers)
+            total_inserted += len(customers)
+            
+            # Commit every batch
+            self.session.commit()
+            
+        return total_inserted
 
     def update(self, edited_customer: Customer, data: CustomerSchema):
 

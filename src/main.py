@@ -8,20 +8,31 @@ from starlette.middleware.cors import CORSMiddleware
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, invoice, order_package, order_detail
+    order_state, order, invoice, order_package, order_detail, sync
 from src.database import Base, engine
 
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.redis import RedisBackend
-from fastapi_cache.decorator import cache
-
-from redis import asyncio as aioredis
+try:
+    from fastapi_cache import FastAPICache
+    from fastapi_cache.backends.redis import RedisBackend
+    from fastapi_cache.decorator import cache
+    from redis import asyncio as aioredis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("WARNING: Redis not available, cache disabled")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    redis = aioredis.from_url("redis://localhost")
-    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+    if REDIS_AVAILABLE:
+        try:
+            redis = aioredis.from_url("redis://localhost")
+            FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+            print("Redis cache initialized")
+        except Exception as e:
+            print(f"WARNING: Redis connection failed: {e}, cache disabled")
+    else:
+        print("Redis not available, cache disabled")
     yield
 
 app = FastAPI(
@@ -29,9 +40,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-@cache()
-async def get_cache():
-    return 1
+if REDIS_AVAILABLE:
+    @cache()
+    async def get_cache():
+        return 1
+else:
+    async def get_cache():
+        return 1
 
 
 
@@ -72,6 +87,7 @@ app.include_router(shipping.router)
 app.include_router(invoice.router)
 app.include_router(order_package.router)
 app.include_router(order_detail.router)
+app.include_router(sync.router)
 
 
 @app.on_event("startup")

@@ -439,3 +439,11 @@ class OrderRepository:
             "sectional": format_sectional(order.id_sectional),
             "order_states": format_order_states(order.id_order)
         }
+    
+    def get_by_origin_id(self, id_origin: str) -> Optional[Order]:
+        """Get order by origin ID (PrestaShop ID)"""
+        try:
+            return self.session.query(Order).filter(Order.id_origin == id_origin).first()
+        except Exception as e:
+            print(f"DEBUG: Error getting order by origin ID {id_origin}: {str(e)}")
+            return None

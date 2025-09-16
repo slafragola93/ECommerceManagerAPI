@@ -32,6 +32,14 @@ class LangRepository:
 
     def get_by_id(self, _id: int) -> LangResponseSchema:
         return self.session.query(Lang).filter(Lang.id_lang == _id).first()
+    
+    def get_by_iso_code(self, iso_code: str) -> LangResponseSchema:
+        """Get language by ISO code"""
+        return self.session.query(Lang).filter(Lang.iso_code == iso_code).first()
+    
+    def get_by_name(self, name: str) -> LangResponseSchema:
+        """Get language by name"""
+        return self.session.query(Lang).filter(Lang.name == name).first()
 
     def create(self, data: LangSchema):
         lang = Lang(**data.model_dump())

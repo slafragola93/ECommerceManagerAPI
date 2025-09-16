@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 
@@ -26,7 +26,7 @@ class CustomerSchema(BaseModel):
     id_lang: int = Field(..., gt=0)
     firstname: str = Field(..., min_length=1, max_length=100)
     lastname: str = Field(..., min_length=1, max_length=100)
-    email: EmailStr
+    email: str = Field(..., max_length=150)
 
 
 class CountryResponseSchema(BaseModel):
