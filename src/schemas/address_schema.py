@@ -8,7 +8,7 @@ from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerRes
 class AddressSchema(BaseModel):
     id_origin: Optional[int] = None
     id_country: Optional[int] = None
-    customer: CustomerSchema | int | None = None
+    id_customer: Optional[int] = None
     company: Optional[str] = None
     firstname: str = Field(..., max_length=255)
     lastname: str = Field(..., max_length=255)
@@ -18,7 +18,7 @@ class AddressSchema(BaseModel):
     postcode: str = Field(..., max_length=12)
     city: str = Field(..., max_length=64)
     phone: str = Field(..., max_length=32)
-    mobile_phone: str = Field(..., max_length=32)
+    mobile_phone: Optional[str] = Field(None, max_length=32)
     vat: str = Field(..., max_length=32)
     dni: str = Field(..., max_length=16)
     pec: str = Field(..., max_length=128)

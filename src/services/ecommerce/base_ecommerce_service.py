@@ -279,9 +279,9 @@ class BaseEcommerceService(ABC):
         status = "SUCCESS" if not errors else "ERROR"
         
         print(f"[{timestamp}] {operation}: {count} records processed - {status}")
-        if errors:
+        '''if errors:
             for error in errors:
-                print(f"  ERROR: {error}")
+                print(f"  ERROR: {error}")'''
     
     async def _sync_phase(self, phase_name: str, sync_functions: List[callable]) -> Dict[str, Any]:
         """

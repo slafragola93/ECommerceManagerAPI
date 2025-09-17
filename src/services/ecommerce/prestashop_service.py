@@ -87,6 +87,9 @@ class PrestaShopService(BaseEcommerceService):
         }
         
         try:
+            # Disable foreign key checks for the entire synchronization
+            self._disable_foreign_key_checks()
+            
             # Phase 1: Base tables (no dependencies)
             phase1_results = await self._sync_phase("Phase 1 - Base Tables", [
                 #self.sync_languages,
@@ -103,13 +106,13 @@ class PrestaShopService(BaseEcommerceService):
                 #self.sync_products,
                 #self.sync_customers,
                 #self.sync_payments,
-                lambda: self.sync_addresses()
+                #lambda: self.sync_addresses()
             ])
             sync_results['phases'].append(phase2_results)
             
             # Phase 3: Complex tables
             phase3_results = await self._sync_phase("Phase 3 - Complex Tables", [
-                #self.sync_orders,
+                self.sync_orders,
                 #self.sync_product_tags,
                 #self.sync_order_details
             ])
@@ -134,6 +137,9 @@ class PrestaShopService(BaseEcommerceService):
             # Print error summary
             self._print_error_summary(sync_results, str(e))
             raise
+        finally:
+            # Re-enable foreign key checks
+            self._enable_foreign_key_checks()
         
         return sync_results
     
@@ -150,6 +156,9 @@ class PrestaShopService(BaseEcommerceService):
         }
         
         try:
+            # Disable foreign key checks for the entire incremental synchronization
+            self._disable_foreign_key_checks()
+            
             # Get last imported IDs for each table
             last_ids = await self._get_last_imported_ids()
             
@@ -200,6 +209,9 @@ class PrestaShopService(BaseEcommerceService):
             sync_results['status'] = 'ERROR'
             sync_results['error'] = str(e)
             raise
+        finally:
+            # Re-enable foreign key checks
+            self._enable_foreign_key_checks()
         
         return sync_results
     
@@ -778,13 +790,278 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result("Payments", 0, [str(e)])
             raise
     
+    async def _process_and_insert_address_batch(self, batch_addresses: List[Dict], all_states: Dict, all_countries: Dict, address_repo) -> tuple:
+        """Process and insert a batch of addresses immediately"""
+        try:
+            # Prepare address data for this batch
+            async def prepare_address_data(address):
+                # Get state name from the pre-fetched dictionary
+                state_id = int(address.get('id_state', ''))
+                state_name = all_states[state_id] if state_id != 0 else 'ND'
+                
+                # Get country ID from pre-fetched dictionary
+                country_origin_id = str(address.get('id_country', ''))
+                country_data = all_countries.get(country_origin_id, {})
+                country_id = int(country_data.get('id')) if country_data.get('id') else None
+                
+                # Get customer ID (still need to call this as it's not pre-fetched)
+                customer_id = int(self._get_customer_id_by_origin(address.get('id_customer', '')) if self._get_customer_id_by_origin(address.get('id_customer', '')) is not None else None)
+                return {
+                    'id_origin': address.get('id', 0),
+                    'id_country': country_id,
+                    'id_customer': customer_id,
+                    'company': address.get('company', ''),
+                    'firstname': address.get('firstname', ''),
+                    'lastname': address.get('lastname', ''),
+                    'address1': address.get('address1', ''),
+                    'address2': address.get('address2', ''),
+                    'state': state_name,
+                    'postcode': address.get('postcode', ''),
+                    'city': address.get('city', ''),
+                    'phone': address.get('phone_mobile', None),
+                    'vat': address.get('vat', ''),
+                    'dni': address.get('dni', ''),
+                    'pec': address.get('pec', ''),
+                    'sdi': address.get('sdi', ''),
+                    'date_add': datetime.now()
+                }
+            
+            # Prepare all address data concurrently for this batch
+            address_data_list = await asyncio.gather(*[prepare_address_data(address) for address in batch_addresses], return_exceptions=True)
+            
+            # Filter out exceptions
+            valid_address_data = []
+            errors = []
+            for i, result in enumerate(address_data_list):
+                if isinstance(result, Exception):
+                    errors.append(f"Address {batch_addresses[i].get('id', 'unknown')}: {str(result)}")
+                else:
+                    valid_address_data.append(result)
+            
+            batch_processed = len(batch_addresses)
+            batch_errors = len(errors)
+            batch_successful = 0
+            
+            # Insert valid addresses immediately
+            if valid_address_data:
+                from src.schemas.address_schema import AddressSchema
+                
+                # Convert to AddressSchema objects
+                address_schemas = []
+                for data in valid_address_data:
+                    # Remove date_add as it's not in AddressSchema
+                    data_copy = data.copy()
+                    data_copy.pop('date_add', None)
+                    address_schema = AddressSchema(**data_copy)
+                    address_schemas.append(address_schema)
+                
+                # Bulk insert this batch using ultra-fast CSV import method
+                batch_successful = address_repo.bulk_create_csv_import(address_schemas, batch_size=10000)
+                print(f"DEBUG: Inserted {batch_successful} addresses from batch via CSV import")
+            
+            return batch_processed, batch_successful, batch_errors
+            
+        except Exception as e:
+            print(f"DEBUG: Error processing batch: {str(e)}")
+            return len(batch_addresses), 0, 1
+    
+    async def _process_all_addresses_and_create_sql(self, all_addresses: List[Dict], all_states: Dict, all_countries: Dict) -> int:
+        """Process all addresses and create SQL file for bulk insert"""
+        try:
+            import tempfile
+            import os
+            from sqlalchemy import text
+            from datetime import date
+            
+            print("DEBUG: Processing all addresses and creating SQL file...")
+            
+            # Pre-fetch all customer IDs to avoid repeated DB calls
+            print("DEBUG: Pre-fetching customer IDs...")
+            customer_origins = set()
+            for address in all_addresses:
+                customer_origin = address.get('id_customer', '')
+                if customer_origin:
+                    customer_origins.add(str(customer_origin))
+            
+            # Get all customer IDs in one query
+            all_customers = {}
+            if customer_origins:
+                from src.repository.customer_repository import CustomerRepository
+                from src.models.customer import Customer
+                customer_repo = CustomerRepository(self.db)
+                customers = customer_repo.session.query(Customer).filter(
+                    Customer.id_origin.in_(customer_origins)
+                ).all()
+                all_customers = {str(customer.id_origin): customer.id_customer for customer in customers}
+            
+            print(f"DEBUG: Pre-fetched {len(all_customers)} customer IDs")
+            
+            # Optimized prepare address data function
+            def prepare_address_data_optimized(address):
+                # Get state name from the pre-fetched dictionary
+                state_id = int(address.get('id_state', ''))
+                state_name = all_states[state_id] if state_id != 0 else 'ND'
+                
+                # Get country ID from pre-fetched dictionary
+                country_origin_id = str(address.get('id_country', ''))
+                country_data = all_countries.get(country_origin_id, {})
+                country_id = int(country_data.get('id')) if country_data.get('id') else None
+                
+                # Get customer ID from pre-fetched dictionary
+                customer_origin = str(address.get('id_customer', ''))
+                customer_id = all_customers.get(customer_origin)
+                
+                return {
+                    'id_origin': address.get('id', 0),
+                    'id_country': country_id,
+                    'id_customer': customer_id,
+                    'company': address.get('company', ''),
+                    'firstname': address.get('firstname', ''),
+                    'lastname': address.get('lastname', ''),
+                    'address1': address.get('address1', ''),
+                    'address2': address.get('address2', ''),
+                    'state': state_name,
+                    'postcode': address.get('postcode', ''),
+                    'city': address.get('city', ''),
+                    'phone': address.get('phone_mobile', None),
+                    'vat': address.get('vat', ''),
+                    'dni': address.get('dni', ''),
+                    'pec': address.get('pec', ''),
+                    'sdi': address.get('sdi', ''),
+                    'date_add': date.today()
+                }
+            
+            # Prepare all address data in batches for better performance
+            print("DEBUG: Preparing address data in batches...")
+            valid_address_data = []
+            errors = []
+            
+            # Process in batches of 5000 for better memory management and performance
+            batch_size = 5000
+            total_batches = (len(all_addresses) + batch_size - 1) // batch_size
+            
+            for batch_num in range(total_batches):
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, len(all_addresses))
+                batch_addresses = all_addresses[start_idx:end_idx]
+                
+                print(f"DEBUG: Processing batch {batch_num + 1}/{total_batches} ({len(batch_addresses)} addresses)")
+                
+                # Process batch
+                for address in batch_addresses:
+                    try:
+                        result = prepare_address_data_optimized(address)
+                        valid_address_data.append(result)
+                    except Exception as e:
+                        errors.append(f"Address {address.get('id', 'unknown')}: {str(e)}")
+                
+                print(f"DEBUG: Batch {batch_num + 1} completed. Total processed: {len(valid_address_data)}")
+            
+            print(f"DEBUG: Prepared {len(valid_address_data)} valid addresses, {len(errors)} errors")
+            
+            if not valid_address_data:
+                print("DEBUG: No valid addresses to insert")
+                return 0
+            
+            # Use executemany for bulk insert (more reliable than SQL file)
+            print("DEBUG: Starting bulk insert with executemany...")
+            
+            # Get existing address origin IDs to avoid duplicates
+            print("DEBUG: Checking existing addresses...")
+            existing_origins = set()
+            existing_addresses = self.db.execute(text("SELECT id_origin FROM addresses WHERE id_origin IS NOT NULL")).fetchall()
+            existing_origins = {str(row[0]) for row in existing_addresses}
+            print(f"DEBUG: Found {len(existing_origins)} existing addresses")
+            
+            # Prepare data for executemany, filtering out existing addresses
+            insert_data = []
+            skipped_count = 0
+            
+            for data in valid_address_data:
+                # Check if address already exists
+                address_origin = str(data.get('id_origin', 0))
+                if address_origin in existing_origins:
+                    skipped_count += 1
+                    continue
+                
+                # Clean the data
+                if data.get('id_country') == 0:
+                    data['id_country'] = None
+                if data.get('id_customer') == 0:
+                    data['id_customer'] = None
+                
+                insert_data.append({
+                    'id_origin': data.get('id_origin', 0),
+                    'id_country': data.get('id_country'),
+                    'id_customer': data.get('id_customer'),
+                    'company': data.get('company', ''),
+                    'firstname': data.get('firstname', ''),
+                    'lastname': data.get('lastname', ''),
+                    'address1': data.get('address1', ''),
+                    'address2': data.get('address2', ''),
+                    'state': data.get('state', ''),
+                    'postcode': data.get('postcode', ''),
+                    'city': data.get('city', ''),
+                    'phone': data.get('phone'),
+                    'vat': data.get('vat', ''),
+                    'dni': data.get('dni', ''),
+                    'pec': data.get('pec', ''),
+                    'sdi': data.get('sdi', ''),
+                    'date_add': data.get('date_add')
+                })
+            
+            print(f"DEBUG: Skipped {skipped_count} existing addresses, {len(insert_data)} new addresses to insert")
+            
+            if not insert_data:
+                print("DEBUG: No new addresses to insert")
+                return 0
+            
+            # Execute bulk insert in batches
+            insert_sql = text("""
+                INSERT INTO addresses (
+                    id_origin, id_country, id_customer, company, firstname, lastname,
+                    address1, address2, state, postcode, city, phone, vat, dni, pec, sdi, date_add
+                ) VALUES (
+                    :id_origin, :id_country, :id_customer, :company, :firstname, :lastname,
+                    :address1, :address2, :state, :postcode, :city, :phone, :vat, :dni, :pec, :sdi, :date_add
+                )
+            """)
+            
+            # Insert in batches of 5000 for better performance
+            batch_size = 5000
+            total_inserted = 0
+            
+            for i in range(0, len(insert_data), batch_size):
+                batch = insert_data[i:i + batch_size]
+                self.db.execute(insert_sql, batch)
+                self.db.commit()
+                total_inserted += len(batch)
+                print(f"DEBUG: Inserted batch {i//batch_size + 1}/{(len(insert_data) + batch_size - 1)//batch_size} ({len(batch)} addresses)")
+            
+            print(f"DEBUG: Successfully inserted {total_inserted} addresses via executemany")
+            
+            return len(valid_address_data)
+            
+        except Exception as e:
+            print(f"DEBUG: Error processing addresses: {str(e)}")
+            raise
+    
     async def sync_addresses(self) -> List[Dict[str, Any]]:
         """Synchronize addresses from ps_address"""
         try:
-            all_addresses = []
-            limit = 5000
+            limit = 50000  # 50k addresses per API call
             offset = 0
-            parallel_batches = 3  # Number of parallel API calls
+            parallel_batches = 1  # Single call per batch since we're getting 50k at once
+
+            # Fetch all states at once for efficient lookup
+            all_states = await self._get_all_states()
+            all_countries = self._get_all_countries()
+            print(f"DEBUG: Starting address sync with {len(all_states)} states and {len(all_countries)} countries")
+            
+            # Collect all addresses first
+            all_addresses = []
+            total_processed = 0
+            total_errors = 0
             
             while True:
                 # Prepare multiple parallel requests
@@ -800,110 +1077,63 @@ class PrestaShopService(BaseEcommerceService):
                 # Execute parallel requests
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
                 
+                '''
                 #### DEBUG ####
                 if offset >= 1:
-                    break
+                    break'''
                 
                 # Process responses
                 batch_addresses = []
                 for i, response in enumerate(responses):
                     if isinstance(response, Exception):
                         print(f"DEBUG: Error in batch {i}: {str(response)}")
+                        total_errors += 1
                         continue
                         
                     addresses = self._extract_items_from_response(response, 'addresses')
                     if addresses:
                         batch_addresses.extend(addresses)
-                        print(f"DEBUG: Fetched {len(addresses)} addresses from batch {i} (offset: {offset + (i * limit)})")
+                        print(f"DEBUG: Batch {i} fetched {len(addresses)} addresses")
+                
+                print(f"DEBUG: Total addresses in this batch: {len(batch_addresses)}")
                 
                 if not batch_addresses:
                     break
-                    
+                
+                # Collect addresses instead of processing immediately
                 all_addresses.extend(batch_addresses)
-                print(f"DEBUG: Total addresses so far: {len(all_addresses)}")
+                total_processed += len(batch_addresses)
+                
+                print(f"DEBUG: Collected {len(batch_addresses)} addresses. Total collected: {len(all_addresses)}")
                 
                 # If we got less than expected, we've reached the end
-                if len(batch_addresses) < (limit * parallel_batches):
+                if len(batch_addresses) < limit:
                     break
                     
-                offset += limit * parallel_batches
-                # Small delay between parallel batches
-                await asyncio.sleep(0.2)
+                offset += limit
+                # Small delay between batches
+                await asyncio.sleep(0.1)  # Reduced delay for faster processing
             
-            addresses = all_addresses
+            # All addresses collected, now process them all at once
+            print(f"DEBUG: All addresses collected: {len(all_addresses)}")
             
-            # Prepare all address data with async lookups
-            async def prepare_address_data(address):
-                # Parallelize the lookups
-                state_name, country_id, customer_id = await asyncio.gather(
-                    self._get_state_name(address.get('id_state', '')),
-                    self._get_country_id_by_origin(address.get('id_country', '')),
-                    self._get_customer_id_by_origin(address.get('id_customer', ''))
-                )
-                
-                return {
-                    'id_origin': address.get('id', ''),
-                    'id_country': country_id if country_id else 0,
-                    'id_customer': customer_id,
-                    'company': address.get('company', ''),
-                    'firstname': address.get('firstname', ''),
-                    'lastname': address.get('lastname', ''),
-                    'address1': address.get('address1', ''),
-                    'address2': address.get('address2', ''),
-                    'state': state_name,
-                    'postcode': address.get('postcode', ''),
-                    'city': address.get('city', ''),
-                    'phone': address.get('phone_mobile', ''),
-                    'vat': address.get('vat', ''),
-                    'dni': address.get('dni', ''),
-                    'pec': address.get('pec', ''),
-                    'sdi': address.get('sdi', ''),
-                    'date_add': datetime.now()
-                }
-                
-            # Prepare all address data concurrently
-            address_data_list = await asyncio.gather(*[prepare_address_data(address) for address in addresses], return_exceptions=True)
+            if not all_addresses:
+                print("DEBUG: No addresses to process")
+                self._log_sync_result("Addresses", 0)
+                return []
             
-            # Filter out exceptions
-            valid_address_data = []
-            errors = []
-            for i, result in enumerate(address_data_list):
-                if isinstance(result, Exception):
-                    errors.append(f"Address {addresses[i].get('id', 'unknown')}: {str(result)}")
-                else:
-                    valid_address_data.append(result)
+            # Process all addresses and create SQL file
+            total_successful = await self._process_all_addresses_and_create_sql(
+                all_addresses, all_states, all_countries
+            )
             
-            # Bulk insert addresses for better performance
-            if valid_address_data:
-                from src.repository.address_repository import AddressRepository
-                from src.schemas.address_schema import AddressSchema
-                
-                address_repo = AddressRepository(self.db)
-                
-                # Convert to AddressSchema objects (data already prepared by prepare_address_data)
-                address_schemas = []
-                for data in valid_address_data:
-                    # Remove date_add as it's not in AddressSchema
-                    data_copy = data.copy()
-                    data_copy.pop('date_add', None)
-                    
-                    address_schema = AddressSchema(**data_copy)
-                    address_schemas.append(address_schema)
-                
-                # Bulk insert
-                total_inserted = address_repo.bulk_create(address_schemas, batch_size=10000)
-                successful_results = [{"status": "success", "count": total_inserted}]
-                upsert_errors = []
-                
-                all_errors = errors + upsert_errors
-                if all_errors:
-                    self._log_sync_result("Addresses", total_inserted, all_errors)
-                else:
-                    self._log_sync_result("Addresses", total_inserted)
-                
-                return successful_results
+            print(f"DEBUG: Address sync completed - Total processed: {total_processed}, Successful: {total_successful}")
+            
+            if total_successful > 0:
+                self._log_sync_result("Addresses", total_successful)
+                return [{"status": "success", "count": total_successful}]
             else:
-                self._log_sync_result("Addresses", 0, errors)
+                self._log_sync_result("Addresses", 0, [f"Total errors: {total_errors}"])
                 return []
             
         except Exception as e:
@@ -915,32 +1145,39 @@ class PrestaShopService(BaseEcommerceService):
         try:
             orders = await self._get_orders_data()  # Use cached data with order_rows associations
             
+            from sqlalchemy import text
+            existing_orders = self.db.execute(text("SELECT id_origin FROM orders WHERE id_origin IS NOT NULL")).fetchall()
+            existing_order_origins = {str(row[0]) for row in existing_orders}
+            
             results = []
             order_details_results = []
             total_weight = 0
             
             for order in orders:
-                order_id = order.get('id', '')
-                
+                order_id = order.get('id', 0)
+ 
                 # Check if order already exists to avoid duplicates
-                if await self._check_order_exists(order_id):
+                if str(order_id) in existing_order_origins:
                     print(f"DEBUG: Order {order_id} already exists, skipping...")
                     continue
-                
                 # Process order data
+                id_address_delivery = self._get_address_id_by_origin(int(order.get('id_address_delivery', 0)))
+                id_address_invoice = self._get_address_id_by_origin(int(order.get('id_address_invoice', 0)))
+                id_customer = self._get_customer_id_by_origin(int(order.get('id_customer', 0)))
+                id_payment = self._get_payment_id_by_name(order.get('payment', 0))
+                is_payed = self._get_payment_complete_status(order.get('payment', 0))
                 order_data = {
                     'id_origin': order_id,
-                    'id_address_delivery': await self._get_address_id_by_origin(order.get('id_address_delivery', '')),
-                    'id_address_invoice': await self._get_address_id_by_origin(order.get('id_address_invoice', '')),
-                    'id_country': self._get_country_id_by_origin(order.get('id_country', '')),
-                    'id_customer': self._get_customer_id_by_origin(order.get('id_customer', '')),
+                    'address_delivery': id_address_delivery,
+                    'address_invoice': id_address_invoice,
+                    'customer': id_customer,
                     'id_platform': 1,  # PrestaShop default - TODO: Review
-                    'id_payment': await self._get_payment_id_by_name(order.get('payment', '')),
-                    'id_shipping': 1,  # Default - TODO: Review
-                    'id_sectional': 1,  # Default
+                    'id_payment': id_payment,
+                    'shipping': 1,  # Default - TODO: Review
+                    'sectional': 1,  # Default
                     'id_order_state': 1,  # Default
                     'is_invoice_requested': order.get('fattura', 0),
-                    'payed': await self._get_payment_complete_status(order.get('payment', '')),
+                    'payed': is_payed,
                     'date_payment': None,  # Default
                     'total_weight': 0,  # Will be calculated from order_details
                     'total_price': order.get('total_paid_tax_excl', 0),
@@ -953,7 +1190,8 @@ class PrestaShopService(BaseEcommerceService):
                 }
                 
                 result = await self._upsert_order(order_data)
-                results.append(result)
+                print(result)
+                '''results.append(result)
                 
                 # Process order details from associations
                 associations = order.get('associations', {})
@@ -971,7 +1209,6 @@ class PrestaShopService(BaseEcommerceService):
                 else:
                     rows = []
                 
-                print(f"DEBUG: Order {order.get('id', 'unknown')} processed rows: {len(rows)}")
                 
                 # Process each order row
                 for row in rows:
@@ -1009,7 +1246,7 @@ class PrestaShopService(BaseEcommerceService):
                 print(f"DEBUG: Orders processed: {len([r for r in results if r.get('status') == 'success'])}")
                 print(f"DEBUG: Order Details processed: {len([r for r in order_details_results if r.get('status') == 'success'])}")
             self._log_sync_result("Orders", len(results))
-            self._log_sync_result("Order Details", len(order_details_results))
+            self._log_sync_result("Order Details", len(order_details_results))'''
             
             # Return both orders and order details results
             return {
@@ -1438,12 +1675,11 @@ class PrestaShopService(BaseEcommerceService):
             order_repo = OrderRepository(self.db)
             
             # Convert data to OrderSchema
+            print(f"DEBUG: Creating OrderSchema with data: {data}")
             order_schema = OrderSchema(**data)
-            
             # Create order in database
             order_repo.create(order_schema)
             
-            print(f"DEBUG: Successfully upserted order {data.get('id_origin', 'unknown')}")
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:
             print(f"DEBUG: Error upserting order {data.get('id_origin', 'unknown')}: {str(e)}")
@@ -1522,39 +1758,44 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             print(f"DEBUG: Error getting country ID by origin {origin_id}: {str(e)}")
             return None
-    
     def _get_customer_id_by_origin(self, origin_id: str) -> Optional[int]:
         """Get customer ID by origin ID"""
         try:
             from src.repository.customer_repository import CustomerRepository
             customer_repo = CustomerRepository(self.db)
             customer = customer_repo.get_by_origin_id(origin_id)
-            return customer.id_customer if customer else None
+            return customer.id_customer if customer else 0
         except Exception as e:
             print(f"DEBUG: Error getting customer ID by origin {origin_id}: {str(e)}")
-            return None
+            return 0
     
-    async def _get_address_id_by_origin(self, origin_id: str) -> Optional[int]:
+    def _get_address_id_by_origin(self, origin_id) -> Optional[int]:
         """Get address ID by origin ID"""
         try:
+            # Convert to string and check for empty/zero values               
             from src.repository.address_repository import AddressRepository
             address_repo = AddressRepository(self.db)
-            address = address_repo.get_by_origin_id(origin_id)
-            return address.id_address if address else None
+            address_id = address_repo.get_id_by_id_origin(origin_id)
+            
+            if address_id:
+                return address_id
+            else:
+                print(f"DEBUG: No address found for origin {origin_id}")
+                return 0
         except Exception as e:
             print(f"DEBUG: Error getting address ID by origin {origin_id}: {str(e)}")
-            return None
+            return 0
     
-    async def _get_payment_id_by_name(self, payment_name: str) -> Optional[int]:
+    def _get_payment_id_by_name(self, payment_name: str) -> Optional[int]:
         """Get payment ID by name"""
         try:
             from src.repository.payment_repository import PaymentRepository
             payment_repo = PaymentRepository(self.db)
             payment = payment_repo.get_by_name(payment_name)
-            return payment.id_payment if payment else None
+            return payment.id_payment if payment else 0
         except Exception as e:
             print(f"DEBUG: Error getting payment ID by name {payment_name}: {str(e)}")
-            return None
+            return 0
     
     async def _get_tag_id_by_origin(self, origin_id: str) -> Optional[int]:
         """Get tag ID by origin ID"""
@@ -1602,7 +1843,7 @@ class PrestaShopService(BaseEcommerceService):
             return 1  # Default fallback
     
     
-    async def _get_payment_complete_status(self, payment_name: str) -> bool:
+    def _get_payment_complete_status(self, payment_name: str) -> bool:
         """Get payment complete status"""
         try:
             from src.repository.payment_repository import PaymentRepository
@@ -1613,6 +1854,91 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error getting payment complete status for {payment_name}: {str(e)}")
             return True  # Default to complete
     
+    async def _get_all_states(self) -> Dict[str, str]:
+        """Get all states and return as dictionary {id: name}"""
+        try:
+            all_states = {}
+            limit = 1000
+            offset = 0
+            
+            while True:
+                params = {
+                    'display': '[id,name]',
+                    'limit': f'{offset},{limit}'
+                }
+                response = await self._make_request_with_rate_limit('/api/states', params=params)
+                states = self._extract_items_from_response(response, 'states')
+                
+                if not states:
+                    break
+                    
+                for state in states:
+                    state_id = state.get('id', '')
+                    state_name = state.get('name', '')
+                    if state_id:
+                        all_states[state_id] = state_name
+                
+                # If we got less than expected, we've reached the end
+                if len(states) < limit:
+                    break
+                    
+                offset += limit
+                
+            return all_states
+        except Exception as e:
+            print(f"DEBUG: Error fetching all states: {str(e)}")
+            return {}
+
+    def _get_all_countries(self) -> Dict[str, Dict[str, str]]:
+        """Get all countries from our database and return as dictionary {id_origin: {id: db_id, name: country_name}}"""
+        try:
+            from src.repository.country_repository import CountryRepository
+            
+            all_countries = {}
+            country_repo = CountryRepository(self.db)
+            
+            # Get all countries from our database (limit=0 returns query.all())
+            countries = country_repo.get_all()  # This returns a list, not a query
+            
+            for country in countries:
+                country_id_origin = str(country.id_origin) if country.id_origin else None
+                if country_id_origin:
+                    all_countries[country_id_origin] = {
+                        'id': str(country.id_country)
+                    }
+                
+            return all_countries
+        except Exception as e:
+            print(f"DEBUG: Error fetching all countries from database: {str(e)}")
+            return {}
+
+    def _disable_foreign_key_checks(self):
+        """Disable foreign key checks temporarily"""
+        try:
+            # Use raw SQL to disable foreign key checks
+            from sqlalchemy import text
+            result = self.db.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+            print(f"Foreign key checks disabled - Result: {result}")
+            
+            # Verify that FK checks are disabled
+            check_result = self.db.execute(text("SELECT @@FOREIGN_KEY_CHECKS")).fetchone()
+            print(f"DEBUG: FOREIGN_KEY_CHECKS status: {check_result}")
+            
+            # Also disable autocommit to ensure the setting persists
+            self.db.autocommit = False
+            print("DEBUG: Autocommit disabled")
+        except Exception as e:
+            print(f"Error disabling foreign key checks: {e}")
+
+    def _enable_foreign_key_checks(self):
+        """Re-enable foreign key checks"""
+        try:
+            # Re-enable autocommit
+            self.db.autocommit = True
+            print("DEBUG: Autocommit enabled")
+        except Exception as e:
+            print(f"Error enabling foreign key checks: {e}")
+
     async def _get_state_name(self, state_id: str) -> str:
         """Get state name by ID"""
         if not state_id:
@@ -2046,14 +2372,30 @@ class PrestaShopService(BaseEcommerceService):
             if not isinstance(addresses, list):
                 addresses = [addresses]
             
+            # Fetch all states and countries at once for efficient lookup
+            print("DEBUG: Fetching all states and countries for incremental sync...")
+            all_states = await self._get_all_states()
+            all_countries = self._get_all_countries()
+            print(f"DEBUG: Fetched {len(all_states)} states and {len(all_countries)} countries")
+            
             results = []
             for address in addresses:
-                state_name = await self._get_state_name(address.get('id_state', ''))
-                print(state_name)
+                # Get state name from the pre-fetched dictionary
+                state_id = address.get('id_state', '')
+                state_name = all_states.get(state_id, '') if state_id else ''
+                
+                # Get country ID from pre-fetched dictionary
+                country_origin_id = str(address.get('id_country', ''))
+                country_data = all_countries.get(country_origin_id, {})
+                country_id = int(country_data.get('id')) if country_data.get('id') else None
+                
+                # Get customer ID (still need to call this as it's not pre-fetched)
+                customer_id = self._get_customer_id_by_origin(address.get('id_customer', 0))
+                
                 address_data = {
                     'id_origin': address.get('id', ''),
-                    'id_country': self._get_country_id_by_origin(address.get('id_country', 0)),
-                    'id_customer': self._get_customer_id_by_origin(address.get('id_customer', 0)),
+                    'id_country': country_id,
+                    'id_customer': int(customer_id) if customer_id is not None else None,
                     'company': address.get('company', ''),
                     'firstname': address.get('firstname', ''),
                     'lastname': address.get('lastname', ''),
@@ -2149,6 +2491,13 @@ class PrestaShopService(BaseEcommerceService):
             
             orders = all_orders
             
+            # Pre-fetch all existing order origin IDs to avoid repeated queries
+            print("DEBUG: Checking existing orders for incremental sync...")
+            from sqlalchemy import text
+            existing_orders = self.db.execute(text("SELECT id_origin FROM orders WHERE id_origin IS NOT NULL")).fetchall()
+            existing_order_origins = {str(row[0]) for row in existing_orders}
+            print(f"DEBUG: Found {len(existing_order_origins)} existing orders")
+            
             results = []
             order_details_results = []
             total_weight = 0
@@ -2157,24 +2506,21 @@ class PrestaShopService(BaseEcommerceService):
                 order_id = order.get('id', '')
                 
                 # Check if order already exists to avoid duplicates
-                if await self._check_order_exists(order_id):
+                if str(order_id) in existing_order_origins:
                     print(f"DEBUG: Order {order_id} already exists, skipping...")
                     continue
-                
                 # Process order data
+                print(order.get('fattura', 0))
                 order_data = {
                     'id_origin': order_id,
-                    'id_address_delivery': await self._get_address_id_by_origin(order.get('id_address_delivery', '')),
-                    'id_address_invoice': await self._get_address_id_by_origin(order.get('id_address_invoice', '')),
-                    'id_country': self._get_country_id_by_origin(order.get('id_country', '')),
+                    'id_address_delivery': self._get_address_id_by_origin(order.get('id_address_delivery')),
+                    'id_address_invoice': self._get_address_id_by_origin(order.get('id_address_invoice')),
                     'id_customer': self._get_customer_id_by_origin(order.get('id_customer', '')),
                     'id_platform': 1,
                     'id_payment': await self._get_payment_id_by_name(order.get('payment', '')),
-                    'id_shipping': 1,
-                    'id_sectional': 'ND',
                     'id_order_state': 1,
                     'is_invoice_requested': order.get('fattura', 0),
-                    'payed': await self._get_payment_complete_status(order.get('payment', '')),
+                    'payed': self._get_payment_complete_status(order.get('payment', '')),
                     'date_payment': None,
                     'total_weight': 0,
                     'total_price': order.get('total_paid_tax_excl', 0),
@@ -2405,9 +2751,7 @@ class PrestaShopService(BaseEcommerceService):
             date_range_filter = self._get_date_range_filter()
             six_months_ago = self._get_six_months_ago_date()
             
-            print(f"DEBUG: Fetching orders data from API with pagination (5000 per batch)")
-            print(f"DEBUG: Date filter: filter[date_add]={date_range_filter} (last 6 months)")
-            
+
             all_orders = []
             limit = 5000  # Batch size
             offset = 0

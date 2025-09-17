@@ -1,9 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Date, Float, Text
 
 from ..database import Base
-from sqlalchemy import Column, Integer, String, Date, Float, Text
 
 
 class Shipping(Base):

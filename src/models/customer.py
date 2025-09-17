@@ -1,7 +1,7 @@
 from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Date, func
 
 from ..database import Base
-from sqlalchemy import Column, Integer, String, Date, func
 
 
 class Customer(Base):

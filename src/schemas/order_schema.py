@@ -14,15 +14,15 @@ from src.schemas.order_state_schema import OrderStateResponseSchema
 class OrderSchema(BaseModel):
     address_delivery: int | AddressSchema = 0
     address_invoice: int | AddressSchema = 0
-    customer: CustomerSchema | int = None
-    id_platform: Optional[int] = None
-    id_payment: Optional[int] = None
-    shipping: int | ShippingSchema | None = None
-    sectional: int | SectionalSchema = None
+    customer: CustomerSchema | int = 0
+    id_platform: Optional[int] = 0
+    id_payment: Optional[int] = 0
+    shipping: int | ShippingSchema | None = 0
+    sectional: int | SectionalSchema = 0
     id_order_state: int
-    id_origin: Optional[int] = None
+    id_origin: Optional[int] = 0
     is_invoice_requested: bool
-    is_payed: Optional[int] = None
+    is_payed: Optional[int] = 0
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
     total_price: Optional[float] = None

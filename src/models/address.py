@@ -9,8 +9,8 @@ class Address(Base):
 
     id_address = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, default=0)
-    id_country = Column(Integer, ForeignKey("countries.id_country"), default=None)
-    id_customer = Column(Integer, ForeignKey("customers.id_customer"), default=None)
+    id_country = Column(Integer, ForeignKey('countries.id_country'), default=None)
+    id_customer = Column(Integer, ForeignKey('customers.id_customer'), default=None)
     company = Column(String(255), default=None)
     firstname = Column(String(255), default=None)
     lastname = Column(String(255), default=None)
@@ -29,13 +29,5 @@ class Address(Base):
 
     customers = relationship("Customer", back_populates="addresses")
     country = relationship("Country", back_populates="addresses")
-    address_delivery = relationship(
-        "OrderDocument",
-        foreign_keys="[OrderDocument.id_address_delivery]",  # Explicitly state the FK to use
-        back_populates="address_delivery"
-    )
-    address_invoice = relationship(
-        "OrderDocument",
-        foreign_keys="[OrderDocument.id_address_invoice]",  # Explicitly state the FK to use
-        back_populates="address_invoice"
-    )
+    address_delivery = relationship("OrderDocument", foreign_keys="OrderDocument.id_address_delivery", back_populates="address_delivery")
+    address_invoice = relationship("OrderDocument", foreign_keys="OrderDocument.id_address_invoice", back_populates="address_invoice")

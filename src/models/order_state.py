@@ -1,5 +1,5 @@
-from sqlalchemy import Integer, Column, String, Table, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Integer, Column, String, Table
+from sqlalchemy.orm import relationship, foreign
 
 from src import Base
 from src.models.order import orders_history
@@ -17,4 +17,6 @@ class OrderState(Base):
 
     id_order_state = Column(Integer, primary_key=True, index=True)
     name = Column(String(128))
-    orders = relationship("Order",  secondary=orders_history, back_populates="order_states")
+    orders = relationship("Order", secondary=orders_history, back_populates="order_states",
+                         primaryjoin="OrderState.id_order_state == foreign(orders_history.c.id_order_state)",
+                         secondaryjoin="foreign(orders_history.c.id_order) == Order.id_order")

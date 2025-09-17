@@ -1,6 +1,6 @@
 from sqlalchemy.orm import relationship
 
-from .user import user_roles
+from .relations.relations import user_roles
 from ..database import Base
 from sqlalchemy import Column, Integer, String
 

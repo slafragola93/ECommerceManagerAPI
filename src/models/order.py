@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Integer, Column, Text, ForeignKey, Boolean, Date, Float, Table
+from sqlalchemy import Integer, Column, Text, Boolean, Date, Float, Table, ForeignKey
 from sqlalchemy.orm import relationship
 from .relations.relations import orders_history
 
@@ -21,11 +21,11 @@ class Order(Base):
     id_address_delivery = Column(Integer, index=True, nullable=True, default=None)
     id_address_invoice = Column(Integer, index=True, nullable=True, default=None)
     id_customer = Column(Integer, index=True, nullable=True, default=None)
-    id_platform = Column(Integer, ForeignKey('platforms.id_platform'), index=True, nullable=True, default=1)
-    id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=None)
+    id_platform = Column(Integer, index=True, nullable=True, default=1)
+    id_payment = Column(Integer, index=True, nullable=True, default=None)
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'), default=None)
-    id_sectional = Column(Integer, ForeignKey('sectionals.id_sectional'), index=True, nullable=True, default=None)
-    id_order_state = Column(Integer, ForeignKey('order_states.id_order_state'), default=1)
+    id_sectional = Column(Integer, index=True, nullable=True, default=None)
+    id_order_state = Column(Integer, default=1)
     is_invoice_requested = Column(Boolean, default=False)
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
