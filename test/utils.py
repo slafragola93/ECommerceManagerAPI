@@ -1,10 +1,11 @@
 from datetime import datetime, date
+import os
 import pytest
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
-from src import Country, Role, OrderState, Invoice, OrderPackage, Tag
+from src import Country, Role, OrderState, Invoice, OrderPackage
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
@@ -252,9 +253,15 @@ def test_product():
         id_origin=0,
         id_brand=1,
         id_category=1,
+        id_image=None,
         name="Climatizzatore Daikin",
         sku="123456",
-        type="DUAL"
+        reference="ND",
+        type="DUAL",
+        weight=0.0,
+        depth=0.0,
+        height=0.0,
+        width=0.0
     )
 
     db = TestingSessionLocal()
@@ -263,7 +270,6 @@ def test_product():
     yield product_test
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM products;"))
-        conn.execute(text("DELETE FROM product_tags;"))
         conn.commit()
 
 
@@ -713,28 +719,6 @@ def test_tax():
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM taxes;"))
         conn.commit()
-
-
-@pytest.fixture()
-def test_tag():
-    queries = [
-        Tag(
-            id_origin=0,
-            name="r32"
-        ),
-        Tag(
-            id_origin=0,
-            name="tag_generico"
-        ),
-    ]
-    db = TestingSessionLocal()
-    db.add_all(queries)
-    db.commit()
-    yield queries
-    with engine.connect() as conn:
-        conn.execute(text("DELETE FROM tags;"))
-        conn.commit()
-
 
 
 @pytest.fixture()

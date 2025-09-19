@@ -3,11 +3,15 @@ PrestaShop synchronization service
 """
 
 from typing import Dict, List, Any, Optional
+from fastapi.datastructures import Address
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import base64
 import asyncio
 from datetime import datetime
+
+from src.schemas.order_schema import OrderUpdateSchema
+from src.services.tool import safe_int, safe_float, sql_value
 
 from .base_ecommerce_service import BaseEcommerceService
 from ...repository.platform_repository import PlatformRepository
@@ -21,7 +25,6 @@ class PrestaShopService(BaseEcommerceService):
     def __init__(self, db: Session, platform_id: int = 1, batch_size: int = 5000, max_concurrent_requests: int = 10, default_language_id: int = 1):
         super().__init__(db, platform_id, batch_size)
         self.platform_repo = PlatformRepository(db)
-        self._orders_cache = None  # Cache for orders data
         self.max_concurrent_requests = max_concurrent_requests
         self._semaphore = None  # Will be initialized in async context
         self.default_language_id = default_language_id
@@ -90,32 +93,49 @@ class PrestaShopService(BaseEcommerceService):
             # Disable foreign key checks for the entire synchronization
             self._disable_foreign_key_checks()
             
-            # Phase 1: Base tables (no dependencies)
-            phase1_results = await self._sync_phase("Phase 1 - Base Tables", [
-                #self.sync_languages,
-                #self.sync_countries,
-                #self.sync_brands,
-                #self.sync_categories,
-                #self.sync_carriers,
-                #self.sync_tags
-            ])
+            # Phase 1: Base tables (sequential to ensure all complete before proceeding)
+            phase1_functions = [
+                #("Languages", self.sync_languages),
+                #("Countries", self.sync_countries),
+                #("Brands", self.sync_brands),
+                #("Categories", self.sync_categories),
+                #("Carriers", self.sync_carriers),
+            ]
+            
+            phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
             sync_results['phases'].append(phase1_results)
             
-            # Phase 2: Dependent tables
-            phase2_results = await self._sync_phase("Phase 2 - Dependent Tables", [
-                #self.sync_products,
-                #self.sync_customers,
-                #self.sync_payments,
-                #lambda: self.sync_addresses()
-            ])
+            # Check if Phase 1 completed successfully
+            if phase1_results['total_errors'] > 0:
+                print("ERROR: Phase 1 failed. Stopping synchronization.")
+                sync_results['status'] = 'ERROR'
+                sync_results['error'] = 'Phase 1 (Base Tables) failed'
+                return sync_results
+            
+            # Phase 2: Dependent tables (sequential - addresses need customers)
+            phase2_functions = [
+                #("Products", self.sync_products),
+                #("Customers", self.sync_customers),
+                #("Addresses", self.sync_addresses),
+                # Note: Payments are now handled dynamically during order processing
+            ]
+            
+            phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
             sync_results['phases'].append(phase2_results)
             
-            # Phase 3: Complex tables
-            phase3_results = await self._sync_phase("Phase 3 - Complex Tables", [
-                self.sync_orders,
-                #self.sync_product_tags,
-                #self.sync_order_details
-            ])
+            # Check if Phase 2 completed successfully
+            if phase2_results['total_errors'] > 0:
+                print("ERROR: Phase 2 failed. Stopping synchronization.")
+                sync_results['status'] = 'ERROR'
+                sync_results['error'] = 'Phase 2 (Dependent Tables) failed'
+                return sync_results
+            
+            # Phase 3: Complex tables (only after all dependencies are complete)
+            phase3_functions = [
+                ("Orders", self.sync_orders)
+            ]
+            
+            phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
             sync_results['phases'].append(phase3_results)
             
             # Calculate totals
@@ -142,7 +162,104 @@ class PrestaShopService(BaseEcommerceService):
             self._enable_foreign_key_checks()
         
         return sync_results
-    
+
+    async def _sync_phase_sequential(self, phase_name: str, functions: List[tuple]) -> Dict[str, Any]:
+        """
+        Execute sync functions sequentially and stop if any fails
+        
+        Args:
+            phase_name: Name of the phase
+            functions: List of tuples (name, function) to execute sequentially
+            
+        Returns:
+            Dict with phase results
+        """
+        print(f"\n{'='*60}")
+        print(f"Starting {phase_name}")
+        print(f"{'='*60}")
+        
+        phase_start_time = datetime.now()
+        phase_results = {
+            'phase': phase_name,
+            'start_time': phase_start_time.isoformat(),
+            'functions': [],
+            'total_processed': 0,
+            'total_errors': 0,
+            'status': 'SUCCESS'
+        }
+        
+        for func_name, func in functions:
+            print(f"\n{'='*50}")
+            print(f"EXECUTING {func_name}")
+            print(f"{'='*50}")
+            func_start_time = datetime.now()
+            
+            try:
+                if asyncio.iscoroutinefunction(func):
+                    result = await func()
+                else:
+                    result = func()
+                
+                func_end_time = datetime.now()
+                func_duration = (func_end_time - func_start_time).total_seconds()
+                
+                # Handle different result formats
+                if isinstance(result, list):
+                    processed_count = len(result)
+                elif isinstance(result, dict) and 'total_processed' in result:
+                    processed_count = result['total_processed']
+                else:
+                    processed_count = 1 if result else 0
+                
+                phase_results['functions'].append({
+                    'function': func_name,
+                    'status': 'SUCCESS',
+                    'processed': processed_count,
+                    'duration': func_duration,
+                    'start_time': func_start_time.isoformat(),
+                    'end_time': func_end_time.isoformat()
+                })
+                
+                phase_results['total_processed'] += processed_count
+                
+                print(f"✅ {func_name}: {processed_count} records processed in {func_duration:.2f}s")
+                
+            except Exception as e:
+                func_end_time = datetime.now()
+                func_duration = (func_end_time - func_start_time).total_seconds()
+                
+                phase_results['functions'].append({
+                    'function': func_name,
+                    'status': 'ERROR',
+                    'processed': 0,
+                    'duration': func_duration,
+                    'start_time': func_start_time.isoformat(),
+                    'end_time': func_end_time.isoformat(),
+                    'error': str(e)
+                })
+                
+                phase_results['total_errors'] += 1
+                phase_results['status'] = 'ERROR'
+                
+                print(f"❌ {func_name}: FAILED - {str(e)}")
+                print(f"STOPPING {phase_name} due to error in {func_name}")
+                
+                # Stop the entire phase if any function fails
+                break
+        
+        phase_end_time = datetime.now()
+        phase_duration = (phase_end_time - phase_start_time).total_seconds()
+        
+        phase_results['end_time'] = phase_end_time.isoformat()
+        phase_results['duration'] = phase_duration
+        
+        print(f"\n{phase_name} completed in {phase_duration:.2f}s")
+        print(f"Total processed: {phase_results['total_processed']}")
+        print(f"Total errors: {phase_results['total_errors']}")
+        print(f"Status: {phase_results['status']}")
+        
+        return phase_results
+
     async def sync_incremental_data(self) -> Dict[str, Any]:
         """
         Synchronize only new data from PrestaShop based on last imported ID origin
@@ -171,7 +288,6 @@ class PrestaShopService(BaseEcommerceService):
                 lambda: self.sync_brands_incremental(last_ids.get('brand', 0)),
                 lambda: self.sync_categories_incremental(last_ids.get('category', 0)),
                 lambda: self.sync_carriers_incremental(last_ids.get('carrier', 0)),
-                lambda: self.sync_tags_incremental(last_ids.get('tag', 0))
             ])
             sync_results['phases'].append(phase1_results)
             
@@ -179,7 +295,7 @@ class PrestaShopService(BaseEcommerceService):
             phase2_results = await self._sync_phase("Phase 2 - Dependent Tables (Incremental)", [
                 lambda: self.sync_products_incremental(last_ids.get('product', 0)),
                 lambda: self.sync_customers_incremental(last_ids.get('customer', 0)),
-                lambda: self.sync_payments_incremental(),  # Payments don't have incremental logic
+                # Note: Payments are now handled dynamically during order processing
                 lambda: self.sync_addresses_incremental(last_ids.get('address', 0))
             ])
             sync_results['phases'].append(phase2_results)
@@ -187,7 +303,6 @@ class PrestaShopService(BaseEcommerceService):
             # Phase 3: Complex tables - incremental
             phase3_results = await self._sync_phase("Phase 3 - Complex Tables (Incremental)", [
                 lambda: self.sync_orders_incremental(last_ids.get('order', 0)),
-                lambda: self.sync_product_tags_incremental(last_ids.get('product_tag', 0)),
                 lambda: self.sync_order_details_incremental(last_ids.get('order_detail', 0))
             ])
             sync_results['phases'].append(phase3_results)
@@ -474,53 +589,11 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result("Carriers", 0, [str(e)])
             raise
     
-    async def sync_tags(self) -> List[Dict[str, Any]]:
-        """Synchronize tags from ps_tag"""
-        try:
-            response = await self._make_request_with_rate_limit('/api/tags', params={'display': '[id,name]'})
-            tags = self._extract_items_from_response(response, 'tags')
-            # Prepare all tag data
-            tag_data_list = []
-            for tag in tags:
-                tag_data = {
-                    'id_origin': tag.get('id', ''),
-                    'name': tag.get('name', '')
-                }
-                tag_data_list.append(tag_data)
-            
-            # Process all upserts concurrently
-            if tag_data_list:
-                results = await asyncio.gather(*[self._upsert_tag(data) for data in tag_data_list], return_exceptions=True)
-                
-                # Filter out exceptions and log them
-                successful_results = []
-                errors = []
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        errors.append(f"Tag {tag_data_list[i].get('id_origin', 'unknown')}: {str(result)}")
-                    else:
-                        successful_results.append(result)
-                
-                if errors:
-                    self._log_sync_result("Tags", len(successful_results), errors)
-                else:
-                    self._log_sync_result("Tags", len(successful_results))
-                
-                return successful_results
-            else:
-                self._log_sync_result("Tags", 0)
-                return []
-            
-        except Exception as e:
-            self._log_sync_result("Tags", 0, [str(e)])
-            raise
     
     async def sync_products(self) -> List[Dict[str, Any]]:
         """Synchronize products from ps_product (Italian language only)"""
+        print("🚀 STARTING SYNC_PRODUCTS")
         try:
-            # Get Italian language ID
-            
-            
             # Try with pagination to avoid server disconnection
             all_products = []
             limit = 1000  # Smaller batch size
@@ -532,7 +605,7 @@ class PrestaShopService(BaseEcommerceService):
                     # Use PrestaShop format: limit=[offset,]limit
                     params = {
                         'limit': f'{offset},{limit}',
-                        'display': '[id,id_manufacturer,id_category_default,name,reference]'  # Only necessary fields
+                        'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image]'  # Only necessary fields
                     }
                     response = await self._make_request_with_rate_limit('/api/products', params)
                     products = self._extract_items_from_response(response, 'products')
@@ -549,7 +622,6 @@ class PrestaShopService(BaseEcommerceService):
                 except Exception as e:
                     error_msg = str(e).lower()
                     if any(keyword in error_msg for keyword in ['server disconnected', '500', 'timeout', 'connection reset']):
-                        print(f"DEBUG: Server error for products, retrying with smaller batch...")
                         limit = max(10, limit // 2)  # Reduce batch size
                         await asyncio.sleep(2)  # Wait before retry
                         continue
@@ -572,6 +644,8 @@ class PrestaShopService(BaseEcommerceService):
             products = list(unique_products.values())
             
             # Prepare all product data with async lookups
+            from src.schemas.product_schema import ProductSchema
+            
             async def prepare_product_data(product):                
                 # Extract type from name (dual/trial logic)
                 # Skip products without name or with empty name
@@ -585,15 +659,20 @@ class PrestaShopService(BaseEcommerceService):
                     self._get_brand_id_by_origin(product.get('id_manufacturer', ''))
                 )
                 
-                return {
-                    'id_origin': product.get('id', ''),
-                    'id_platform': 1,  # TODO: review this logic
-                    'id_category': int(category_id),
-                    'id_brand': int(brand_id),
-                    'name': product['name'],
-                    'sku': product.get('reference', ''),
-                    'type': product_type
-                }
+                return ProductSchema(
+                    id_origin=product.get('id', ''),
+                    id_category=int(category_id),
+                    id_brand=int(brand_id),
+                    id_image=product.get('id_default_image', None),
+                    name=product['name'],
+                    sku=product.get('ean13', ''),
+                    reference=product.get('reference', 'ND'),
+                    weight=float(product.get('weight', 0.0)) if product.get('weight') else 0.0,
+                    depth=float(product.get('depth', 0.0)) if product.get('depth') else 0.0,
+                    height=float(product.get('height', 0.0)) if product.get('height') else 0.0,
+                    width=float(product.get('width', 0.0)) if product.get('width') else 0.0,
+                    type=product_type
+                )
                 
             # Prepare all product data concurrently
             product_data_list = await asyncio.gather(*[prepare_product_data(product) for product in products], return_exceptions=True)
@@ -610,26 +689,12 @@ class PrestaShopService(BaseEcommerceService):
             # Bulk insert products for better performance
             if valid_product_data:
                 from src.repository.product_repository import ProductRepository
-                from src.schemas.product_schema import ProductSchema
                 
                 product_repo = ProductRepository(self.db)
                 
-                # Convert to ProductSchema objects
-                product_schemas = []
-                for data in valid_product_data:
-                    product_schema = ProductSchema(
-                        id_origin=data.get('id_origin', 0),
-                        id_platform=data.get('id_platform', 1),
-                        id_category=data.get('id_category', 1),
-                        id_brand=data.get('id_brand', 1),
-                        name=data.get('name', ''),
-                        sku=data.get('sku', ''),
-                        type=data.get('type', 'standard')
-                    )
-                    product_schemas.append(product_schema)
-                
+                # valid_product_data already contains ProductSchema objects
                 # Bulk insert
-                total_inserted = product_repo.bulk_create(product_schemas, batch_size=10000)
+                total_inserted = product_repo.bulk_create(valid_product_data, batch_size=10000)
                 successful_results = [{"status": "success", "count": total_inserted}]
                 upsert_errors = []
                 
@@ -652,6 +717,7 @@ class PrestaShopService(BaseEcommerceService):
     
     async def sync_customers(self) -> List[Dict[str, Any]]:
         """Synchronize customers from ps_customer"""
+        print("🚀 STARTING SYNC_CUSTOMERS")
         try:
             all_customers = []
             limit = 5000
@@ -742,10 +808,12 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result("Customers", 0, [str(e)])
             raise
     
+
     async def sync_payments(self) -> List[Dict[str, Any]]:
         """Synchronize payment methods from ps_orders"""
+        print("🚀 STARTING SYNC_PAYMENTS")
         try:
-            orders = await self._get_orders_data()  # Use cached data
+            orders = await self._get_payments_data()  # Use cached data
             
             # Extract unique payment methods
             payment_methods = set()
@@ -759,7 +827,7 @@ class PrestaShopService(BaseEcommerceService):
             for payment_method in payment_methods:
                 payment_data = {
                     'payment_name': payment_method,
-                    'is_complete_payment': 1  #TODO: Review this logic
+                    'is_complete_payment': 1
                 }
                 payment_data_list.append(payment_data)
             
@@ -805,7 +873,15 @@ class PrestaShopService(BaseEcommerceService):
                 country_id = int(country_data.get('id')) if country_data.get('id') else None
                 
                 # Get customer ID (still need to call this as it's not pre-fetched)
-                customer_id = int(self._get_customer_id_by_origin(address.get('id_customer', '')) if self._get_customer_id_by_origin(address.get('id_customer', '')) is not None else None)
+                customer_origin = str(address.get('id_customer', ''))
+                customer_id = self._get_customer_id_by_origin(customer_origin)
+                customer_id = customer_id if customer_id != 0 else None
+                
+                # Debug customer mapping
+                if customer_origin != '' and customer_origin != '0' and customer_id is None:
+                    print(f"DEBUG: Customer origin '{customer_origin}' not found in database")
+                elif customer_origin != '' and customer_origin != '0' and customer_id is not None:
+                    print(f"DEBUG: Found customer '{customer_origin}' -> {customer_id}")
                 return {
                     'id_origin': address.get('id', 0),
                     'id_country': country_id,
@@ -868,11 +944,9 @@ class PrestaShopService(BaseEcommerceService):
     async def _process_all_addresses_and_create_sql(self, all_addresses: List[Dict], all_states: Dict, all_countries: Dict) -> int:
         """Process all addresses and create SQL file for bulk insert"""
         try:
-            import tempfile
-            import os
+
             from sqlalchemy import text
             from datetime import date
-            
             print("DEBUG: Processing all addresses and creating SQL file...")
             
             # Pre-fetch all customer IDs to avoid repeated DB calls
@@ -880,11 +954,20 @@ class PrestaShopService(BaseEcommerceService):
             customer_origins = set()
             for address in all_addresses:
                 customer_origin = address.get('id_customer', '')
-                if customer_origin:
-                    customer_origins.add(str(customer_origin))
+                if customer_origin and customer_origin != '0':
+                    try:
+                        customer_origins.add(int(customer_origin))
+                    except (ValueError, TypeError):
+                        print(f"DEBUG: Invalid customer origin '{customer_origin}', skipping")
             
             # Get all customer IDs in one query
             all_customers = {}
+            
+            print(f"DEBUG: Found {len(customer_origins)} unique customer origins to lookup")
+            
+            if not customer_origins:
+                print("WARNING: No valid customer origins found in addresses. This might indicate missing customers.")
+                return 0
             if customer_origins:
                 from src.repository.customer_repository import CustomerRepository
                 from src.models.customer import Customer
@@ -892,9 +975,14 @@ class PrestaShopService(BaseEcommerceService):
                 customers = customer_repo.session.query(Customer).filter(
                     Customer.id_origin.in_(customer_origins)
                 ).all()
-                all_customers = {str(customer.id_origin): customer.id_customer for customer in customers}
+                all_customers = {int(customer.id_origin): customer.id_customer for customer in customers}
             
-            print(f"DEBUG: Pre-fetched {len(all_customers)} customer IDs")
+            print(f"DEBUG: Pre-fetched {len(all_customers)} customer IDs from {len(customer_origins)} unique origins")
+            if all_customers:
+                print(f"DEBUG: Sample customer mappings: {dict(list(all_customers.items())[:3])}")
+            else:
+                print("WARNING: No customers found in database. This will cause all addresses to fail.")
+                print("DEBUG: Make sure customers are synced before addresses.")
             
             # Optimized prepare address data function
             def prepare_address_data_optimized(address):
@@ -908,8 +996,9 @@ class PrestaShopService(BaseEcommerceService):
                 country_id = int(country_data.get('id')) if country_data.get('id') else None
                 
                 # Get customer ID from pre-fetched dictionary
-                customer_origin = str(address.get('id_customer', ''))
-                customer_id = all_customers.get(customer_origin)
+                customer_origin = int(address.get('id_customer', 0))
+                customer_id = int(all_customers.get(customer_origin))
+                
                 
                 return {
                     'id_origin': address.get('id', 0),
@@ -1048,15 +1137,15 @@ class PrestaShopService(BaseEcommerceService):
     
     async def sync_addresses(self) -> List[Dict[str, Any]]:
         """Synchronize addresses from ps_address"""
+        print("🚀 STARTING SYNC_ADDRESSES")
         try:
-            limit = 50000  # 50k addresses per API call
+            limit = 5000  # 25k addresses per API call
             offset = 0
             parallel_batches = 1  # Single call per batch since we're getting 50k at once
 
             # Fetch all states at once for efficient lookup
             all_states = await self._get_all_states()
             all_countries = self._get_all_countries()
-            print(f"DEBUG: Starting address sync with {len(all_states)} states and {len(all_countries)} countries")
             
             # Collect all addresses first
             all_addresses = []
@@ -1077,10 +1166,7 @@ class PrestaShopService(BaseEcommerceService):
                 # Execute parallel requests
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
                 
-                '''
-                #### DEBUG ####
-                if offset >= 1:
-                    break'''
+       
                 
                 # Process responses
                 batch_addresses = []
@@ -1142,192 +1228,68 @@ class PrestaShopService(BaseEcommerceService):
     
     async def sync_orders(self) -> List[Dict[str, Any]]:
         """Synchronize orders and order details from ps_orders with associations"""
+        print("🚀 STARTING SYNC_ORDERS")
         try:
-            orders = await self._get_orders_data()  # Use cached data with order_rows associations
+            print("DEBUG: Starting orders synchronization...")
+            
+            # Final check: ensure all dependencies are synced successfully
+            from sqlalchemy import text
+            customers_count = self.db.execute(text("SELECT COUNT(*) FROM customers")).scalar()
+            products_count = self.db.execute(text("SELECT COUNT(*) FROM products")).scalar()
+            payments_count = self.db.execute(text("SELECT COUNT(*) FROM payments")).scalar()
+            addresses_count = self.db.execute(text("SELECT COUNT(*) FROM addresses")).scalar()
+            
+            print(f"DEBUG: Final dependencies check - Customers: {customers_count}, Products: {products_count}, Payments: {payments_count}, Addresses: {addresses_count}")
+            
+            if customers_count == 0:
+                raise Exception("No customers found. Cannot sync orders without customers.")
+            if products_count == 0:
+                raise Exception("No products found. Cannot sync orders without products.")
+            if payments_count == 0:
+                raise Exception("No payments found. Cannot sync orders without payments.")
+            if addresses_count == 0:
+                raise Exception("No addresses found. Cannot sync orders without addresses.")
+            
+            print("DEBUG: All dependencies verified. Proceeding with orders sync...")
+            
+            orders = await self._get_orders_data()  # Get fresh orders data
             
             from sqlalchemy import text
             existing_orders = self.db.execute(text("SELECT id_origin FROM orders WHERE id_origin IS NOT NULL")).fetchall()
             existing_order_origins = {str(row[0]) for row in existing_orders}
             
-            results = []
-            order_details_results = []
-            total_weight = 0
-            
+            # Filter out existing orders
+            new_orders = []
             for order in orders:
-                order_id = order.get('id', 0)
- 
-                # Check if order already exists to avoid duplicates
-                if str(order_id) in existing_order_origins:
-                    print(f"DEBUG: Order {order_id} already exists, skipping...")
-                    continue
-                # Process order data
-                id_address_delivery = self._get_address_id_by_origin(int(order.get('id_address_delivery', 0)))
-                id_address_invoice = self._get_address_id_by_origin(int(order.get('id_address_invoice', 0)))
-                id_customer = self._get_customer_id_by_origin(int(order.get('id_customer', 0)))
-                id_payment = self._get_payment_id_by_name(order.get('payment', 0))
-                is_payed = self._get_payment_complete_status(order.get('payment', 0))
-                order_data = {
-                    'id_origin': order_id,
-                    'address_delivery': id_address_delivery,
-                    'address_invoice': id_address_invoice,
-                    'customer': id_customer,
-                    'id_platform': 1,  # PrestaShop default - TODO: Review
-                    'id_payment': id_payment,
-                    'shipping': 1,  # Default - TODO: Review
-                    'sectional': 1,  # Default
-                    'id_order_state': 1,  # Default
-                    'is_invoice_requested': order.get('fattura', 0),
-                    'payed': is_payed,
-                    'date_payment': None,  # Default
-                    'total_weight': 0,  # Will be calculated from order_details
-                    'total_price': order.get('total_paid_tax_excl', 0),
-                    'cash_on_delivery': 0,  # Default - TODO: Review
-                    'insured_value': 0,  # Default - TODO: Review
-                    'privacy_note': None,
-                    'note': order.get('order_note', ''),
-                    'delivery_date': None,
-                    'date_add': order.get('date_add', None)
-                }
-                
-                result = await self._upsert_order(order_data)
-                print(result)
-                '''results.append(result)
-                
-                # Process order details from associations
-                associations = order.get('associations', {})
-                order_rows = associations.get('order_rows', {})
-                
-                
-                # Handle both single order_row and multiple order_rows
-                if isinstance(order_rows, dict):
-                    if 'order_row' in order_rows:
-                        rows = order_rows['order_row']
-                        if not isinstance(rows, list):
-                            rows = [rows]  # Convert single item to list
-                    else:
-                        rows = []
+                order_id_prestashop = order.get('id', 0)
+                if str(order_id_prestashop) not in existing_order_origins:
+                    new_orders.append(order)
                 else:
-                    rows = []
-                
-                
-                # Process each order row
-                for row in rows:
-                    if isinstance(row, dict):
-                        order_detail_data = {
-                            'id_origin': row.get('id', f"{order_id}_{row.get('product_id', 'unknown')}"),
-                            'id_order': await self._get_order_id_by_origin(order_id),
-                            'id_invoice': 0,  # Default
-                            'id_order_document': 0,  # Default
-                            'id_product': await self._get_product_id_by_origin(row.get('product_id', '')),
-                            'product_name': row.get('product_name', ''),
-                            'product_reference': row.get('product_reference', ''),
-                            'product_quantity': int(row.get('product_quantity', 1)) if row.get('product_quantity') else 1,
-                            'product_weight': 0,  # Not available in order_rows
-                            'product_price': float(row.get('product_price', 0)) if row.get('product_price') else 0,
-                            'id_tax': await self._get_default_tax_id(),
-                            'reduction_percent': 0,  # Default
-                            'reduction_amount': 0,  # Default
-                            'rda': None  # Default
-                        }
-                        
-                        detail_result = await self._upsert_order_detail(order_detail_data)
-                        order_details_results.append(detail_result)
-                        
-                        # Add weight to total (product_weight * quantity)
-                        total_weight += order_detail_data['product_weight'] * order_detail_data['product_quantity']
-                
+                    print(f"DEBUG: Order {order_id_prestashop} already exists, skipping...")
             
-            # Update order total weight
-            if results and total_weight > 0:
-                # Update the first order's total weight (this could be improved to update each order individually)
-                await self._update_order_total_weight(results[0].get('id_origin', ''), total_weight)
+            print(f"DEBUG: Found {len(new_orders)} new orders to process out of {len(orders)} total orders")
             
-                print(f"DEBUG: Final counts - Orders: {len(results)}, Order Details: {len(order_details_results)}")
-                print(f"DEBUG: Orders processed: {len([r for r in results if r.get('status') == 'success'])}")
-                print(f"DEBUG: Order Details processed: {len([r for r in order_details_results if r.get('status') == 'success'])}")
-            self._log_sync_result("Orders", len(results))
-            self._log_sync_result("Order Details", len(order_details_results))'''
+            if not new_orders:
+                print("DEBUG: No new orders to process")
+                self._log_sync_result("Orders", 0)
+                return []
             
-            # Return both orders and order details results
-            return {
-                'orders': results,
-                'order_details': order_details_results
-            }
+            # Process all orders and create SQL file for bulk insert
+            total_successful = await self._process_all_orders_and_create_sql(new_orders)
             
+            print(f"DEBUG: Order sync completed - Total processed: {len(new_orders)}, Successful: {total_successful}")
+            
+            if total_successful > 0:
+                self._log_sync_result("Orders", total_successful)
+                return [{"status": "success", "count": total_successful}]
+            else:
+                self._log_sync_result("Orders", 0, ["No orders could be processed"])
+                return []
+   
         except Exception as e:
             self._log_sync_result("Orders", 0, [str(e)])
             raise
     
-    async def sync_product_tags(self) -> List[Dict[str, Any]]:
-        """Synchronize product-tag relationships from products endpoint"""
-        try:
-            # Get all products to extract tags
-            response = await self._make_request_with_rate_limit('/api/products', params={'display': '[id,id_category_default,id_manufacturer,name,reference]'})
-            products = self._extract_items_from_response(response, 'products')
-            
-            results = []
-            for product in products:
-                if 'tags' in product and product['tags']:
-                    # Handle both single language and multi-language tag formats
-                    if isinstance(product['tags'], list):
-                        # Multi-language format: [{"id": "1", "value": "tag1,tag2"}]
-                        for tag_entry in product['tags']:
-                            if tag_entry.get('value'):
-                                tags = tag_entry['value'].split(',')
-                                for tag in tags:
-                                    tag = tag.strip()
-                                    if tag:
-                                        # Get or create tag
-                                        tag_id = await self._get_or_create_tag(tag, tag_entry['id'])
-                                        product_id = await self._get_product_id_by_origin(product.get('id', ''))
-                                        
-                                        if tag_id and product_id:
-                                            product_tag_data = {
-                                                'id_tag': tag_id,
-                                                'id_product': product_id
-                                            }
-                                            
-                                            result = await self._upsert_product_tag(product_tag_data)
-                                            results.append(result)
-                    else:
-                        # Single language format: "tag1,tag2"
-                        tags = product['tags'].split(',')
-                        for tag in tags:
-                            tag = tag.strip()
-                            if tag:
-                                # Get or create tag
-                                tag_id = await self._get_or_create_tag(tag, '1')  # Default language
-                                product_id = await self._get_product_id_by_origin(product.get('id', ''))
-                                
-                                if tag_id and product_id:
-                                    product_tag_data = {
-                                        'id_tag': tag_id,
-                                        'id_product': product_id
-                                    }
-                                    
-                                    result = await self._upsert_product_tag(product_tag_data)
-                                    results.append(result)
-            
-            self._log_sync_result("Product Tags", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result("Product Tags", 0, [str(e)])
-            raise
-    
-    async def sync_order_details(self) -> List[Dict[str, Any]]:
-        """Order details are now synchronized together with orders to avoid duplicate API calls"""
-        try:
-            print("DEBUG: Order details are synchronized together with orders in sync_orders method")
-            print("DEBUG: This method is kept for compatibility but does not perform separate synchronization")
-            
-            # Return empty list since order details are handled in sync_orders
-            self._log_sync_result("Order Details", 0, ["Synchronized together with orders"])
-            return []
-            
-        except Exception as e:
-            self._log_sync_result("Order Details", 0, [str(e)])
-            raise
     
     # Helper methods for data extraction and transformation
     def _extract_product_type(self, product_name: Any) -> str:
@@ -1373,6 +1335,12 @@ class PrestaShopService(BaseEcommerceService):
             if not iso_code:
                 iso_code = "XX"
             
+            # Check if language already exists by ISO code
+            existing_lang = lang_repo.get_by_iso_code(iso_code)
+            if existing_lang:
+                print(f"DEBUG: Language with ISO code '{iso_code}' already exists (ID: {existing_lang.id_lang}), skipping creation")
+                return {"status": "skipped", "id_origin": data.get('id_origin', 'unknown'), "reason": "already_exists", "existing_id": existing_lang.id_lang}
+            
             # Create LangSchema
             lang_schema = LangSchema(
                 name=lang_name,
@@ -1382,6 +1350,7 @@ class PrestaShopService(BaseEcommerceService):
             # Create language in database
             lang_repo.create(lang_schema)
             
+            print(f"DEBUG: Successfully created language '{lang_name}' with ISO code '{iso_code}'")
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:
             print(f"DEBUG: Error upserting language {data.get('id_origin', 'unknown')}: {str(e)}")
@@ -1517,40 +1486,6 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error upserting carrier {data.get('id_origin', 'unknown')}: {str(e)}")
             return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
-    async def _upsert_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Upsert tag record"""
-        try:
-            from src.repository.tag_repository import TagRepository
-            
-            tag_repo = TagRepository(self.db)
-            
-            # Extract data from PrestaShop format
-            tag_name = data.get('name', '')
-            
-            if isinstance(tag_name, dict):
-                if 'value' in tag_name:
-                    tag_name = tag_name['value']
-                else:
-                    # If it's a dict but no 'value' key, try to get the first string value
-                    tag_name = str(list(tag_name.values())[0]) if tag_name else ''
-            elif isinstance(tag_name, list) and tag_name:
-                if isinstance(tag_name[0], dict):
-                    if 'value' in tag_name[0]:
-                        tag_name = tag_name[0]['value']
-                    else:
-                        # If it's a list of dicts but no 'value' key, try to get the first string value
-                        tag_name = str(list(tag_name[0].values())[0]) if tag_name[0] else ''
-                else:
-                    tag_name = str(tag_name[0])
-            
-            
-            # Create tag using repository
-            tag_repo.create(tag_name, data.get('id_origin', 0))
-            
-            return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
-        except Exception as e:
-            print(f"DEBUG: Error upserting tag {data.get('id_origin', 'unknown')}: {str(e)}")
-            return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
     async def _upsert_product(self, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -1675,25 +1610,18 @@ class PrestaShopService(BaseEcommerceService):
             order_repo = OrderRepository(self.db)
             
             # Convert data to OrderSchema
-            print(f"DEBUG: Creating OrderSchema with data: {data}")
             order_schema = OrderSchema(**data)
             # Create order in database
             order_repo.create(order_schema)
             
-            return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
+            id_order = int(self._get_order_id_by_origin(data.get('id_origin')))
+            
+            return {"status": "success", "id_origin": data.get('id_origin', 'unknown'), "id_order": id_order}
+            
         except Exception as e:
             print(f"DEBUG: Error upserting order {data.get('id_origin', 'unknown')}: {str(e)}")
             return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
-    async def _upsert_product_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Upsert product-tag relationship"""
-        try:
-            # Per ora implementiamo una versione semplificata
-            # In futuro si può creare una tabella di relazione dedicata
-            return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
-        except Exception as e:
-            print(f"DEBUG: Error upserting product-tag {data.get('id_origin', 'unknown')}: {str(e)}")
-            return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
     async def _upsert_order_detail(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Upsert order detail record"""
@@ -1769,7 +1697,7 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error getting customer ID by origin {origin_id}: {str(e)}")
             return 0
     
-    def _get_address_id_by_origin(self, origin_id) -> Optional[int]:
+    def _get_address_id_by_origin(self, origin_id: int) -> Optional[int]:
         """Get address ID by origin ID"""
         try:
             # Convert to string and check for empty/zero values               
@@ -1797,40 +1725,63 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error getting payment ID by name {payment_name}: {str(e)}")
             return 0
     
-    async def _get_tag_id_by_origin(self, origin_id: str) -> Optional[int]:
-        """Get tag ID by origin ID"""
+    async def _get_or_create_payment_id(self, payment_name: str, payment_repo=None) -> Optional[int]:
+        """Get existing payment ID or create new payment if not exists"""
         try:
-            from src.repository.tag_repository import TagRepository
-            tag_repo = TagRepository(self.db)
-            tag = tag_repo.get_by_origin_id(origin_id)
-            return tag.id_tag if tag else None
+            if not payment_name:
+                return None
+                
+            # Use provided repository or create new one if not provided
+            if payment_repo is None:
+                from src.repository.payment_repository import PaymentRepository
+                payment_repo = PaymentRepository(self.db)
+            
+            # Try to find existing payment
+            payment = payment_repo.get_by_name(payment_name)
+            if payment:
+                return payment.id_payment
+            
+            # Create new payment if not exists
+            print(f"DEBUG: Creating new payment: {payment_name}")
+            from src.schemas.payment_schema import PaymentSchema
+            payment_schema = PaymentSchema(
+                name=payment_name,
+                is_complete_payment=False  # Default to incomplete, can be updated later
+            )
+            payment_repo.create(payment_schema)
+            
+            # Get the newly created payment ID
+            new_payment = payment_repo.get_by_name(payment_name)
+            return new_payment.id_payment if new_payment else None
+            
         except Exception as e:
-            print(f"DEBUG: Error getting tag ID by origin {origin_id}: {str(e)}")
+            print(f"DEBUG: Error getting or creating payment {payment_name}: {str(e)}")
             return None
     
-    async def _get_product_id_by_origin(self, origin_id: str) -> Optional[int]:
+    
+    def _get_product_id_by_origin(self, origin_id: int) -> Optional[int]:
         """Get product ID by origin ID"""
         try:
             from src.repository.product_repository import ProductRepository
             product_repo = ProductRepository(self.db)
             product = product_repo.get_by_origin_id(origin_id)
-            return product.id_product if product else None
+            return product.id_product if product else 0
         except Exception as e:
             print(f"DEBUG: Error getting product ID by origin {origin_id}: {str(e)}")
-            return None
+            return 0
     
-    async def _get_order_id_by_origin(self, origin_id: str) -> Optional[int]:
+    def _get_order_id_by_origin(self, origin_id: str) -> Optional[int]:
         """Get order ID by origin ID"""
         try:
             from src.repository.order_repository import OrderRepository
             order_repo = OrderRepository(self.db)
-            order = order_repo.get_by_origin_id(origin_id)
-            return order.id_order if order else None
+            order = order_repo.get_id_by_origin_id(origin_id)
+            return order.id_order if order else 0
         except Exception as e:
             print(f"DEBUG: Error getting order ID by origin {origin_id}: {str(e)}")
-            return None
+            return 0
     
-    async def _get_default_tax_id(self) -> int:
+    def _get_default_tax_id(self) -> int:
         """Get default tax ID"""
         try:
             from src.repository.tax_repository import TaxRepository
@@ -1841,6 +1792,71 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             print(f"DEBUG: Error getting default tax ID: {str(e)}")
             return 1  # Default fallback
+
+    def _get_tax_by_country(self, id_country: int) -> float:
+        """Get tax percentage by country ID"""
+        try:
+            from src.repository.tax_repository import TaxRepository
+            from src.models.tax import Tax
+            
+            # Check if id_country is valid
+            if id_country is None or id_country == 0:
+                print(f"DEBUG: Invalid country ID: {id_country}, using default tax")
+                tax = self.db.query(Tax).filter(Tax.is_default == True).first()
+                if tax is None:
+                    print(f"DEBUG: No default tax found, using fallback")
+                    return {
+                        "percentage": 22.0,
+                        "id_tax": 1
+                    }
+                return {
+                    "percentage": tax.percentage if tax.percentage is not None else 22.0,
+                    "id_tax": tax.id_tax
+                }
+
+            tax = self.db.query(Tax).filter(Tax.id_country == id_country).first()
+            
+            if tax is None:
+                # No tax found for this country, try to get default tax
+                print(f"DEBUG: No tax found for country {id_country}, trying default tax")
+                tax = self.db.query(Tax).filter(Tax.is_default == True).first()
+                if tax is None:
+                    print(f"DEBUG: No default tax found, using fallback")
+                    return {
+                        "percentage": 0.0,
+                        "id_tax": 1
+                    }
+            
+            percentage = tax.percentage if tax.percentage is not None else 0.0
+
+            
+            print(f"DEBUG: Found tax percentage {percentage}% for country {id_country}")
+            return {
+                "percentage": percentage,
+                "id_tax": tax.id_tax
+            }
+            
+        except Exception as e:
+            print(f"DEBUG: Error getting tax percentage for country {id_country}: {str(e)}")
+            return 22  # Default fallback to 0% tax
+
+
+    def _get_country_id_by_address_id(self, address_id: int) -> Optional[int]:
+        """Get country ID by address ID"""
+        try:
+            if not address_id or address_id == 0:
+                return None
+                
+            from src.repository.address_repository import AddressRepository
+            address_repo = AddressRepository(self.db)
+            address = address_repo.get_by_id(address_id)
+            if address and address.id_country:
+                return address.id_country
+            return None
+            
+        except Exception as e:
+            print(f"DEBUG: Error getting country ID by address ID {address_id}: {str(e)}")
+            return None
     
     
     def _get_payment_complete_status(self, payment_name: str) -> bool:
@@ -1918,7 +1934,6 @@ class PrestaShopService(BaseEcommerceService):
             # Use raw SQL to disable foreign key checks
             from sqlalchemy import text
             result = self.db.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
-            print(f"Foreign key checks disabled - Result: {result}")
             
             # Verify that FK checks are disabled
             check_result = self.db.execute(text("SELECT @@FOREIGN_KEY_CHECKS")).fetchone()
@@ -1926,7 +1941,6 @@ class PrestaShopService(BaseEcommerceService):
             
             # Also disable autocommit to ensure the setting persists
             self.db.autocommit = False
-            print("DEBUG: Autocommit disabled")
         except Exception as e:
             print(f"Error disabling foreign key checks: {e}")
 
@@ -1950,18 +1964,17 @@ class PrestaShopService(BaseEcommerceService):
         except:
             return ''
     
-    async def _update_order_total_weight(self, order_origin_id: str, total_weight: float):
+    async def _update_order_total_weight(self, order_id: int, total_weight: float):
         """Update order total weight"""
         try:
             from src.repository.order_repository import OrderRepository
             order_repo = OrderRepository(self.db)
-            order = order_repo.get_by_origin_id(order_origin_id)
+            order = order_repo.get_by_id(order_id)
             if order:
                 order.total_weight = total_weight
-                order_repo.update(order)
-                print(f"DEBUG: Updated order {order_origin_id} total weight to {total_weight}")
+                order_repo.update(order, OrderUpdateSchema(total_weight=total_weight))
         except Exception as e:
-            print(f"DEBUG: Error updating order total weight for {order_origin_id}: {str(e)}")
+            print(f"DEBUG: Error updating order total weight for {order_id}: {str(e)}")
     
     # Incremental sync methods
     async def _get_last_imported_ids(self) -> Dict[str, int]:
@@ -1980,12 +1993,10 @@ class PrestaShopService(BaseEcommerceService):
             'brand': 'brand',
             'category': 'category',
             'carrier': 'carrier',
-            'tag': 'tag',
             'product': 'product',
             'customer': 'customer',
             'address': 'address',
             'order': 'order',
-            'product_tag': 'producttag',
             'order_detail': 'order_detail'
         }
         
@@ -2204,32 +2215,6 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result(f"Carriers (Incremental from ID {last_id})", 0, [str(e)])
             raise
     
-    async def sync_tags_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new tags from ps_tag"""
-        try:
-            params = {'filter[id]': f'[{last_id + 1},]'}
-            response = await self._make_request_with_rate_limit('/api/tags', params)
-            tags = response.get('tags', {}).get('tag', [])
-            
-            if not isinstance(tags, list):
-                tags = [tags]
-            
-            results = []
-            for tag in tags:
-                tag_data = {
-                    'id_origin': tag.get('id', ''),
-                    'name': tag.get('name', '')
-                }
-                
-                result = await self._upsert_tag(tag_data)
-                results.append(result)
-            
-            self._log_sync_result(f"Tags (Incremental from ID {last_id})", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result(f"Tags (Incremental from ID {last_id})", 0, [str(e)])
-            raise
     
     async def sync_products_incremental(self, last_id: int) -> List[Dict[str, Any]]:
         """Synchronize only new products from ps_product (Italian language only)"""
@@ -2502,6 +2487,10 @@ class PrestaShopService(BaseEcommerceService):
             order_details_results = []
             total_weight = 0
             
+            # Initialize payment repository once for all orders
+            from src.repository.payment_repository import PaymentRepository
+            payment_repo = PaymentRepository(self.db)
+            
             for order in orders:
                 order_id = order.get('id', '')
                 
@@ -2517,7 +2506,7 @@ class PrestaShopService(BaseEcommerceService):
                     'id_address_invoice': self._get_address_id_by_origin(order.get('id_address_invoice')),
                     'id_customer': self._get_customer_id_by_origin(order.get('id_customer', '')),
                     'id_platform': 1,
-                    'id_payment': await self._get_payment_id_by_name(order.get('payment', '')),
+                    'id_payment': await self._get_or_create_payment_id(order.get('payment', ''), payment_repo),
                     'id_order_state': 1,
                     'is_invoice_requested': order.get('fattura', 0),
                     'payed': self._get_payment_complete_status(order.get('payment', '')),
@@ -2556,18 +2545,19 @@ class PrestaShopService(BaseEcommerceService):
                 # Process each order row
                 for row in rows:
                     if isinstance(row, dict):
+                        print(row)
                         order_detail_data = {
                             'id_origin': row.get('id', f"{order_id}_{row.get('product_id', 'unknown')}"),
-                            'id_order': await self._get_order_id_by_origin(order_id),
+                            'id_order': self._get_order_id_by_origin(order_id),
                             'id_invoice': 0,  # Default
                             'id_order_document': 0,  # Default
-                            'id_product': await self._get_product_id_by_origin(row.get('product_id', '')),
+                            'id_product': self._get_product_id_by_origin(row.get('product_id')),
                             'product_name': row.get('product_name', ''),
                             'product_reference': row.get('product_reference', ''),
                             'product_quantity': int(row.get('product_quantity', 1)) if row.get('product_quantity') else 1,
                             'product_weight': 0,  # Not available in order_rows
                             'product_price': float(row.get('product_price', 0)) if row.get('product_price') else 0,
-                            'id_tax': await self._get_default_tax_id(),
+                            'id_tax': self._get_default_tax_id(),
                             'reduction_percent': 0,  # Default
                             'reduction_amount': 0,  # Default
                             'rda': None  # Default
@@ -2604,7 +2594,10 @@ class PrestaShopService(BaseEcommerceService):
             # Update order total weight
             if results and total_weight > 0:
                 # Update the first order's total weight (this could be improved to update each order individually)
-                await self._update_order_total_weight(results[0].get('id_origin', ''), total_weight)
+                id_order = int(results[0].get('id_order'))
+                if id_order:
+                    rounded_weight = round(total_weight, 2)
+                    await self._update_order_total_weight(id_order, rounded_weight)
             
             self._log_sync_result(f"Orders (Incremental from ID {last_id})", len(results))
             self._log_sync_result(f"Order Details (Incremental from ID {last_id})", len(order_details_results))
@@ -2619,81 +2612,10 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result(f"Orders (Incremental from ID {last_id})", 0, [str(e)])
             raise
     
-    async def sync_product_tags_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new product-tag relationships from products endpoint"""
-        try:
-            # Get only new products (incremental)
-            params = {'filter[id]': f'[{last_id + 1},]'}
-            response = await self._make_request_with_rate_limit('/api/products', params)
-            products = self._extract_items_from_response(response, 'products')
-            
-            results = []
-            for product in products:
-                if 'tags' in product and product['tags']:
-                    # Handle both single language and multi-language tag formats
-                    if isinstance(product['tags'], list):
-                        # Multi-language format: [{"id": "1", "value": "tag1,tag2"}]
-                        for tag_entry in product['tags']:
-                            if tag_entry.get('value'):
-                                tags = tag_entry['value'].split(',')
-                                for tag in tags:
-                                    tag = tag.strip()
-                                    if tag:
-                                        # Get or create tag
-                                        tag_id = await self._get_or_create_tag(tag, tag_entry['id'])
-                                        product_id = await self._get_product_id_by_origin(product.get('id', ''))
-                                        
-                                        if tag_id and product_id:
-                                            product_tag_data = {
-                                                'id_tag': tag_id,
-                                                'id_product': product_id
-                                            }
-                                            
-                                            result = await self._upsert_product_tag(product_tag_data)
-                                            results.append(result)
-                    else:
-                        # Single language format: "tag1,tag2"
-                        tags = product['tags'].split(',')
-                        for tag in tags:
-                            tag = tag.strip()
-                            if tag:
-                                # Get or create tag
-                                tag_id = await self._get_or_create_tag(tag, '1')  # Default language
-                                product_id = await self._get_product_id_by_origin(product.get('id', ''))
-                                
-                                if tag_id and product_id:
-                                    product_tag_data = {
-                                        'id_tag': tag_id,
-                                        'id_product': product_id
-                                    }
-                                    
-                                    result = await self._upsert_product_tag(product_tag_data)
-                                    results.append(result)
-            
-            self._log_sync_result(f"Product Tags (Incremental from ID {last_id})", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result(f"Product Tags (Incremental from ID {last_id})", 0, [str(e)])
-            raise
     
-    async def sync_order_details_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Order details are now synchronized together with orders to avoid duplicate API calls"""
-        try:
-            print(f"DEBUG: Order details incremental sync is handled together with orders in sync_orders_incremental method")
-            print(f"DEBUG: This method is kept for compatibility but does not perform separate synchronization (from ID {last_id})")
-            
-            # Return empty list since order details are handled in sync_orders_incremental
-            self._log_sync_result("Order Details Incremental", 0, ["Synchronized together with orders"])
-            return []
-            
-        except Exception as e:
-            self._log_sync_result(f"Order Details (Incremental from ID {last_id})", 0, [str(e)])
-            raise
     
     def _extract_items_from_response(self, response: Any, key: str) -> List[Dict[str, Any]]:
         """Extract items from API response, handling both list and dict formats"""
-        print(f"DEBUG: Extracting {key} from response type: {type(response)}")
         
         if isinstance(response, list):
             print(f"DEBUG: Response is a list with {len(response)} items")
@@ -2704,10 +2626,8 @@ class PrestaShopService(BaseEcommerceService):
             # Try different possible structures
             if key in response:
                 items = response[key]
-                print(f"DEBUG: Found {key} in response, type: {type(items)}")
                 
                 if isinstance(items, dict):
-                    print(f"DEBUG: {key} is a dict with keys: {list(items.keys())}")
                     # Handle nested structure like {'languages': {'language': [...]}}
                     singular_key = key.rstrip('s')  # languages -> language
                     if singular_key in items:
@@ -2746,37 +2666,410 @@ class PrestaShopService(BaseEcommerceService):
             return []
     
     async def _get_orders_data(self) -> List[Dict[str, Any]]:
-        """Get orders data with caching and pagination to avoid server overload"""
-        if self._orders_cache is None:
-            date_range_filter = self._get_date_range_filter()
-            six_months_ago = self._get_six_months_ago_date()
+        """Get orders data with pagination to avoid server overload"""
+        print("DEBUG: Fetching fresh orders data...")
+        date_range_filter = self._get_date_range_filter()
+        six_months_ago = self._get_six_months_ago_date()
+        
+        all_orders = []
+        limit = 5000  
+        offset = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        
+        while True:
+            try:
+                # Include order_rows associations to get order details
+                # Use PrestaShop format: limit=[offset,]limit
+                # Filter orders for the last 6 months using date range filter
+                params = {
+                    'display': 'full',
+                    'filter[date_add]': date_range_filter,  # Orders from 6 months ago to today
+                    'date': 1,
+                    'limit': f'{offset},{limit}'
+                }
+                
+                print(f"DEBUG: Fetching orders batch {offset//limit + 1} (offset: {offset}, limit: {limit})")
+                
+                response = await self._make_request_with_rate_limit('/api/orders', params)
             
+                
+                orders_batch = self._extract_items_from_response(response, 'orders')
+                
+                if not orders_batch:
+                    print(f"DEBUG: No more orders found at offset {offset}")
+                    break
+                
+                
+                all_orders.extend(orders_batch)
+                offset += limit
+                consecutive_errors = 0  # Reset error counter on success
+                
+                # Debug: Show last order ID and date in this batch
+                last_order = orders_batch[-1] if orders_batch else {}
+                last_order_id = last_order.get('id', last_order.get('id_order', 'unknown'))
+                last_order_date = orders_batch[-1].get('date_add', 'unknown') if orders_batch else 'none'
+                print(f"DEBUG: Fetched {len(orders_batch)} orders (total: {len(all_orders)}) - Last ID: {last_order_id}, Date: {last_order_date}")
+                
+                # Small delay between batches to be gentle with the server
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                consecutive_errors += 1
+                print(f"DEBUG: Error {consecutive_errors}/{max_consecutive_errors} at offset {offset}")
+                print(f"DEBUG: Error type: {type(e).__name__}")
+                print(f"DEBUG: Error message: {str(e)}")
+                print(f"DEBUG: Error args: {e.args if hasattr(e, 'args') else 'No args'}")
+                
+                # If too many consecutive errors, give up
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"DEBUG: Too many consecutive errors ({consecutive_errors}), stopping order fetch")
+                    break
+                
+                error_msg = str(e).lower()
+                
+                # Check for memory exhaustion errors first
+                if any(keyword in error_msg for keyword in ['memory', 'exhausted', 'fatal error', 'allowed memory size']):
+                    print(f"DEBUG: Memory exhaustion error - reducing batch size from {limit} to {max(5, limit // 4)}")
+                    limit = max(5, limit // 4)  # Reduce batch size more aggressively
+                    await asyncio.sleep(15)  # Wait longer before retry
+                    continue
+                elif any(keyword in error_msg for keyword in ['500', 'server', 'timeout', 'connection reset', 'disconnected']):
+                    print(f"DEBUG: Server error - reducing batch size from {limit} to {max(10, limit // 2)}")
+                    limit = max(10, limit // 2)  # Reduce batch size
+                    await asyncio.sleep(8)  # Wait before retry
+                    continue
+                else:
+                    print(f"DEBUG: Non-server error - continuing with next batch...")
+                    # Don't break, try to continue with next batch
+                    offset += limit
+                    await asyncio.sleep(2)
+                    continue
+        
+        print(f"DEBUG: Fetched {len(all_orders)} orders total")
+        
+        # Debug: Check if orders respect the date filter
+        if all_orders:
+            first_order_date = all_orders[0].get('date_add', 'unknown')
+            last_order_date = all_orders[-1].get('date_add', 'unknown')
+            print(f"DEBUG: Date range of orders: {first_order_date} to {last_order_date}")
+            print(f"DEBUG: Filter was: filter[date_add]={date_range_filter}")
+            
+            # Check if filter is working - if we get old dates, the filter is not working
+            if '2017' in str(first_order_date) or '2018' in str(first_order_date) or '2019' in str(first_order_date):
+                print(f"WARNING: Date filter is NOT working! Getting orders from {first_order_date}")
+                print(f"WARNING: Expected orders from {six_months_ago} onwards")
+                print(f"WARNING: Applying client-side date filtering...")
+                
+                # Apply client-side filtering
+                all_orders = self._filter_orders_by_date(all_orders, six_months_ago)
+                print(f"DEBUG: After date filtering: {len(all_orders)} orders")
+        
+        return all_orders
 
+    async def _process_all_orders_and_create_sql(self, all_orders: List[Dict]) -> int:
+        """Process all orders and create SQL file for bulk insert"""
+        try:
+            from sqlalchemy import text
+            from datetime import date
+            print("DEBUG: Processing all orders and creating SQL file...")
+            
+            # OPTIMIZATION: Two-pass approach for maximum performance
+            # Pass 1: Collect all unique IDs from orders (no database queries)
+            print("DEBUG: Pass 1 - Collecting all unique IDs from orders...")
+            customer_origins = set()
+            product_origins = set()
+            address_origins = set()
+            # Note: payments are handled dynamically during order processing
+            for order in all_orders:
+                # Collect customer origins
+                customer_origin = order['id_customer']
+                if customer_origin and customer_origin != '0':
+                    try:
+                        customer_origins.add(int(customer_origin))
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Note: payment names are collected and processed dynamically during order processing
+                
+                # Collect address origins
+                delivery_address = order.get('id_address_delivery',0)
+                invoice_address = order.get('id_address_invoice',0)
+                for addr_id in [delivery_address, invoice_address]:
+                    address_origins.add(int(addr_id))
+                
+                # Collect product origins from order details (if available)
+                order_details = order.get('associations', {}).get('order_rows', {})
+                
+                # Handle different data structures: could be dict with 'order_row' key or direct list
+                if isinstance(order_details, dict):
+                    if 'order_row' in order_details:
+                        order_details = order_details.get('order_row', [])
+                    else:
+                        # If it's a dict but no 'order_row' key, treat as single item
+                        order_details = [order_details] if order_details else []
+                elif not isinstance(order_details, list):
+                    order_details = [order_details] if order_details else []
+
+                for detail in order_details:
+                    product_origin = detail.get('product_id')
+                    print(detail)
+                    if product_origin and product_origin != '0':
+                        try:
+                            product_origins.add(int(product_origin))
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Now pre-fetch all mappings using raw SQL queries
+            print("DEBUG: Pre-fetching all required mappings with raw SQL...")
+            all_customers = {}
+            if customer_origins:
+                placeholders = ','.join([':id_origin_' + str(i) for i in range(len(customer_origins))])
+                params = {f'id_origin_{i}': origin for i, origin in enumerate(customer_origins)}
+                query = text(f"SELECT id_customer, id_origin FROM customers WHERE id_origin IN ({placeholders})")
+                result = self.db.execute(query, params)
+                all_customers = {int(row.id_origin): row.id_customer for row in result}
+            
+            all_products = {}
+            if product_origins:
+                placeholders = ','.join([':id_origin_' + str(i) for i in range(len(product_origins))])
+                params = {f'id_origin_{i}': origin for i, origin in enumerate(product_origins)}
+                query = text(f"SELECT id_product, id_origin FROM products WHERE id_origin IN ({placeholders})")
+                result = self.db.execute(query, params)
+                all_products = {int(row.id_origin): row.id_product for row in result}
+            
+            # Note: payments are handled dynamically during order processing
+            
+            all_addresses = {}
+            if address_origins:
+                placeholders = ','.join([':id_origin_' + str(i) for i in range(len(address_origins))])
+                params = {f'id_origin_{i}': origin for i, origin in enumerate(address_origins)}
+                query = text(f"SELECT id_address, id_origin FROM addresses WHERE id_origin IN ({placeholders})")
+                result = self.db.execute(query, params)
+                all_addresses = {int(row.id_origin): row.id_address for row in result}
+            
+            # Pre-fetch product weights using raw SQL
+            product_weight_mapping = {}
+            if product_origins:
+                placeholders = ','.join([':id_origin_' + str(i) for i in range(len(product_origins))])
+                params = {f'id_origin_{i}': origin for i, origin in enumerate(product_origins)}
+                query = text(f"SELECT id_product, weight FROM products WHERE id_origin IN ({placeholders}) AND weight IS NOT NULL")
+                result = self.db.execute(query, params)
+                product_weight_mapping = {str(row.id_product): row.weight for row in result}
+            
+            print(f"DEBUG: Pre-fetched {len(all_customers)} customer IDs, {len(all_products)} product IDs, {len(all_addresses)} address IDs, {len(product_weight_mapping)} product weights")
+            
+            # Pass 2: Process orders using pre-fetched mappings (fast in-memory lookups)
+            print("DEBUG: Pass 2 - Processing orders with pre-fetched mappings...")
+            valid_order_data = []
+            valid_order_detail_data = []
+            total_errors = 0
+            
+            # Initialize payment repository once for all orders
+            from src.repository.payment_repository import PaymentRepository
+            payment_repo = PaymentRepository(self.db)
+            
+            for order in all_orders:
+                try:
+                    # Get order data
+                    order_id_origin = safe_int(order.get('id', 0))
+                    customer_origin = safe_int(order.get('id_customer', 0))
+                    delivery_address_origin = safe_int(order.get('id_address_delivery', 0))
+                    invoice_address_origin = safe_int(order.get('id_address_invoice', 0))
+                    payment_name = order.get('payment', '')
+                    
+                    # Validate required fields
+                    if not order_id_origin or not customer_origin:
+                        total_errors += 1
+                        continue
+                    
+                    # Get mapped IDs
+                    customer_id = all_customers.get(customer_origin)
+                    delivery_address_id = all_addresses.get(delivery_address_origin)
+                    invoice_address_id = all_addresses.get(invoice_address_origin)
+                    payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
+                    
+                    if not customer_id:
+                        total_errors += 1
+                        continue
+                    
+                    # Get country ID from delivery address for tax calculation
+                    id_country = self._get_country_id_by_address_id(delivery_address_id) if delivery_address_id else None
+                    is_payed = self._get_payment_complete_status(payment_name)
+                    
+                    # Prepare complete order data
+                    order_data = {
+                        'id_origin': order_id_origin,
+                        'address_delivery': delivery_address_id,
+                        'address_invoice': invoice_address_id,
+                        'customer': customer_id,
+                        'id_platform': 1,  # TODO: r
+                        'id_payment': payment_id,
+                        'shipping': 1,  # Default
+                        'sectional': 1,  # Default
+                        'id_order_state': 1,  # Default
+                        'is_invoice_requested': order.get('fattura', 0),
+                        'payed': is_payed,
+                        'date_payment': None,  # Default
+                        'total_weight': 0,  # Will be calculated from order_details
+                        'total_price': safe_float(order.get('total_paid_tax_excl', 0)),
+                        'cash_on_delivery': 0,  # Default
+                        'insured_value': 0,  # Default
+                        'privacy_note': None,
+                        'note': order.get('order_note', ''),
+                        'delivery_date': None,
+                        'date_add': order.get('date_add', None)
+                    }
+                    valid_order_data.append(order_data)
+                    
+                    # Process order details
+                    order_details = order.get('associations', {}).get('order_rows', {})
+                    
+                    # Handle different data structures: could be dict with 'order_row' key or direct list
+                    if isinstance(order_details, dict):
+                        if 'order_row' in order_details:
+                            order_details = order_details.get('order_row', [])
+                        else:
+                            # If it's a dict but no 'order_row' key, treat as single item
+                            order_details = [order_details] if order_details else []
+                    elif not isinstance(order_details, list):
+                        order_details = [order_details] if order_details else []
+                    
+                    for detail in order_details:
+                        try:
+                            product_origin = safe_int(detail.get('product_id', 0))
+                            product_quantity = safe_int(detail.get('product_quantity', 0))
+                            
+                            if not product_origin or not product_quantity:
+                                continue
+                            
+                            product_id = all_products.get(product_origin)
+                            if not product_id:
+                                continue
+                            
+                            # Get product weight from mapping
+                            product_weight = product_weight_mapping.get(str(product_id), 0.0) if product_id else 0.0
+                            
+                            # Get tax information for the country
+                            tax = self._get_tax_by_country(id_country) if id_country else {"id_tax": 1}
+                            id_tax = tax.get('id_tax', 1)
+                            
+                            # Prepare complete order detail data
+                            order_detail_data = {
+                                'id_origin': detail.get('id', 0),
+                                'id_order': None,  # Will be set after order insert
+                                'id_invoice': 0,
+                                'id_order_document': 0,
+                                'id_product': product_id,
+                                'product_name': detail.get('product_name', 'ND'),
+                                'product_reference': detail.get('product_reference', 'ND'),
+                                'product_qty': product_quantity,
+                                'product_weight': product_weight,
+                                'product_price': safe_float(detail.get('product_price', 0.0)),
+                                'id_tax': id_tax,
+                                'reduction_percent': 0,
+                                'reduction_amount': 0,
+                                'rda': None
+                            }
+                            valid_order_detail_data.append(order_detail_data)
+                            
+                        except Exception as e:
+                            print(f"DEBUG: Error processing order detail: {str(e)}")
+                            continue
+                    
+                except Exception as e:
+                    print(f"DEBUG: Error processing order {order.get('id', 'unknown')}: {str(e)}")
+                    total_errors += 1
+                    continue
+            
+            print(f"DEBUG: Prepared {len(valid_order_data)} valid orders, {len(valid_order_detail_data)} order details, {total_errors} errors")
+            
+            if not valid_order_data:
+                print("DEBUG: No valid orders to insert")
+                return 0
+            
+            # Create SQL file for orders
+            orders_sql_file = "temp_orders_insert.sql"
+            with open(orders_sql_file, 'w', encoding='utf-8') as f:
+                f.write("-- Orders bulk insert\n")
+                f.write("INSERT INTO orders (id_origin, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
+                
+                for i, order_data in enumerate(valid_order_data):
+                    comma = "," if i < len(valid_order_data) - 1 else ";"
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
+            
+            # Execute orders SQL file
+            print(f"DEBUG: Executing orders SQL file: {orders_sql_file}")
+            with open(orders_sql_file, 'r', encoding='utf-8') as f:
+                sql_content = f.read()
+                self.db.execute(text(sql_content))
+                self.db.commit()
+            
+            # Get the inserted order IDs
+            inserted_orders = self.db.execute(text("SELECT id_order, id_origin FROM orders WHERE id_origin IN :origins"), 
+                                            {"origins": [order['id_origin'] for order in valid_order_data]}).fetchall()
+            order_id_mapping = {row.id_origin: row.id_order for row in inserted_orders}
+            
+            # Update order detail data with order IDs
+            for detail in valid_order_detail_data:
+                # Find the corresponding order ID
+                for order_data in valid_order_data:
+                    if order_data['id_origin'] in order_id_mapping:
+                        detail['id_order'] = order_id_mapping[order_data['id_origin']]
+                        break
+            
+            # Create SQL file for order details
+            if valid_order_detail_data:
+                details_sql_file = "temp_order_details_insert.sql"
+                with open(details_sql_file, 'w', encoding='utf-8') as f:
+                    f.write("-- Order details bulk insert\n")
+                    f.write("INSERT INTO order_details (id_origin, id_order, id_invoice, id_order_document, id_product, product_name, product_reference, product_qty, product_weight, product_price, id_tax, reduction_percent, reduction_amount, rda) VALUES\n")
+                    
+                    for i, detail_data in enumerate(valid_order_detail_data):
+                        if detail_data['id_order']:  # Only include details with valid order IDs
+                            comma = "," if i < len(valid_order_detail_data) - 1 else ";"
+                            f.write(f"({detail_data['id_origin']}, {detail_data['id_order']}, {sql_value(detail_data['id_invoice'])}, {sql_value(detail_data['id_order_document'])}, {detail_data['id_product']}, {sql_value(detail_data['product_name'])}, {sql_value(detail_data['product_reference'])}, {detail_data['product_qty']}, {detail_data['product_weight']}, {detail_data['product_price']}, {sql_value(detail_data['id_tax'])}, {detail_data['reduction_percent']}, {detail_data['reduction_amount']}, {sql_value(detail_data['rda'])}){comma}\n")
+                
+                # Execute order details SQL file
+                print(f"DEBUG: Executing order details SQL file: {details_sql_file}")
+                with open(details_sql_file, 'r', encoding='utf-8') as f:
+                    sql_content = f.read()
+                    self.db.execute(text(sql_content))
+                    self.db.commit()
+                
+                # Clean up order details SQL file
+                import os
+                if os.path.exists(details_sql_file):
+                    os.remove(details_sql_file)
+            
+            # Clean up orders SQL file
+            import os
+            if os.path.exists(orders_sql_file):
+                os.remove(orders_sql_file)
+            
+            print(f"DEBUG: Successfully inserted {len(valid_order_data)} orders and {len(valid_order_detail_data)} order details via SQL files")
+            
+            return len(valid_order_data)
+            
+        except Exception as e:
+            print(f"DEBUG: Error in _process_all_orders_and_create_sql: {str(e)}")
+            raise
+
+    async def _get_payments_data(self) -> List[Dict[str, Any]]:
+        """Get orders data with only payment field for payment method extraction"""
+        try:            
             all_orders = []
-            limit = 5000  # Batch size
+            limit = 2500  # Start with smaller batch size to avoid memory issues
             offset = 0
             
             while True:
                 try:
-            # Include order_rows associations to get order details
-                    # Use PrestaShop format: limit=[offset,]limit
-                    # Filter orders for the last 6 months using date range filter
+                    # Request only the payment field to optimize the API call
                     params = {
-                        'display': 'full',
-                        'filter[date_add]': date_range_filter,  # Orders from 6 months ago to today
-                        'date': 1,
-                        'limit': f'{offset},{limit}'
+                        'display': '[payment]',
+                        'limit': f'{offset},{limit}'  # Add pagination
                     }
-                    
-                    print(f"DEBUG: Fetching orders batch {offset//limit + 1} (offset: {offset}, limit: {limit})")
-                    
-                    # Debug: Print the complete URL with parameters
-                    import urllib.parse
-                    base_url = f"{self.base_url}/api/orders"
-                    query_string = urllib.parse.urlencode(params)
-                    full_url = f"{base_url}?{query_string}"
-                    print(f"DEBUG: Orders API Request URL: {full_url}")
-                    
+
                     response = await self._make_request_with_rate_limit('/api/orders', params)
                     orders_batch = self._extract_items_from_response(response, 'orders')
                     
@@ -2787,25 +3080,31 @@ class PrestaShopService(BaseEcommerceService):
                     all_orders.extend(orders_batch)
                     offset += limit
                     
-                    # Debug: Show last order ID and date in this batch
+                    # Debug: Show last order ID and payment method in this batch
                     last_order_id = orders_batch[-1].get('id', 'unknown') if orders_batch else 'none'
-                    last_order_date = orders_batch[-1].get('date_add', 'unknown') if orders_batch else 'none'
-                    print(f"DEBUG: Fetched {len(orders_batch)} orders (total: {len(all_orders)}) - Last ID: {last_order_id}, Date: {last_order_date}")
+                    last_payment = orders_batch[-1].get('payment', 'unknown') if orders_batch else 'none'
                     
-                    # Small delay between batches to be gentle with the server
-                    await asyncio.sleep(0.5)
+                    # Longer delay between batches to be gentle with the server
+                    await asyncio.sleep(2)
                     
                 except Exception as e:
                     # Debug: Print full error details
-                    print(f"DEBUG: Full error details for orders at offset {offset}:")
+                    print(f"DEBUG: Full error details for payment data at offset {offset}:")
                     print(f"DEBUG: Error type: {type(e).__name__}")
                     print(f"DEBUG: Error message: {str(e)}")
                     print(f"DEBUG: Error args: {e.args if hasattr(e, 'args') else 'No args'}")
                     
                     error_msg = str(e).lower()
-                    if any(keyword in error_msg for keyword in ['500', 'server', 'timeout', 'connection reset', 'disconnected']):
+                    
+                    # Check for memory exhaustion errors
+                    if any(keyword in error_msg for keyword in ['memory', 'exhausted', 'fatal error', 'allowed memory size']):
+                        print(f"DEBUG: Memory exhaustion error at offset {offset}, reducing batch size significantly...")
+                        limit = max(10, limit // 4)  # Reduce batch size more aggressively
+                        await asyncio.sleep(5)  # Wait longer before retry
+                        continue
+                    elif any(keyword in error_msg for keyword in ['500', 'server', 'timeout', 'connection reset', 'disconnected']):
                         print(f"DEBUG: Server error at offset {offset}, retrying with smaller batch...")
-                        limit = max(100, limit // 2)  # Reduce batch size
+                        limit = max(10, limit // 2)  # Reduce batch size
                         await asyncio.sleep(3)  # Wait before retry
                         continue
                     else:
@@ -2815,29 +3114,13 @@ class PrestaShopService(BaseEcommerceService):
                         await asyncio.sleep(1)
                         continue
             
-                self._orders_cache = all_orders
-                
-                # Debug: Check if orders respect the date filter
-                if all_orders:
-                    first_order_date = all_orders[0].get('date_add', 'unknown')
-                    last_order_date = all_orders[-1].get('date_add', 'unknown')
-                    print(f"DEBUG: Date range of cached orders: {first_order_date} to {last_order_date}")
-                    print(f"DEBUG: Filter was: filter[date_add]={date_range_filter}")
-                    
-                    # Check if filter is working - if we get old dates, the filter is not working
-                    if '2017' in str(first_order_date) or '2018' in str(first_order_date) or '2019' in str(first_order_date):
-                        print(f"WARNING: Date filter is NOT working! Getting orders from {first_order_date}")
-                        print(f"WARNING: Expected orders from {six_months_ago} onwards")
-                        print(f"WARNING: Applying client-side date filtering...")
-                        
-                        # Apply client-side filtering
-                        all_orders = self._filter_orders_by_date(all_orders, six_months_ago)
-                        self._orders_cache = all_orders
-        else:
-            print("DEBUG: Using cached orders data")
+            print(f"DEBUG: Total orders fetched for payment extraction: {len(all_orders)}")
+            return all_orders
+            
+        except Exception as e:
+            print(f"DEBUG: Error in _get_payments_data: {str(e)}")
+            raise
         
-        return self._orders_cache
-    
     def _filter_orders_by_date(self, orders: List[Dict[str, Any]], cutoff_date: str) -> List[Dict[str, Any]]:
         """Filter orders by date on client side if API filter doesn't work"""
         from datetime import datetime
@@ -2869,28 +3152,10 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error in client-side date filtering: {str(e)}")
             return orders
     
-    async def _get_or_create_tag(self, tag_name: str, lang_id: str) -> int:
-        """Get or create a tag by name and language"""
-        try:
-            from ...repository.tag_repository import TagRepository
-            tag_repo = TagRepository(self.db)
-            
-            # Try to find existing tag
-            existing_tag = tag_repo.get_by_name_and_lang(tag_name, int(lang_id))
-            if existing_tag:
-                return existing_tag.id_tag
-            
-            # Create new tag if not found
-            new_tag = tag_repo.create(
-                name=tag_name,
-                id_lang=int(lang_id)
-            )
-            return new_tag.id_tag
-            
-        except Exception as e:
-            print(f"Error getting/creating tag '{tag_name}': {str(e)}")
-            return None
     
+    async def sync_order_details(self) -> List[Dict[str, Any]]:
+        """Synchronize order details"""
+        pass
     def _print_final_sync_summary(self, sync_results: Dict[str, Any], is_incremental: bool = False):
         """Print a comprehensive summary of the synchronization results"""
         sync_type = "INCREMENTAL" if is_incremental else "FULL"

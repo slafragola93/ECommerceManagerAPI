@@ -6,7 +6,6 @@ from .product_repository import ProductRepository
 from ..models import OrderDetail
 from src.schemas.order_detail_schema import *
 from src.services import QueryUtils
-from ..services.model_services.product_service import ProductService
 
 
 class OrderDetailRepository:
@@ -21,7 +20,6 @@ class OrderDetailRepository:
             session (Session): Sessione del DB
         """
         self.session = session
-        self.product_service = ProductService(session)
         self.product_repository = ProductRepository(session)
 
     def get_all(self,
@@ -99,19 +97,14 @@ class OrderDetailRepository:
         return self.session.query(OrderDetail).filter(OrderDetail.id_order_detail == _id).first()
 
     def create(self, data: OrderDetailSchema):
-        order_detail = OrderDetail(**data.model_dump(exclude=['real_price', 'real_weight']))
-        order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
-        order_detail.product_weight = self.product_service.get_live_weight(product_id=order_detail.id_product)
-
+        order_detail = OrderDetail(**data.model_dump())
+        # Get live price and weight based on the order's platform
         self.session.add(order_detail)
         self.session.commit()
 
     def create_and_get_id(self, data: OrderDetailSchema):
         """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
-        order_detail = OrderDetail(**data.model_dump(exclude=['real_price', 'real_weight']))
-        order_detail.product_price = self.product_service.get_live_price(product_id=order_detail.id_product)
-        order_detail.product_weight = self.product_service.get_live_weight(product_id=order_detail.id_product)
-
+        order_detail = OrderDetail(**data.model_dump())
         self.session.add(order_detail)
         self.session.commit()
         self.session.refresh(order_detail)

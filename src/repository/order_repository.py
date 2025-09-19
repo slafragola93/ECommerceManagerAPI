@@ -206,6 +206,7 @@ class OrderRepository:
         self.session.add(order)
         self.session.commit()
         self.session.refresh(order)
+        
         # Creazione di Order Package
         self.order_package_repository.create(
             OrderPackageSchema(id_order=order.id_order,
@@ -215,6 +216,8 @@ class OrderRepository:
                                weight=0.0,
                                value=0.0)
         )
+        
+        return order.id_order
 
     # def update_order_status(self, id_order: int, id_order_state: int):
     #     order_history = OrderHistory(id_order=id_order, id_order_state=id_order_state)
@@ -440,10 +443,18 @@ class OrderRepository:
             "order_states": format_order_states(order.id_order)
         }
     
-    def get_by_origin_id(self, id_origin: str) -> Optional[Order]:
+    def get_by_origin_id(self, id_origin: int) -> Optional[Order]:
         """Get order by origin ID (PrestaShop ID)"""
         try:
             return self.session.query(Order).filter(Order.id_origin == id_origin).first()
         except Exception as e:
             print(f"DEBUG: Error getting order by origin ID {id_origin}: {str(e)}")
+            return None
+    
+    def get_id_by_origin_id(self, id_origin: int) -> Optional[int]:
+        """Get order ID by origin ID (PrestaShop ID)"""
+        try:
+            return self.session.query(Order.id_order).filter(Order.id_origin == id_origin).first()
+        except Exception as e:
+            print(f"DEBUG: Error getting order ID by origin ID {id_origin}: {str(e)}")
             return None

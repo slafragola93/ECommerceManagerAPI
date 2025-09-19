@@ -2,7 +2,7 @@ from src import get_db
 from src.main import app
 from src.models import Product
 from src.services.auth import get_current_user
-from ..utils import client, test_product, test_brand, test_category, test_tag, override_get_db, \
+from ..utils import client, test_product, test_brand, test_category, override_get_db, \
     override_get_current_user, \
     TestingSessionLocal, override_get_current_user_read_only
 
@@ -12,26 +12,12 @@ app.dependency_overrides[get_current_user] = override_get_current_user
 
 
 
-def test_get_all_products(test_product, test_brand, test_category,test_tag):
+def test_get_all_products(test_product, test_brand, test_category):
     """
     Testa la funzionalità di recupero di tutti i prodotti dall'endpoint API.
     Verifica che la risposta includa il prodotto inserito attraverso il fixture di test e
     che i dettagli del prodotto corrispondano a quanto atteso.
     """
-    # Associazione tag a prodotti
-    request_body = {
-        "id_product": 1,
-        "id_tag": 1,
-    }
-
-    client.post("/api/v1/products/add_tag", json=request_body)
-    # Verifica della risposta
-
-    request_body = {
-        "id_product": 1,
-        "id_tag": 2,
-    }
-    client.post("/api/v1/products/add_tag", json=request_body)
 
     # Verifica della risposta
     response = client.get("/api/v1/products/")
@@ -41,9 +27,15 @@ def test_get_all_products(test_product, test_brand, test_category,test_tag):
     assert response.json()["products"] == [{
         'id_product': 1,
         'id_origin': 0,
+        'id_image': None,
         'name': 'Climatizzatore Daikin',
         'sku': '123456',
+        'reference': 'ND',
         'type': 'DUAL',
+        'weight': 0.0,
+        'depth': 0.0,
+        'height': 0.0,
+        'width': 0.0,
         'category': {
             'id_category': 1,
             'id_origin': 702,
@@ -53,20 +45,11 @@ def test_get_all_products(test_product, test_brand, test_category,test_tag):
             'id_brand': 1,
             'id_origin': 1,
             'name': 'Samsung'
-        },
-        'tags': [
-            {
-                'id_tag': 1,
-                'name': 'r32'
-            }, {
-                'id_tag': 2,
-                'name': 'tag_generico'
-            }
-        ]
+        }
     }]
 
 
-def test_get_products_by_filters(test_product, test_brand, test_category, test_tag):
+def test_get_products_by_filters(test_product, test_brand, test_category):
     """
     Testa l'endpoint API per il recupero dei prodotti utilizzando vari filtri.
     Prima verifica che la risposta sia 400 per una richiesta con filtro non valido.
@@ -74,18 +57,9 @@ def test_get_products_by_filters(test_product, test_brand, test_category, test_t
     """
     # Associazione tag a prodotti
     request_body = {
-        "id_product": 1,
-        "id_tag": 1,
+        "id_product": 1
     }
 
-    client.post("/api/v1/products/add_tag", json=request_body)
-    # Verifica della risposta
-
-    request_body = {
-        "id_product": 1,
-        "id_tag": 2,
-    }
-    client.post("/api/v1/products/add_tag", json=request_body)
 
     response = client.get("/api/v1/products/?product_ids=asasdsd")
 
@@ -100,9 +74,15 @@ def test_get_products_by_filters(test_product, test_brand, test_category, test_t
     assert response.json()["products"] == [{
         'id_product': 1,
         'id_origin': 0,
+        'id_image': None,
         'name': 'Climatizzatore Daikin',
         'sku': '123456',
+        'reference': 'ND',
         'type': 'DUAL',
+        'weight': 0.0,
+        'depth': 0.0,
+        'height': 0.0,
+        'width': 0.0,
         'category': {
             'id_category': 1,
             'id_origin': 702,
@@ -112,72 +92,21 @@ def test_get_products_by_filters(test_product, test_brand, test_category, test_t
             'id_brand': 1,
             'id_origin': 1,
             'name': 'Samsung'
-        },
-        'tags': [
-            {
-                'id_tag': 1,
-                'name': 'r32'
-            }, {
-                'id_tag': 2,
-                'name': 'tag_generico'
-            }
-        ]
-
-    }]
-
-    response = client.get("/api/v1/products/?tags_ids=1,2")
-
-    # Verifica della risposta
-    assert response.status_code == 200
-
-    assert response.json()["products"] == [{
-        'id_product': 1,
-        'id_origin': 0,
-        'name': 'Climatizzatore Daikin',
-        'sku': '123456',
-        'type': 'DUAL',
-        'category': {
-            'id_category': 1,
-            'id_origin': 702,
-            'name': 'Climatizzatori'
-        },
-        'brand': {
-            'id_brand': 1,
-            'id_origin': 1,
-            'name': 'Samsung'
-        },
-        'tags': [
-            {
-                'id_tag': 1,
-                'name': 'r32'
-            }, {
-                'id_tag': 2,
-                'name': 'tag_generico'
-            }
-        ]
+        }
 
     }]
 
 
-def test_get_product_by_id(test_product, test_brand, test_category, test_tag):
+
+def test_get_product_by_id(test_product, test_brand, test_category):
     """
     Testa il recupero di un singolo prodotto tramite il suo ID dall'endpoint API.
     Verifica che la richiesta di un ID inesistente restituisca uno status code 404.
     Per un ID esistente, verifica che i dettagli del prodotto restituito corrispondano a quanto atteso.
     """
     request_body = {
-        "id_product": 1,
-        "id_tag": 1,
+        "id_product": 1
     }
-
-    client.post("/api/v1/products/add_tag", json=request_body)
-    # Verifica della risposta
-
-    request_body = {
-        "id_product": 1,
-        "id_tag": 2,
-    }
-    client.post("/api/v1/products/add_tag", json=request_body)
 
     response = client.get('/api/v1/products/100')
     assert response.status_code == 404
@@ -190,9 +119,15 @@ def test_get_product_by_id(test_product, test_brand, test_category, test_tag):
     assert response.json() == {
         'id_product': 1,
         'id_origin': 0,
+        'id_image': None,
         'name': 'Climatizzatore Daikin',
         'sku': '123456',
+        'reference': 'ND',
         'type': 'DUAL',
+        'weight': 0.0,
+        'depth': 0.0,
+        'height': 0.0,
+        'width': 0.0,
         'category': {
             'id_category': 1,
             'id_origin': 702,
@@ -202,16 +137,7 @@ def test_get_product_by_id(test_product, test_brand, test_category, test_tag):
             'id_brand': 1,
             'id_origin': 1,
             'name': 'Samsung'
-        },
-        'tags': [
-            {
-                'id_tag': 1,
-                'name': 'r32'
-            }, {
-                'id_tag': 2,
-                'name': 'tag_generico'
-            }
-        ]
+        }
     }
 
 
@@ -310,9 +236,15 @@ def test_get_all_products_with_user_permissions(test_product, test_brand, test_c
     assert response.json()["products"] == [{
         'id_product': 1,
         'id_origin': 0,
+        'id_image': None,
         'name': 'Climatizzatore Daikin',
         'sku': '123456',
+        'reference': 'ND',
         'type': 'DUAL',
+        'weight': 0.0,
+        'depth': 0.0,
+        'height': 0.0,
+        'width': 0.0,
         'category': {
             'id_category': 1,
             'id_origin': 702,
@@ -322,8 +254,7 @@ def test_get_all_products_with_user_permissions(test_product, test_brand, test_c
             'id_brand': 1,
             'id_origin': 1,
             'name': 'Samsung'
-        },
-        'tags': []
+        }
     }]
 
 
@@ -341,9 +272,15 @@ def test_get_products_by_filters_with_user_permissions(test_product, test_brand,
     assert response.json()["products"] == [{
         'id_product': 1,
         'id_origin': 0,
+        'id_image': None,
         'name': 'Climatizzatore Daikin',
         'sku': '123456',
+        'reference': 'ND',
         'type': 'DUAL',
+        'weight': 0.0,
+        'depth': 0.0,
+        'height': 0.0,
+        'width': 0.0,
         'category': {
             'id_category': 1,
             'id_origin': 702,
@@ -353,8 +290,7 @@ def test_get_products_by_filters_with_user_permissions(test_product, test_brand,
             'id_brand': 1,
             'id_origin': 1,
             'name': 'Samsung'
-        },
-        'tags': []
+        }
     }]
 
 
@@ -370,9 +306,15 @@ def test_get_product_by_id_with_user_permissions(test_product, test_brand, test_
     assert response.json() == {
         'id_product': 1,
         'id_origin': 0,
+        'id_image': None,
         'name': 'Climatizzatore Daikin',
         'sku': '123456',
+        'reference': 'ND',
         'type': 'DUAL',
+        'weight': 0.0,
+        'depth': 0.0,
+        'height': 0.0,
+        'width': 0.0,
         'category': {
             'id_category': 1,
             'id_origin': 702,
@@ -382,8 +324,7 @@ def test_get_product_by_id_with_user_permissions(test_product, test_brand, test_
             'id_brand': 1,
             'id_origin': 1,
             'name': 'Samsung'
-        },
-        'tags': []
+        }
     }
 
 

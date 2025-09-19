@@ -17,8 +17,6 @@ class OrderDetailSchema(BaseModel):
     product_weight: Optional[float] = 0.0
     reduction_percent: Optional[float] = 0.0
     reduction_amount: Optional[float] = 0.0
-    real_price: bool = False
-    real_weight: bool = False
 
 
 class OrderDetailResponseSchema(BaseModel):

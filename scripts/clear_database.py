@@ -28,7 +28,6 @@ def clear_database():
         tables = [
             'orders_history',
             'user_roles', 
-            'product_tags',
             'order_details',
             'order_packages',
             'shipments',
@@ -48,7 +47,6 @@ def clear_database():
             'sectionals',
             'platforms',
             'products',
-            'tags',
             'brands',
             'categories',
             'roles',

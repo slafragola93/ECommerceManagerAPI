@@ -100,10 +100,6 @@ class BaseEcommerceService(ABC):
         """Synchronize carriers"""
         pass
     
-    @abstractmethod
-    async def sync_tags(self) -> List[Dict[str, Any]]:
-        """Synchronize tags"""
-        pass
     
     @abstractmethod
     async def sync_products(self) -> List[Dict[str, Any]]:
@@ -129,11 +125,7 @@ class BaseEcommerceService(ABC):
     async def sync_orders(self) -> List[Dict[str, Any]]:
         """Synchronize orders"""
         pass
-    
-    @abstractmethod
-    async def sync_product_tags(self) -> List[Dict[str, Any]]:
-        """Synchronize product-tag relationships"""
-        pass
+
     
     @abstractmethod
     async def sync_order_details(self) -> List[Dict[str, Any]]:

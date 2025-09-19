@@ -85,18 +85,10 @@ async def get_order_detail_by_id(user: user_dependency,
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
 async def create_order_detail(user: user_dependency,
                               ods: OrderDetailSchema,
-                              odr: OrderDetailRepository = Depends(get_repository),
-                              order_r: OrderRepository = Depends(get_order_repository)):
+                              odr: OrderDetailRepository = Depends(get_repository)):
     odr.create(data=ods)
 
-    # Aggiornamento prezzo e peso di Order
-    if ods.real_price is True or ods.real_weight is True:
-        order_details = odr.get_by_id_order(id_order=ods.id_order)
-        if ods.real_price is True:
-            order_r.set_price(id_order=ods.id_order, order_details=order_details)
 
-        if ods.real_weight is True:
-            order_r.set_weight(id_order=ods.id_order, order_details=order_details)
 
 
 @router.put("/{order_detail_id}", status_code=status.HTTP_200_OK,

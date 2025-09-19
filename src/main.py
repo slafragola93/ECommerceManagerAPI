@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from starlette.middleware.cors import CORSMiddleware
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
-    api_carrier, platform, tag, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
+    api_carrier, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
     order_state, order, invoice, order_package, order_detail, sync
 from src.database import Base, engine
 
@@ -77,7 +77,6 @@ app.include_router(order.router)
 app.include_router(carrier.router)
 app.include_router(api_carrier.router)
 app.include_router(platform.router)
-app.include_router(tag.router)
 app.include_router(sectional.router)
 app.include_router(message.router)
 app.include_router(payment.router)

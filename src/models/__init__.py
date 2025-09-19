@@ -9,7 +9,6 @@ from .address import Address
 from .carrier import Carrier
 from .carrier_api import CarrierApi
 from .platform import Platform
-from .tag import Tag
 from .lang import Lang
 from .sectional import Sectional
 from .message import Message

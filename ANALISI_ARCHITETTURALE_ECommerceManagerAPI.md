@@ -25,7 +25,7 @@ ECommerceManagerAPI/
 │   ├── models/                   # Modelli SQLAlchemy (25 entità)
 │   │   ├── user.py, role.py     # Autenticazione/autorizzazione
 │   │   ├── customer.py, address.py # Gestione clienti
-│   │   ├── product.py, category.py, brand.py, tag.py # Catalogo
+│   │   ├── product.py, category.py, brand.py # Catalogo
 │   │   ├── order.py, order_detail.py, order_state.py # Ordini
 │   │   ├── payment.py, invoice.py # Pagamenti/fatturazione
 │   │   ├── shipping.py, carrier.py # Spedizioni
@@ -82,10 +82,9 @@ ECommerceManagerAPI/
 | **Role** | roles | id_role (PK) | N:N con User |
 | **Customer** | customers | id_customer (PK) | 1:N con Address, Order |
 | **Address** | addresses | id_address (PK) | N:1 con Customer, Country |
-| **Product** | products | id_product (PK) | N:1 con Category, Brand; N:N con Tag |
+| **Product** | products | id_product (PK) | N:1 con Category, Brand|
 | **Category** | categories | id_category (PK) | 1:N con Product |
 | **Brand** | brands | id_brand (PK) | 1:N con Product |
-| **Tag** | tags | id_tag (PK) | N:N con Product |
 | **Order** | orders | id_order (PK) | N:1 con Customer, Address, Payment, Shipping |
 | **OrderDetail** | order_details | id_order_detail (PK) | N:1 con Order, Product |
 | **OrderState** | order_states | id_order_state (PK) | N:N con Order (storico) |

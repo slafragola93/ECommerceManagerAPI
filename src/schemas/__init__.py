@@ -9,7 +9,6 @@ from .address_schema import *
 from .carrier_schema import *
 from .carrier_api_schema import *
 from .platform_schema import *
-from .tag_schema import *
 from .lang_schema import *
 from .sectional_schema import *
 from .message_schema import *
@@ -24,4 +23,3 @@ from .invoice_schema import *
 from .order_package_schema import *
 from .order_detail_schema import *
 from .order_document_schema import *
-from .tag_schema import *

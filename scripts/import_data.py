@@ -1,8 +1,7 @@
 from sqlalchemy import Table, select, Column, Integer
 
-from src import Tag
 from .functions import get_ids_origin, retrieve_brand_by_id_origin, retrieve_category_by_id_origin, \
-    retrieve_customer_by_id_origin, retrieve_product_tags, retrieve_tags, get_id_by_id_origin, insert_product_tags
+    retrieve_customer_by_id_origin, get_id_by_id_origin
 from .setup import *
 from tqdm import tqdm
 from src.models import Customer, Category, Brand, Product, Address, Carrier
@@ -292,67 +291,5 @@ else:
 #     carrier_ps_table.id_carrier.not_in(carrier_ids_origin_already_added)
 # )
 
-
-##### IMPORT TAG ###############
-counter = 0
-tag_ps_table = Table('ww_ps_tag', metadata, autoload_with=src_engine)
-tag_already_added = retrieve_tags(dest_session)
-
-query = select(
-    tag_ps_table.c.id_tag.label('id_origin'),
-    tag_ps_table.c.name
-).where(
-    tag_ps_table.c.id_lang == 1
-).where(tag_ps_table.c.name.not_in(tag_already_added))
-
-tags_prestashop = connessione_ps.execute(query).fetchall()
-
-if not tags_prestashop:
-    print("Nessun tag da importare.")
-else:
-    try:
-        for tag in tqdm(tags_prestashop, desc="Processing tags", unit="tag"):
-            if tag.name in tag_already_added:
-                continue
-
-            new_tag = Tag(
-                id_origin=tag.id_origin,
-                name=tag.name
-            )
-            dest_session.add(new_tag)
-            counter += 1
-
-        dest_session.commit()
-        print(f"Numero di tag importati: {counter}")
-    except Exception as e:
-        # In caso di errore, esegue il rollback delle modifiche
-        dest_session.rollback()
-        print(f"Si è verificato un errore durante l'importazione dei tag: {e}")
-
-######### ACCOPPIAMENTO PRODUCT E TAG #######################
-counter = 0
-product_tag_ps_table = Table('ww_ps_product_tag', metadata, autoload_with=src_engine)
-product_tag_already_added = retrieve_product_tags(dest_session)
-print(product_tag_already_added)
-
-
-query = select(
-    product_tag_ps_table.c.id_product,
-    product_tag_ps_table.c.id_tag
-).where(
-    product_tag_ps_table.c.id_lang == 1
-)
-product_tags_prestashop = connessione_ps.execute(query).fetchall()
-for product_tag in tqdm(product_tags_prestashop, desc="Processing product tags", unit="product tag"):
-    id_origin_product = product_tag[0]
-    id_origin_tag = product_tag[1]
-    # Conversione dell'id_origin in id attuale
-    id_product = get_id_by_id_origin(dest_session, Product, 'id_product', id_origin_product)
-    id_tag = get_id_by_id_origin(dest_session, Tag, 'id_tag', id_origin_tag)
-    if (id_product, id_tag) not in product_tag_already_added:
-        insert_product_tags(dest_session, id_product, id_tag)
-        counter += 1
-
-print(f"Numero di tag importati: {counter}")
 
 print("Trasferimento completato.")

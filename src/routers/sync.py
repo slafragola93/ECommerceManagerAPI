@@ -575,7 +575,6 @@ async def test_all_endpoints(
             '/api/manufacturers',
             '/api/categories',
             '/api/carriers',
-            '/api/tags',
             '/api/products',
             '/api/customers',
             '/api/orders',

@@ -47,7 +47,6 @@ def setup_test_database():
             "order_states",
             "shipments",
             "taxes",
-            "tags",
             "shipping_state",
             "countries",
             "roles"

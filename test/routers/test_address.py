@@ -139,6 +139,7 @@ def test_create_address(test_customer, test_address):
     request_body = {
         "id_origin": 0,
         "id_country": 1,
+        "id_customer": 1,  # ID del cliente dal fixture test_customer
         "customer": {
             'id_origin': 0,
             'id_lang': 1,
@@ -167,15 +168,18 @@ def test_create_address(test_customer, test_address):
 
     # Verifica della risposta
     assert response.status_code == 201
+    
+    # Recupera l'ID dell'indirizzo creato dalla risposta
+    created_address_id = response.json()  # Il router restituisce direttamente l'ID
 
     db = TestingSessionLocal()
 
-    address = db.query(Address).filter(Address.id_address == 2).first()
+    address = db.query(Address).filter(Address.id_address == created_address_id).first()
     assert address is not None
 
     assert address.id_origin == request_body.get('id_origin')
     assert address.id_country == request_body.get('id_country')
-    assert address.id_customer == 2
+    assert address.id_customer == request_body.get('id_customer')
     assert address.firstname == request_body.get('firstname')
     assert address.address1 == request_body.get('address1')
     assert address.city == request_body.get('city')

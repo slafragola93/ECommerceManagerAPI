@@ -63,9 +63,6 @@ async def get_all_orders(user: user_dependency,
                             page=page,
                             limit=limit)
 
-    if not orders:
-        raise HTTPException(status_code=404, detail="Nessun ordine trovato")
-
     total_count = or_repo.get_count(orders_ids=orders_ids,
                                    customers_ids=customers_ids,
                                    order_states_ids=order_states_ids,
@@ -117,7 +114,7 @@ async def create_order(user: user_dependency,
     - `user`: Dipendenza dell'utente autenticato.
     - `order`: Schema dell'ordine da creare.
     """
-    or_repo.create(data=order)
+    return or_repo.create(data=order)
 
 
 @router.put("/{order_id}", status_code=status.HTTP_200_OK, response_description="Ordine aggiornato correttamente")

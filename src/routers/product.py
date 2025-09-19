@@ -3,7 +3,7 @@ from fastapi import APIRouter, Path, HTTPException, Query, Depends
 from starlette import status
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from src.models.product import Product
-from .. import ProductSchema, ProductResponseSchema, AllProductsResponseSchema, AssociateTagToProductSchema
+from .. import ProductSchema, ProductResponseSchema, AllProductsResponseSchema
 from src.services.tool import edit_entity
 from src.services.wrap import check_authentication
 from ..repository.product_repository import ProductRepository
@@ -26,7 +26,6 @@ async def get_all_products(user: user_dependency,
                            pr: ProductRepository = Depends(get_repository),
                            category_ids: Optional[str] = None,
                            brand_ids: Optional[str] = None,
-                           tags_ids: Optional[str] = None,
                            product_name: Optional[str] = None,
                            product_ids: Optional[str] = None,
                            sku: Optional[str] = None,
@@ -62,7 +61,6 @@ async def get_all_products(user: user_dependency,
         brands_ids=brand_ids,
         product_name=product_name,
         products_ids=product_ids,
-        tags_ids=tags_ids,
         sku=sku,
         page=page,
         limit=limit
@@ -76,7 +74,6 @@ async def get_all_products(user: user_dependency,
         brands_ids=brand_ids,
         product_name=product_name,
         products_ids=product_ids,
-        tags_ids=tags_ids,
         sku=sku
     )
 
@@ -86,8 +83,7 @@ async def get_all_products(user: user_dependency,
                                            brand_name=brand_name,
                                            brand_id_origin=brand_id_origin,
                                            category_name=category_name,
-                                           category_id_origin=category_id_origin,
-                                           tags=product.tags
+                                           category_id_origin=category_id_origin
                                            ))
 
     return {"products": results, "total": total_count, "page": page, "limit": limit}
@@ -122,7 +118,7 @@ async def get_product_by_id(user: user_dependency,
 
     product, brand_name, brand_id_origin, category_name, category_id_origin = product
 
-    return formatted_output(product=product,
+    return ProductRepository.formatted_output(product=product,
                             brand_name=brand_name,
                             brand_id_origin=brand_id_origin,
                             category_name=category_name,
@@ -144,15 +140,6 @@ async def create_product(user: user_dependency,
     - ps: Schema del prodotto contenente i dati per la creazione.
     """
     pr.create(data=ps)
-
-@router.post("/add_tag", status_code=status.HTTP_201_CREATED, response_description="Tag associato correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def add_tag_to_product(user: user_dependency,
-                             ps: AssociateTagToProductSchema,
-                             pr: ProductRepository = Depends(get_repository)):
-
-    pr.associate_tag(data=ps)
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Prodotto eliminato")
 @check_authentication
@@ -231,6 +218,5 @@ def formatted_output(product: Product,
             "id_brand": product.id_brand,  # Assumi che tu abbia l'ID disponibile qui
             "id_origin": brand_id_origin,
             "name": brand_name
-        },
-        "tags": product.tags
+        }
     }

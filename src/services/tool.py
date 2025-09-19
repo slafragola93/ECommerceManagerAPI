@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -28,3 +29,33 @@ def validate_format_date(date: str):
             return True
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Formato data non valido: {date}. Formato atteso: YYYY-MM-DD")
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    """Safely convert value to int, returning default if conversion fails"""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """Safely convert value to float, returning default if conversion fails"""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def sql_value(value: Any, null_value: str = "NULL") -> str:
+    """Convert value to SQL-safe string representation"""
+    if value is None:
+        return null_value
+    elif isinstance(value, str):
+        return f"'{value.replace(chr(39), chr(39) + chr(39))}'"  # Escape single quotes
+    else:
+        return str(value)

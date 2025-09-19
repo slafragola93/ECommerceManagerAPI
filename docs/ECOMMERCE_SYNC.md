@@ -89,7 +89,6 @@ curl -X POST "http://localhost:8000/api/v1/sync/test-connection" \
 3. **Brands** (`ps_manufacturer` → `brand`)
 4. **Categories** (`ps_category` → `category`)
 5. **Carriers** (`ps_carrier` → `carrier`)
-6. **Tags** (`ps_tag` → `tag`)
 
 ### Fase 2: Tabelle dipendenti
 1. **Products** (`ps_product` → `product`)
@@ -99,8 +98,7 @@ curl -X POST "http://localhost:8000/api/v1/sync/test-connection" \
 
 ### Fase 3: Tabelle complesse
 1. **Orders** (`ps_orders` → `order`)
-2. **Product Tags** (`ps_product_tag` → `producttag`)
-3. **Order Details** (`ps_order_detail` → `order_detail`)
+2. **Order Details** (`ps_order_detail` → `order_detail`)
 
 ## Mappatura dati
 
@@ -200,7 +198,6 @@ class ShopifyService(BaseEcommerceService):
 3. **Timeout**: Ridurre batch_size o aumentare timeout
 4. **Memory Error**: Processare meno record per volta
 5. **XML Response Error**: Il sistema ora include automaticamente `output_format=JSON` in tutte le richieste
-6. **Product Tags Error**: I tag dei prodotti vengono ora recuperati dall'endpoint `/api/products` nel campo `<tags>` invece che dall'inesistente `/api/product_tags`
 7. **List Object Errors**: Corretti errori `'list' object has no attribute 'get'` e `'list' object has no attribute 'lower'` con gestione migliorata dei formati di risposta
 8. **Order Details Endpoint**: Aggiunto fallback per endpoint `/api/order_detail` se `/api/order_details` fallisce
 9. **Debug di Fine Sincronizzazione**: Aggiunto report dettagliato con emoji, statistiche complete e riepilogo errori

@@ -159,14 +159,12 @@ Tutte le funzioni di sincronizzazione ora salvano effettivamente i dati nel data
 - ✅ **Brands**: `_upsert_brand()` - Salva marchi
 - ✅ **Categories**: `_upsert_category()` - Salva categorie
 - ✅ **Carriers**: `_upsert_carrier()` - Salva corrieri
-- ✅ **Tags**: `_upsert_tag()` - Salva tag
 - ✅ **Products**: `_upsert_product()` - Salva prodotti
 - ✅ **Customers**: `_upsert_customer()` - Salva clienti
 - ✅ **Payments**: `_upsert_payment()` - Salva metodi di pagamento
 - ✅ **Addresses**: `_upsert_address()` - Salva indirizzi
 - ✅ **Orders**: `_upsert_order()` - Salva ordini
 - ✅ **Order Details**: `_upsert_order_detail()` - Salva dettagli ordini
-- ✅ **Product-Tags**: `_upsert_product_tag()` - Salva relazioni prodotto-tag
 
 ### **Debug e Monitoraggio**
 Ogni funzione upsert fornisce debug dettagliato:

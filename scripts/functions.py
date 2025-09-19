@@ -1,6 +1,6 @@
 from sqlalchemy import text
 
-from src import Category, Brand, Customer, Payment, Tag
+from src import Category, Brand, Customer, Payment
 
 
 def get_ids_origin(db, model):
@@ -52,19 +52,3 @@ def retrieve_payment_methods(db):
     return payment_names
 
 
-def retrieve_tags(db):
-    results = db.query(Tag.name).all()
-    tags = [tag[0] for tag in results]
-    return tags
-
-
-def retrieve_product_tags(db):
-    results = db.execute(text("SELECT id_product, id_tag FROM product_tags"))
-    product_tags = [product_tag[0] for product_tag in results]
-    return product_tags
-
-
-def insert_product_tags(db, id_product, id_tag):
-    sql_query = text("INSERT INTO product_tags (id_product, id_tag) VALUES (:id_product, :id_tag)")
-    db.execute(sql_query, {'id_product': id_product, 'id_tag': id_tag})
-    db.commit()

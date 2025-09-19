@@ -179,19 +179,7 @@ def create_fixtures():
         db.commit()
         print(f"✅ Creati {len(brands)} marchi")
         
-        # 10. Creazione Tag
-        print("🏷️ Creazione tag...")
-        tags = []
-        tag_names = ['novità', 'sconto', 'premium', 'ecologico', 'made in italy', 'tecnologia', 'design', 'qualità']
-        for name in tag_names:
-            tag = Tag(
-                name=name,
-                id_origin=random.randint(1, 100)
-            )
-            db.add(tag)
-            tags.append(tag)
-        db.commit()
-        print(f"✅ Creati {len(tags)} tag")
+        
         
         # 11. Creazione Prodotti
         print("📦 Creazione prodotti...")
@@ -210,20 +198,6 @@ def create_fixtures():
         db.commit()
         print(f"✅ Creati {len(products)} prodotti")
         
-        # 12. Associazione Prodotti-Tag
-        print("🔗 Associazione prodotti-tag...")
-        for product in products:
-            # Ogni prodotto ha 1-3 tag casuali
-            tag_count = random.randint(1, 3)
-            selected_tags = random.sample(tags, tag_count)
-            for tag in selected_tags:
-                # Usiamo la tabella di associazione direttamente
-                from src.models.relations.relations import product_tags
-                stmt = product_tags.insert().values(
-                    id_product=product.id_product,
-                    id_tag=tag.id_tag
-                )
-                db.execute(stmt)
         db.commit()
         print("✅ Associazioni prodotti-tag create")
         
@@ -556,7 +530,6 @@ def create_fixtures():
         print(f"   - Indirizzi: {len(addresses)}")
         print(f"   - Categorie: {len(categories)}")
         print(f"   - Marchi: {len(brands)}")
-        print(f"   - Tag: {len(tags)}")
         print(f"   - Prodotti: {len(products)}")
         print(f"   - Piattaforme: {len(platforms)}")
         print(f"   - Sezionali: {len(sectionals)}")
