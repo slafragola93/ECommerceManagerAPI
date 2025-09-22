@@ -32,9 +32,9 @@ class ProductSchema(BaseModel):
         width (float): Larghezza del prodotto.
     """
     id_origin: Optional[int] = 0
-    id_category: int = Field(..., gt=0)
-    id_brand: int = Field(..., gt=0)
-    id_image: Optional[int] = None
+    id_category: int = Field(..., ge=0)
+    id_brand: int = Field(..., ge=0)
+    id_image: Optional[int] = Field(default=0, ge=0)
     name: str = Field(..., max_length=128)
     sku: str = Field(..., max_length=32)
     reference: str = Field(default='ND', max_length=64)
@@ -68,8 +68,8 @@ class ProductUpdateSchema(BaseModel):
     Tutti i campi sono opzionali per permettere aggiornamenti parziali.
     """
     id_origin: Optional[int] = None
-    id_category: Optional[int] = Field(None, gt=0)
-    id_brand: Optional[int] = Field(None, gt=0)
+    id_category: Optional[int] = Field(None, ge=0)
+    id_brand: Optional[int] = Field(None, ge=0)
     id_image: Optional[int] = None
     name: Optional[str] = Field(None, max_length=128)
     sku: Optional[str] = Field(None, max_length=32)

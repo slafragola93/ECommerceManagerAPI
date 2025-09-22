@@ -30,6 +30,79 @@ async def sync_prestashop(
     background_tasks: BackgroundTasks,
     user: user_dependency,
     db: db_dependency,
+    pr: PlatformRepository = Depends(get_platform_repository),
+    limit: int = None
+):
+    """
+    Start PrestaShop full synchronization process
+    
+    This endpoint starts an asynchronous synchronization process that will:
+    1. Retrieve PrestaShop API credentials from platforms table (ID 1)
+    2. Sync all data in the correct order (base tables first, then dependent tables)
+    3. Process data in batches to avoid timeouts
+    4. Log all operations for tracking
+    
+    Returns:
+        202 Accepted: Synchronization started successfully
+        400 Bad Request: Missing configuration or invalid credentials
+        500 Internal Server Error: Failed to start synchronization
+    """
+    try:
+        # Get PrestaShop configuration from platforms table (ID 1)
+        platform = pr.get_by_id(1)
+        
+        if not platform:
+            raise HTTPException(
+                status_code=400, 
+                detail="PrestaShop platform not found in platforms table (ID 1)"
+            )
+        
+        api_key = platform.api_key
+        base_url = platform.url
+        
+        if not api_key:
+            raise HTTPException(
+                status_code=400, 
+                detail="PrestaShop API key not found in platforms table"
+            )
+        
+        if not base_url:
+            raise HTTPException(
+                status_code=400, 
+                detail="PrestaShop base URL not found in platforms table"
+            )
+        
+        # Start background synchronization
+        background_tasks.add_task(
+            _run_prestashop_sync,
+            db=db,
+            platform_id=1,
+            new_elements=True,
+            limit=limit
+        )
+        
+        return {
+            "message": "PrestaShop incremental synchronization started",
+            "status": "accepted",
+            "sync_type": "incremental",
+            "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start PrestaShop synchronization: {str(e)}"
+        )
+
+@router.post("/prestashop/full", status_code=status.HTTP_202_ACCEPTED)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def sync_prestashop_full(
+    background_tasks: BackgroundTasks,
+    user: user_dependency,
+    db: db_dependency,
     pr: PlatformRepository = Depends(get_platform_repository)
 ):
     """
@@ -76,7 +149,7 @@ async def sync_prestashop(
             _run_prestashop_sync,
             db=db,
             platform_id=1,
-            incremental=False
+            new_elements=False
         )
         
         return {
@@ -102,7 +175,8 @@ async def sync_prestashop_incremental(
     background_tasks: BackgroundTasks,
     user: user_dependency,
     db: db_dependency,
-    pr: PlatformRepository = Depends(get_platform_repository)
+    pr: PlatformRepository = Depends(get_platform_repository),
+    new_elements: bool = True
 ):
     """
     Start PrestaShop incremental synchronization process
@@ -151,6 +225,7 @@ async def sync_prestashop_incremental(
             _run_prestashop_sync,
             db=db,
             platform_id=1,
+            new_elements=new_elements,
             incremental=True
         )
         
@@ -231,36 +306,44 @@ async def get_prestashop_last_imported_ids(
         )
 
 
-async def _run_prestashop_sync(db: Session, platform_id: int = 1, incremental: bool = False):
+async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: bool = True, incremental: bool = None, limit: int = None):
     """
     Background task to run PrestaShop synchronization
     
     Args:
         db: Database session
         platform_id: Platform ID in the platforms table (default: 1 for PrestaShop)
-        incremental: Whether to run incremental sync (only new data)
+        new_elements: Whether to sync only new elements (incremental sync)
+        incremental: Whether to run incremental sync (only new data) - deprecated, use new_elements
+        limit: Maximum number of records to process per batch
     """
     try:
-        sync_type = "incremental" if incremental else "full"
+        # Handle both new_elements and incremental parameters
+        if incremental is not None:
+            new_elements = incremental
+        
+        sync_type = "incremental" if new_elements else "full"
         print(f"Starting PrestaShop {sync_type} synchronization...")
         print(f"Platform ID: {platform_id}")
         
         # Create PrestaShop service instance
-        async with PrestaShopService(db, platform_id) as ps_service:
+        # Note: limit parameter is not currently supported by PrestaShopService
+        # but we log it for future implementation
+        if limit:
+            print(f"Limit parameter set to {limit} (not yet implemented in PrestaShopService)")
+        
+        async with PrestaShopService(db, platform_id, new_elements=new_elements) as ps_service:
             print(f"Base URL: {ps_service.base_url}")
             print(f"API Key: {ps_service.api_key[:10]}...")
             # Run synchronization based on type
-            if incremental:
-                results = await ps_service.sync_incremental_data()
-            else:
-                results = await ps_service.sync_all_data()
+            results = await ps_service.sync_all_data()
             
             print(f"{sync_type.capitalize()} synchronization completed:")
             print(f"  Total processed: {results['total_processed']}")
             print(f"  Total errors: {results['total_errors']}")
             print(f"  Status: {results['status']}")
             
-            if incremental and 'last_ids' in results:
+            if new_elements and 'last_ids' in results:
                 print(f"  Last imported IDs: {results['last_ids']}")
             
             # Log detailed results
@@ -605,6 +688,7 @@ async def test_all_endpoints(
                     }
                 
                 # Small delay between requests
+                import asyncio
                 await asyncio.sleep(0.5)
         
         return {

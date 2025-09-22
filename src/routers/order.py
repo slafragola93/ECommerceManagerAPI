@@ -7,6 +7,7 @@ from ..schemas.order_schema import OrderResponseSchema, AllOrderResponseSchema, 
 from src.services.wrap import check_authentication
 from ..repository.order_repository import OrderRepository
 from ..services.auth import authorize
+from ..models.relations.relations import orders_history
 
 router = APIRouter(
     prefix='/api/v1/orders',
@@ -179,12 +180,15 @@ async def update_order_status(user: user_dependency,
                              order_id: int = Path(gt=0),
                              new_status_id: int = Query(gt=0)):
     """
-    Aggiorna lo stato di un ordine.
+    Aggiorna lo stato di un ordine e crea un record nell'order history.
 
     Parametri:
     - `user`: Dipendenza dell'utente autenticato.
     - `order_id`: ID dell'ordine da aggiornare.
     - `new_status_id`: ID del nuovo stato dell'ordine.
+    
+    La funzione aggiorna lo stato dell'ordine nella tabella orders e crea
+    un nuovo record nella tabella orders_history per tracciare il cambio di stato.
     """
     order = or_repo.get_by_id(_id=order_id)
 
@@ -194,6 +198,14 @@ async def update_order_status(user: user_dependency,
     # Aggiorna solo lo stato dell'ordine
     order.id_order_state = new_status_id
     or_repo.session.add(order)
+    
+    # Aggiungi record nell'order history
+    order_history_insert = orders_history.insert().values(
+        id_order=order_id,
+        id_order_state=new_status_id
+    )
+    or_repo.session.execute(order_history_insert)
+    
     or_repo.session.commit()
 
     return {"message": "Stato ordine aggiornato con successo", "order_id": order_id, "new_status_id": new_status_id}

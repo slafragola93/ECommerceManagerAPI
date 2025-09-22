@@ -22,23 +22,32 @@ class PrestaShopService(BaseEcommerceService):
     PrestaShop synchronization service implementation
     """
     
-    def __init__(self, db: Session, platform_id: int = 1, batch_size: int = 5000, max_concurrent_requests: int = 10, default_language_id: int = 1):
+    def __init__(
+        self, 
+        db: Session, 
+        platform_id: int = 1, 
+        batch_size: int = 5000, 
+        max_concurrent_requests: int = 10, 
+        default_language_id: int = 1,
+        new_elements: bool = True
+        ):
         super().__init__(db, platform_id, batch_size)
         self.platform_repo = PlatformRepository(db)
         self.max_concurrent_requests = max_concurrent_requests
         self._semaphore = None  # Will be initialized in async context
         self.default_language_id = default_language_id
+        self.new_elements = new_elements
     
     def _get_six_months_ago_date(self) -> str:
         """Get date string for six months ago in YYYY-MM-DD format"""
         from datetime import timedelta
-        six_months_ago = datetime.now() - timedelta(days=180)  # 6 months
+        six_months_ago = datetime.now() - timedelta(days=720)  # 6 months
         return six_months_ago.strftime('%Y-%m-%d')
     
     def _get_date_range_filter(self) -> str:
         """Get date range filter string for PrestaShop API [start_date,end_date]"""
         from datetime import timedelta
-        six_months_ago = datetime.now() - timedelta(days=180)  # 6 months ago
+        six_months_ago = datetime.now() - timedelta(days=720)  # 6 months ago
         today = datetime.now()
         
         start_date = six_months_ago.strftime('%Y-%m-%d')
@@ -95,11 +104,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                #("Languages", self.sync_languages),
-                #("Countries", self.sync_countries),
-                #("Brands", self.sync_brands),
-                #("Categories", self.sync_categories),
-                #("Carriers", self.sync_carriers),
+                ("Languages", self.sync_languages),
+                ("Countries", self.sync_countries),
+                ("Brands", self.sync_brands),
+                ("Categories", self.sync_categories),
+                ("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -114,10 +123,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                #("Products", self.sync_products),
-                #("Customers", self.sync_customers),
-                #("Addresses", self.sync_addresses),
-                # Note: Payments are now handled dynamically during order processing
+                ("Products", self.sync_products),
+                ("Customers", self.sync_customers),
+                ("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -259,76 +267,7 @@ class PrestaShopService(BaseEcommerceService):
         print(f"Status: {phase_results['status']}")
         
         return phase_results
-
-    async def sync_incremental_data(self) -> Dict[str, Any]:
-        """
-        Synchronize only new data from PrestaShop based on last imported ID origin
-        """
-        sync_results = {
-            'start_time': datetime.now().isoformat(),
-            'phases': [],
-            'total_processed': 0,
-            'total_errors': 0,
-            'incremental': True
-        }
         
-        try:
-            # Disable foreign key checks for the entire incremental synchronization
-            self._disable_foreign_key_checks()
-            
-            # Get last imported IDs for each table
-            last_ids = await self._get_last_imported_ids()
-            
-            print(f"Starting incremental sync with last IDs: {last_ids}")
-            
-            # Phase 1: Base tables (no dependencies) - incremental
-            phase1_results = await self._sync_phase("Phase 1 - Base Tables (Incremental)", [
-                lambda: self.sync_languages_incremental(last_ids.get('lang', 0)),
-                lambda: self.sync_countries_incremental(last_ids.get('country', 0)),
-                lambda: self.sync_brands_incremental(last_ids.get('brand', 0)),
-                lambda: self.sync_categories_incremental(last_ids.get('category', 0)),
-                lambda: self.sync_carriers_incremental(last_ids.get('carrier', 0)),
-            ])
-            sync_results['phases'].append(phase1_results)
-            
-            # Phase 2: Dependent tables - incremental
-            phase2_results = await self._sync_phase("Phase 2 - Dependent Tables (Incremental)", [
-                lambda: self.sync_products_incremental(last_ids.get('product', 0)),
-                lambda: self.sync_customers_incremental(last_ids.get('customer', 0)),
-                # Note: Payments are now handled dynamically during order processing
-                lambda: self.sync_addresses_incremental(last_ids.get('address', 0))
-            ])
-            sync_results['phases'].append(phase2_results)
-            
-            # Phase 3: Complex tables - incremental
-            phase3_results = await self._sync_phase("Phase 3 - Complex Tables (Incremental)", [
-                lambda: self.sync_orders_incremental(last_ids.get('order', 0)),
-                lambda: self.sync_order_details_incremental(last_ids.get('order_detail', 0))
-            ])
-            sync_results['phases'].append(phase3_results)
-            
-            # Calculate totals
-            for phase in sync_results['phases']:
-                sync_results['total_processed'] += phase['total_processed']
-                sync_results['total_errors'] += phase['total_errors']
-            
-            sync_results['end_time'] = datetime.now().isoformat()
-            sync_results['status'] = 'SUCCESS' if sync_results['total_errors'] == 0 else 'PARTIAL'
-            sync_results['last_ids'] = last_ids
-            
-            # Add final debug summary for incremental sync
-            self._print_final_sync_summary(sync_results, is_incremental=True)
-            
-        except Exception as e:
-            sync_results['end_time'] = datetime.now().isoformat()
-            sync_results['status'] = 'ERROR'
-            sync_results['error'] = str(e)
-            raise
-        finally:
-            # Re-enable foreign key checks
-            self._enable_foreign_key_checks()
-        
-        return sync_results
     
     async def sync_languages(self) -> List[Dict[str, Any]]:
         """Synchronize languages from ps_lang"""
@@ -380,8 +319,14 @@ class PrestaShopService(BaseEcommerceService):
         try:
             # Get countries from PrestaShop API with all necessary fields in one call
             params = {
-                'display': '[id,iso_code,name]'  # Get all necessary fields in one call
+                'display': '[id,iso_code,name]'  # Get all necessary fields in one call,
             }
+
+            if self.new_elements:
+                last_id = self.db.execute(text("SELECT MAX(id_origin) FROM countries WHERE id_origin IS NOT NULL")).scalar()
+                last_id = last_id if last_id else 0
+                params['filter[id]'] = f'>[{last_id}]'
+
             response = await self._make_request_with_rate_limit('/api/countries', params)
             countries = self._extract_items_from_response(response, 'countries')
             
@@ -440,6 +385,12 @@ class PrestaShopService(BaseEcommerceService):
             params = {
                 'display': '[id,name]'  # Only necessary fields
             }
+
+            if self.new_elements:
+                last_id = self.db.execute(text("SELECT MAX(id_origin) FROM brands WHERE id_origin IS NOT NULL")).scalar()
+                last_id = last_id if last_id else 0
+                params['filter[id]'] = f'>[{last_id}]'
+
             response = await self._make_request_with_rate_limit('/api/manufacturers', params)
             manufacturers = self._extract_items_from_response(response, 'manufacturers')
             
@@ -497,6 +448,12 @@ class PrestaShopService(BaseEcommerceService):
             params = {
                 'display': '[id,name]'  # Only necessary fields
             }
+    
+            if self.new_elements:
+                last_id = self.db.execute(text("SELECT MAX(id_origin) FROM categories WHERE id_origin IS NOT NULL")).scalar()
+                last_id = last_id if last_id else 0
+                params['filter[id]'] = f'>[{last_id}]'
+
             response = await self._make_request_with_rate_limit('/api/categories', params)
             categories = self._extract_items_from_response(response, 'categories')
             
@@ -550,12 +507,42 @@ class PrestaShopService(BaseEcommerceService):
     async def sync_carriers(self) -> List[Dict[str, Any]]:
         """Synchronize carriers from ps_carrier"""
         try:
-            response = await self._make_request_with_rate_limit('/api/carriers', params={'display': '[id,name]'})
+            from sqlalchemy import text
+            
+            params={
+                'display': '[id,name]'
+                }
+
+            if self.new_elements:
+                last_id = self.db.execute(text("SELECT MAX(id_origin) FROM carriers WHERE id_origin IS NOT NULL")).scalar()
+                last_id = last_id if last_id else 0
+                params['filter[id]'] = f'>[{last_id}]'
+
+
+            response = await self._make_request_with_rate_limit('/api/carriers', )
             carriers = self._extract_items_from_response(response, 'carriers')
+            
+            # Check for existing carriers to avoid duplicates
+            existing_carriers = self.db.execute(text("SELECT id_origin FROM carriers WHERE id_origin IS NOT NULL")).fetchall()
+            existing_carrier_origins = {str(row[0]) for row in existing_carriers}
+            
+            print(f"DEBUG: Found {len(carriers)} total carriers from API")
+            print(f"DEBUG: Found {len(existing_carrier_origins)} existing carriers in database")
+            
+            # Filter out carriers that already exist
+            new_carriers = []
+            for carrier in carriers:
+                carrier_id = str(carrier.get('id', ''))
+                if carrier_id not in existing_carrier_origins:
+                    new_carriers.append(carrier)
+                else:
+                    print(f"DEBUG: Carrier {carrier_id} already exists, skipping...")
+            
+            print(f"DEBUG: Found {len(new_carriers)} new carriers to process out of {len(carriers)} total carriers")
             
             # Prepare all carrier data
             carrier_data_list = []
-            for carrier in carriers:
+            for carrier in new_carriers:
                 carrier_data = {
                     'id_origin': carrier.get('id', ''),
                     'name': carrier.get('name', '')
@@ -582,6 +569,7 @@ class PrestaShopService(BaseEcommerceService):
                 
                 return successful_results
             else:
+                print("DEBUG: No new carriers to process")
                 self._log_sync_result("Carriers", 0)
                 return []
             
@@ -598,39 +586,59 @@ class PrestaShopService(BaseEcommerceService):
             all_products = []
             limit = 1000  # Smaller batch size
             offset = 0
-            
+            params = {
+                'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image]',  # Only necessary fields
+            }
+            if self.new_elements:
+                last_id = self.db.execute(text("SELECT MAX(id_origin) FROM products WHERE id_origin IS NOT NULL")).scalar()
+                last_id = last_id if last_id else 0
+
             while True:
                 try:
+                    print(f"DEBUG: Starting products loop - offset: {offset}, limit: {limit}")
                     # Include only necessary fields to reduce response size
                     # Use PrestaShop format: limit=[offset,]limit
-                    params = {
-                        'limit': f'{offset},{limit}',
-                        'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image]'  # Only necessary fields
-                    }
-                    response = await self._make_request_with_rate_limit('/api/products', params)
-                    products = self._extract_items_from_response(response, 'products')
+
+                    if last_id:
+                        params['filter[id]'] = f'>[{str(last_id)}]'
+                        print(f"DEBUG: Using filter with last_id: {last_id}")
+                    params['limit'] = f'{offset},{limit}'
+                    print(f"DEBUG: Final params: {params}")
                     
+                    print(f"DEBUG: Making API request...")
+                    response = await self._make_request_with_rate_limit('/api/products', params)
+                    print(f"DEBUG: API request completed")
+
+                    products = self._extract_items_from_response(response, 'products')
+                    print(f"DEBUG: Extracted {len(products)} products from response")
                     if not products:
+                        print("DEBUG: No products found, breaking loop")
                         break
                         
                     all_products.extend(products)
+                    print(f"DEBUG: Total products so far: {len(all_products)}")
                     offset += limit
                     
                     # Small delay to avoid overwhelming the server
                     await asyncio.sleep(0.1)
                     
                 except Exception as e:
+                    print(f"DEBUG: Exception in products loop: {str(e)}")
                     error_msg = str(e).lower()
                     if any(keyword in error_msg for keyword in ['server disconnected', '500', 'timeout', 'connection reset']):
+                        print(f"DEBUG: Server error detected, reducing batch size from {limit} to {max(10, limit // 2)}")
                         limit = max(10, limit // 2)  # Reduce batch size
                         await asyncio.sleep(2)  # Wait before retry
                         continue
                     else:
-                        print(f"DEBUG: Error fetching products at offset {offset}: {str(e)}")
+                        print(f"DEBUG: Non-server error, raising exception")
                         raise
-            
+                
+                
+            print(f"DEBUG: Finished products loop. Total products fetched: {len(all_products)}")
             # Deduplicate products by ID and filter for Italian language
             unique_products = {}
+            print(f"DEBUG: Starting deduplication process...")
             for product in all_products:
                 product_name_list = product.get('name', {})
                 product['name'] = next((item['value'] for item in product_name_list if item.get('id') == str(self.default_language_id)), '')
@@ -642,37 +650,52 @@ class PrestaShopService(BaseEcommerceService):
                 unique_products[product_id] = product
             
             products = list(unique_products.values())
-            
+            print(f"DEBUG: Found {len(products)} unique products to process")
+            print(f"DEBUG: First product: {products[0] if products else 'None'}")
             # Prepare all product data with async lookups
             from src.schemas.product_schema import ProductSchema
             
             async def prepare_product_data(product):                
-                # Extract type from name (dual/trial logic)
-                # Skip products without name or with empty name
-                if not product['name']:
-                   product['name'] = ''
-                product_type = self._extract_product_type(product['name'])
+                try:
+                    print(f"DEBUG: Processing product {product.get('id', 'unknown')}")
+                    # Extract type from name (dual/trial logic)
+                    # Skip products without name or with empty name
+                    if not product['name']:
+                       product['name'] = ''
+                    product_type = self._extract_product_type(product['name'])
+                    print(f"DEBUG: Product type: {product_type}")
+                    
+                    # Parallelize the ID lookups
+                    category_id, brand_id = await asyncio.gather(
+                        self._get_category_id_by_origin(product.get('id_category_default', '')),
+                        self._get_brand_id_by_origin(product.get('id_manufacturer', ''))
+                    )
+                    print(f"DEBUG: Category ID: {category_id}, Brand ID: {brand_id}")
                 
-                # Parallelize the ID lookups
-                category_id, brand_id = await asyncio.gather(
-                    self._get_category_id_by_origin(product.get('id_category_default', '')),
-                    self._get_brand_id_by_origin(product.get('id_manufacturer', ''))
-                )
-                
-                return ProductSchema(
-                    id_origin=product.get('id', ''),
-                    id_category=int(category_id),
-                    id_brand=int(brand_id),
-                    id_image=product.get('id_default_image', None),
-                    name=product['name'],
-                    sku=product.get('ean13', ''),
-                    reference=product.get('reference', 'ND'),
-                    weight=float(product.get('weight', 0.0)) if product.get('weight') else 0.0,
-                    depth=float(product.get('depth', 0.0)) if product.get('depth') else 0.0,
-                    height=float(product.get('height', 0.0)) if product.get('height') else 0.0,
-                    width=float(product.get('width', 0.0)) if product.get('width') else 0.0,
-                    type=product_type
-                )
+                    # Handle id_image - convert empty string to 0
+                    id_image = product.get('id_default_image', 0)
+                    if id_image == '' or id_image is None:
+                        id_image = 0
+                    else:
+                        id_image = int(id_image)
+                    
+                    return ProductSchema(
+                        id_origin=int(product.get('id', 0)),
+                        id_category=int(category_id) if category_id else 0,
+                        id_brand=int(brand_id) if brand_id else 0,
+                        id_image=id_image,
+                        name=product['name'],
+                        sku=product.get('ean13', ''),
+                        reference=product.get('reference', 'ND'),
+                        weight=float(product.get('weight', 0.0)) if product.get('weight') else 0.0,
+                        depth=float(product.get('depth', 0.0)) if product.get('depth') else 0.0,
+                        height=float(product.get('height', 0.0)) if product.get('height') else 0.0,
+                        width=float(product.get('width', 0.0)) if product.get('width') else 0.0,
+                        type=product_type
+                    )
+                except Exception as e:
+                    print(f"DEBUG: Error in prepare_product_data for product {product.get('id', 'unknown')}: {str(e)}")
+                    raise
                 
             # Prepare all product data concurrently
             product_data_list = await asyncio.gather(*[prepare_product_data(product) for product in products], return_exceptions=True)
@@ -682,9 +705,16 @@ class PrestaShopService(BaseEcommerceService):
             errors = []
             for i, result in enumerate(product_data_list):
                 if isinstance(result, Exception):
+                    print(f"DEBUG: Error processing product {products[i].get('id', 'unknown')}: {str(result)}")
                     errors.append(f"Product {products[i].get('id', 'unknown')}: {str(result)}")
                 elif result is not None:
+                    print(f"DEBUG: Successfully prepared product {products[i].get('id', 'unknown')}: {result.name}")
                     valid_product_data.append(result)
+                else:
+                    print(f"DEBUG: Product {products[i].get('id', 'unknown')} returned None")
+            
+            print(f"DEBUG: Valid products to insert: {len(valid_product_data)}")
+            print(f"DEBUG: Errors: {len(errors)}")
             
             # Bulk insert products for better performance
             if valid_product_data:
@@ -694,7 +724,9 @@ class PrestaShopService(BaseEcommerceService):
                 
                 # valid_product_data already contains ProductSchema objects
                 # Bulk insert
+                print(f"DEBUG: Attempting to insert {len(valid_product_data)} products")
                 total_inserted = product_repo.bulk_create(valid_product_data, batch_size=10000)
+                print(f"DEBUG: Successfully inserted {total_inserted} products")
                 successful_results = [{"status": "success", "count": total_inserted}]
                 upsert_errors = []
                 
@@ -728,12 +760,17 @@ class PrestaShopService(BaseEcommerceService):
                     'display': '[id,firstname,lastname,email]',
                     'limit': f'{offset},{limit}'
                 }
+
+                if self.new_elements:
+                    last_id = self.db.execute(text("SELECT MAX(id_origin) FROM customers WHERE id_origin IS NOT NULL")).scalar()
+                    last_id = last_id if last_id else 0
+                    params['filter[id]'] = f'>[{last_id}]'
                 
+
                 response = await self._make_request_with_rate_limit('/api/customers', params)
                 customers = self._extract_items_from_response(response, 'customers')
-                
                 if not customers:
-                    break
+                    return []
                     
                 all_customers.extend(customers)
                 
@@ -1161,11 +1198,16 @@ class PrestaShopService(BaseEcommerceService):
                         'display': 'full',
                         'limit': f'{current_offset},{limit}'
                     }
+
+                    if self.new_elements:
+                        last_id = self.db.execute(text("SELECT MAX(id_origin) FROM addresses WHERE id_origin IS NOT NULL")).scalar()
+                        last_id = last_id if last_id else 0
+                        params['filter[id]'] = f'>[{last_id}]'
+
                     tasks.append(self._make_request_with_rate_limit('/api/addresses', params=params))
                 
                 # Execute parallel requests
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
-                
        
                 
                 # Process responses
@@ -1245,8 +1287,6 @@ class PrestaShopService(BaseEcommerceService):
                 raise Exception("No customers found. Cannot sync orders without customers.")
             if products_count == 0:
                 raise Exception("No products found. Cannot sync orders without products.")
-            if payments_count == 0:
-                raise Exception("No payments found. Cannot sync orders without payments.")
             if addresses_count == 0:
                 raise Exception("No addresses found. Cannot sync orders without addresses.")
             
@@ -1742,7 +1782,6 @@ class PrestaShopService(BaseEcommerceService):
                 return payment.id_payment
             
             # Create new payment if not exists
-            print(f"DEBUG: Creating new payment: {payment_name}")
             from src.schemas.payment_schema import PaymentSchema
             payment_schema = PaymentSchema(
                 name=payment_name,
@@ -1818,7 +1857,6 @@ class PrestaShopService(BaseEcommerceService):
             
             if tax is None:
                 # No tax found for this country, try to get default tax
-                print(f"DEBUG: No tax found for country {id_country}, trying default tax")
                 tax = self.db.query(Tax).filter(Tax.is_default == True).first()
                 if tax is None:
                     print(f"DEBUG: No default tax found, using fallback")
@@ -1830,7 +1868,6 @@ class PrestaShopService(BaseEcommerceService):
             percentage = tax.percentage if tax.percentage is not None else 0.0
 
             
-            print(f"DEBUG: Found tax percentage {percentage}% for country {id_country}")
             return {
                 "percentage": percentage,
                 "id_tax": tax.id_tax
@@ -1869,6 +1906,102 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             print(f"DEBUG: Error getting payment complete status for {payment_name}: {str(e)}")
             return True  # Default to complete
+    
+    def _create_order_history(self, order_id_mapping: Dict[int, int], valid_order_data: List[Dict]) -> None:
+        """Create order history entries for all orders"""
+        try:
+            if not order_id_mapping:
+                return
+            
+            # Prepare order history data and remove duplicates
+            order_history_values = []
+            seen_combinations = set()
+            
+            for order_data in valid_order_data:
+                order_id = order_id_mapping.get(order_data['id_origin'])
+                if order_id:
+                    combination = (order_id, order_data['id_order_state'])
+                    if combination not in seen_combinations:
+                        order_history_values.append(combination)
+                        seen_combinations.add(combination)
+                    else:
+                        print(f"DEBUG: Skipping duplicate order history - Order ID: {order_id}, State: {order_data['id_order_state']}")
+            
+            # Execute bulk insert for order history
+            if order_history_values:
+                from sqlalchemy import text
+                
+                # Check for existing records to avoid duplicates
+                existing_combinations = set()
+                if order_history_values:
+                    order_ids = [str(order_id) for order_id, _ in order_history_values]
+                    placeholders = ','.join(order_ids)
+                    existing_query = text(f"SELECT id_order, id_order_state FROM orders_history WHERE id_order IN ({placeholders})")
+                    existing_records = self.db.execute(existing_query).fetchall()
+                    existing_combinations = {(row.id_order, row.id_order_state) for row in existing_records}
+                
+                # Filter out existing combinations
+                new_values = []
+                for order_id, order_state in order_history_values:
+                    if (order_id, order_state) not in existing_combinations:
+                        new_values.append((order_id, order_state))
+                    else:
+                        print(f"DEBUG: Order history already exists - Order ID: {order_id}, State: {order_state}")
+                
+                if new_values:
+                    # Build the SQL query with direct values (safer approach)
+                    values_list = []
+                    for order_id, order_state in new_values:
+                        values_list.append(f"({order_id}, {order_state})")
+                    
+                    sql_query = f"INSERT INTO orders_history (id_order, id_order_state) VALUES {','.join(values_list)}"
+                    
+                    print(f"DEBUG: Creating {len(new_values)} new order history entries (skipped {len(order_history_values) - len(new_values)} existing)")
+                    
+                    original_echo = self.db.bind.echo
+                    self.db.bind.echo = False
+                    try:
+                        self.db.execute(text(sql_query))
+                        self.db.commit()
+                        print(f"DEBUG: Successfully created {len(new_values)} order history entries")
+                    finally:
+                        self.db.bind.echo = original_echo
+                else:
+                    print("DEBUG: No new order history entries to create (all already exist)")
+                    
+        except Exception as e:
+            print(f"DEBUG: Error creating order history: {str(e)}")
+            raise
+    
+    def _create_order_packages(self, order_id_mapping: Dict[int, int], valid_order_data: List[Dict]) -> None:
+        """Create order packages for all orders"""
+        try:
+            if not order_id_mapping:
+                return
+            
+            from src.repository.order_package_repository import OrderPackageRepository
+            from src.schemas.order_package_schema import OrderPackageSchema
+            
+            # Initialize order package repository
+            order_package_repo = OrderPackageRepository(self.db)
+            
+            # Create order packages for each order
+            for order_data in valid_order_data:
+                order_id = order_id_mapping.get(order_data['id_origin'])
+                if order_id:
+                    order_package_schema = OrderPackageSchema(
+                        id_order=order_id,
+                        height=10.0,
+                        width=10.0,
+                        depth=10.0,
+                        weight=1.0,
+                        value=order_data['total_price']
+                    )
+                    order_package_repo.create(order_package_schema)
+                    
+        except Exception as e:
+            print(f"DEBUG: Error creating order packages: {str(e)}")
+            raise
     
     async def _get_all_states(self) -> Dict[str, str]:
         """Get all states and return as dictionary {id: name}"""
@@ -2147,7 +2280,6 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result(f"Brands (Incremental from ID {last_id}) - Italian", 0, [str(e)])
             raise
     
-    async def sync_categories_incremental(self, last_id: int) -> List[Dict[str, Any]]:
         """Synchronize only new categories from ps_category (Italian language only)"""
         try:
             # Get Italian language ID
@@ -2190,439 +2322,14 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             self._log_sync_result(f"Categories (Incremental from ID {last_id}) - Italian", 0, [str(e)])
             raise
-    
-    async def sync_carriers_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new carriers from ps_carrier"""
-        try:
-            params = {'filter[id]': f'[{last_id + 1},]'}
-            response = await self._make_request_with_rate_limit('/api/carriers', params)
-            carriers = self._extract_items_from_response(response, 'carriers')
-            
-            results = []
-            for carrier in carriers:
-                carrier_data = {
-                    'id_origin': carrier.get('id', ''),
-                    'name': carrier.get('name', '')
-                }
-                
-                result = await self._upsert_carrier(carrier_data)
-                results.append(result)
-            
-            self._log_sync_result(f"Carriers (Incremental from ID {last_id})", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result(f"Carriers (Incremental from ID {last_id})", 0, [str(e)])
-            raise
-    
-    
-    async def sync_products_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new products from ps_product (Italian language only)"""
-        try:
-            # Get Italian language ID
-            
-            print(f"DEBUG: Using Italian language ID: {self.default_language_id}")
-            
-            # Get only new products with only necessary fields
-            params = {
-                'filter[id]': f'[{last_id + 1},]',
-                'display': '[id,id_manufacturer,id_category_default,name,reference]'  # Only necessary fields
-            }
-            response = await self._make_request_with_rate_limit('/api/products', params)
-            products = self._extract_items_from_response(response, 'products')
-            
-            if not isinstance(products, list):
-                products = [products] if products else []
-            
-            # Deduplicate products by ID and filter for Italian language
-            unique_products = {}
-            for product in products:
-                product_id = product.get('id', '')
-                if not product_id:
-                    continue
-                
-                # Handle name field - it might be a list or string
-                product_name_raw = product.get('name', '')
-                product_name = ''
-                
-                if isinstance(product_name_raw, list):
-                    # If it's a list, take the first non-empty value
-                    for name_item in product_name_raw:
-                        if name_item and str(name_item).strip():
-                            product_name = str(name_item).strip()
-                            break
-                elif isinstance(product_name_raw, str):
-                    product_name = product_name_raw.strip()
-                
-                # Skip products without name or with empty name
-                if not product_name:
-                    continue
-                
-                # If we already have this product, prefer the one with better Italian data
-                if product_id in unique_products:
-                    current_product = unique_products[product_id]
-                    current_name_raw = current_product.get('name', '')
-                    current_name = ''
-                    
-                    # Handle current product name the same way
-                    if isinstance(current_name_raw, list):
-                        for name_item in current_name_raw:
-                            if name_item and str(name_item).strip():
-                                current_name = str(name_item).strip()
-                                break
-                    elif isinstance(current_name_raw, str):
-                        current_name = current_name_raw.strip()
-                    
-                    # Prefer the product with Italian name if available
-                    if 'italian' in product_name.lower() or (product_name and not current_name):
-                        unique_products[product_id] = product
-                else:
-                    # First time seeing this product, add it
-                    unique_products[product_id] = product
-            
-            products = list(unique_products.values())
-            print(f"DEBUG: Deduplicated incremental products: {len(products)} unique products")
-            
-            results = []
-            
-            for product in products:
-                
-                # Extract type from name (dual/trial logic)
-                product_type = self._extract_product_type(product_name)
-                
-                product_data = {
-                    'id_origin': product.get('id', ''),
-                    'id_platform': 1,
-                    'id_category': await self._get_category_id_by_origin(product.get('id_category_default', '')),
-                    'id_brand': await self._get_brand_id_by_origin(product.get('id_manufacturer', '')),
-                    'name': product_name,
-                    'sku': product.get('reference', ''),
-                    'type': product_type
-                }
-                
-                
-                result = await self._upsert_product(product_data)
-                results.append(result)
-            
-            print(f"DEBUG: Processed {len(results)} Italian products (API filtered incremental)")
-            self._log_sync_result(f"Products (Incremental from ID {last_id}) - Italian", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result(f"Products (Incremental from ID {last_id}) - Italian", 0, [str(e)])
-            raise
-    
-    async def sync_customers_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new customers from ps_customer"""
-        try:
-            params = {'filter[id]': f'[{last_id + 1},]'}
-            response = await self._make_request_with_rate_limit('/api/customers', params)
-            customers = response.get('customers', {}).get('customer', [])
-            
-            if not isinstance(customers, list):
-                customers = [customers]
-            
-            results = []
-            for customer in customers:
-                customer_data = {
-                    'id_origin': customer.get('id', ''),
-                    'firstname': customer.get('firstname', ''),
-                    'lastname': customer.get('lastname', ''),
-                    'email': customer.get('email', ''),
-                    'date_add': datetime.now()
-                }
-                
-                result = await self._upsert_customer(customer_data)
-                results.append(result)
-            
-            self._log_sync_result(f"Customers (Incremental from ID {last_id})", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result(f"Customers (Incremental from ID {last_id})", 0, [str(e)])
-            raise
-    
-    async def sync_payments_incremental(self) -> List[Dict[str, Any]]:
-        """Synchronize payment methods (no incremental logic needed)"""
-        # Payments don't have incremental logic as they're extracted from orders
-        return await self.sync_payments()
-    
-    async def sync_addresses_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new addresses from ps_address"""
-        try:
-            params = {'filter[id]': f'[{last_id + 1},]'}
-            response = await self._make_request_with_rate_limit('/api/addresses', params)
-            addresses = response.get('addresses', {}).get('address', [])
-            
-            if not isinstance(addresses, list):
-                addresses = [addresses]
-            
-            # Fetch all states and countries at once for efficient lookup
-            print("DEBUG: Fetching all states and countries for incremental sync...")
-            all_states = await self._get_all_states()
-            all_countries = self._get_all_countries()
-            print(f"DEBUG: Fetched {len(all_states)} states and {len(all_countries)} countries")
-            
-            results = []
-            for address in addresses:
-                # Get state name from the pre-fetched dictionary
-                state_id = address.get('id_state', '')
-                state_name = all_states.get(state_id, '') if state_id else ''
-                
-                # Get country ID from pre-fetched dictionary
-                country_origin_id = str(address.get('id_country', ''))
-                country_data = all_countries.get(country_origin_id, {})
-                country_id = int(country_data.get('id')) if country_data.get('id') else None
-                
-                # Get customer ID (still need to call this as it's not pre-fetched)
-                customer_id = self._get_customer_id_by_origin(address.get('id_customer', 0))
-                
-                address_data = {
-                    'id_origin': address.get('id', ''),
-                    'id_country': country_id,
-                    'id_customer': int(customer_id) if customer_id is not None else None,
-                    'company': address.get('company', ''),
-                    'firstname': address.get('firstname', ''),
-                    'lastname': address.get('lastname', ''),
-                    'address1': address.get('address1', ''),
-                    'address2': address.get('address2', ''),
-                    'state': state_name,
-                    'postcode': address.get('postcode', ''),
-                    'city': address.get('city', ''),
-                    'phone': address.get('phone_mobile', ''),
-                    'vat': address.get('vat', ''),
-                    'dni': address.get('dni', ''),
-                    'pec': address.get('pec', ''),
-                    'sdi': address.get('sdi', ''),
-                    'date_add': datetime.now()
-                }
-                
-                result = await self._upsert_address(address_data)
-                results.append(result)
-            
-            self._log_sync_result(f"Addresses (Incremental from ID {last_id})", len(results))
-            return results
-            
-        except Exception as e:
-            self._log_sync_result(f"Addresses (Incremental from ID {last_id})", 0, [str(e)])
-            raise
-    
-    async def sync_orders_incremental(self, last_id: int) -> List[Dict[str, Any]]:
-        """Synchronize only new orders and order details from ps_orders with associations"""
-        try:
-            # Get only new orders with associations using pagination
-            date_range_filter = self._get_date_range_filter()
 
-            all_orders = []
-            limit = 1000  # Batch size
-            offset = 0
-            
-            while True:
-                try:
-                    # Filter orders not older than 2 years
-                    # Filter orders for the last 6 months using date range filter
-                    params = {
-                        'filter[id]': f'[{last_id + 1},]', 
-                        'filter[date_add]': date_range_filter,  # Orders from 6 months ago to today
-                        'display': 'full',
-                        'limit': f'{offset},{limit}'
-                    }
-                    
-                    print(f"DEBUG: Fetching incremental orders batch {offset//limit + 1} (offset: {offset}, limit: {limit})")
-                    
-                    # Debug: Print the complete URL with parameters
-                    import urllib.parse
-                    base_url = f"{self.base_url}/api/orders"
-                    query_string = urllib.parse.urlencode(params)
-                    full_url = f"{base_url}?{query_string}"
-                    print(f"DEBUG: Incremental Orders API Request URL: {full_url}")
-                    
-                    response = await self._make_request_with_rate_limit('/api/orders', params)
-                    orders_batch = self._extract_items_from_response(response, 'orders')
-                    
-                    if not orders_batch:
-                        print(f"DEBUG: No more incremental orders found at offset {offset}")
-                        break
-                    
-                    all_orders.extend(orders_batch)
-                    offset += limit
-                    
-                    # Debug: Show last order ID in this batch
-                    last_order_id = orders_batch[-1].get('id', 'unknown') if orders_batch else 'none'
-                    print(f"DEBUG: Fetched {len(orders_batch)} incremental orders (total: {len(all_orders)}) - Last ID: {last_order_id}")
-                    
-                    # Small delay between batches
-                    await asyncio.sleep(0.5)
-                    
-                except Exception as e:
-                    # Debug: Print full error details
-                    print(f"DEBUG: Full error details for incremental orders at offset {offset}:")
-                    print(f"DEBUG: Error type: {type(e).__name__}")
-                    print(f"DEBUG: Error message: {str(e)}")
-                    print(f"DEBUG: Error args: {e.args if hasattr(e, 'args') else 'No args'}")
-                    
-                    error_msg = str(e).lower()
-                    if any(keyword in error_msg for keyword in ['500', 'server', 'timeout', 'connection reset', 'disconnected']):
-                        print(f"DEBUG: Server error at offset {offset}, retrying with smaller batch...")
-                        limit = max(100, limit // 2)  # Reduce batch size
-                        await asyncio.sleep(3)  # Wait before retry
-                        continue
-                    else:
-                        print(f"DEBUG: Non-server error at offset {offset}, continuing with next batch...")
-                        # Don't break, try to continue with next batch
-                        offset += limit
-                        await asyncio.sleep(1)
-                        continue
-            
-            orders = all_orders
-            
-            # Pre-fetch all existing order origin IDs to avoid repeated queries
-            print("DEBUG: Checking existing orders for incremental sync...")
-            from sqlalchemy import text
-            existing_orders = self.db.execute(text("SELECT id_origin FROM orders WHERE id_origin IS NOT NULL")).fetchall()
-            existing_order_origins = {str(row[0]) for row in existing_orders}
-            print(f"DEBUG: Found {len(existing_order_origins)} existing orders")
-            
-            results = []
-            order_details_results = []
-            total_weight = 0
-            
-            # Initialize payment repository once for all orders
-            from src.repository.payment_repository import PaymentRepository
-            payment_repo = PaymentRepository(self.db)
-            
-            for order in orders:
-                order_id = order.get('id', '')
-                
-                # Check if order already exists to avoid duplicates
-                if str(order_id) in existing_order_origins:
-                    print(f"DEBUG: Order {order_id} already exists, skipping...")
-                    continue
-                # Process order data
-                print(order.get('fattura', 0))
-                order_data = {
-                    'id_origin': order_id,
-                    'id_address_delivery': self._get_address_id_by_origin(order.get('id_address_delivery')),
-                    'id_address_invoice': self._get_address_id_by_origin(order.get('id_address_invoice')),
-                    'id_customer': self._get_customer_id_by_origin(order.get('id_customer', '')),
-                    'id_platform': 1,
-                    'id_payment': await self._get_or_create_payment_id(order.get('payment', ''), payment_repo),
-                    'id_order_state': 1,
-                    'is_invoice_requested': order.get('fattura', 0),
-                    'payed': self._get_payment_complete_status(order.get('payment', '')),
-                    'date_payment': None,
-                    'total_weight': 0,
-                    'total_price': order.get('total_paid_tax_excl', 0),
-                    'cash_on_delivery': 0,
-                    'insured_value': 0,
-                    'privacy_note': None,
-                    'note': order.get('order_note', ''),
-                    'delivery_date': None,
-                    'date_add': order.get('date_add', None)
-                }
-                
-                result = await self._upsert_order(order_data)
-                results.append(result)
-                
-                # Process order details from associations
-                associations = order.get('associations', {})
-                order_rows = associations.get('order_rows', {})
-                
-                
-                # Handle both single order_row and multiple order_rows
-                if isinstance(order_rows, dict):
-                    if 'order_row' in order_rows:
-                        rows = order_rows['order_row']
-                        if not isinstance(rows, list):
-                            rows = [rows]  # Convert single item to list
-                    else:
-                        rows = []
-                else:
-                    rows = []
-                
-                print(f"DEBUG: Order {order.get('id', 'unknown')} processed rows: {len(rows)}")
-                
-                # Process each order row
-                for row in rows:
-                    if isinstance(row, dict):
-                        print(row)
-                        order_detail_data = {
-                            'id_origin': row.get('id', f"{order_id}_{row.get('product_id', 'unknown')}"),
-                            'id_order': self._get_order_id_by_origin(order_id),
-                            'id_invoice': 0,  # Default
-                            'id_order_document': 0,  # Default
-                            'id_product': self._get_product_id_by_origin(row.get('product_id')),
-                            'product_name': row.get('product_name', ''),
-                            'product_reference': row.get('product_reference', ''),
-                            'product_quantity': int(row.get('product_quantity', 1)) if row.get('product_quantity') else 1,
-                            'product_weight': 0,  # Not available in order_rows
-                            'product_price': float(row.get('product_price', 0)) if row.get('product_price') else 0,
-                            'id_tax': self._get_default_tax_id(),
-                            'reduction_percent': 0,  # Default
-                            'reduction_amount': 0,  # Default
-                            'rda': None  # Default
-                        }
-                        
-                        detail_result = await self._upsert_order_detail(order_detail_data)
-                        order_details_results.append(detail_result)
-                        
-                        # Add weight to total (product_weight * quantity)
-                        total_weight += order_detail_data['product_weight'] * order_detail_data['product_quantity']
-                
-                # If no order_rows found, create a basic entry
-                if not rows:
-                    order_detail_data = {
-                        'id_origin': f"{order_id}_basic",
-                        'id_order': await self._get_order_id_by_origin(order_id),
-                        'id_invoice': 0,  # Default
-                        'id_order_document': 0,  # Default
-                        'id_product': 0,  # Default
-                        'product_name': 'Order Products',
-                        'product_reference': '',
-                        'product_quantity': 1,
-                        'product_weight': 0,
-                        'product_price': float(order.get('total_products', 0)),
-                        'id_tax': await self._get_default_tax_id(),
-                        'reduction_percent': 0,  # Default
-                        'reduction_amount': 0,  # Default
-                        'rda': None  # Default
-                    }
-                    
-                    detail_result = await self._upsert_order_detail(order_detail_data)
-                    order_details_results.append(detail_result)
-            
-            # Update order total weight
-            if results and total_weight > 0:
-                # Update the first order's total weight (this could be improved to update each order individually)
-                id_order = int(results[0].get('id_order'))
-                if id_order:
-                    rounded_weight = round(total_weight, 2)
-                    await self._update_order_total_weight(id_order, rounded_weight)
-            
-            self._log_sync_result(f"Orders (Incremental from ID {last_id})", len(results))
-            self._log_sync_result(f"Order Details (Incremental from ID {last_id})", len(order_details_results))
-            
-            # Return both orders and order details results
-            return {
-                'orders': results,
-                'order_details': order_details_results
-            }
-            
-        except Exception as e:
-            self._log_sync_result(f"Orders (Incremental from ID {last_id})", 0, [str(e)])
-            raise
-    
-    
-    
     def _extract_items_from_response(self, response: Any, key: str) -> List[Dict[str, Any]]:
         """Extract items from API response, handling both list and dict formats"""
         
         if isinstance(response, list):
-            print(f"DEBUG: Response is a list with {len(response)} items")
             return response
         elif isinstance(response, dict):
-            print(f"DEBUG: Response keys: {list(response.keys())}")
-            
+        
             # Try different possible structures
             if key in response:
                 items = response[key]
@@ -2638,44 +2345,37 @@ class PrestaShopService(BaseEcommerceService):
                         for possible_key in items.keys():
                             if isinstance(items[possible_key], list):
                                 items = items[possible_key]
-                                print(f"DEBUG: Found list in key: {possible_key}")
                                 break
                 
                 if not isinstance(items, list):
                     items = [items] if items else []
-                    print(f"DEBUG: Converted to list with {len(items)} items")
-                else:
-                    print(f"DEBUG: Items is already a list with {len(items)} items")
-                    
+                
                 return items
             else:
                 # Try to find the key in a different case or similar
-                print(f"DEBUG: Key {key} not found in response, trying alternatives...")
                 for response_key in response.keys():
                     if response_key.lower() == key.lower():
-                        print(f"DEBUG: Found case-insensitive match: {response_key}")
                         return self._extract_items_from_response(response, response_key)
                     elif key.rstrip('s') in response_key.lower():
-                        print(f"DEBUG: Found partial match: {response_key}")
                         return self._extract_items_from_response(response, response_key)
                 
-                print(f"DEBUG: No alternative keys found for {key}")
                 return []
         else:
-            print(f"DEBUG: Unexpected response type: {type(response)}")
             return []
     
     async def _get_orders_data(self) -> List[Dict[str, Any]]:
         """Get orders data with pagination to avoid server overload"""
         print("DEBUG: Fetching fresh orders data...")
-        date_range_filter = self._get_date_range_filter()
-        six_months_ago = self._get_six_months_ago_date()
+
         
         all_orders = []
         limit = 5000  
         offset = 0
         consecutive_errors = 0
         max_consecutive_errors = 5
+        
+        date_range_filter = self._get_date_range_filter()
+        six_months_ago = self._get_six_months_ago_date()
         
         while True:
             try:
@@ -2684,18 +2384,25 @@ class PrestaShopService(BaseEcommerceService):
                 # Filter orders for the last 6 months using date range filter
                 params = {
                     'display': 'full',
-                    'filter[date_add]': date_range_filter,  # Orders from 6 months ago to today
-                    'date': 1,
                     'limit': f'{offset},{limit}'
                 }
+
+                if self.new_elements:
+                    last_id = self.db.execute(text("SELECT MAX(id_origin) FROM orders WHERE id_origin IS NOT NULL")).scalar()
+                    last_id = last_id if last_id else 0
+                    params['filter[id]'] = f'>[{last_id}]'
+                else:
+                    params['date'] = 1,
+                    params['filter[date_add]'] = date_range_filter
                 
-                print(f"DEBUG: Fetching orders batch {offset//limit + 1} (offset: {offset}, limit: {limit})")
                 
                 response = await self._make_request_with_rate_limit('/api/orders', params)
             
                 
                 orders_batch = self._extract_items_from_response(response, 'orders')
-                
+                print(params)
+                print(f"last id: {last_id}")
+                print(f"DEBUG: Orders batch: {orders_batch}")
                 if not orders_batch:
                     print(f"DEBUG: No more orders found at offset {offset}")
                     break
@@ -2753,7 +2460,6 @@ class PrestaShopService(BaseEcommerceService):
             first_order_date = all_orders[0].get('date_add', 'unknown')
             last_order_date = all_orders[-1].get('date_add', 'unknown')
             print(f"DEBUG: Date range of orders: {first_order_date} to {last_order_date}")
-            print(f"DEBUG: Filter was: filter[date_add]={date_range_filter}")
             
             # Check if filter is working - if we get old dates, the filter is not working
             if '2017' in str(first_order_date) or '2018' in str(first_order_date) or '2019' in str(first_order_date):
@@ -2772,6 +2478,12 @@ class PrestaShopService(BaseEcommerceService):
         try:
             from sqlalchemy import text
             from datetime import date
+            from src.repository.shipping_repository import ShippingRepository
+            from src.schemas.shipping_schema import ShippingSchema
+            
+            # Initialize shipping repository
+            shipping_repo = ShippingRepository(self.db)
+
             print("DEBUG: Processing all orders and creating SQL file...")
             
             # OPTIMIZATION: Two-pass approach for maximum performance
@@ -2813,7 +2525,6 @@ class PrestaShopService(BaseEcommerceService):
 
                 for detail in order_details:
                     product_origin = detail.get('product_id')
-                    print(detail)
                     if product_origin and product_origin != '0':
                         try:
                             product_origins.add(int(product_origin))
@@ -2821,7 +2532,6 @@ class PrestaShopService(BaseEcommerceService):
                             pass
             
             # Now pre-fetch all mappings using raw SQL queries
-            print("DEBUG: Pre-fetching all required mappings with raw SQL...")
             all_customers = {}
             if customer_origins:
                 placeholders = ','.join([':id_origin_' + str(i) for i in range(len(customer_origins))])
@@ -2848,21 +2558,32 @@ class PrestaShopService(BaseEcommerceService):
                 result = self.db.execute(query, params)
                 all_addresses = {int(row.id_origin): row.id_address for row in result}
             
+            
+            # Pre-fetch all taxes using raw SQL
+            all_taxes = {}
+            default_tax_id = None
+            query = text("SELECT id_tax, id_country, is_default FROM taxes")
+            result = self.db.execute(query)
+            for row in result:
+                if row.is_default == 1:
+                    default_tax_id = row.id_tax
+                if row.id_country is not None:
+                    all_taxes[row.id_country] = row.id_tax
+            
             # Pre-fetch product weights using raw SQL
             product_weight_mapping = {}
             if product_origins:
                 placeholders = ','.join([':id_origin_' + str(i) for i in range(len(product_origins))])
                 params = {f'id_origin_{i}': origin for i, origin in enumerate(product_origins)}
-                query = text(f"SELECT id_product, weight FROM products WHERE id_origin IN ({placeholders}) AND weight IS NOT NULL")
+                query = text(f"SELECT id_origin, weight FROM products WHERE id_origin IN ({placeholders})")
                 result = self.db.execute(query, params)
-                product_weight_mapping = {str(row.id_product): row.weight for row in result}
-            
-            print(f"DEBUG: Pre-fetched {len(all_customers)} customer IDs, {len(all_products)} product IDs, {len(all_addresses)} address IDs, {len(product_weight_mapping)} product weights")
-            
+                product_weight_mapping = {int(row.id_origin): row.weight for row in result}
+                        
             # Pass 2: Process orders using pre-fetched mappings (fast in-memory lookups)
             print("DEBUG: Pass 2 - Processing orders with pre-fetched mappings...")
             valid_order_data = []
             valid_order_detail_data = []
+            order_detail_to_order_mapping = []  # Track which order each detail belongs to
             total_errors = 0
             
             # Initialize payment repository once for all orders
@@ -2888,6 +2609,7 @@ class PrestaShopService(BaseEcommerceService):
                     delivery_address_id = all_addresses.get(delivery_address_origin)
                     invoice_address_id = all_addresses.get(invoice_address_origin)
                     payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
+                    total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
                     
                     if not customer_id:
                         total_errors += 1
@@ -2896,6 +2618,16 @@ class PrestaShopService(BaseEcommerceService):
                     # Get country ID from delivery address for tax calculation
                     id_country = self._get_country_id_by_address_id(delivery_address_id) if delivery_address_id else None
                     is_payed = self._get_payment_complete_status(payment_name)
+                    # Get tax ID: first try country-specific, then default
+                    if id_country and id_country in all_taxes:
+                        id_tax = all_taxes[id_country]
+                    else:
+                        id_tax = default_tax_id
+                    
+                    # Final fallback if no default tax is configured
+                    if id_tax is None:
+                        id_tax = 1
+
                     
                     # Prepare complete order data
                     order_data = {
@@ -2903,16 +2635,14 @@ class PrestaShopService(BaseEcommerceService):
                         'address_delivery': delivery_address_id,
                         'address_invoice': invoice_address_id,
                         'customer': customer_id,
-                        'id_platform': 1,  # TODO: r
+                        'id_platform': 1,  # TODO: review
                         'id_payment': payment_id,
-                        'shipping': 1,  # Default
                         'sectional': 1,  # Default
                         'id_order_state': 1,  # Default
                         'is_invoice_requested': order.get('fattura', 0),
                         'payed': is_payed,
                         'date_payment': None,  # Default
-                        'total_weight': 0,  # Will be calculated from order_details
-                        'total_price': safe_float(order.get('total_paid_tax_excl', 0)),
+                        'total_price': total_paid_tax_excl,
                         'cash_on_delivery': 0,  # Default
                         'insured_value': 0,  # Default
                         'privacy_note': None,
@@ -2920,27 +2650,20 @@ class PrestaShopService(BaseEcommerceService):
                         'delivery_date': None,
                         'date_add': order.get('date_add', None)
                     }
-                    valid_order_data.append(order_data)
                     
-                    # Process order details
+                    order_total_weight = 0.0
+                    
                     order_details = order.get('associations', {}).get('order_rows', {})
-                    
-                    # Handle different data structures: could be dict with 'order_row' key or direct list
-                    if isinstance(order_details, dict):
-                        if 'order_row' in order_details:
-                            order_details = order_details.get('order_row', [])
-                        else:
-                            # If it's a dict but no 'order_row' key, treat as single item
-                            order_details = [order_details] if order_details else []
-                    elif not isinstance(order_details, list):
-                        order_details = [order_details] if order_details else []
-                    
+                    # Process order details for order_detail_data creation
                     for detail in order_details:
                         try:
                             product_origin = safe_int(detail.get('product_id', 0))
                             product_quantity = safe_int(detail.get('product_quantity', 0))
                             
-                            if not product_origin or not product_quantity:
+                            # Get product weight from mapping using id_origin
+                            product_weight = product_weight_mapping.get(product_origin, 0.0)
+                            
+                            if not product_origin:
                                 continue
                             
                             product_id = all_products.get(product_origin)
@@ -2948,11 +2671,11 @@ class PrestaShopService(BaseEcommerceService):
                                 continue
                             
                             # Get product weight from mapping
-                            product_weight = product_weight_mapping.get(str(product_id), 0.0) if product_id else 0.0
+                            order_total_weight += product_weight * product_quantity
                             
-                            # Get tax information for the country
-                            tax = self._get_tax_by_country(id_country) if id_country else {"id_tax": 1}
-                            id_tax = tax.get('id_tax', 1)
+                            # Get tax information for the country from pre-fetched dictionary
+                            if id_tax is None:
+                                id_tax = 1  # Fallback
                             
                             # Prepare complete order detail data
                             order_detail_data = {
@@ -2972,20 +2695,31 @@ class PrestaShopService(BaseEcommerceService):
                                 'rda': None
                             }
                             valid_order_detail_data.append(order_detail_data)
+                            order_detail_to_order_mapping.append(order_data['id_origin'])  # Track which order this detail belongs to
                             
                         except Exception as e:
                             print(f"DEBUG: Error processing order detail: {str(e)}")
                             continue
                     
+                    order_data['total_weight'] = order_total_weight
+                    order_data['shipping'] = shipping_repo.create_and_get_id(ShippingSchema(
+                        id_carrier_api=1, # TODO: review
+                        id_shipping_state=1,
+                        id_tax=id_tax,
+                        tracking=None,
+                        weight=order_total_weight,
+                        price_tax_incl=0.0, #TODO: review
+                        price_tax_excl=safe_float(order.get('total_paid_tax_excl', 0))
+                    ))
+                    valid_order_data.append(order_data)
+                                        
                 except Exception as e:
                     print(f"DEBUG: Error processing order {order.get('id', 'unknown')}: {str(e)}")
                     total_errors += 1
                     continue
-            
-            print(f"DEBUG: Prepared {len(valid_order_data)} valid orders, {len(valid_order_detail_data)} order details, {total_errors} errors")
-            
+
             if not valid_order_data:
-                print("DEBUG: No valid orders to insert")
+                print("DEBUG: No valid orders to insert - valid_order_data is empty")
                 return 0
             
             # Create SQL file for orders
@@ -2999,24 +2733,38 @@ class PrestaShopService(BaseEcommerceService):
                     f.write(f"({order_data['id_origin']}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
-            print(f"DEBUG: Executing orders SQL file: {orders_sql_file}")
             with open(orders_sql_file, 'r', encoding='utf-8') as f:
                 sql_content = f.read()
-                self.db.execute(text(sql_content))
-                self.db.commit()
+                # Temporarily disable echo to prevent SQL output
+                original_echo = self.db.bind.echo
+                self.db.bind.echo = False
+                try:
+                    self.db.execute(text(sql_content))
+                    self.db.commit()
+                finally:
+                    self.db.bind.echo = original_echo
             
             # Get the inserted order IDs
             inserted_orders = self.db.execute(text("SELECT id_order, id_origin FROM orders WHERE id_origin IN :origins"), 
                                             {"origins": [order['id_origin'] for order in valid_order_data]}).fetchall()
             order_id_mapping = {row.id_origin: row.id_order for row in inserted_orders}
             
-            # Update order detail data with order IDs
-            for detail in valid_order_detail_data:
-                # Find the corresponding order ID
-                for order_data in valid_order_data:
-                    if order_data['id_origin'] in order_id_mapping:
-                        detail['id_order'] = order_id_mapping[order_data['id_origin']]
-                        break
+            # Create order history entries
+            self._create_order_history(order_id_mapping, valid_order_data)
+            
+            # Create order packages
+            self._create_order_packages(order_id_mapping, valid_order_data)
+            
+            # Update order detail data with order IDs using the tracking mapping
+            for i, detail in enumerate(valid_order_detail_data):
+                if i < len(order_detail_to_order_mapping):
+                    order_origin_id = order_detail_to_order_mapping[i]
+                    if order_origin_id in order_id_mapping:
+                        detail['id_order'] = order_id_mapping[order_origin_id]
+                    else:
+                        print(f"DEBUG: Warning - Could not find order ID for detail {detail['id_origin']} (order origin {order_origin_id})")
+                else:
+                    print(f"DEBUG: Warning - No mapping found for order detail {detail['id_origin']}")
             
             # Create SQL file for order details
             if valid_order_detail_data:
@@ -3031,11 +2779,16 @@ class PrestaShopService(BaseEcommerceService):
                             f.write(f"({detail_data['id_origin']}, {detail_data['id_order']}, {sql_value(detail_data['id_invoice'])}, {sql_value(detail_data['id_order_document'])}, {detail_data['id_product']}, {sql_value(detail_data['product_name'])}, {sql_value(detail_data['product_reference'])}, {detail_data['product_qty']}, {detail_data['product_weight']}, {detail_data['product_price']}, {sql_value(detail_data['id_tax'])}, {detail_data['reduction_percent']}, {detail_data['reduction_amount']}, {sql_value(detail_data['rda'])}){comma}\n")
                 
                 # Execute order details SQL file
-                print(f"DEBUG: Executing order details SQL file: {details_sql_file}")
                 with open(details_sql_file, 'r', encoding='utf-8') as f:
                     sql_content = f.read()
-                    self.db.execute(text(sql_content))
-                    self.db.commit()
+                    # Temporarily disable echo to prevent SQL output
+                    original_echo = self.db.bind.echo
+                    self.db.bind.echo = False
+                    try:
+                        self.db.execute(text(sql_content))
+                        self.db.commit()
+                    finally:
+                        self.db.bind.echo = original_echo
                 
                 # Clean up order details SQL file
                 import os
@@ -3047,7 +2800,7 @@ class PrestaShopService(BaseEcommerceService):
             if os.path.exists(orders_sql_file):
                 os.remove(orders_sql_file)
             
-            print(f"DEBUG: Successfully inserted {len(valid_order_data)} orders and {len(valid_order_detail_data)} order details via SQL files")
+            print(f"DEBUG: Successfully inserted {len(valid_order_data)} orders, {len(valid_order_data)} shipments, {len(valid_order_data)} order history entries, {len(valid_order_data)} order packages, and {len(valid_order_detail_data)} order details")
             
             return len(valid_order_data)
             
@@ -3069,6 +2822,7 @@ class PrestaShopService(BaseEcommerceService):
                         'display': '[payment]',
                         'limit': f'{offset},{limit}'  # Add pagination
                     }
+                    
 
                     response = await self._make_request_with_rate_limit('/api/orders', params)
                     orders_batch = self._extract_items_from_response(response, 'orders')
