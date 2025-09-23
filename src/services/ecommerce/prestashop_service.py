@@ -104,11 +104,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages),
-                ("Countries", self.sync_countries),
-                ("Brands", self.sync_brands),
-                ("Categories", self.sync_categories),
-                ("Carriers", self.sync_carriers),
+                #("Languages", self.sync_languages),
+                #("Countries", self.sync_countries),
+                #("Brands", self.sync_brands),
+                #("Categories", self.sync_categories),
+                #("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -123,8 +123,8 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                ("Products", self.sync_products),
-                ("Customers", self.sync_customers),
+                #("Products", self.sync_products),
+                #("Customers", self.sync_customers),
                 ("Addresses", self.sync_addresses),
             ]
             
@@ -140,7 +140,7 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 3: Complex tables (only after all dependencies are complete)
             phase3_functions = [
-                ("Orders", self.sync_orders)
+                #("Orders", self.sync_orders)
             ]
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
@@ -1000,7 +1000,6 @@ class PrestaShopService(BaseEcommerceService):
             # Get all customer IDs in one query
             all_customers = {}
             
-            print(f"DEBUG: Found {len(customer_origins)} unique customer origins to lookup")
             
             if not customer_origins:
                 print("WARNING: No valid customer origins found in addresses. This might indicate missing customers.")
@@ -1024,17 +1023,22 @@ class PrestaShopService(BaseEcommerceService):
             # Optimized prepare address data function
             def prepare_address_data_optimized(address):
                 # Get state name from the pre-fetched dictionary
-                state_id = int(address.get('id_state', ''))
+                state_id_raw = address.get('id_state')
+                state_id = int(state_id_raw) if state_id_raw is not None and state_id_raw != '' else 0
                 state_name = all_states[state_id] if state_id != 0 else 'ND'
                 
                 # Get country ID from pre-fetched dictionary
-                country_origin_id = str(address.get('id_country', ''))
+                country_origin_id_raw = address.get('id_country')
+                country_origin_id = str(country_origin_id_raw) if country_origin_id_raw is not None else ''
                 country_data = all_countries.get(country_origin_id, {})
-                country_id = int(country_data.get('id')) if country_data.get('id') else None
+                country_id_raw = country_data.get('id')
+                country_id = int(country_id_raw) if country_id_raw is not None and country_id_raw != '' else None
                 
                 # Get customer ID from pre-fetched dictionary
-                customer_origin = int(address.get('id_customer', 0))
-                customer_id = int(all_customers.get(customer_origin))
+                customer_origin_raw = address.get('id_customer')
+                customer_origin = int(customer_origin_raw) if customer_origin_raw is not None and customer_origin_raw != '' else 0
+                customer_id_raw = all_customers.get(customer_origin)
+                customer_id = int(customer_id_raw) if customer_id_raw is not None else None
                 
                 
                 return {
@@ -1084,7 +1088,7 @@ class PrestaShopService(BaseEcommerceService):
                 print(f"DEBUG: Batch {batch_num + 1} completed. Total processed: {len(valid_address_data)}")
             
             print(f"DEBUG: Prepared {len(valid_address_data)} valid addresses, {len(errors)} errors")
-            
+            print(errors)
             if not valid_address_data:
                 print("DEBUG: No valid addresses to insert")
                 return 0

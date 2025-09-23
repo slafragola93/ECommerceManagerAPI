@@ -135,70 +135,16 @@ class TestSyncPrestashop:
 
 
 class TestSyncIncremental:
-    """Test per la sincronizzazione incrementale"""
+    """Test per la sincronizzazione incrementale - Endpoint rimosso"""
 
     @pytest.mark.anyio
-    async def test_sync_incremental_success(self, test_user, mock_platform_repository):
-        """Test sincronizzazione incrementale con successo"""
-        # Mock del PrestaShopService per evitare problemi con event loop
-        with patch('src.routers.sync.PrestaShopService') as mock_service_class:
-            mock_service = AsyncMock()
-            mock_service.sync_all_data.return_value = {
-                'status': 'success',
-                'total_processed': 10,
-                'phases': [
-                    {'name': 'Phase 1', 'processed': 5},
-                    {'name': 'Phase 2', 'processed': 3},
-                    {'name': 'Phase 3', 'processed': 2}
-                ]
-            }
-            mock_service_class.return_value = mock_service
-
-            # Override del PlatformRepository
-            app.dependency_overrides[get_platform_repository] = lambda: mock_platform_repository
-
-            async with AsyncClient(app=app, base_url="http://localhost:8000/api/v1/sync/") as ac:
-                response = await ac.post("/prestashop/incremental", headers=get_auth_headers())
-
-            # Ripristiniamo il mock originale
-            app.dependency_overrides[get_platform_repository] = lambda: mock_platform_repository
-
-            assert response.status_code == status.HTTP_202_ACCEPTED
-            assert "PrestaShop incremental synchronization started" in response.json()["message"]
-
-    @pytest.mark.anyio
-    async def test_sync_incremental_with_new_elements_false(self, test_user, mock_platform_repository):
-        """Test sincronizzazione incrementale con new_elements=False"""
-        # Mock del PrestaShopService per evitare problemi con event loop
-        with patch('src.routers.sync.PrestaShopService') as mock_service_class:
-            mock_service = AsyncMock()
-            mock_service.sync_all_data.return_value = {
-                'status': 'success',
-                'total_processed': 5,
-                'phases': [
-                    {'name': 'Phase 1', 'processed': 2},
-                    {'name': 'Phase 2', 'processed': 2},
-                    {'name': 'Phase 3', 'processed': 1}
-                ]
-            }
-            mock_service_class.return_value = mock_service
-
-            # Override del PlatformRepository
-            app.dependency_overrides[get_platform_repository] = lambda: mock_platform_repository
-
-            async with AsyncClient(app=app, base_url="http://localhost:8000/api/v1/sync/") as ac:
-                response = await ac.post("/prestashop/incremental?new_elements=false", headers=get_auth_headers())
-
-            # Ripristiniamo il mock originale
-            app.dependency_overrides[get_platform_repository] = lambda: mock_platform_repository
-
-            assert response.status_code == status.HTTP_202_ACCEPTED
-            # Verifica che il servizio sia stato inizializzato con new_elements=False
-            mock_service_class.assert_called_once()
-            call_args = mock_service_class.call_args
-            # Il servizio viene chiamato con (db, platform_id, new_elements)
-            assert len(call_args[0]) >= 2  # Almeno db e platform_id
-            assert call_args[0][1] == 1  # platform_id
+    async def test_sync_incremental_endpoint_not_available(self, test_user):
+        """Test che verifica che l'endpoint /prestashop/incremental non è più disponibile"""
+        async with AsyncClient(app=app, base_url="http://localhost:8000/api/v1/sync/") as ac:
+            response = await ac.post("/prestashop/incremental", headers=get_auth_headers())
+        
+        # L'endpoint dovrebbe restituire 404 perché è stato rimosso
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestIndividualSyncMethods:

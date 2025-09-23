@@ -64,6 +64,9 @@ async def get_all_orders(user: user_dependency,
                             page=page,
                             limit=limit)
 
+    if not orders:
+        raise HTTPException(status_code=404, detail="Nessun ordine trovato")
+
     total_count = or_repo.get_count(orders_ids=orders_ids,
                                    customers_ids=customers_ids,
                                    order_states_ids=order_states_ids,
