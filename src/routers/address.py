@@ -51,7 +51,6 @@ async def get_all_address(user: user_dependency,
      - `page`: Pagina corrente per la paginazione.
      - `limit`: Numero di record per pagina.
      """
-    print(user)
     addresses = ar.get_all(addresses_ids=addresses_ids,
                            origin_ids=origin_ids,
                            customers_ids=customers_ids,

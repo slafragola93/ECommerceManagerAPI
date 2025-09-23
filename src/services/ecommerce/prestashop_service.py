@@ -104,11 +104,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                #("Languages", self.sync_languages),
-                #("Countries", self.sync_countries),
-                #("Brands", self.sync_brands),
-                #("Categories", self.sync_categories),
-                #("Carriers", self.sync_carriers),
+                ("Languages", self.sync_languages),
+                ("Countries", self.sync_countries),
+                ("Brands", self.sync_brands),
+                ("Categories", self.sync_categories),
+                ("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -123,8 +123,8 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                #("Products", self.sync_products),
-                #("Customers", self.sync_customers),
+                ("Products", self.sync_products),
+                ("Customers", self.sync_customers),
                 ("Addresses", self.sync_addresses),
             ]
             
@@ -140,7 +140,7 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 3: Complex tables (only after all dependencies are complete)
             phase3_functions = [
-                #("Orders", self.sync_orders)
+                ("Orders", self.sync_orders)
             ]
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
@@ -519,7 +519,7 @@ class PrestaShopService(BaseEcommerceService):
                 params['filter[id]'] = f'>[{last_id}]'
 
 
-            response = await self._make_request_with_rate_limit('/api/carriers', )
+            response = await self._make_request_with_rate_limit('/api/carriers', params)
             carriers = self._extract_items_from_response(response, 'carriers')
             
             # Check for existing carriers to avoid duplicates
@@ -543,6 +543,7 @@ class PrestaShopService(BaseEcommerceService):
             # Prepare all carrier data
             carrier_data_list = []
             for carrier in new_carriers:
+                print(carrier)
                 carrier_data = {
                     'id_origin': carrier.get('id', ''),
                     'name': carrier.get('name', '')
@@ -589,6 +590,7 @@ class PrestaShopService(BaseEcommerceService):
             params = {
                 'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image]',  # Only necessary fields
             }
+            last_id = None
             if self.new_elements:
                 last_id = self.db.execute(text("SELECT MAX(id_origin) FROM products WHERE id_origin IS NOT NULL")).scalar()
                 last_id = last_id if last_id else 0
@@ -601,13 +603,10 @@ class PrestaShopService(BaseEcommerceService):
 
                     if last_id:
                         params['filter[id]'] = f'>[{str(last_id)}]'
-                        print(f"DEBUG: Using filter with last_id: {last_id}")
+
                     params['limit'] = f'{offset},{limit}'
-                    print(f"DEBUG: Final params: {params}")
                     
-                    print(f"DEBUG: Making API request...")
                     response = await self._make_request_with_rate_limit('/api/products', params)
-                    print(f"DEBUG: API request completed")
 
                     products = self._extract_items_from_response(response, 'products')
                     print(f"DEBUG: Extracted {len(products)} products from response")
@@ -657,20 +656,17 @@ class PrestaShopService(BaseEcommerceService):
             
             async def prepare_product_data(product):                
                 try:
-                    print(f"DEBUG: Processing product {product.get('id', 'unknown')}")
                     # Extract type from name (dual/trial logic)
                     # Skip products without name or with empty name
                     if not product['name']:
                        product['name'] = ''
                     product_type = self._extract_product_type(product['name'])
-                    print(f"DEBUG: Product type: {product_type}")
                     
                     # Parallelize the ID lookups
                     category_id, brand_id = await asyncio.gather(
                         self._get_category_id_by_origin(product.get('id_category_default', '')),
                         self._get_brand_id_by_origin(product.get('id_manufacturer', ''))
                     )
-                    print(f"DEBUG: Category ID: {category_id}, Brand ID: {brand_id}")
                 
                     # Handle id_image - convert empty string to 0
                     id_image = product.get('id_default_image', 0)
@@ -695,6 +691,7 @@ class PrestaShopService(BaseEcommerceService):
                     )
                 except Exception as e:
                     print(f"DEBUG: Error in prepare_product_data for product {product.get('id', 'unknown')}: {str(e)}")
+                    print(e)
                     raise
                 
             # Prepare all product data concurrently
@@ -708,7 +705,6 @@ class PrestaShopService(BaseEcommerceService):
                     print(f"DEBUG: Error processing product {products[i].get('id', 'unknown')}: {str(result)}")
                     errors.append(f"Product {products[i].get('id', 'unknown')}: {str(result)}")
                 elif result is not None:
-                    print(f"DEBUG: Successfully prepared product {products[i].get('id', 'unknown')}: {result.name}")
                     valid_product_data.append(result)
                 else:
                     print(f"DEBUG: Product {products[i].get('id', 'unknown')} returned None")
@@ -984,8 +980,6 @@ class PrestaShopService(BaseEcommerceService):
 
             from sqlalchemy import text
             from datetime import date
-            print("DEBUG: Processing all addresses and creating SQL file...")
-            
             # Pre-fetch all customer IDs to avoid repeated DB calls
             print("DEBUG: Pre-fetching customer IDs...")
             customer_origins = set()
@@ -1018,7 +1012,6 @@ class PrestaShopService(BaseEcommerceService):
                 print(f"DEBUG: Sample customer mappings: {dict(list(all_customers.items())[:3])}")
             else:
                 print("WARNING: No customers found in database. This will cause all addresses to fail.")
-                print("DEBUG: Make sure customers are synced before addresses.")
             
             # Optimized prepare address data function
             def prepare_address_data_optimized(address):
@@ -1062,7 +1055,6 @@ class PrestaShopService(BaseEcommerceService):
                 }
             
             # Prepare all address data in batches for better performance
-            print("DEBUG: Preparing address data in batches...")
             valid_address_data = []
             errors = []
             
@@ -1075,8 +1067,6 @@ class PrestaShopService(BaseEcommerceService):
                 end_idx = min(start_idx + batch_size, len(all_addresses))
                 batch_addresses = all_addresses[start_idx:end_idx]
                 
-                print(f"DEBUG: Processing batch {batch_num + 1}/{total_batches} ({len(batch_addresses)} addresses)")
-                
                 # Process batch
                 for address in batch_addresses:
                     try:
@@ -1084,24 +1074,17 @@ class PrestaShopService(BaseEcommerceService):
                         valid_address_data.append(result)
                     except Exception as e:
                         errors.append(f"Address {address.get('id', 'unknown')}: {str(e)}")
-                
-                print(f"DEBUG: Batch {batch_num + 1} completed. Total processed: {len(valid_address_data)}")
             
             print(f"DEBUG: Prepared {len(valid_address_data)} valid addresses, {len(errors)} errors")
-            print(errors)
             if not valid_address_data:
                 print("DEBUG: No valid addresses to insert")
                 return 0
             
             # Use executemany for bulk insert (more reliable than SQL file)
-            print("DEBUG: Starting bulk insert with executemany...")
-            
             # Get existing address origin IDs to avoid duplicates
-            print("DEBUG: Checking existing addresses...")
             existing_origins = set()
             existing_addresses = self.db.execute(text("SELECT id_origin FROM addresses WHERE id_origin IS NOT NULL")).fetchall()
             existing_origins = {str(row[0]) for row in existing_addresses}
-            print(f"DEBUG: Found {len(existing_origins)} existing addresses")
             
             # Prepare data for executemany, filtering out existing addresses
             insert_data = []
@@ -1140,8 +1123,6 @@ class PrestaShopService(BaseEcommerceService):
                     'date_add': data.get('date_add')
                 })
             
-            print(f"DEBUG: Skipped {skipped_count} existing addresses, {len(insert_data)} new addresses to insert")
-            
             if not insert_data:
                 print("DEBUG: No new addresses to insert")
                 return 0
@@ -1166,9 +1147,8 @@ class PrestaShopService(BaseEcommerceService):
                 self.db.execute(insert_sql, batch)
                 self.db.commit()
                 total_inserted += len(batch)
-                print(f"DEBUG: Inserted batch {i//batch_size + 1}/{(len(insert_data) + batch_size - 1)//batch_size} ({len(batch)} addresses)")
             
-            print(f"DEBUG: Successfully inserted {total_inserted} addresses via executemany")
+            print(f"DEBUG: Successfully inserted {total_inserted} addresses")
             
             return len(valid_address_data)
             
@@ -1225,9 +1205,6 @@ class PrestaShopService(BaseEcommerceService):
                     addresses = self._extract_items_from_response(response, 'addresses')
                     if addresses:
                         batch_addresses.extend(addresses)
-                        print(f"DEBUG: Batch {i} fetched {len(addresses)} addresses")
-                
-                print(f"DEBUG: Total addresses in this batch: {len(batch_addresses)}")
                 
                 if not batch_addresses:
                     break
@@ -1235,8 +1212,6 @@ class PrestaShopService(BaseEcommerceService):
                 # Collect addresses instead of processing immediately
                 all_addresses.extend(batch_addresses)
                 total_processed += len(batch_addresses)
-                
-                print(f"DEBUG: Collected {len(batch_addresses)} addresses. Total collected: {len(all_addresses)}")
                 
                 # If we got less than expected, we've reached the end
                 if len(batch_addresses) < limit:
@@ -1247,8 +1222,6 @@ class PrestaShopService(BaseEcommerceService):
                 await asyncio.sleep(0.1)  # Reduced delay for faster processing
             
             # All addresses collected, now process them all at once
-            print(f"DEBUG: All addresses collected: {len(all_addresses)}")
-            
             if not all_addresses:
                 print("DEBUG: No addresses to process")
                 self._log_sync_result("Addresses", 0)
@@ -1259,7 +1232,7 @@ class PrestaShopService(BaseEcommerceService):
                 all_addresses, all_states, all_countries
             )
             
-            print(f"DEBUG: Address sync completed - Total processed: {total_processed}, Successful: {total_successful}")
+            print(f"DEBUG: Address sync completed - Processed: {total_processed}, Inserted: {total_successful}")
             
             if total_successful > 0:
                 self._log_sync_result("Addresses", total_successful)
@@ -1285,7 +1258,7 @@ class PrestaShopService(BaseEcommerceService):
             payments_count = self.db.execute(text("SELECT COUNT(*) FROM payments")).scalar()
             addresses_count = self.db.execute(text("SELECT COUNT(*) FROM addresses")).scalar()
             
-            print(f"DEBUG: Final dependencies check - Customers: {customers_count}, Products: {products_count}, Payments: {payments_count}, Addresses: {addresses_count}")
+            print(f"DEBUG: Dependencies check - Customers: {customers_count}, Products: {products_count}, Payments: {payments_count}, Addresses: {addresses_count}")
             
             if customers_count == 0:
                 raise Exception("No customers found. Cannot sync orders without customers.")
@@ -1642,7 +1615,6 @@ class PrestaShopService(BaseEcommerceService):
             
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:
-            print(f"DEBUG: Error upserting address {data.get('id_origin', 'unknown')}: {str(e)}")
             return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
     async def _upsert_order(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1752,10 +1724,8 @@ class PrestaShopService(BaseEcommerceService):
             if address_id:
                 return address_id
             else:
-                print(f"DEBUG: No address found for origin {origin_id}")
                 return 0
         except Exception as e:
-            print(f"DEBUG: Error getting address ID by origin {origin_id}: {str(e)}")
             return 0
     
     def _get_payment_id_by_name(self, payment_name: str) -> Optional[int]:
@@ -1896,7 +1866,6 @@ class PrestaShopService(BaseEcommerceService):
             return None
             
         except Exception as e:
-            print(f"DEBUG: Error getting country ID by address ID {address_id}: {str(e)}")
             return None
     
     
@@ -2487,12 +2456,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Initialize shipping repository
             shipping_repo = ShippingRepository(self.db)
-
-            print("DEBUG: Processing all orders and creating SQL file...")
             
             # OPTIMIZATION: Two-pass approach for maximum performance
             # Pass 1: Collect all unique IDs from orders (no database queries)
-            print("DEBUG: Pass 1 - Collecting all unique IDs from orders...")
             customer_origins = set()
             product_origins = set()
             address_origins = set()
@@ -2584,7 +2550,6 @@ class PrestaShopService(BaseEcommerceService):
                 product_weight_mapping = {int(row.id_origin): row.weight for row in result}
                         
             # Pass 2: Process orders using pre-fetched mappings (fast in-memory lookups)
-            print("DEBUG: Pass 2 - Processing orders with pre-fetched mappings...")
             valid_order_data = []
             valid_order_detail_data = []
             order_detail_to_order_mapping = []  # Track which order each detail belongs to
@@ -2639,7 +2604,7 @@ class PrestaShopService(BaseEcommerceService):
                         'address_delivery': delivery_address_id,
                         'address_invoice': invoice_address_id,
                         'customer': customer_id,
-                        'id_platform': 1,  # TODO: review
+                        'id_platform': self.platform_id,
                         'id_payment': payment_id,
                         'sectional': 1,  # Default
                         'id_order_state': 1,  # Default
@@ -2647,7 +2612,7 @@ class PrestaShopService(BaseEcommerceService):
                         'payed': is_payed,
                         'date_payment': None,  # Default
                         'total_price': total_paid_tax_excl,
-                        'cash_on_delivery': 0,  # Default
+                        'cash_on_delivery': 0,  #TODO: controllare
                         'insured_value': 0,  # Default
                         'privacy_note': None,
                         'note': order.get('order_note', ''),
@@ -2706,14 +2671,22 @@ class PrestaShopService(BaseEcommerceService):
                             continue
                     
                     order_data['total_weight'] = order_total_weight
+                    
+                    # Automatic carrier assignment logic
+                    assigned_carrier_api_id = await self._assign_carrier_api(
+                        order=order,
+                        order_total_weight=order_total_weight,
+                        delivery_address_id=order_data.get('id_address_delivery')
+                    )
+                    
                     order_data['shipping'] = shipping_repo.create_and_get_id(ShippingSchema(
-                        id_carrier_api=1, # TODO: review
+                        id_carrier_api=assigned_carrier_api_id,
                         id_shipping_state=1,
                         id_tax=id_tax,
                         tracking=None,
                         weight=order_total_weight,
                         price_tax_incl=0.0, #TODO: review
-                        price_tax_excl=safe_float(order.get('total_paid_tax_excl', 0))
+                        price_tax_excl=safe_float(order.get('total_shipping_tax_excl', 0))
                     ))
                     valid_order_data.append(order_data)
                                         
@@ -2999,3 +2972,69 @@ class PrestaShopService(BaseEcommerceService):
             print(f"📈 Records processed before failure: {sync_results['total_processed']:,}")
         
         print("="*80 + "\n")
+
+    async def _assign_carrier_api(self, order: Dict, order_total_weight: float, 
+                                delivery_address_id: Optional[int] = None) -> int:
+        """
+        Assegna automaticamente un carrier API basato sulle regole di CarrierAssignment
+        
+        Args:
+            order: Dati dell'ordine da PrestaShop
+            order_total_weight: Peso totale dell'ordine
+            delivery_address_id: ID dell'indirizzo di consegna
+            invoice_address_id: ID dell'indirizzo di fatturazione
+            
+        Returns:
+            int: ID del carrier API assegnato (default: 1 se nessuna regola corrisponde)
+        """
+        try:
+            from src.repository.carrier_assignment_repository import CarrierAssignmentRepository
+            from sqlalchemy import text
+            
+            # Inizializza la repository
+            carrier_assignment_repo = CarrierAssignmentRepository(self.db)
+            
+            # Estrai informazioni dall'ordine per la ricerca
+            postal_code = None
+            country_id = None
+            origin_carrier_id = None
+            
+            # Prova a ottenere il codice postale dall'indirizzo di consegna
+            if delivery_address_id:
+                try:
+                    query = text("SELECT postcode, id_country FROM addresses WHERE id_address = :address_id")
+                    result = self.db.execute(query, {"address_id": delivery_address_id}).fetchone()
+                    print(result)
+                    if result:
+                        postal_code = result.postcode
+                        country_id = result.id_country
+                except Exception as e:
+                    pass
+            
+            
+            # Estrai l'ID del corriere di origine dall'ordine PrestaShop
+            origin_carrier_id = order.get('id_carrier')
+            if origin_carrier_id:
+                try:
+                    origin_carrier_id = int(origin_carrier_id)
+                except (ValueError, TypeError):
+                    origin_carrier_id = None
+            
+            # Cerca un'assegnazione che corrisponde ai criteri
+            assignment = carrier_assignment_repo.find_matching_assignment(
+                postal_code=postal_code,
+                country_id=country_id,
+                origin_carrier_id=origin_carrier_id,
+                weight=order_total_weight
+            )
+            
+            if assignment:
+                print(f"DEBUG: Found matching carrier assignment: {assignment.id_carrier_assignment} -> Carrier API {assignment.id_carrier_api} for order {order.get('id')}")
+                return assignment.id_carrier_api
+            else:
+                print("DEBUG: No matching carrier assignment found, using default carrier API (ID: 1)")
+                return 1  # Default carrier API
+                
+        except Exception as e:
+            print(f"DEBUG: Error in carrier assignment logic: {str(e)}")
+            return 1  # Default carrier API in case of error

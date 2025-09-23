@@ -1,7 +1,7 @@
 from typing import Optional, Union
 
 from pydantic import BaseModel, Field, validator
-from datetime import datetime
+from datetime import datetime, date
 from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerResponseWithoutAddressSchema
 
 
@@ -23,6 +23,7 @@ class AddressSchema(BaseModel):
     dni: str = Field(..., max_length=16)
     pec: str = Field(..., max_length=128)
     sdi: str = Field(..., max_length=128)
+    ipa: Optional[str] = Field(None, max_length=128)
 
 
 class CountryResponseSchema(BaseModel):
@@ -50,11 +51,14 @@ class AddressResponseSchema(BaseModel):
     dni: str | None
     pec: str | None
     sdi: str | None
+    ipa: Optional[str] = None
     date_add: Union[datetime, str] | None
 
     @validator('date_add', pre=True, allow_reuse=True)
     def format_date(cls, value):
         if isinstance(value, datetime):
+            return value.strftime('%d-%m-%Y')
+        elif isinstance(value, date):
             return value.strftime('%d-%m-%Y')
         elif isinstance(value, str):
             try:
@@ -63,7 +67,9 @@ class AddressResponseSchema(BaseModel):
                 return value  # Se è già una stringa corretta, restituiscila così com'è
             except ValueError:
                 raise ValueError("date_add must be a valid 'DD-MM-YYYY' formatted string")
-        raise ValueError("date_add must be a datetime object or a 'DD-MM-YYYY' formatted string")
+        elif value is None:
+            return None
+        raise ValueError("date_add must be a datetime/date object or a 'DD-MM-YYYY' formatted string")
 
 
 class AllAddressResponseSchema(BaseModel):

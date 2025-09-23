@@ -11,4 +11,4 @@ class Payment(Base):
     name = Column(String(50))
     is_complete_payment = Column(Boolean, default=False)
 
-    invoice = relationship("Invoice", back_populates="payments")
+    # invoice = relationship("Invoice", back_populates="payments")  # Removed - no relationship needed

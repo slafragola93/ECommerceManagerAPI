@@ -34,7 +34,3 @@ class AppConfiguration(Base):
     is_encrypted = Column(Boolean, default=False)
     date_add = Column(DateTime, default=func.now())
     date_upd = Column(DateTime, default=func.now(), onupdate=func.now())
-
-
-#TODO: quando si crea una nuova listino tasse, bisogna mapparlo creando dinamicamente una nuova variabile in app configurations e settare il codice
-# fare tutto in un unica schermata , elimina div da configurazione

@@ -41,8 +41,6 @@ async def get_current_user(token: token_dependency):
         user_id: int = payload.get("id")
         roles: list = payload.get("roles")
         
-        # TODO: ottieni anche ruolo + permessi
-
         if username is None or user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenziali non valide")
         
@@ -54,7 +52,6 @@ async def get_current_user(token: token_dependency):
 
 def create_access_token(username: str, user_id: int, roles: list[Role], expires_delta: timedelta):
     """Genera il token di accesso"""
-    # TODO: aggiungerel ruolo + permessi
     encode = {"sub": username, "id": user_id,
               "roles": [{"name": role.name, "permissions": role.permissions} for role in roles]}
 

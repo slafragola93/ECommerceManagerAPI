@@ -1,136 +1,100 @@
-from datetime import date, datetime
-
-from fastapi import HTTPException
-from sqlalchemy import func, extract, desc
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+from typing import Optional, List
+from datetime import datetime
 
-from .. import AllInvoiceResponseSchema, InvoiceResponseSchema, InvoiceSchema, Payment
-from ..models.invoice import Invoice
-from ..services import QueryUtils
+from src.models.invoice import Invoice
+from src.schemas.invoice_schema import InvoiceSchema, InvoiceUpdateSchema
 
 
 class InvoiceRepository:
-    """
-    Repository clienti
-    """
-
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
         self.session = session
-
-    def get_all(self,
-                page: int = 1, limit: int = 10,
-                **kwargs
-                ) -> AllInvoiceResponseSchema:
-        """
-        Recupera tutti i clienti
-
-        Returns:
-            AllInvoiceResponseSchema: Tutti i clienti
-        """
-        document_number = kwargs.get('document_number')
-        payed = kwargs.get('payed')
-        date_from = kwargs.get('date_from') if kwargs.get('date_from') else None
-        date_to = kwargs.get('date_to') if kwargs.get('date_to') else None
-        order_id = kwargs.get('order_id')
-
-        query = self.session.query(
-            Invoice,
-            Payment) \
-            .order_by(desc(Invoice.id_invoice)) \
-            .outerjoin(Payment, Invoice.id_payment == Payment.id_payment)
-
-        if not kwargs:
-            return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-        query = QueryUtils.filter_by_string(query, Invoice, 'document_number',
-                                            document_number) if document_number else query
-        query = QueryUtils.filter_by_date(query, Invoice, 'date_add', date_from, date_to)
-        query = query.filter(Invoice.id_order == order_id) if order_id else query
-        query = query.filter(Invoice.payed == payed) if payed else query
-
-        return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-    def get_last_id(self) -> int:
-
-        return self.session.query(Invoice).select(Invoice.id_invoice).order_by(Invoice.id_invoice.desc()).first()
-
-    def get_count(self,
-                  **kwargs) -> AllInvoiceResponseSchema:
-
-        document_number = kwargs.get('document_number')
-        payed = kwargs.get('payed')
-        date_from = kwargs.get('date_from') if kwargs.get('date_from') else None
-        date_to = kwargs.get('date_to') if kwargs.get('date_to') else None
-        order_id = kwargs.get('order_id')
-
-        query = self.session.query(func.count(Invoice.id_invoice))
-
-        if not kwargs:
-            return query.scalar()
-
-        query = QueryUtils.filter_by_string(query, Invoice, 'document_number',
-                                            document_number) if document_number else query
-        query = QueryUtils.filter_by_date(query, Invoice, 'date_add', date_from, date_to)
-        query = query.filter(Invoice.id_order == order_id) if order_id else query
-        query = query.filter(Invoice.payed == payed) if payed else query
-
-        return query.scalar()
-
-    def get_by_id_with_payment(self, _id: int) -> InvoiceResponseSchema:
-        return self.session.query(Invoice, Payment) \
-            .outerjoin(Payment, Invoice.id_payment == Payment.id_payment) \
-            .filter(Invoice.id_invoice == _id).first()
-
-    def get_by_id(self, _id: int) -> InvoiceResponseSchema:
-        return self.session.query(Invoice).filter(Invoice.id_invoice == _id).first()
-
-    def get_last_document_number(self) -> int:
-        current_year = int(datetime.now().year)
-        return self.session.query(func.max(Invoice.document_number)).filter(
-            extract('year', Invoice.date_add) == current_year
-        ).scalar()
-
-    def create(self, data: InvoiceSchema):
-        invoice = Invoice(**data.model_dump())
+    
+    def get_all(self, page: int = 1, limit: int = 10, order_ids: Optional[str] = None) -> List[Invoice]:
+        """Recupera tutte le fatture con paginazione"""
+        query = self.session.query(Invoice)
+        
+        if order_ids:
+            ids = [int(i) for i in order_ids.split(',')]
+            query = query.filter(Invoice.id_order.in_(ids))
+        
+        return query.offset((page - 1) * limit).limit(limit).all()
+    
+    def get_count(self, order_ids: Optional[str] = None) -> int:
+        """Conta il numero totale di fatture"""
+        query = self.session.query(Invoice)
+        
+        if order_ids:
+            ids = [int(i) for i in order_ids.split(',')]
+            query = query.filter(Invoice.id_order.in_(ids))
+        
+        return query.count()
+    
+    def get_by_id(self, invoice_id: int) -> Optional[Invoice]:
+        """Recupera una fattura per ID"""
+        return self.session.query(Invoice).filter(Invoice.id_invoice == invoice_id).first()
+    
+    def get_by_order_id(self, order_id: int) -> List[Invoice]:
+        """Recupera tutte le fatture per un ordine"""
+        return self.session.query(Invoice).filter(Invoice.id_order == order_id).all()
+    
+    def get_by_document_number(self, document_number: str) -> Optional[Invoice]:
+        """Recupera una fattura per numero documento"""
+        return self.session.query(Invoice).filter(Invoice.document_number == document_number).first()
+    
+    def create_invoice(self, data: dict) -> int:
+        """Crea una nuova fattura"""
+        invoice = Invoice(**data)
         self.session.add(invoice)
         self.session.commit()
         self.session.refresh(invoice)
-
-    def update(self, edited_invoice: Invoice, data: InvoiceSchema):
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
+        return invoice.id_invoice
+    
+    def update(self, invoice: Invoice, data: InvoiceUpdateSchema):
+        """Aggiorna una fattura esistente"""
+        entity_updated = data.model_dump(exclude_unset=True)
         for key, value in entity_updated.items():
-
-            if hasattr(edited_invoice, key) and value is not None:
-                setattr(edited_invoice, key, value)
-        self.session.add(edited_invoice)
+            if hasattr(invoice, key) and value is not None:
+                setattr(invoice, key, value)
+        
+        invoice.date_upd = datetime.now()
+        self.session.add(invoice)
         self.session.commit()
-
+    
     def delete(self, invoice: Invoice) -> bool:
+        """Elimina una fattura"""
         self.session.delete(invoice)
         self.session.commit()
-
         return True
-
-    @staticmethod
-    def formatted_output(invoice: Invoice,
-                         payment: Payment = None) -> dict:
+    
+    def get_next_document_number(self, year: int = None) -> str:
+        """Genera il prossimo numero di documento sequenziale per l'anno"""
+        if year is None:
+            year = datetime.now().year
+        
+        query = text("""
+            SELECT MAX(CAST(SUBSTRING(document_number, 1, 5) AS UNSIGNED)) as max_num
+            FROM invoices 
+            WHERE YEAR(date_add) = :year
+        """)
+        
+        result = self.session.execute(query, {"year": year}).fetchone()
+        max_num = result.max_num if result and result.max_num else 0
+        
+        # Incrementa di 1 e formatta con padding a 5 cifre
+        next_num = max_num + 1
+        return f"{next_num:05d}"
+    
+    def formatted_output(self, invoice: Invoice) -> dict:
+        """Formatta l'output di una fattura per l'API"""
         return {
             "id_invoice": invoice.id_invoice,
             "id_order": invoice.id_order,
-            "id_customer": invoice.id_customer,
-            "id_address_delivery": invoice.id_address_delivery,
-            "id_address_invoice": invoice.id_address_invoice,
-            "id_payment": payment.id_payment if payment else None,
-            "payment_name": payment.name if payment else None,
-            "invoice_status": invoice.invoice_status,
-            "note": invoice.note,
             "document_number": invoice.document_number,
-            "payed": invoice.payed,
-            "date_add": invoice.date_add,
+            "filename": invoice.filename,
+            "status": invoice.status,
+            "upload_result": invoice.upload_result,
+            "date_add": invoice.date_add.isoformat() if invoice.date_add else None,
+            "date_upd": invoice.date_upd.isoformat() if invoice.date_upd else None
         }

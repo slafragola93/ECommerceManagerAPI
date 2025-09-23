@@ -25,7 +25,7 @@ class Address(Base):
     dni = Column(String(16), default=None)
     pec = Column(String(128), default=None)
     sdi = Column(String(128), default=None)
-    #TODO: aggiungi codice IPA
+    ipa = Column(String(128), default=None)
     date_add = Column(Date, default=func.now())
 
     customers = relationship("Customer", back_populates="addresses")

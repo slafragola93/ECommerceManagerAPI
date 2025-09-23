@@ -42,3 +42,4 @@ class Order(Base):
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")
     shipments = relationship("Shipping", back_populates="orders")
     orders_document = relationship("OrderDocument", back_populates="order")
+    invoices = relationship("Invoice", back_populates="order")

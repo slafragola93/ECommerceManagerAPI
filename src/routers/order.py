@@ -298,10 +298,10 @@ async def get_order_summary(user: user_dependency,
     return {
         "order": or_repo.formatted_output(order),
         "order_details": [or_repo.order_detail_repository.formatted_output(detail) for detail in order_details] if order_details else [],
-        "order_packages": [],  # Da implementare quando sarà disponibile il metodo
+        "order_packages": [],  #TODO: Da implementare quando sarà disponibile il metodo
         "summary": {
             "total_items": len(order_details) if order_details else 0,
-            "total_packages": 0,  # Da implementare quando sarà disponibile
+            "total_packages": 0,  #TODO: Da implementare quando sarà disponibile
             "total_weight": order.total_weight or 0,
             "total_price": order.total_price or 0
         }
