@@ -8,7 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, invoice, order_package, order_detail, sync
+    order_state, order, invoice, order_package, order_detail, sync, fatturapa
 from src.database import Base, engine
 
 try:
@@ -88,6 +88,7 @@ app.include_router(invoice.router)
 app.include_router(order_package.router)
 app.include_router(order_detail.router)
 app.include_router(sync.router)
+app.include_router(fatturapa.router)
 
 
 @app.on_event("startup")

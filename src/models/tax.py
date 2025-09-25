@@ -8,7 +8,7 @@ class Tax(Base):
     __tablename__ = "taxes"
 
     id_tax = Column(Integer, primary_key=True, index=True)
-    id_country = Column(Integer, ForeignKey('countries.id_country'), index=True, default=None)
+    id_country = Column(Integer, ForeignKey('countries.id_country'), index=True, nullable=True, default=None)
     is_default = Column(Integer, default=0)
     name = Column(String(200))
     note = Column(String(200), default=None)

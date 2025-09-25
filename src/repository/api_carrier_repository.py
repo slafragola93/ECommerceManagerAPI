@@ -68,6 +68,16 @@ class CarrierApiRepository:
         self.session.commit()
 
     def delete(self, carrier_api: CarrierApi) -> bool:
+        # Prima elimina tutti i carrier_assignments associati
+        from src.models.carrier_assignment import CarrierAssignment
+        carrier_assignments = self.session.query(CarrierAssignment).filter(
+            CarrierAssignment.id_carrier_api == carrier_api.id_carrier_api
+        ).all()
+        
+        for assignment in carrier_assignments:
+            self.session.delete(assignment)
+        
+        # Poi elimina il carrier_api
         self.session.delete(carrier_api)
         self.session.commit()
 

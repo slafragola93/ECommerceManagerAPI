@@ -2,6 +2,7 @@ import httpx
 import json
 import xml.etree.ElementTree as ET
 from datetime import datetime, date
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -89,12 +90,17 @@ class FatturaPAService:
                    a_inv.vat as invoice_vat,
                    a_inv.dni as invoice_dni,
                    a_inv.pec as invoice_pec,
+                   a_inv.sdi as invoice_sdi,
                    a_inv.phone as invoice_phone,
                    c.name as country_name,
-                   c.iso_code as country_iso
+                   c.iso_code as country_iso,
+                   t.electronic_code as tax_electronic_code,
+                   t.note as tax_note
             FROM orders o
             LEFT JOIN addresses a_inv ON o.id_address_invoice = a_inv.id_address
             LEFT JOIN countries c ON a_inv.id_country = c.id_country
+            LEFT JOIN orders_document od ON o.id_order = od.id_order
+            LEFT JOIN taxes t ON od.id_tax = t.id_tax
             WHERE o.id_order = :order_id
         """)
         
@@ -116,151 +122,338 @@ class FatturaPAService:
         results = self.db.execute(query, {"order_id": order_id}).fetchall()
         return [dict(row._mapping) for row in results]
     
+    def _create_element(self, parent, tag: str, text: str = None, use_prefix: bool = False, **attrs) -> ET.Element:
+        """Helper per creare elementi XML"""
+        # Usa prefisso p: solo se esplicitamente richiesto (per FatturaElettronica root)
+        element_tag = f"p:{tag}" if use_prefix else tag
+        element = ET.SubElement(parent, element_tag)
+        if text:
+            element.text = text
+        for key, value in attrs.items():
+            element.set(key, value)
+        return element
+
     def _generate_xml(self, order_data: Dict[str, Any], order_details: list, document_number: str) -> str:
         """Genera l'XML FatturaPA secondo le specifiche ufficiali"""
+        print(f"=== INIZIO GENERAZIONE XML FATTURAPA ===")
+        print(f"Documento: {document_number}")
+        print(f"Order data keys: {list(order_data.keys())}")
+        print(f"Order details count: {len(order_details)}")
         
         # Estrai dati cliente
         customer_name = order_data.get('invoice_firstname', '') + ' ' + order_data.get('invoice_lastname', '')
         customer_company = order_data.get('invoice_company', '')
         customer_cf = order_data.get('invoice_dni', '')
         customer_pec = order_data.get('invoice_pec', '')
+        customer_sdi = order_data.get('invoice_sdi', '')
         
-        # Calcola totali
-        total_amount = float(order_data.get('total_paid_tax_incl', 0))
-        tax_amount = float(order_data.get('total_paid_tax_incl', 0)) - float(order_data.get('total_paid_tax_excl', 0))
-        net_amount = float(order_data.get('total_paid_tax_excl', 0))
+        print(f"=== DATI CLIENTE ===")
+        print(f"Cliente: '{customer_name.strip()}' (company: '{customer_company}')")
+        print(f"CodiceFiscale: '{customer_cf}' (lunghezza: {len(customer_cf) if customer_cf else 0})")
+        print(f"SDI: '{customer_sdi}' (lunghezza: {len(customer_sdi) if customer_sdi else 0})")
+        print(f"PEC: '{customer_pec}'")
+        
+        # Calcola totali corretti
         tax_rate = 22.0  # Default IVA 22%
+        print(f"=== CALCOLI IVA ===")
+        print(f"Aliquota IVA: {tax_rate}%")
         
-        # Crea root element
+        # Ricalcola imponibile e imposta dalle linee di dettaglio
+        totale_imponibile = 0
+        totale_imposta = 0
+        
+        print(f"=== DETTAGLI ORDINE ===")
+        for i, detail in enumerate(order_details):
+            print(f"--- Prodotto {i+1} ---")
+            print(f"  Nome: '{detail.get('product_name', 'N/A')}'")
+            print(f"  Quantità: {detail.get('product_qty', 0)}")
+            print(f"  Prezzo con IVA: {detail.get('product_price', 0)}")
+            
+            quantita = float(detail.get('product_qty', 1))
+            prezzo_unitario_iva = float(detail.get('product_price', 0))
+            prezzo_unitario_netto = prezzo_unitario_iva / (1 + tax_rate / 100)
+            prezzo_totale_netto = prezzo_unitario_netto * quantita
+            imposta_linea = (prezzo_unitario_iva - prezzo_unitario_netto) * quantita
+            
+            print(f"  Prezzo unitario netto: {prezzo_unitario_netto:.4f}")
+            print(f"  Prezzo totale netto: {prezzo_totale_netto:.4f}")
+            print(f"  Imposta linea: {imposta_linea:.4f}")
+            
+            # Arrotonda usando ROUND_HALF_UP per coerenza con SdI
+            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            imposta_linea = Decimal(str(imposta_linea)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            
+            print(f"  Prezzo totale netto (arrotondato): {prezzo_totale_netto}")
+            print(f"  Imposta linea (arrotondata): {imposta_linea}")
+            
+            totale_imponibile += float(prezzo_totale_netto)
+            totale_imposta += float(imposta_linea)
+        
+        # Calcola il totale con IVA dalle linee di dettaglio
+        total_amount = totale_imponibile + totale_imposta
+        
+        print(f"=== TOTALI CALCOLATI ===")
+        print(f"Totale imponibile: {totale_imponibile:.2f}")
+        print(f"Totale imposta: {totale_imposta:.2f}")
+        print(f"Totale con IVA: {total_amount:.2f}")
+        
+        # Se non ci sono dettagli, usa il totale dell'ordine
+        if totale_imponibile == 0:
+            logger.warning("Nessun dettaglio ordine trovato, uso totale ordine")
+            total_amount = float(order_data.get('total_price', 0))
+            if total_amount > 0:
+                totale_imponibile = total_amount / (1 + tax_rate / 100)
+                totale_imposta = total_amount - totale_imponibile
+                print(f"Totale ordine: {total_amount:.2f}")
+                print(f"Imponibile calcolato: {totale_imponibile:.2f}")
+                print(f"Imposta calcolata: {totale_imposta:.2f}")
+        
+        print(f"=== CREAZIONE XML ===")
+        # Crea root element con prefisso p:
         root = ET.Element("p:FatturaElettronica")
         root.set("versione", "FPR12")
         root.set("xmlns:p", "http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2")
         root.set("xmlns:ds", "http://www.w3.org/2000/09/xmldsig#")
         root.set("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+        print("Root element creato con prefisso p:")
         
         # Header
-        header = ET.SubElement(root, "FatturaElettronicaHeader")
+        header = self._create_element(root, "FatturaElettronicaHeader")
         
         # DatiTrasmissione
-        dati_trasmissione = ET.SubElement(header, "DatiTrasmissione")
+        dati_trasmissione = self._create_element(header, "DatiTrasmissione")
         
-        id_trasmittente = ET.SubElement(dati_trasmissione, "IdTrasmittente")
-        ET.SubElement(id_trasmittente, "IdPaese").text = "IT"
-        ET.SubElement(id_trasmittente, "IdCodice").text = self.vat_number
+        id_trasmittente = self._create_element(dati_trasmissione, "IdTrasmittente")
+        self._create_element(id_trasmittente, "IdPaese", "IT")
+        self._create_element(id_trasmittente, "IdCodice", self.vat_number)
         
-        ET.SubElement(dati_trasmissione, "ProgressivoInvio").text = document_number
-        ET.SubElement(dati_trasmissione, "FormatoTrasmissione").text = "FPR12"
-        ET.SubElement(dati_trasmissione, "CodiceDestinatario").text = "0000000"
+        self._create_element(dati_trasmissione, "ProgressivoInvio", document_number)
+        self._create_element(dati_trasmissione, "FormatoTrasmissione", "FPR12")
+        
+        # Logica CodiceDestinatario basata su FormatoTrasmissione
+        formato_trasmissione = "FPR12"  # Default per privati
+        print(f"=== VALIDAZIONE CODICE DESTINATARIO ===")
+        print(f"FormatoTrasmissione: {formato_trasmissione}")
+        
+        if formato_trasmissione == "FPR12":
+            # Fatture verso privati: 7 caratteri o 0000000 se non accreditato
+            if customer_sdi and len(customer_sdi) == 7:
+                codice_destinatario = customer_sdi
+                print(f"CodiceDestinatario da SDI: '{codice_destinatario}'")
+            else:
+                codice_destinatario = "0000000"
+                print(f"CodiceDestinatario default (non accreditato): '{codice_destinatario}'")
+        elif formato_trasmissione == "FPA12":
+            # Fatture verso PA: 6 caratteri
+            if customer_sdi and len(customer_sdi) == 6:
+                codice_destinatario = customer_sdi
+                print(f"CodiceDestinatario PA: '{codice_destinatario}'")
+            else:
+                error_msg = f"Per FPA12 CodiceDestinatario deve essere esattamente 6 caratteri. Ricevuto: '{customer_sdi}' (lunghezza: {len(customer_sdi) if customer_sdi else 0})"
+                logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
+                raise ValueError(error_msg)
+        else:
+            # Operazioni transfrontaliere: XXXXXXX
+            codice_destinatario = "XXXXXXX"
+            print(f"CodiceDestinatario transfrontaliero: '{codice_destinatario}'")
+            
+        self._create_element(dati_trasmissione, "CodiceDestinatario", codice_destinatario)
+        print(f"✅ CodiceDestinatario validato: {codice_destinatario}")
         
         if customer_pec:
-            ET.SubElement(dati_trasmissione, "PECDestinatario").text = customer_pec
+            self._create_element(dati_trasmissione, "PECDestinatario", customer_pec)
         
-        contatti_trasmittente = ET.SubElement(dati_trasmissione, "ContattiTrasmittente")
-        ET.SubElement(contatti_trasmittente, "Telefono").text = self.company_phone
-        ET.SubElement(contatti_trasmittente, "Email").text = self.company_email
+        contatti_trasmittente = self._create_element(dati_trasmissione, "ContattiTrasmittente")
+        self._create_element(contatti_trasmittente, "Telefono", self.company_phone)
+        self._create_element(contatti_trasmittente, "Email", self.company_email)
         
         # CedentePrestatore
-        cedente = ET.SubElement(header, "CedentePrestatore")
+        cedente = self._create_element(header, "CedentePrestatore")
         
-        dati_anagrafici_cedente = ET.SubElement(cedente, "DatiAnagrafici")
-        id_fiscale_cedente = ET.SubElement(dati_anagrafici_cedente, "IdFiscaleIVA")
-        ET.SubElement(id_fiscale_cedente, "IdPaese").text = "IT"
-        ET.SubElement(id_fiscale_cedente, "IdCodice").text = self.vat_number
+        dati_anagrafici_cedente = self._create_element(cedente, "DatiAnagrafici")
+        id_fiscale_cedente = self._create_element(dati_anagrafici_cedente, "IdFiscaleIVA")
+        self._create_element(id_fiscale_cedente, "IdPaese", "IT")
+        self._create_element(id_fiscale_cedente, "IdCodice", self.vat_number)
         
-        ET.SubElement(dati_anagrafici_cedente, "CodiceFiscale").text = self.vat_number
+        self._create_element(dati_anagrafici_cedente, "CodiceFiscale", self.vat_number)
         
-        anagrafica_cedente = ET.SubElement(dati_anagrafici_cedente, "Anagrafica")
-        ET.SubElement(anagrafica_cedente, "Denominazione").text = self.company_name
+        anagrafica_cedente = self._create_element(dati_anagrafici_cedente, "Anagrafica")
+        self._create_element(anagrafica_cedente, "Denominazione", self.company_name)
         
-        ET.SubElement(dati_anagrafici_cedente, "RegimeFiscale").text = "RF01"
+        # Recupera il regime fiscale dalla configurazione, default RF01 se null
+        tax_regime = self._get_config_value("electronic_invoicing", "tax_regime", "RF01")
+        self._create_element(dati_anagrafici_cedente, "RegimeFiscale", tax_regime)
         
-        sede_cedente = ET.SubElement(cedente, "Sede")
-        ET.SubElement(sede_cedente, "Indirizzo").text = self.company_address
-        ET.SubElement(sede_cedente, "NumeroCivico").text = self.company_civic
-        ET.SubElement(sede_cedente, "CAP").text = self.company_cap
-        ET.SubElement(sede_cedente, "Comune").text = self.company_city
-        ET.SubElement(sede_cedente, "Provincia").text = self.company_province
-        ET.SubElement(sede_cedente, "Nazione").text = "IT"
+        sede_cedente = self._create_element(cedente, "Sede")
+        self._create_element(sede_cedente, "Indirizzo", self.company_address)
+        self._create_element(sede_cedente, "NumeroCivico", self.company_civic)
+        self._create_element(sede_cedente, "CAP", self.company_cap)
+        self._create_element(sede_cedente, "Comune", self.company_city)
+        self._create_element(sede_cedente, "Provincia", self.company_province)
+        self._create_element(sede_cedente, "Nazione", "IT")
         
-        contatti_cedente = ET.SubElement(cedente, "Contatti")
-        ET.SubElement(contatti_cedente, "Telefono").text = self.company_phone
-        ET.SubElement(contatti_cedente, "Email").text = self.company_email
+        contatti_cedente = self._create_element(cedente, "Contatti")
+        self._create_element(contatti_cedente, "Telefono", self.company_phone)
+        self._create_element(contatti_cedente, "Email", self.company_email)
         
-        ET.SubElement(cedente, "RiferimentoAmministrazione").text = self.company_contact
+        self._create_element(cedente, "RiferimentoAmministrazione", self.company_contact)
         
         # CessionarioCommittente
-        cessionario = ET.SubElement(header, "CessionarioCommittente")
+        cessionario = self._create_element(header, "CessionarioCommittente")
         
-        dati_anagrafici_cessionario = ET.SubElement(cessionario, "DatiAnagrafici")
+        dati_anagrafici_cessionario = self._create_element(cessionario, "DatiAnagrafici")
         
+        print(f"=== VALIDAZIONE CODICE FISCALE ===")
+        print(f"CodiceFiscale: '{customer_cf}' (lunghezza: {len(customer_cf) if customer_cf else 0})")
         if customer_cf:
-            ET.SubElement(dati_anagrafici_cessionario, "CodiceFiscale").text = customer_cf
+            if len(customer_cf) < 11 or len(customer_cf) > 16:
+                error_msg = f"CodiceFiscale deve essere tra 11 e 16 caratteri. Ricevuto: '{customer_cf}' (lunghezza: {len(customer_cf)})"
+                logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
+                raise ValueError(error_msg)
+            self._create_element(dati_anagrafici_cessionario, "CodiceFiscale", customer_cf)
+            print(f"✅ CodiceFiscale validato: {customer_cf}")
+        else:
+            logger.warning("⚠️ CodiceFiscale non presente")
         
-        anagrafica_cessionario = ET.SubElement(dati_anagrafici_cessionario, "Anagrafica")
+        anagrafica_cessionario = self._create_element(dati_anagrafici_cessionario, "Anagrafica")
         
         if customer_company:
-            ET.SubElement(anagrafica_cessionario, "Denominazione").text = customer_company
+            self._create_element(anagrafica_cessionario, "Denominazione", customer_company)
         else:
             name_parts = customer_name.strip().split(' ', 1)
             if len(name_parts) >= 1:
-                ET.SubElement(anagrafica_cessionario, "Nome").text = name_parts[0]
+                self._create_element(anagrafica_cessionario, "Nome", name_parts[0])
             if len(name_parts) >= 2:
-                ET.SubElement(anagrafica_cessionario, "Cognome").text = name_parts[1]
+                self._create_element(anagrafica_cessionario, "Cognome", name_parts[1])
         
-        sede_cessionario = ET.SubElement(cessionario, "Sede")
-        ET.SubElement(sede_cessionario, "Indirizzo").text = order_data.get('invoice_address1', 'VIA CLIENTE')
-        ET.SubElement(sede_cessionario, "NumeroCivico").text = "1"
-        ET.SubElement(sede_cessionario, "CAP").text = order_data.get('invoice_postcode', '20100')
-        ET.SubElement(sede_cessionario, "Comune").text = order_data.get('invoice_city', 'MILANO')
-        ET.SubElement(sede_cessionario, "Provincia").text = order_data.get('invoice_state', 'MI')
-        ET.SubElement(sede_cessionario, "Nazione").text = order_data.get('country_iso', 'IT')
+        sede_cessionario = self._create_element(cessionario, "Sede")
+        # Pulisci l'indirizzo da caratteri speciali e virgole
+        indirizzo = order_data.get('invoice_address1', 'VIA CLIENTE')
+        indirizzo_pulito = indirizzo.replace(',', '').replace(';', '').strip()
+        print(f"=== VALIDAZIONE INDIRIZZO ===")
+        print(f"Indirizzo originale: '{indirizzo}'")
+        print(f"Indirizzo pulito: '{indirizzo_pulito}'")
+        if not indirizzo_pulito:
+            error_msg = "Indirizzo cliente non può essere vuoto"
+            logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
+            raise ValueError(error_msg)
+        self._create_element(sede_cessionario, "Indirizzo", indirizzo_pulito)
+        print(f"✅ Indirizzo validato: {indirizzo_pulito}")
+        self._create_element(sede_cessionario, "NumeroCivico", "1")
+        cap = order_data.get('invoice_postcode', '20100')
+        print(f"=== VALIDAZIONE CAP ===")
+        print(f"CAP: '{cap}' (lunghezza: {len(cap) if cap else 0})")
+        if not cap or len(cap) != 5:
+            error_msg = f"CAP deve essere esattamente 5 caratteri. Ricevuto: '{cap}' (lunghezza: {len(cap) if cap else 0})"
+            logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
+            raise ValueError(error_msg)
+        self._create_element(sede_cessionario, "CAP", cap)
+        print(f"✅ CAP validato: {cap}")
+        
+        self._create_element(sede_cessionario, "Comune", order_data.get('invoice_city', 'MILANO'))
+        
+        # Provincia limitata a 2 caratteri (formato NA, MI, etc.)
+        provincia_originale = order_data.get('invoice_state')
+        print(f"=== VALIDAZIONE PROVINCIA ===")
+        print(f"Provincia originale: '{provincia_originale}'")
+        if provincia_originale:
+            # Tronca alle prime due lettere e converti in maiuscolo
+            provincia = provincia_originale[:2].upper()
+            print(f"Provincia elaborata: '{provincia}'")
+        else:
+            provincia = provincia_originale
+        if not provincia or len(provincia) != 2:
+            error_msg = f"Provincia deve essere esattamente 2 caratteri. Ricevuto: '{provincia_originale}' (lunghezza: {len(provincia) if provincia else 0})"
+            logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
+            raise ValueError(error_msg)
+        self._create_element(sede_cessionario, "Provincia", provincia)
+        print(f"✅ Provincia validata: {provincia}")
+        self._create_element(sede_cessionario, "Nazione", order_data.get('country_iso', 'IT'))
         
         # Body
-        body = ET.SubElement(root, "FatturaElettronicaBody")
+        body = self._create_element(root, "FatturaElettronicaBody")
         
         # DatiGenerali
-        dati_generali = ET.SubElement(body, "DatiGenerali")
-        dati_generali_documento = ET.SubElement(dati_generali, "DatiGeneraliDocumento")
+        dati_generali = self._create_element(body, "DatiGenerali")
+        dati_generali_documento = self._create_element(dati_generali, "DatiGeneraliDocumento")
         
-        ET.SubElement(dati_generali_documento, "TipoDocumento").text = "TD01"
-        ET.SubElement(dati_generali_documento, "Divisa").text = "EUR"
-        ET.SubElement(dati_generali_documento, "Data").text = date.today().strftime("%Y-%m-%d")
-        ET.SubElement(dati_generali_documento, "Numero").text = f"FATT-{document_number}"
-        ET.SubElement(dati_generali_documento, "ImportoTotaleDocumento").text = f"{total_amount:.2f}"
+        self._create_element(dati_generali_documento, "TipoDocumento", "TD01")
+        self._create_element(dati_generali_documento, "Divisa", "EUR")
+        self._create_element(dati_generali_documento, "Data", date.today().strftime("%Y-%m-%d"))
+        self._create_element(dati_generali_documento, "Numero", document_number)
+        self._create_element(dati_generali_documento, "ImportoTotaleDocumento", f"{total_amount:.2f}")
+        
+        # DatiCassaPrevidenziale - solo se electronic_code è presente
+        tax_electronic_code = order_data.get('tax_electronic_code')
+        #if tax_electronic_code and tax_electronic_code.strip():
         
         # DatiBeniServizi
-        dati_beni_servizi = ET.SubElement(body, "DatiBeniServizi")
+        dati_beni_servizi = self._create_element(body, "DatiBeniServizi")
         
         # DettaglioLinee
         for i, detail in enumerate(order_details, 1):
-            dettaglio_linea = ET.SubElement(dati_beni_servizi, "DettaglioLinee")
-            ET.SubElement(dettaglio_linea, "NumeroLinea").text = str(i)
-            ET.SubElement(dettaglio_linea, "Descrizione").text = detail.get('product_name', 'Prodotto')
-            ET.SubElement(dettaglio_linea, "Quantita").text = f"{float(detail.get('product_quantity', 1)):.2f}"
-            ET.SubElement(dettaglio_linea, "PrezzoUnitario").text = f"{float(detail.get('unit_price_tax_excl', 0)):.2f}"
-            ET.SubElement(dettaglio_linea, "PrezzoTotale").text = f"{float(detail.get('total_price_tax_excl', 0)):.2f}"
-            ET.SubElement(dettaglio_linea, "AliquotaIVA").text = f"{tax_rate:.2f}"
+            dettaglio_linea = self._create_element(dati_beni_servizi, "DettaglioLinee")
+            self._create_element(dettaglio_linea, "NumeroLinea", str(i))
+            self._create_element(dettaglio_linea, "Descrizione", detail.get('product_name', 'Prodotto'))
+            
+            # Quantità
+            quantita = float(detail.get('product_qty'))
+            self._create_element(dettaglio_linea, "Quantita", f"{quantita:.2f}")
+            
+            # Prezzo unitario (product_price è il prezzo con IVA)
+            prezzo_unitario_iva = float(detail.get('product_price', 0))
+            prezzo_unitario_netto = prezzo_unitario_iva / (1 + tax_rate / 100)
+            # Arrotonda usando ROUND_HALF_UP
+            prezzo_unitario_netto = Decimal(str(prezzo_unitario_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            self._create_element(dettaglio_linea, "PrezzoUnitario", f"{prezzo_unitario_netto:.2f}")
+            
+            # Prezzo totale (prezzo unitario netto * quantità)
+            prezzo_totale_netto = float(prezzo_unitario_netto) * quantita
+            # Arrotonda usando ROUND_HALF_UP
+            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            self._create_element(dettaglio_linea, "PrezzoTotale", f"{prezzo_totale_netto:.2f}")
+            
+            self._create_element(dettaglio_linea, "AliquotaIVA", f"{tax_rate:.2f}")
+            if tax_electronic_code and tax_electronic_code.strip():
+                self._create_element(dettaglio_linea, "Natura", f"{tax_electronic_code:.2f}")
         
         # DatiRiepilogo
-        dati_riepilogo = ET.SubElement(dati_beni_servizi, "DatiRiepilogo")
-        ET.SubElement(dati_riepilogo, "AliquotaIVA").text = f"{tax_rate:.2f}"
-        ET.SubElement(dati_riepilogo, "ImponibileImporto").text = f"{net_amount:.2f}"
-        ET.SubElement(dati_riepilogo, "Imposta").text = f"{tax_amount:.2f}"
-        ET.SubElement(dati_riepilogo, "EsigibilitaIVA").text = "I"
+        dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
+        self._create_element(dati_riepilogo, "AliquotaIVA", f"{tax_rate:.2f}")
+
+        if tax_electronic_code and tax_electronic_code.strip():
+            self._create_element(dati_riepilogo, "Natura", tax_electronic_code)
+            # Usa il campo note della tassa per RiferimentoNormativo
+            tax_note = order_data.get('tax_note')
+            if tax_note and tax_note.strip():
+                self._create_element(dati_riepilogo, "RiferimentoNormativo", tax_note)
+
+        # Arrotonda i totali usando ROUND_HALF_UP
+        totale_imponibile_arrotondato = Decimal(str(totale_imponibile)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        totale_imposta_arrotondato = Decimal(str(totale_imposta)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        self._create_element(dati_riepilogo, "ImponibileImporto", f"{totale_imponibile_arrotondato:.2f}")
+        self._create_element(dati_riepilogo, "Imposta", f"{totale_imposta_arrotondato:.2f}")
+        self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
         
         # DatiPagamento
-        dati_pagamento = ET.SubElement(body, "DatiPagamento")
-        ET.SubElement(dati_pagamento, "CondizioniPagamento").text = "TP02"
+        dati_pagamento = self._create_element(body, "DatiPagamento")
+        # Recupera le condizioni di pagamento dalla configurazione, default TP02 se null
+        condition_payment = self._get_config_value("electronic_invoicing", "condition_payment", "TP02")
+        self._create_element(dati_pagamento, "CondizioniPagamento", condition_payment)
         
-        dettaglio_pagamento = ET.SubElement(dati_pagamento, "DettaglioPagamento")
-        ET.SubElement(dettaglio_pagamento, "ModalitaPagamento").text = "MP05"
-        ET.SubElement(dettaglio_pagamento, "DataScadenzaPagamento").text = date.today().strftime("%Y-%m-%d")
-        ET.SubElement(dettaglio_pagamento, "ImportoPagamento").text = f"{total_amount:.2f}"
-        ET.SubElement(dettaglio_pagamento, "IBAN").text = self.company_iban
+        dettaglio_pagamento = self._create_element(dati_pagamento, "DettaglioPagamento")
+        self._create_element(dettaglio_pagamento, "ModalitaPagamento", "MP05")
+        self._create_element(dettaglio_pagamento, "ImportoPagamento", f"{total_amount:.2f}")
+        # Aggiungi IBAN solo se presente e non vuoto
+        if self.company_iban and self.company_iban.strip():
+            self._create_element(dettaglio_pagamento, "IBAN", self.company_iban)
         
         # Converti in stringa XML
+        print(f"=== FINALIZZAZIONE XML ===")
         ET.indent(root, space="  ", level=0)
         xml_str = ET.tostring(root, encoding='unicode', xml_declaration=True)
+        print(f"XML generato con successo (lunghezza: {len(xml_str)} caratteri)")
+        print(f"=== FINE GENERAZIONE XML FATTURAPA ===")
         
         return xml_str
     
@@ -286,7 +479,7 @@ class FatturaPAService:
             status_code, _, body = await self._http_request('GET', url)
             
             if status_code == 200 and 'true' in body.lower():
-                logger.info("Verifica API FatturaPA completata con successo")
+                print("Verifica API FatturaPA completata con successo")
                 return True
             else:
                 logger.error(f"Verifica API fallita: {status_code} - {body}")
@@ -309,7 +502,7 @@ class FatturaPAService:
                     complete = data.get('Complete') or data.get('complete')
                     
                     if name and complete:
-                        logger.info(f"UploadStart1 completato: {name}")
+                        print(f"UploadStart1 completato: {name}")
                         return name, complete
                 except json.JSONDecodeError:
                     pass
@@ -333,7 +526,7 @@ class FatturaPAService:
                                                           headers=headers, content=xml_content)
             
             if 200 <= status_code < 300:
-                logger.info("Upload XML completato con successo")
+                print("Upload XML completato con successo")
                 return True
             else:
                 logger.error(f"Upload XML fallito: {status_code} - {body}")
@@ -346,7 +539,7 @@ class FatturaPAService:
     async def upload_stop(self, name: str, send_to_sdi: bool = False) -> Dict[str, Any]:
         """Completa il processo di upload"""
         try:
-            endpoint = "UploadStop" if send_to_sdi else "UploadStop1"
+            endpoint = "UploadStop1"
             url = f"{self.base_url}/{endpoint}/{self.api_key}/{name}"
             
             status_code, _, body = await self._http_request('GET', url)
@@ -354,7 +547,7 @@ class FatturaPAService:
             if status_code == 200:
                 try:
                     result = json.loads(body)
-                    logger.info(f"UploadStop completato: {endpoint}")
+                    print(f"UploadStop completato: {endpoint}")
                     return result
                 except json.JSONDecodeError:
                     return {"status": "success", "message": body}
@@ -422,28 +615,52 @@ class FatturaPAService:
                 return {"status": "error", "message": "UploadStart fallito"}
             
             # 7. Upload XML
-            if not await self.upload_xml(complete_url, xml_content):
-                return {"status": "error", "message": "Upload XML fallito"}
+            upload_success = await self.upload_xml(complete_url, xml_content)
             
             # 8. Upload Stop (senza invio a SdI)
             stop_result = await self.upload_stop(name, send_to_sdi=False)
             
-            # 9. Crea record Invoice nel database
-            invoice_data = {
-                "id_order": order_id,
-                "document_number": document_number,
-                "filename": filename,
-                "xml_content": xml_content,
-                "status": "uploaded",
-                "upload_result": stop_result,
-                "date_add": datetime.now()
-            }
+            print(stop_result)
+            # Determina lo status finale
+            if upload_success and stop_result.get("status") != "error":
+                final_status = "uploaded"
+            else:
+                final_status = "error"
+                if not upload_success:
+                    stop_result = {"status": "error", "message": "Upload XML fallito"}
             
-            invoice_id = self.invoice_repo.create_invoice(invoice_data)
+            # 9. Crea record Invoice nel database
+            invoice_id = None
+            if final_status == "uploaded":
+                # Salva con document_number per fatture riuscite
+                invoice_data = {
+                    "id_order": order_id,
+                    "document_number": document_number,
+                    "filename": filename,
+                    "xml_content": xml_content,
+                    "status": final_status,
+                    "upload_result": json.dumps(stop_result) if stop_result else None,
+                    "date_add": datetime.now()
+                }
+                
+                invoice_id = self.invoice_repo.create_invoice(invoice_data)
+            else:
+                # Salva senza document_number per fatture fallite
+                error_data = {
+                    "id_order": order_id,
+                    "document_number": None,  # Nessun document_number per preservare la numerazione
+                    "filename": filename,
+                    "xml_content": None,  # Non salvare XML se errore
+                    "status": "error",
+                    "upload_result": json.dumps(stop_result) if stop_result else None,
+                    "date_add": datetime.now()
+                }
+                
+                invoice_id = self.invoice_repo.create_invoice(error_data)
             
             return {
-                "status": "success",
-                "message": "Fattura generata e caricata con successo",
+                "status": "success" if final_status == "uploaded" else "error",
+                "message": "Fattura generata e caricata con successo" if final_status == "uploaded" else "Fattura generata ma upload fallito",
                 "invoice_id": invoice_id,
                 "document_number": document_number,
                 "filename": filename,
@@ -452,4 +669,23 @@ class FatturaPAService:
             
         except Exception as e:
             logger.error(f"Errore nella generazione fattura: {e}")
+            
+            # Salva record con status "error" senza document_number per tracciabilità
+            try:
+                error_filename = f"{self.vat_number}_error.xml"
+                
+                error_data = {
+                    "id_order": order_id,
+                    "document_number": None,  # Nessun document_number per preservare la numerazione
+                    "filename": error_filename,
+                    "xml_content": None,
+                    "status": "error",
+                    "upload_result": json.dumps({"status": "error", "message": str(e)}),
+                    "date_add": datetime.now()
+                }
+                
+                self.invoice_repo.create_invoice(error_data)
+            except Exception as db_error:
+                logger.error(f"Errore nel salvataggio errore nel database: {db_error}")
+            
             return {"status": "error", "message": str(e)}

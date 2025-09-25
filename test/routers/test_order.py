@@ -25,8 +25,8 @@ test_order_data = {
     "is_invoice_requested": False,
     "is_payed": False,
     "total_weight": 1.5,
-    "total_price": 99.99,
-    "cash_on_delivery": 0.0
+        "total_price": 99.99,
+        "cash_on_delivery": 0.0
 }
 
 expected_order_response = {

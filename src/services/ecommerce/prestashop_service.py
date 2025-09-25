@@ -12,6 +12,7 @@ from datetime import datetime
 
 from src.schemas.order_schema import OrderUpdateSchema
 from src.services.tool import safe_int, safe_float, sql_value
+from src.services.province_service import province_service
 
 from .base_ecommerce_service import BaseEcommerceService
 from ...repository.platform_repository import PlatformRepository
@@ -41,13 +42,13 @@ class PrestaShopService(BaseEcommerceService):
     def _get_six_months_ago_date(self) -> str:
         """Get date string for six months ago in YYYY-MM-DD format"""
         from datetime import timedelta
-        six_months_ago = datetime.now() - timedelta(days=720)  # 6 months
+        six_months_ago = datetime.now() - timedelta(days=365)  # 6 months
         return six_months_ago.strftime('%Y-%m-%d')
     
     def _get_date_range_filter(self) -> str:
         """Get date range filter string for PrestaShop API [start_date,end_date]"""
         from datetime import timedelta
-        six_months_ago = datetime.now() - timedelta(days=720)  # 6 months ago
+        six_months_ago = datetime.now() - timedelta(days=365)  # 6 months ago
         today = datetime.now()
         
         start_date = six_months_ago.strftime('%Y-%m-%d')
@@ -104,11 +105,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages),
-                ("Countries", self.sync_countries),
-                ("Brands", self.sync_brands),
-                ("Categories", self.sync_categories),
-                ("Carriers", self.sync_carriers),
+                #("Languages", self.sync_languages),
+                #("Countries", self.sync_countries),
+                #("Brands", self.sync_brands),
+                #("Categories", self.sync_categories),
+                #("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -123,9 +124,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                ("Products", self.sync_products),
-                ("Customers", self.sync_customers),
-                ("Addresses", self.sync_addresses),
+                #("Products", self.sync_products),
+                #("Customers", self.sync_customers),
+                #("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -543,7 +544,6 @@ class PrestaShopService(BaseEcommerceService):
             # Prepare all carrier data
             carrier_data_list = []
             for carrier in new_carriers:
-                print(carrier)
                 carrier_data = {
                     'id_origin': carrier.get('id', ''),
                     'name': carrier.get('name', '')
@@ -924,7 +924,7 @@ class PrestaShopService(BaseEcommerceService):
                     'lastname': address.get('lastname', ''),
                     'address1': address.get('address1', ''),
                     'address2': address.get('address2', ''),
-                    'state': state_name,
+                    'state': province_service.update_state_with_abbreviation(state_name),
                     'postcode': address.get('postcode', ''),
                     'city': address.get('city', ''),
                     'phone': address.get('phone_mobile', None),
@@ -1008,10 +1008,7 @@ class PrestaShopService(BaseEcommerceService):
                 all_customers = {int(customer.id_origin): customer.id_customer for customer in customers}
             
             print(f"DEBUG: Pre-fetched {len(all_customers)} customer IDs from {len(customer_origins)} unique origins")
-            if all_customers:
-                print(f"DEBUG: Sample customer mappings: {dict(list(all_customers.items())[:3])}")
-            else:
-                print("WARNING: No customers found in database. This will cause all addresses to fail.")
+
             
             # Optimized prepare address data function
             def prepare_address_data_optimized(address):
@@ -1031,7 +1028,7 @@ class PrestaShopService(BaseEcommerceService):
                 customer_origin_raw = address.get('id_customer')
                 customer_origin = int(customer_origin_raw) if customer_origin_raw is not None and customer_origin_raw != '' else 0
                 customer_id_raw = all_customers.get(customer_origin)
-                customer_id = int(customer_id_raw) if customer_id_raw is not None else None
+                customer_id = int(customer_id_raw) if customer_id_raw is not None else 0
                 
                 
                 return {
@@ -1043,7 +1040,7 @@ class PrestaShopService(BaseEcommerceService):
                     'lastname': address.get('lastname', ''),
                     'address1': address.get('address1', ''),
                     'address2': address.get('address2', ''),
-                    'state': state_name,
+                    'state': province_service.update_state_with_abbreviation(state_name),
                     'postcode': address.get('postcode', ''),
                     'city': address.get('city', ''),
                     'phone': address.get('phone_mobile', None),
@@ -1192,7 +1189,7 @@ class PrestaShopService(BaseEcommerceService):
                 
                 # Execute parallel requests
                 responses = await asyncio.gather(*tasks, return_exceptions=True)
-       
+                
                 
                 # Process responses
                 batch_addresses = []
@@ -2181,7 +2178,6 @@ class PrestaShopService(BaseEcommerceService):
                     'name': country.get('name', ''),
                     'iso_code': country.get('iso_code', '')
                 }
-                print(country_data)
                 country_data_list.append(country_data)
             
             # Process all upserts concurrently
@@ -2352,30 +2348,24 @@ class PrestaShopService(BaseEcommerceService):
         
         while True:
             try:
-                # Include order_rows associations to get order details
-                # Use PrestaShop format: limit=[offset,]limit
-                # Filter orders for the last 6 months using date range filter
                 params = {
                     'display': 'full',
                     'limit': f'{offset},{limit}'
                 }
-
+                # Always use date filter for orders sync to avoid old data
                 if self.new_elements:
                     last_id = self.db.execute(text("SELECT MAX(id_origin) FROM orders WHERE id_origin IS NOT NULL")).scalar()
                     last_id = last_id if last_id else 0
                     params['filter[id]'] = f'>[{last_id}]'
                 else:
-                    params['date'] = 1,
+                    params['date'] = 1
                     params['filter[date_add]'] = date_range_filter
-                
-                
+                    print(f"DEBUG: Using date filter: {date_range_filter}")
+                    print(f"DEBUG: Request params: {params}")
                 response = await self._make_request_with_rate_limit('/api/orders', params)
             
                 
                 orders_batch = self._extract_items_from_response(response, 'orders')
-                print(params)
-                print(f"last id: {last_id}")
-                print(f"DEBUG: Orders batch: {orders_batch}")
                 if not orders_batch:
                     print(f"DEBUG: No more orders found at offset {offset}")
                     break
@@ -2580,6 +2570,17 @@ class PrestaShopService(BaseEcommerceService):
                     payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
                     total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
                     
+                    # Extract shipping data
+                    total_shipping_tax_escl = safe_float(order.get('total_shipping_tax_excl', 0))
+                    shipping_tax_rate = safe_float(order.get('carrier_tax_rate', 0))
+        
+                    
+                    # Calculate total shipping price with tax included
+                    # total_shipping_price deve essere il prezzo finale comprensivo di tassa
+                    # Formula: price_tax_incl = total_shipping_tax_escl + (total_shipping_tax_escl * shipping_tax_rate / 100)
+                    # Simplified: price_tax_incl = total_shipping_tax_escl * (1 + shipping_tax_rate / 100)
+                    # Esempio: 10€ senza tassa + 22% tassa = 10 * (1 + 22/100) = 10 * 1.22 = 12.20€
+                    total_shipping_price = total_shipping_tax_escl * (1 + shipping_tax_rate / 100)
                     if not customer_id:
                         total_errors += 1
                         continue
@@ -2663,6 +2664,7 @@ class PrestaShopService(BaseEcommerceService):
                                 'reduction_amount': 0,
                                 'rda': None
                             }
+
                             valid_order_detail_data.append(order_detail_data)
                             order_detail_to_order_mapping.append(order_data['id_origin'])  # Track which order this detail belongs to
                             
@@ -2682,10 +2684,10 @@ class PrestaShopService(BaseEcommerceService):
                     order_data['shipping'] = shipping_repo.create_and_get_id(ShippingSchema(
                         id_carrier_api=assigned_carrier_api_id,
                         id_shipping_state=1,
-                        id_tax=id_tax,
+                        id_tax=default_tax_id,
                         tracking=None,
                         weight=order_total_weight,
-                        price_tax_incl=0.0, #TODO: review
+                        price_tax_incl=total_shipping_price, 
                         price_tax_excl=safe_float(order.get('total_shipping_tax_excl', 0))
                     ))
                     valid_order_data.append(order_data)
@@ -3029,10 +3031,8 @@ class PrestaShopService(BaseEcommerceService):
             )
             
             if assignment:
-                print(f"DEBUG: Found matching carrier assignment: {assignment.id_carrier_assignment} -> Carrier API {assignment.id_carrier_api} for order {order.get('id')}")
                 return assignment.id_carrier_api
             else:
-                print("DEBUG: No matching carrier assignment found, using default carrier API (ID: 1)")
                 return 1  # Default carrier API
                 
         except Exception as e:

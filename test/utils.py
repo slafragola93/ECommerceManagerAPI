@@ -748,59 +748,47 @@ def test_invoices():
     queries = [
         Invoice(
             id_order=1,
-            id_address_delivery=1,
-            id_address_invoice=2,
-            id_customer=1,
-            id_payment=1,
-            invoice_status="payed",
-            note="test note",
-            payed=True,
-            document_number=1
+            document_number="00005",
+            filename="IT12345678901_00005.xml",
+            xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
+            status="sent",
+            upload_result='{"status": "success", "message": "Fattura inviata a SdI"}',
+            date_add=datetime.now()
         ),
         Invoice(
             id_order=10,
-            id_address_delivery=9,
-            id_address_invoice=2,
-            id_payment=None,
-            invoice_status="payed",
-            id_customer=5,
-            note="test note",
-            payed=True,
-            document_number=2
+            document_number="00004",
+            filename="IT12345678901_00004.xml",
+            xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
+            status="uploaded",
+            upload_result='{"status": "success", "message": "Upload completato"}',
+            date_add=datetime.now()
         ),
         Invoice(
             id_order=1,
-            id_address_delivery=1,
-            id_address_invoice=2,
-            invoice_status="payed",
-            id_customer=1,
-            id_payment=1,
-            note="test note",
-            payed=True,
-            document_number=1
+            document_number="00003",
+            filename="IT12345678901_00003.xml",
+            xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
+            status="error",
+            upload_result='{"status": "error", "message": "Errore validazione"}',
+            date_add=datetime.now()
         ),
         Invoice(
             id_order=1,
-            id_address_delivery=1,
-            id_address_invoice=2,
-            id_payment=1,
-            invoice_status="payed",
-            id_customer=1,
-            note="test note",
-            payed=True,
-            document_number=1,
+            document_number="00002",
+            filename="IT12345678901_00002.xml",
+            xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
+            status="pending",
+            upload_result=None,
             date_add=anno_precedente
         ),
         Invoice(
             id_order=1,
-            id_address_delivery=1,
-            id_address_invoice=2,
-            invoice_status="payed",
-            id_payment=1,
-            id_customer=1,
-            note="test note",
-            payed=True,
-            document_number=1,
+            document_number="00001",
+            filename="IT12345678901_00001.xml",
+            xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
+            status="uploaded",
+            upload_result='{"status": "success", "message": "Upload completato"}',
             date_add=due_anni_precedenti
         )
     ]

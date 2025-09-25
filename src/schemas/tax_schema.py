@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 
 class TaxSchema(BaseModel):
-    id_country: Optional[int] = 1
+    id_country: Optional[int] = None
     is_default: Optional[int] = 0
     name: str = Field(..., min_length=5, max_length=200)
     note: Optional[str] = ""
@@ -13,12 +13,12 @@ class TaxSchema(BaseModel):
 
 class TaxResponseSchema(BaseModel):
     id_tax: int
-    id_country: int
+    id_country: Optional[int]
     is_default: int
     name: str
-    note: str
+    note: Optional[str]
     percentage: int
-    electronic_code: str
+    electronic_code: Optional[str]
 
 
 class AllTaxesResponseSchema(BaseModel):
