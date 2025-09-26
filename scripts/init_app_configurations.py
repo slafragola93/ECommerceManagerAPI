@@ -223,20 +223,6 @@ def init_app_configurations():
             ),
             AppConfigurationSchema(
                 category="electronic_invoicing",
-                name="withholding_type",
-                value="",
-                description="Tipo Ritenuta",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="payment_reason",
-                value="",
-                description="Causale Pagamento",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
                 name="vat_exigibility",
                 value="",
                 description="Esigibilità IVA",

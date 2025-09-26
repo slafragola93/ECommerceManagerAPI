@@ -4,6 +4,8 @@ from typing import Optional, List
 from datetime import datetime
 
 from src.models.invoice import Invoice
+from src.models.address import Address
+from src.models.customer import Customer
 from src.schemas.invoice_schema import InvoiceSchema, InvoiceUpdateSchema
 
 
@@ -85,6 +87,29 @@ class InvoiceRepository:
         # Incrementa di 1 e formatta con padding a 5 cifre
         next_num = max_num + 1
         return f"{next_num:05d}"
+    
+    def get_pec_by_customer_id(self, customer_id: int) -> Optional[str]:
+        """
+        Recupera la PEC di un customer in base al suo ID.
+        Cerca in tutti gli indirizzi collegati al customer e restituisce la prima PEC trovata.
+        
+        Args:
+            customer_id (int): ID del customer
+            
+        Returns:
+            Optional[str]: La PEC del customer se trovata, None altrimenti
+        """
+        # Cerca la PEC negli indirizzi del customer
+        address_with_pec = self.session.query(Address).filter(
+            Address.id_customer == customer_id,
+            Address.pec.isnot(None),
+            Address.pec != ""
+        ).first()
+        
+        if address_with_pec and address_with_pec.pec and address_with_pec.pec.strip():
+            return address_with_pec.pec
+        
+        return None
     
     def formatted_output(self, invoice: Invoice) -> dict:
         """Formatta l'output di una fattura per l'API"""

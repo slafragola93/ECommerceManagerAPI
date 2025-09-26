@@ -17,8 +17,8 @@ class OrderDetail(Base):
     product_qty = Column(Integer)
     product_weight = Column(Float)
     product_price = Column(Float)
-    reduction_percent = Column(Float)
-    reduction_amount = Column(Float)
+    reduction_percent = Column(Float, default=0.0)
+    reduction_amount = Column(Float, default=0.0)
     rda = Column(String(10))
 
 

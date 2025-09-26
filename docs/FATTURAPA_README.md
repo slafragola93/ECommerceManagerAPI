@@ -285,7 +285,6 @@ Il servizio recupera automaticamente i dati necessari dall'ordine:
 - **Persona Fisica**: Nome + Cognome (no Denominazione)
 - **Persona Giuridica**: Denominazione (no Nome/Cognome)
 - **TD01-TD03**: AliquotaIVA ≠ 0
-- **Ritenuta=SI**: DatiRitenuta obbligatorio
 
 ## Esempi di Utilizzo
 

@@ -94,7 +94,6 @@ class ElectronicInvoicingSchema(BaseModel):
     rea_registration: Optional[str] = Field(default=None, description="Iscrizione REA")
     cash_type: Optional[str] = Field(default=None, description="Tipo Cassa")
     withholding_type: Optional[str] = Field(default=None, description="Tipo Ritenuta")
-    payment_reason: Optional[str] = Field(default=None, description="Causale Pagamento")
     vat_exigibility: Optional[str] = Field(default=None, description="Esigibilità IVA")
     intermediary_name: Optional[str] = Field(default=None, description="Intermediario - Denominazione")
     intermediary_vat: Optional[str] = Field(default=None, description="Intermediario - Partita IVA")

@@ -189,7 +189,7 @@ class DatiGeneraliDocumento(BaseModel):
     tipo_documento: TipoDocumento
     divisa: str = Field(..., min_length=3, max_length=3)
     data: date
-    numero: str = Field(..., min_length=1, max_length=20)
+    numero: int = Field(..., gt=0, description="Numero sequenziale del documento")
     dati_ritenuta: Optional[List[DatiRitenuta]] = None
     sconto_maggiorazione: Optional[List[ScontoMaggiorazione]] = None
     importo_totale_documento: Optional[Decimal] = Field(None)

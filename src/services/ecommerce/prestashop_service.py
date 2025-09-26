@@ -2557,6 +2557,7 @@ class PrestaShopService(BaseEcommerceService):
                     delivery_address_origin = safe_int(order.get('id_address_delivery', 0))
                     invoice_address_origin = safe_int(order.get('id_address_invoice', 0))
                     payment_name = order.get('payment', '')
+                    reference = order.get('reference', None)
                     
                     # Validate required fields
                     if not order_id_origin or not customer_origin:
@@ -2602,6 +2603,7 @@ class PrestaShopService(BaseEcommerceService):
                     # Prepare complete order data
                     order_data = {
                         'id_origin': order_id_origin,
+                        'reference': reference,
                         'address_delivery': delivery_address_id,
                         'address_invoice': invoice_address_id,
                         'customer': customer_id,
@@ -2613,6 +2615,7 @@ class PrestaShopService(BaseEcommerceService):
                         'payed': is_payed,
                         'date_payment': None,  # Default
                         'total_price': total_paid_tax_excl,
+                        'total_discounts': safe_float(order.get('total_discounts', 0.0)),
                         'cash_on_delivery': 0,  #TODO: controllare
                         'insured_value': 0,  # Default
                         'privacy_note': None,
@@ -2647,6 +2650,32 @@ class PrestaShopService(BaseEcommerceService):
                             if id_tax is None:
                                 id_tax = 1  # Fallback
                             
+                            # Calcola differenza per rilevare sconti prodotto
+                            product_price = safe_float(detail.get('product_price', 0.0))
+                            unit_price_tax_excl = safe_float(detail.get('unit_price_tax_excl', 0.0))
+                            price_difference = product_price - unit_price_tax_excl
+                            
+                            # Inizializza valori sconto
+                            reduction_percent = 0.0
+                            reduction_amount = 0.0
+                            
+                            # Se c'è differenza di prezzo, cerca sconti nell'API order_details
+                            if price_difference > 0:
+                                try:
+                                    # Chiama API order_details per questo ordine
+                                    order_details_response = await self._get_order_details_discounts(order_id_origin)
+                                    
+                                    if order_details_response:
+                                        # Cerca il prodotto specifico nella risposta
+                                        product_reference = detail.get('product_reference', '')
+                                        for order_detail in order_details_response:
+                                            if order_detail.get('product_reference') == product_reference:
+                                                reduction_percent = safe_float(order_detail.get('reduction_percent', 0.0))
+                                                reduction_amount = safe_float(order_detail.get('reduction_amount', 0.0))
+                                                break
+                                except Exception as e:
+                                    print(f"⚠️ Errore nel recupero sconti per ordine {order_id_origin}: {e}")
+                            
                             # Prepare complete order detail data
                             order_detail_data = {
                                 'id_origin': detail.get('id', 0),
@@ -2658,10 +2687,10 @@ class PrestaShopService(BaseEcommerceService):
                                 'product_reference': detail.get('product_reference', 'ND'),
                                 'product_qty': product_quantity,
                                 'product_weight': product_weight,
-                                'product_price': safe_float(detail.get('product_price', 0.0)),
+                                'product_price': product_price,
                                 'id_tax': id_tax,
-                                'reduction_percent': 0,
-                                'reduction_amount': 0,
+                                'reduction_percent': reduction_percent,
+                                'reduction_amount': reduction_amount,
                                 'rda': None
                             }
 
@@ -2705,11 +2734,11 @@ class PrestaShopService(BaseEcommerceService):
             orders_sql_file = "temp_orders_insert.sql"
             with open(orders_sql_file, 'w', encoding='utf-8') as f:
                 f.write("-- Orders bulk insert\n")
-                f.write("INSERT INTO orders (id_origin, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
+                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
                 
                 for i, order_data in enumerate(valid_order_data):
                     comma = "," if i < len(valid_order_data) - 1 else ";"
-                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price']}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
             with open(orders_sql_file, 'r', encoding='utf-8') as f:
@@ -2813,9 +2842,6 @@ class PrestaShopService(BaseEcommerceService):
                     all_orders.extend(orders_batch)
                     offset += limit
                     
-                    # Debug: Show last order ID and payment method in this batch
-                    last_order_id = orders_batch[-1].get('id', 'unknown') if orders_batch else 'none'
-                    last_payment = orders_batch[-1].get('payment', 'unknown') if orders_batch else 'none'
                     
                     # Longer delay between batches to be gentle with the server
                     await asyncio.sleep(2)
@@ -2889,6 +2915,37 @@ class PrestaShopService(BaseEcommerceService):
     async def sync_order_details(self) -> List[Dict[str, Any]]:
         """Synchronize order details"""
         pass
+    
+    async def _get_order_details_discounts(self, order_id_origin: int) -> List[Dict[str, Any]]:
+        """
+        Recupera i dati di sconto per un ordine specifico dall'API order_details
+        
+        Args:
+            order_id_origin (int): ID dell'ordine in PrestaShop
+            
+        Returns:
+            List[Dict[str, Any]]: Lista dei dettagli ordine con sconti
+        """
+        try:
+            # Costruisce l'URL per l'API order_details
+            url = f"{self.base_url}/api/order_details"
+            params = {
+                'filter[id]': f'[{order_id_origin}]',
+                'display': '[product_reference,reduction_amount,reduction_percent]',
+                'output_format': 'JSON'
+            }
+            
+            # Utilizza la funzione esistente con rate limiting
+            response = await self._make_request_with_rate_limit(url, params)
+            
+            if response and 'order_details' in response:
+                return response['order_details']
+            else:
+                return []
+                
+        except Exception as e:
+            print(f"⚠️ Errore nella chiamata API order_details per ordine {order_id_origin}: {e}")
+            return []
     def _print_final_sync_summary(self, sync_results: Dict[str, Any], is_incremental: bool = False):
         """Print a comprehensive summary of the synchronization results"""
         sync_type = "INCREMENTAL" if is_incremental else "FULL"

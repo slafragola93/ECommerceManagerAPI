@@ -137,7 +137,7 @@ class TipoRitenuta(str, Enum):
     RT03 = "RT03"  # Ritenuta su somme già riscosse
     RT04 = "RT04"  # Ritenuta su somme già riscosse
     RT05 = "RT05"  # Ritenuta su somme già riscosse
-    RT06 = "RT06"  # Ritenuta su somme già riscosse
+    RT06 = "RT06"  
 
 
 class FormatoTrasmissione(str, Enum):

@@ -63,3 +63,15 @@ class TaxRepository:
         else:
             tax = self.session.query(Tax).filter(Tax.id_country == id_country).first()
             return tax.id_tax if tax else 1  # Fallback a ID 1 se non trovato
+
+    def get_by_id_country(self, id_country: int) -> list[Tax]:
+        """
+        Recupera tutte le tasse per un paese specifico
+        
+        Args:
+            id_country (int): ID del paese
+            
+        Returns:
+            list[Tax]: Lista delle tasse per il paese
+        """
+        return self.session.query(Tax).filter(Tax.id_country == id_country).all()

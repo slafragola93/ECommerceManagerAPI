@@ -95,10 +95,16 @@ class FatturaPAService:
                    c.name as country_name,
                    c.iso_code as country_iso,
                    t.electronic_code as tax_electronic_code,
-                   t.note as tax_note
+                   t.note as tax_note,
+                   a_del.id_country as delivery_country_id,
+                   c_del.iso_code as delivery_country_iso,
+                   t_del.percentage as tax_percentage
             FROM orders o
             LEFT JOIN addresses a_inv ON o.id_address_invoice = a_inv.id_address
             LEFT JOIN countries c ON a_inv.id_country = c.id_country
+            LEFT JOIN addresses a_del ON o.id_address_delivery = a_del.id_address
+            LEFT JOIN countries c_del ON a_del.id_country = c_del.id_country
+            LEFT JOIN taxes t_del ON a_del.id_country = t_del.id_country
             LEFT JOIN orders_document od ON o.id_order = od.id_order
             LEFT JOIN taxes t ON od.id_tax = t.id_tax
             WHERE o.id_order = :order_id
@@ -154,8 +160,17 @@ class FatturaPAService:
         print(f"PEC: '{customer_pec}'")
         
         # Calcola totali corretti
-        tax_rate = 22.0  # Default IVA 22%
+        # Recupera la percentuale IVA dal paese di delivery
+        tax_percentage = order_data.get('tax_percentage')
+        if tax_percentage is not None:
+            tax_rate = float(tax_percentage)
+        else:
+            tax_rate = 22.0  # Default IVA 22% se non trovata
+            print(f"WARNING: Tax percentage not found for delivery country, using default {tax_rate}%")
+        
+        delivery_country_iso = order_data.get('delivery_country_iso')
         print(f"=== CALCOLI IVA ===")
+        print(f"Paese di delivery: {delivery_country_iso}")
         print(f"Aliquota IVA: {tax_rate}%")
         
         # Ricalcola imponibile e imposta dalle linee di dettaglio
@@ -260,13 +275,24 @@ class FatturaPAService:
         self._create_element(dati_trasmissione, "CodiceDestinatario", codice_destinatario)
         print(f"✅ CodiceDestinatario validato: {codice_destinatario}")
         
+        # Gestione PEC del destinatario
         if customer_pec:
             self._create_element(dati_trasmissione, "PECDestinatario", customer_pec)
+        else:
+            # Se non c'è PEC nell'indirizzo, cerca negli altri indirizzi del customer
+            customer_id = order_data.get('id_customer')
+            if customer_id:
+                invoice_repo = InvoiceRepository(self.db)
+                customer_pec_fallback = invoice_repo.get_pec_by_customer_id(customer_id)
+                if customer_pec_fallback:
+                    self._create_element(dati_trasmissione, "PECDestinatario", customer_pec_fallback)
         
         contatti_trasmittente = self._create_element(dati_trasmissione, "ContattiTrasmittente")
         self._create_element(contatti_trasmittente, "Telefono", self.company_phone)
         self._create_element(contatti_trasmittente, "Email", self.company_email)
         
+
+
         # CedentePrestatore
         cedente = self._create_element(header, "CedentePrestatore")
         
@@ -380,7 +406,9 @@ class FatturaPAService:
         self._create_element(dati_generali_documento, "TipoDocumento", "TD01")
         self._create_element(dati_generali_documento, "Divisa", "EUR")
         self._create_element(dati_generali_documento, "Data", date.today().strftime("%Y-%m-%d"))
-        self._create_element(dati_generali_documento, "Numero", document_number)
+        # Converte il document_number in intero per il campo Numero
+        numero_sequenziale = int(document_number)
+        self._create_element(dati_generali_documento, "Numero", str(numero_sequenziale))
         self._create_element(dati_generali_documento, "ImportoTotaleDocumento", f"{total_amount:.2f}")
         
         # DatiCassaPrevidenziale - solo se electronic_code è presente

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Integer, Column, Text, Boolean, Date, Float, Table, ForeignKey
+from sqlalchemy import Integer, Column, Text, Boolean, Date, Float, Table, ForeignKey, String
 from sqlalchemy.orm import relationship
 from .relations.relations import orders_history
 
@@ -17,6 +17,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id_order = Column(Integer, primary_key=True, index=True)
+    reference = Column(String(255), nullable=True)
     id_origin = Column(Integer, index=True, nullable=True)
     id_address_delivery = Column(Integer, index=True, nullable=True, default=None)
     id_address_invoice = Column(Integer, index=True, nullable=True, default=None)
@@ -31,6 +32,7 @@ class Order(Base):
     payment_date = Column(Date, nullable=True)
     total_weight = Column(Float, default=0)
     total_price = Column(Float, default=0)
+    total_discounts = Column(Float, default=0.0)
     cash_on_delivery = Column(Float, default=0)
     insured_value = Column(Float, default=0)
     privacy_note = Column(Text, nullable=True)

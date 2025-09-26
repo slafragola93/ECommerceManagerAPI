@@ -413,6 +413,7 @@ class OrderRepository:
         return {
             "id_order": order.id_order,
             "id_origin": order.id_origin,
+            "reference": order.reference,
             # Campi ID per compatibilità con OrderIdSchema
             "id_address_delivery": order.id_address_delivery,
             "id_address_invoice": order.id_address_invoice,
@@ -428,6 +429,7 @@ class OrderRepository:
             "payment_date": order.payment_date,
             "total_weight": order.total_weight,
             "total_price": order.total_price,
+            "total_discounts": order.total_discounts,
             "cash_on_delivery": order.cash_on_delivery,
             "insured_value": order.insured_value,
             "privacy_note": order.privacy_note,

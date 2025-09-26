@@ -19,18 +19,35 @@ def get_repository(db: db_dependency) -> TaxRepository:
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllTaxesResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'FATTURAZIONE'], permissions_required=['R'])
-async def get_all_taxs(
+async def get_taxes(
         user: user_dependency,
         tr: TaxRepository = Depends(get_repository),
         page: int = Query(1, gt=0),
-        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+        id_country: int = Query(None, gt=0, description="Filtra le tasse per ID paese")
 ):
-    taxes = tr.get_all(page=page, limit=limit)
-
-    if not taxes:
-        raise HTTPException(status_code=404, detail="Nessuna tasse trovato")
-
-    total_count = tr.get_count()
+    """
+    Recupera tutte le tasse con filtro opzionale per paese
+    
+    Args:
+        user: Utente autenticato
+        tr: Repository delle tasse
+        page: Numero di pagina
+        limit: Limite di risultati per pagina
+        id_country: ID del paese per filtrare le tasse (opzionale)
+    """
+    if id_country:
+        # Filtra per paese specifico
+        taxes = tr.get_by_id_country(id_country=id_country)
+        if not taxes:
+            raise HTTPException(status_code=404, detail=f"Nessuna tassa trovata per il paese con ID {id_country}")
+        total_count = len(taxes)
+    else:
+        # Recupera tutte le tasse
+        taxes = tr.get_all(page=page, limit=limit)
+        if not taxes:
+            raise HTTPException(status_code=404, detail="Nessuna tasse trovato")
+        total_count = tr.get_count()
 
     return {"taxes": taxes, "total": total_count, "page": page, "limit": limit}
 

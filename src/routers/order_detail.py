@@ -62,7 +62,6 @@ async def get_all_order_details(
                                 product_ids=product_ids,
                                 search_value=search_value,
                                 rda=rda)
-    print(order_details)
     return {"order_details": order_details, "total": total_count, "page": page, "limit": limit}
 
 

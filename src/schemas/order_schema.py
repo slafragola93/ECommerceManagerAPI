@@ -21,11 +21,13 @@ class OrderSchema(BaseModel):
     sectional: int | SectionalSchema = 0
     id_order_state: int
     id_origin: Optional[int] = 0
+    reference: Optional[str] = None
     is_invoice_requested: bool
     is_payed: Optional[int] = 0
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
     total_price: Optional[float] = None
+    total_discounts: Optional[float] = 0.0
     cash_on_delivery: Optional[float] = None
 
     class Config:
@@ -43,11 +45,13 @@ class OrderUpdateSchema(BaseModel):
     id_sectional: Optional[int] = None
     id_order_state: Optional[int] = None
     id_origin: Optional[int] = None
+    reference: Optional[str] = None
     is_invoice_requested: Optional[bool] = None
     is_payed: Optional[int] = None
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
     total_price: Optional[float] = None
+    total_discounts: Optional[float] = None
     cash_on_delivery: Optional[float] = None
     insured_value: Optional[float] = None
     privacy_note: Optional[str] = None
@@ -61,6 +65,7 @@ class OrderUpdateSchema(BaseModel):
 class OrderResponseSchema(BaseModel):
     id_order: int
     id_origin: Optional[int]
+    reference: Optional[str]
     id_address_delivery: Optional[int]
     id_address_invoice: Optional[int]
     id_customer: Optional[int]
@@ -74,6 +79,7 @@ class OrderResponseSchema(BaseModel):
     payment_date: Optional[datetime]
     total_weight: Optional[float]
     total_price: Optional[float]
+    total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
     privacy_note: Optional[str]
@@ -97,6 +103,7 @@ class OrderIdSchema(BaseModel):
     """Schema per la risposta di get_order_by_id con relazioni popolate"""
     id_order: int
     id_origin: Optional[int]
+    reference: Optional[str]
     # Campi ID per compatibilità con i test
     id_address_delivery: Optional[int] = None
     id_address_invoice: Optional[int] = None
@@ -112,6 +119,7 @@ class OrderIdSchema(BaseModel):
     payment_date: Optional[datetime]
     total_weight: Optional[float]
     total_price: Optional[float]
+    total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
     privacy_note: Optional[str]
