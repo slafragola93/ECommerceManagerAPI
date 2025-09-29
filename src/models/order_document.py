@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, Float, Date, func, ForeignKey
+from sqlalchemy import Integer, Column, String, Float, Date, DateTime, func, ForeignKey
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -22,6 +22,7 @@ class OrderDocument(Base):
     delivery_price = Column(Float)
     note = Column(String(200))
     date_add = Column(Date, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     order = relationship("Order", back_populates="orders_document")
     tax = relationship("Tax", back_populates="orders_document")

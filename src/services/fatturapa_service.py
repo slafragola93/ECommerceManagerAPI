@@ -147,6 +147,7 @@ class FatturaPAService:
         print(f"Order details count: {len(order_details)}")
         
         # Estrai dati cliente
+        print(f"DEBUG FIRSTNAME: {order_data.get('invoice_firstname', '')} LASTNAME: {order_data.get('invoice_lastname', '')}")
         customer_name = order_data.get('invoice_firstname', '') + ' ' + order_data.get('invoice_lastname', '')
         customer_company = order_data.get('invoice_company', '')
         customer_cf = order_data.get('invoice_dni', '')
@@ -179,13 +180,10 @@ class FatturaPAService:
         
         print(f"=== DETTAGLI ORDINE ===")
         for i, detail in enumerate(order_details):
-            print(f"--- Prodotto {i+1} ---")
-            print(f"  Nome: '{detail.get('product_name', 'N/A')}'")
-            print(f"  Quantità: {detail.get('product_qty', 0)}")
-            print(f"  Prezzo con IVA: {detail.get('product_price', 0)}")
-            
-            quantita = float(detail.get('product_qty', 1))
-            prezzo_unitario_iva = float(detail.get('product_price', 0))
+            product_qty_debug = detail.get('product_qty', 1)
+            product_price_debug = detail.get('product_price', 0)
+            quantita = float(product_qty_debug) if product_qty_debug is not None else 1.0
+            prezzo_unitario_iva = float(product_price_debug) if product_price_debug is not None else 0.0
             prezzo_unitario_netto = prezzo_unitario_iva / (1 + tax_rate / 100)
             prezzo_totale_netto = prezzo_unitario_netto * quantita
             imposta_linea = (prezzo_unitario_iva - prezzo_unitario_netto) * quantita
@@ -204,8 +202,9 @@ class FatturaPAService:
             totale_imponibile += float(prezzo_totale_netto)
             totale_imposta += float(imposta_linea)
         
-        # Calcola il totale con IVA dalle linee di dettaglio
-        total_amount = totale_imponibile + totale_imposta
+        # Calcola il totale con IVA usando total_price dell'ordine * percentuale tassa
+        order_total_price = float(order_data.get('total_price', 0))
+        total_amount = order_total_price * (1 + tax_rate / 100)
         
         print(f"=== TOTALI CALCOLATI ===")
         print(f"Totale imponibile: {totale_imponibile:.2f}")
@@ -230,8 +229,8 @@ class FatturaPAService:
         root.set("xmlns:p", "http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2")
         root.set("xmlns:ds", "http://www.w3.org/2000/09/xmldsig#")
         root.set("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
-        print("Root element creato con prefisso p:")
-        
+        root.set("xsi:schemaLocation", "http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2 http://www.fatturapa.gov.it/export/fatturazione/sdi/fatturapa/v1.2/Schema_del_file_xml_FatturaPA_versione_1.2.xsd")
+
         # Header
         header = self._create_element(root, "FatturaElettronicaHeader")
         
@@ -329,15 +328,12 @@ class FatturaPAService:
         
         dati_anagrafici_cessionario = self._create_element(cessionario, "DatiAnagrafici")
         
-        print(f"=== VALIDAZIONE CODICE FISCALE ===")
-        print(f"CodiceFiscale: '{customer_cf}' (lunghezza: {len(customer_cf) if customer_cf else 0})")
         if customer_cf:
             if len(customer_cf) < 11 or len(customer_cf) > 16:
                 error_msg = f"CodiceFiscale deve essere tra 11 e 16 caratteri. Ricevuto: '{customer_cf}' (lunghezza: {len(customer_cf)})"
                 logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
                 raise ValueError(error_msg)
             self._create_element(dati_anagrafici_cessionario, "CodiceFiscale", customer_cf)
-            print(f"✅ CodiceFiscale validato: {customer_cf}")
         else:
             logger.warning("⚠️ CodiceFiscale non presente")
         
@@ -356,32 +352,22 @@ class FatturaPAService:
         # Pulisci l'indirizzo da caratteri speciali e virgole
         indirizzo = order_data.get('invoice_address1', 'VIA CLIENTE')
         indirizzo_pulito = indirizzo.replace(',', '').replace(';', '').strip()
-        print(f"=== VALIDAZIONE INDIRIZZO ===")
-        print(f"Indirizzo originale: '{indirizzo}'")
-        print(f"Indirizzo pulito: '{indirizzo_pulito}'")
         if not indirizzo_pulito:
             error_msg = "Indirizzo cliente non può essere vuoto"
             logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
             raise ValueError(error_msg)
         self._create_element(sede_cessionario, "Indirizzo", indirizzo_pulito)
-        print(f"✅ Indirizzo validato: {indirizzo_pulito}")
-        self._create_element(sede_cessionario, "NumeroCivico", "1")
         cap = order_data.get('invoice_postcode', '20100')
-        print(f"=== VALIDAZIONE CAP ===")
-        print(f"CAP: '{cap}' (lunghezza: {len(cap) if cap else 0})")
         if not cap or len(cap) != 5:
             error_msg = f"CAP deve essere esattamente 5 caratteri. Ricevuto: '{cap}' (lunghezza: {len(cap) if cap else 0})"
             logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
             raise ValueError(error_msg)
         self._create_element(sede_cessionario, "CAP", cap)
-        print(f"✅ CAP validato: {cap}")
         
         self._create_element(sede_cessionario, "Comune", order_data.get('invoice_city', 'MILANO'))
         
         # Provincia limitata a 2 caratteri (formato NA, MI, etc.)
         provincia_originale = order_data.get('invoice_state')
-        print(f"=== VALIDAZIONE PROVINCIA ===")
-        print(f"Provincia originale: '{provincia_originale}'")
         if provincia_originale:
             # Tronca alle prime due lettere e converti in maiuscolo
             provincia = provincia_originale[:2].upper()
@@ -393,7 +379,6 @@ class FatturaPAService:
             logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
             raise ValueError(error_msg)
         self._create_element(sede_cessionario, "Provincia", provincia)
-        print(f"✅ Provincia validata: {provincia}")
         self._create_element(sede_cessionario, "Nazione", order_data.get('country_iso', 'IT'))
         
         # Body
@@ -418,6 +403,7 @@ class FatturaPAService:
         # DatiBeniServizi
         dati_beni_servizi = self._create_element(body, "DatiBeniServizi")
         
+        
         # DettaglioLinee
         for i, detail in enumerate(order_details, 1):
             dettaglio_linea = self._create_element(dati_beni_servizi, "DettaglioLinee")
@@ -425,15 +411,40 @@ class FatturaPAService:
             self._create_element(dettaglio_linea, "Descrizione", detail.get('product_name', 'Prodotto'))
             
             # Quantità
-            quantita = float(detail.get('product_qty'))
+            product_qty_raw = detail.get('product_qty')
+            quantita = float(product_qty_raw) if product_qty_raw is not None else 1.0
             self._create_element(dettaglio_linea, "Quantita", f"{quantita:.2f}")
             
             # Prezzo unitario (product_price è il prezzo con IVA)
-            prezzo_unitario_iva = float(detail.get('product_price', 0))
+            product_price_raw = detail.get('product_price', 0)
+            prezzo_unitario_iva = float(product_price_raw) if product_price_raw is not None else 0.0
             prezzo_unitario_netto = prezzo_unitario_iva / (1 + tax_rate / 100)
             # Arrotonda usando ROUND_HALF_UP
             prezzo_unitario_netto = Decimal(str(prezzo_unitario_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             self._create_element(dettaglio_linea, "PrezzoUnitario", f"{prezzo_unitario_netto:.2f}")
+
+                      
+            # Controlla se ci sono sconti o maggiorazioni
+            reduction_percent_raw = detail.get('reduction_percent', 0)
+            reduction_amount_raw = detail.get('reduction_amount', 0)
+            
+            # Gestisci valori None convertendoli a 0
+            reduction_percent = float(reduction_percent_raw) if reduction_percent_raw is not None else 0.0
+            reduction_amount = float(reduction_amount_raw) if reduction_amount_raw is not None else 0.0
+            
+            if reduction_percent != 0 or reduction_amount != 0:
+                # Crea il tag ScontoMaggiorazione
+                sconto_maggiorazione = self._create_element(dettaglio_linea, "ScontoMaggiorazione")
+                self._create_element(sconto_maggiorazione, "Tipo", "SC")
+                
+                if reduction_percent != 0:
+                    # Se c'è una percentuale di sconto
+                    self._create_element(sconto_maggiorazione, "Percentuale", f"{reduction_percent:.2f}")
+                elif reduction_amount != 0:
+                    # Se c'è un importo di sconto, moltiplica per la percentuale della tassa
+                    print(f"DEBUG: TAX RATE: {tax_rate}")
+                    importo_sconto = reduction_amount * (1 + tax_rate / 100)
+                    self._create_element(sconto_maggiorazione, "Importo", f"{importo_sconto:.2f}")
             
             # Prezzo totale (prezzo unitario netto * quantità)
             prezzo_totale_netto = float(prezzo_unitario_netto) * quantita
@@ -444,6 +455,7 @@ class FatturaPAService:
             self._create_element(dettaglio_linea, "AliquotaIVA", f"{tax_rate:.2f}")
             if tax_electronic_code and tax_electronic_code.strip():
                 self._create_element(dettaglio_linea, "Natura", f"{tax_electronic_code:.2f}")
+  
         
         # DatiRiepilogo
         dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
@@ -463,18 +475,6 @@ class FatturaPAService:
         self._create_element(dati_riepilogo, "Imposta", f"{totale_imposta_arrotondato:.2f}")
         self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
         
-        # DatiPagamento
-        dati_pagamento = self._create_element(body, "DatiPagamento")
-        # Recupera le condizioni di pagamento dalla configurazione, default TP02 se null
-        condition_payment = self._get_config_value("electronic_invoicing", "condition_payment", "TP02")
-        self._create_element(dati_pagamento, "CondizioniPagamento", condition_payment)
-        
-        dettaglio_pagamento = self._create_element(dati_pagamento, "DettaglioPagamento")
-        self._create_element(dettaglio_pagamento, "ModalitaPagamento", "MP05")
-        self._create_element(dettaglio_pagamento, "ImportoPagamento", f"{total_amount:.2f}")
-        # Aggiungi IBAN solo se presente e non vuoto
-        if self.company_iban and self.company_iban.strip():
-            self._create_element(dettaglio_pagamento, "IBAN", self.company_iban)
         
         # Converti in stringa XML
         print(f"=== FINALIZZAZIONE XML ===")

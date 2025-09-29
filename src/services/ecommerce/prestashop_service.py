@@ -105,11 +105,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                #("Languages", self.sync_languages),
-                #("Countries", self.sync_countries),
-                #("Brands", self.sync_brands),
-                #("Categories", self.sync_categories),
-                #("Carriers", self.sync_carriers),
+                ("Languages", self.sync_languages),
+                ("Countries", self.sync_countries),
+                ("Brands", self.sync_brands),
+                ("Categories", self.sync_categories),
+                ("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -124,9 +124,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                #("Products", self.sync_products),
-                #("Customers", self.sync_customers),
-                #("Addresses", self.sync_addresses),
+                ("Products", self.sync_products),
+                ("Customers", self.sync_customers),
+                ("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -2353,6 +2353,7 @@ class PrestaShopService(BaseEcommerceService):
                     'limit': f'{offset},{limit}'
                 }
                 # Always use date filter for orders sync to avoid old data
+                self.new_elements = False
                 if self.new_elements:
                     last_id = self.db.execute(text("SELECT MAX(id_origin) FROM orders WHERE id_origin IS NOT NULL")).scalar()
                     last_id = last_id if last_id else 0
@@ -2360,14 +2361,19 @@ class PrestaShopService(BaseEcommerceService):
                 else:
                     params['date'] = 1
                     params['filter[date_add]'] = date_range_filter
-                    print(f"DEBUG: Using date filter: {date_range_filter}")
-                    print(f"DEBUG: Request params: {params}")
-                response = await self._make_request_with_rate_limit('/api/orders', params)
+                
+                # Add timeout to prevent indefinite blocking
+                try:
+                    response = await asyncio.wait_for(
+                        self._make_request_with_rate_limit('/api/orders', params),
+                        timeout=60.0  # 60 second timeout
+                    )
+                except asyncio.TimeoutError:
+                    raise Exception("API request timed out")
             
                 
                 orders_batch = self._extract_items_from_response(response, 'orders')
                 if not orders_batch:
-                    print(f"DEBUG: No more orders found at offset {offset}")
                     break
                 
                 
@@ -2375,11 +2381,6 @@ class PrestaShopService(BaseEcommerceService):
                 offset += limit
                 consecutive_errors = 0  # Reset error counter on success
                 
-                # Debug: Show last order ID and date in this batch
-                last_order = orders_batch[-1] if orders_batch else {}
-                last_order_id = last_order.get('id', last_order.get('id_order', 'unknown'))
-                last_order_date = orders_batch[-1].get('date_add', 'unknown') if orders_batch else 'none'
-                print(f"DEBUG: Fetched {len(orders_batch)} orders (total: {len(all_orders)}) - Last ID: {last_order_id}, Date: {last_order_date}")
                 
                 # Small delay between batches to be gentle with the server
                 await asyncio.sleep(1)
@@ -2417,22 +2418,7 @@ class PrestaShopService(BaseEcommerceService):
                     continue
         
         print(f"DEBUG: Fetched {len(all_orders)} orders total")
-        
-        # Debug: Check if orders respect the date filter
-        if all_orders:
-            first_order_date = all_orders[0].get('date_add', 'unknown')
-            last_order_date = all_orders[-1].get('date_add', 'unknown')
-            print(f"DEBUG: Date range of orders: {first_order_date} to {last_order_date}")
-            
-            # Check if filter is working - if we get old dates, the filter is not working
-            if '2017' in str(first_order_date) or '2018' in str(first_order_date) or '2019' in str(first_order_date):
-                print(f"WARNING: Date filter is NOT working! Getting orders from {first_order_date}")
-                print(f"WARNING: Expected orders from {six_months_ago} onwards")
-                print(f"WARNING: Applying client-side date filtering...")
-                
-                # Apply client-side filtering
-                all_orders = self._filter_orders_by_date(all_orders, six_months_ago)
-                print(f"DEBUG: After date filtering: {len(all_orders)} orders")
+    
         
         return all_orders
 
@@ -2461,9 +2447,7 @@ class PrestaShopService(BaseEcommerceService):
                         customer_origins.add(int(customer_origin))
                     except (ValueError, TypeError):
                         pass
-                
-                # Note: payment names are collected and processed dynamically during order processing
-                
+   
                 # Collect address origins
                 delivery_address = order.get('id_address_delivery',0)
                 invoice_address = order.get('id_address_invoice',0)
@@ -2555,7 +2539,9 @@ class PrestaShopService(BaseEcommerceService):
                     order_id_origin = safe_int(order.get('id', 0))
                     customer_origin = safe_int(order.get('id_customer', 0))
                     delivery_address_origin = safe_int(order.get('id_address_delivery', 0))
+                    print(f"DEBUG: ID ORDER {order_id_origin} Delivery address origin: {delivery_address_origin}")
                     invoice_address_origin = safe_int(order.get('id_address_invoice', 0))
+                    print(f"DEBUG: ID ORDER {order_id_origin} Invoice address origin: {invoice_address_origin}")
                     payment_name = order.get('payment', '')
                     reference = order.get('reference', None)
                     
@@ -2568,6 +2554,8 @@ class PrestaShopService(BaseEcommerceService):
                     customer_id = all_customers.get(customer_origin)
                     delivery_address_id = all_addresses.get(delivery_address_origin)
                     invoice_address_id = all_addresses.get(invoice_address_origin)
+                    print(f"DEBUG: ID ORDER {order_id_origin} match {delivery_address_origin} Delivery address ID: {delivery_address_id}")
+                    print(f"DEBUG: ID ORDER {order_id_origin} match {invoice_address_origin} Invoice address ID: {invoice_address_id}")
                     payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
                     total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
                     
@@ -2655,6 +2643,7 @@ class PrestaShopService(BaseEcommerceService):
                             unit_price_tax_excl = safe_float(detail.get('unit_price_tax_excl', 0.0))
                             price_difference = product_price - unit_price_tax_excl
                             
+                            
                             # Inizializza valori sconto
                             reduction_percent = 0.0
                             reduction_amount = 0.0
@@ -2664,14 +2653,13 @@ class PrestaShopService(BaseEcommerceService):
                                 try:
                                     # Chiama API order_details per questo ordine
                                     order_details_response = await self._get_order_details_discounts(order_id_origin)
-                                    
                                     if order_details_response:
                                         # Cerca il prodotto specifico nella risposta
                                         product_reference = detail.get('product_reference', '')
                                         for order_detail in order_details_response:
                                             if order_detail.get('product_reference') == product_reference:
                                                 reduction_percent = safe_float(order_detail.get('reduction_percent', 0.0))
-                                                reduction_amount = safe_float(order_detail.get('reduction_amount', 0.0))
+                                                reduction_amount = safe_float(order_detail.get('reduction_amount_tax_excl', 0.0))
                                                 break
                                 except Exception as e:
                                     print(f"⚠️ Errore nel recupero sconti per ordine {order_id_origin}: {e}")
@@ -2687,7 +2675,7 @@ class PrestaShopService(BaseEcommerceService):
                                 'product_reference': detail.get('product_reference', 'ND'),
                                 'product_qty': product_quantity,
                                 'product_weight': product_weight,
-                                'product_price': product_price,
+                                'product_price': unit_price_tax_excl,
                                 'id_tax': id_tax,
                                 'reduction_percent': reduction_percent,
                                 'reduction_amount': reduction_amount,
@@ -2927,17 +2915,15 @@ class PrestaShopService(BaseEcommerceService):
             List[Dict[str, Any]]: Lista dei dettagli ordine con sconti
         """
         try:
-            # Costruisce l'URL per l'API order_details
-            url = f"{self.base_url}/api/order_details"
+            # Costruisce i parametri per l'API order_details
             params = {
-                'filter[id]': f'[{order_id_origin}]',
-                'display': '[product_reference,reduction_amount,reduction_percent]',
+                'filter[id_order]': f'[{order_id_origin}]',
+                'display': '[product_reference,reduction_amount,reduction_percent,reduction_amount_tax_excl]',
                 'output_format': 'JSON'
             }
             
-            # Utilizza la funzione esistente con rate limiting
-            response = await self._make_request_with_rate_limit(url, params)
-            
+            # Utilizza la funzione esistente con rate limiting (passa solo l'endpoint)
+            response = await self._make_request_with_rate_limit('/api/order_details', params)
             if response and 'order_details' in response:
                 return response['order_details']
             else:

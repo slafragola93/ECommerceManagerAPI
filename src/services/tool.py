@@ -59,3 +59,8 @@ def sql_value(value: Any, null_value: str = "NULL") -> str:
         return f"'{value.replace(chr(39), chr(39) + chr(39))}'"  # Escape single quotes
     else:
         return str(value)
+
+
+def generate_preventivo_reference(document_number: str) -> str:
+    """Genera reference automatica per preventivo con formato PRV+document_number"""
+    return f"PRV{document_number}"
