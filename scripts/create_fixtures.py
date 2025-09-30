@@ -424,27 +424,66 @@ def create_fixtures():
         db.commit()
         print(f"✅ Create {len(shipments)} spedizioni")
         
-        # 25. Creazione Fatture
-        print("🧾 Creazione fatture...")
-        invoices = []
+        # 25. Creazione Documenti Fiscali (Fatture e Note di Credito)
+        print("🧾 Creazione documenti fiscali...")
+        fiscal_documents = []
+        
+        # Recupera ID Italia per validazione fatture elettroniche
+        italy = db.query(Country).filter(Country.iso_code == 'IT').first()
+        italy_id = italy.id_country if italy else None
+        
+        # Creazione fatture
         for order in orders:
             if random.choice([True, False]):  # Solo alcuni ordini hanno fattura
-                invoice = Invoice(
+                # Verifica se l'indirizzo è italiano per fatture elettroniche
+                address = db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
+                is_italian = address and italy_id and address.id_country == italy_id
+                is_electronic = is_italian and random.choice([True, False])
+                
+                fiscal_doc = FiscalDocument(
+                    document_type='invoice',
+                    tipo_documento_fe='TD01' if is_electronic else None,
                     id_order=order.id_order,
-                    id_customer=order.id_customer,
-                    id_payment=order.id_payment,
-                    id_address_invoice=order.id_address_invoice,
-                    id_address_delivery=order.id_address_delivery,
-                    invoice_status=random.choice(['draft', 'sent', 'paid', 'cancelled']),
-                    note=fake.text(max_nb_chars=150) if random.choice([True, False]) else None,
-                    payed=random.choice([True, False]),
-                    document_number=random.randint(1000, 9999),
-                    date_add=datetime.now().date()
+                    document_number=f"{random.randint(1, 999):06d}" if is_electronic else None,
+                    internal_number=f"INV-{random.randint(1000, 9999)}",
+                    is_electronic=is_electronic,
+                    status=random.choice(['pending', 'generated', 'sent']),
+                    total_amount=order.total_price,
+                    filename=f"IT01234567890_{random.randint(1, 999):05d}.xml" if is_electronic else None
                 )
-                db.add(invoice)
-                invoices.append(invoice)
+                db.add(fiscal_doc)
+                fiscal_documents.append(fiscal_doc)
+        
         db.commit()
-        print(f"✅ Create {len(invoices)} fatture")
+        
+        # Creazione note di credito per alcune fatture
+        invoices = [fd for fd in fiscal_documents if fd.document_type == 'invoice']
+        for invoice in random.sample(invoices, min(5, len(invoices))):
+            if random.choice([True, False]):
+                is_partial = random.choice([True, False])
+                credit_note = FiscalDocument(
+                    document_type='credit_note',
+                    tipo_documento_fe='TD04' if invoice.is_electronic else None,
+                    id_order=invoice.id_order,
+                    id_fiscal_document_ref=invoice.id_fiscal_document,
+                    document_number=f"{random.randint(1, 999):06d}" if invoice.is_electronic else None,
+                    internal_number=f"NC-{random.randint(1000, 9999)}",
+                    is_electronic=invoice.is_electronic,
+                    status=random.choice(['pending', 'generated', 'sent']),
+                    credit_note_reason=random.choice([
+                        'Reso merce difettosa',
+                        'Storno fattura errata',
+                        'Sconto post-vendita',
+                        'Reso parziale'
+                    ]),
+                    is_partial=is_partial,
+                    total_amount=invoice.total_amount if not is_partial else invoice.total_amount * random.uniform(0.3, 0.7),
+                    filename=f"IT01234567890_{random.randint(1, 999):05d}.xml" if invoice.is_electronic else None
+                )
+                db.add(credit_note)
+                fiscal_documents.append(credit_note)
+        db.commit()
+        print(f"✅ Creati {len(fiscal_documents)} documenti fiscali ({len(invoices)} fatture, {len(fiscal_documents) - len(invoices)} note di credito)")
         
         # 26. Creazione Documenti Ordine
         print("📄 Creazione documenti ordine...")

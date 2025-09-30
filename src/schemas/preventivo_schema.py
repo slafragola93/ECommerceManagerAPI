@@ -59,8 +59,8 @@ class ArticoloPreventivoSchema(BaseModel):
 class PreventivoCreateSchema(BaseModel):
     """Schema per creazione preventivo"""
     customer: CustomerField = Field(..., description="Customer (ID o oggetto completo)")
-    address_delivery: Optional[AddressField] = Field(None, description="Address delivery (ID o oggetto completo)")
-    address_invoice: Optional[AddressField] = Field(None, description="Address invoice (ID o oggetto completo)")
+    address_delivery: AddressField = Field(..., description="Address delivery (ID o oggetto completo) - obbligatorio")
+    address_invoice: Optional[AddressField] = Field(None, description="Address invoice (ID o oggetto completo) - se non specificato usa address_delivery")
     note: Optional[str] = None
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
 

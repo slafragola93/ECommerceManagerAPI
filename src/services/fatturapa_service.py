@@ -8,9 +8,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
 
-from src.models import Order, Address, Invoice, AppConfiguration
-from src.repository.invoice_repository import InvoiceRepository
+from src.models import Order, Address, AppConfiguration
+from src.models.fiscal_document import FiscalDocument
+from src.models.fiscal_document_detail import FiscalDocumentDetail
+from src.models.order_detail import OrderDetail
+from src.models.country import Country
 from src.repository.app_configuration_repository import AppConfigurationRepository
+from src.services.province_service import province_service
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +28,6 @@ class FatturaPAService:
     def __init__(self, db: Session, vat_number: Optional[str] = None):
         self.db = db
         self.vat_number = vat_number
-        self.invoice_repo = InvoiceRepository(db)
         self.config_repo = AppConfigurationRepository(db)
         
         # Configurazione FatturaPA
@@ -138,6 +141,18 @@ class FatturaPAService:
         for key, value in attrs.items():
             element.set(key, value)
         return element
+    
+    def _generate_filename(self, document_number: str) -> str:
+        """
+        Genera il nome del file XML FatturaPA
+        
+        Args:
+            document_number: Numero documento (es. "000001")
+        
+        Returns:
+            Nome file formato: IT{VAT_NUMBER}_{DOCUMENT_NUMBER}.xml
+        """
+        return f"{self.vat_number}_{document_number}.xml"
 
     def _generate_xml(self, order_data: Dict[str, Any], order_details: list, document_number: str) -> str:
         """Genera l'XML FatturaPA secondo le specifiche ufficiali"""
@@ -278,13 +293,9 @@ class FatturaPAService:
         if customer_pec:
             self._create_element(dati_trasmissione, "PECDestinatario", customer_pec)
         else:
-            # Se non c'è PEC nell'indirizzo, cerca negli altri indirizzi del customer
-            customer_id = order_data.get('id_customer')
-            if customer_id:
-                invoice_repo = InvoiceRepository(self.db)
-                customer_pec_fallback = invoice_repo.get_pec_by_customer_id(customer_id)
-                if customer_pec_fallback:
-                    self._create_element(dati_trasmissione, "PECDestinatario", customer_pec_fallback)
+            # Se non c'è PEC nell'indirizzo, cerca SDI o usa "0000000"
+            # TODO: Implementare fallback PEC da altri indirizzi customer se necessario
+            pass
         
         contatti_trasmittente = self._create_element(dati_trasmissione, "ContattiTrasmittente")
         self._create_element(contatti_trasmittente, "Telefono", self.company_phone)
@@ -367,13 +378,22 @@ class FatturaPAService:
         self._create_element(sede_cessionario, "Comune", order_data.get('invoice_city', 'MILANO'))
         
         # Provincia limitata a 2 caratteri (formato NA, MI, etc.)
-        provincia_originale = order_data.get('invoice_state')
+        provincia_originale = order_data.get('invoice_state') or order_data.get('provincia')
+        
+        # Usa ProvinceService per conversione
         if provincia_originale:
-            # Tronca alle prime due lettere e converti in maiuscolo
-            provincia = provincia_originale[:2].upper()
-            print(f"Provincia elaborata: '{provincia}'")
+            # Se è già un'abbreviazione (2 caratteri), usala
+            if len(provincia_originale) == 2:
+                provincia = provincia_originale.upper()
+            else:
+                # Altrimenti converti usando il service
+                provincia = province_service.get_province_abbreviation(provincia_originale)
+                if not provincia:
+                    # Fallback: prime 2 lettere
+                    provincia = provincia_originale[:2].upper()
         else:
-            provincia = provincia_originale
+            provincia = None
+        
         if not provincia or len(provincia) != 2:
             error_msg = f"Provincia deve essere esattamente 2 caratteri. Ricevuto: '{provincia_originale}' (lunghezza: {len(provincia) if provincia else 0})"
             logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
@@ -388,7 +408,9 @@ class FatturaPAService:
         dati_generali = self._create_element(body, "DatiGenerali")
         dati_generali_documento = self._create_element(dati_generali, "DatiGeneraliDocumento")
         
-        self._create_element(dati_generali_documento, "TipoDocumento", "TD01")
+        # TipoDocumento viene passato come parametro (TD01 per fatture, TD04 per note di credito)
+        tipo_documento = order_data.get('tipo_documento_fe', 'TD01')
+        self._create_element(dati_generali_documento, "TipoDocumento", tipo_documento)
         self._create_element(dati_generali_documento, "Divisa", "EUR")
         self._create_element(dati_generali_documento, "Data", date.today().strftime("%Y-%m-%d"))
         # Converte il document_number in intero per il campo Numero
@@ -432,24 +454,35 @@ class FatturaPAService:
             reduction_percent = float(reduction_percent_raw) if reduction_percent_raw is not None else 0.0
             reduction_amount = float(reduction_amount_raw) if reduction_amount_raw is not None else 0.0
             
+            # Calcola PrezzoTotale PRIMA dello sconto (prezzo base * quantità)
+            prezzo_totale_base = float(prezzo_unitario_netto) * quantita
+            
+            # Applica sconti per ottenere PrezzoTotale finale (IVA esclusa)
+            prezzo_totale_netto = prezzo_totale_base
+            
+            if reduction_percent != 0:
+                # Applica sconto percentuale
+                sconto = prezzo_totale_base * (reduction_percent / 100)
+                prezzo_totale_netto = prezzo_totale_base - sconto
+            elif reduction_amount != 0:
+                # Applica sconto importo (già IVA esclusa)
+                prezzo_totale_netto = prezzo_totale_base - reduction_amount
+            
+            # Arrotonda usando ROUND_HALF_UP
+            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            
+            # Tag ScontoMaggiorazione
             if reduction_percent != 0 or reduction_amount != 0:
-                # Crea il tag ScontoMaggiorazione
                 sconto_maggiorazione = self._create_element(dettaglio_linea, "ScontoMaggiorazione")
                 self._create_element(sconto_maggiorazione, "Tipo", "SC")
                 
                 if reduction_percent != 0:
-                    # Se c'è una percentuale di sconto
                     self._create_element(sconto_maggiorazione, "Percentuale", f"{reduction_percent:.2f}")
                 elif reduction_amount != 0:
-                    # Se c'è un importo di sconto, moltiplica per la percentuale della tassa
-                    print(f"DEBUG: TAX RATE: {tax_rate}")
-                    importo_sconto = reduction_amount * (1 + tax_rate / 100)
-                    self._create_element(sconto_maggiorazione, "Importo", f"{importo_sconto:.2f}")
+                    # reduction_amount è già IVA esclusa
+                    self._create_element(sconto_maggiorazione, "Importo", f"{reduction_amount:.2f}")
             
-            # Prezzo totale (prezzo unitario netto * quantità)
-            prezzo_totale_netto = float(prezzo_unitario_netto) * quantita
-            # Arrotonda usando ROUND_HALF_UP
-            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            # PrezzoTotale = prezzo base * quantità - sconti (IVA ESCLUSA)
             self._create_element(dettaglio_linea, "PrezzoTotale", f"{prezzo_totale_netto:.2f}")
             
             self._create_element(dettaglio_linea, "AliquotaIVA", f"{tax_rate:.2f}")
@@ -717,3 +750,188 @@ class FatturaPAService:
                 logger.error(f"Errore nel salvataggio errore nel database: {db_error}")
             
             return {"status": "error", "message": str(e)}
+    
+    # ==================== NUOVI METODI PER FISCAL DOCUMENTS ====================
+    
+    def generate_xml_from_fiscal_document(self, id_fiscal_document: int) -> Dict[str, Any]:
+        """
+        Genera XML FatturaPA da un FiscalDocument (fattura o nota di credito)
+        
+        Args:
+            id_fiscal_document: ID del documento fiscale
+        
+        Returns:
+            Dict con status, filename, xml_content
+        """
+        try:
+            # Recupera fiscal document
+            fiscal_doc = self.db.query(FiscalDocument).filter(
+                FiscalDocument.id_fiscal_document == id_fiscal_document
+            ).first()
+            
+            if not fiscal_doc:
+                raise ValueError(f"Documento fiscale {id_fiscal_document} non trovato")
+            
+            if not fiscal_doc.is_electronic:
+                raise ValueError("Il documento non è elettronico, non è possibile generare XML")
+            
+            # Recupera ordine
+            order = self.db.query(Order).filter(Order.id_order == fiscal_doc.id_order).first()
+            if not order:
+                raise ValueError(f"Ordine {fiscal_doc.id_order} non trovato")
+            
+            # Verifica indirizzo italiano
+            italy = self.db.query(Country).filter(Country.iso_code == 'IT').first()
+            if not italy:
+                raise ValueError("Paese Italia (IT) non trovato nel database")
+            
+            address = self.db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
+            if not address or address.id_country != italy.id_country:
+                raise ValueError("La fattura elettronica può essere emessa solo per indirizzi italiani")
+            
+            # Prepara order_data con tipo documento
+            order_data = self._prepare_order_data_from_fiscal_document(fiscal_doc, order, address)
+            
+            # Recupera order details
+            order_details = self._get_order_details_for_fiscal_document(fiscal_doc)
+            
+            # Genera XML
+            xml_content = self._generate_xml(order_data, order_details, fiscal_doc.document_number)
+            
+            # Genera filename
+            filename = self._generate_filename(fiscal_doc.document_number)
+            
+            return {
+                "status": "success",
+                "filename": filename,
+                "xml_content": xml_content
+            }
+            
+        except Exception as e:
+            logger.error(f"Errore generazione XML per fiscal document {id_fiscal_document}: {e}")
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    def _prepare_order_data_from_fiscal_document(
+        self, 
+        fiscal_doc: FiscalDocument, 
+        order: Order, 
+        address: Address
+    ) -> Dict[str, Any]:
+        """Prepara dizionario order_data da FiscalDocument"""
+        
+        # Query per ottenere dati customer
+        customer_query = text("""
+            SELECT c.*
+            FROM customers c
+            WHERE c.id_customer = :id_customer
+        """)
+        customer_result = self.db.execute(customer_query, {"id_customer": order.id_customer}).fetchone()
+        
+        if not customer_result:
+            raise ValueError(f"Cliente {order.id_customer} non trovato")
+        
+        # Converti result in dict
+        customer = dict(customer_result._mapping)
+        
+        # Recupera country ISO dall'address
+        country_iso = 'IT'  # Default
+        if address.id_country:
+            country = self.db.query(Country).filter(Country.id_country == address.id_country).first()
+            if country:
+                country_iso = country.iso_code
+        
+        # Determina company name da address o customer
+        customer_company = address.company if address.company else (
+            customer.get('company') or f"{customer.get('firstname', '')} {customer.get('lastname', '')}".strip()
+        )
+        
+        # Converti provincia usando ProvinceService
+        provincia_abbreviation = None
+        if address.state:
+            provincia_abbreviation = province_service.get_province_abbreviation(address.state)
+            if not provincia_abbreviation:
+                # Se non trova, usa le prime 2 lettere maiuscole come fallback
+                provincia_abbreviation = address.state[:2].upper() if len(address.state) >= 2 else address.state.upper()
+        
+        return {
+            'id_order': order.id_order,
+            'tipo_documento_fe': fiscal_doc.tipo_documento_fe,  # TD01 o TD04
+            
+            # Dati anagrafici - usa address (priorità) o customer (fallback)
+            'customer_company': customer_company,
+            'customer_firstname': address.firstname or customer.get('firstname'),
+            'customer_lastname': address.lastname or customer.get('lastname'),
+            'customer_vat': address.vat or '',
+            'customer_fiscal_code': address.dni or '',
+            
+            # Campi usati in _generate_xml (con prefisso invoice_)
+            'invoice_firstname': address.firstname or customer.get('firstname', ''),
+            'invoice_lastname': address.lastname or customer.get('lastname', ''),
+            'invoice_address1': address.address1,
+            'invoice_address2': address.address2,
+            'invoice_city': address.city,
+            'invoice_postcode': address.postcode,
+            'invoice_state': provincia_abbreviation,
+            'invoice_pec': address.pec,
+            'invoice_sdi': address.sdi,
+            
+            # Altri campi legacy
+            'address_line1': address.address1,
+            'address_line2': address.address2,
+            'city': address.city,
+            'postcode': address.postcode,
+            'country_iso': country_iso,
+            'provincia': provincia_abbreviation,
+            'pec': address.pec,
+            'sdi': address.sdi,
+            'total_price': fiscal_doc.total_amount or 0.0
+        }
+    
+    def _get_order_details_for_fiscal_document(self, fiscal_doc: FiscalDocument) -> list:
+        """Recupera order details per fiscal document usando fiscal_document_details"""
+        
+        # Recupera fiscal_document_details
+        fiscal_details = self.db.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document == fiscal_doc.id_fiscal_document
+        ).all()
+        
+        if not fiscal_details:
+            return []
+        
+        details = []
+        for fdd in fiscal_details:
+            # Recupera OrderDetail per ottenere product_name e id_tax
+            od = self.db.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == fdd.id_order_detail
+            ).first()
+            
+            if not od:
+                continue
+            
+            # Calcola reduction dal confronto tra total_amount e prezzo base
+            prezzo_base = fdd.unit_price * fdd.quantity
+            sconto = prezzo_base - fdd.total_amount
+            
+            # Determina se è percentuale o importo
+            reduction_percent = 0.0
+            reduction_amount = 0.0
+            
+            if sconto > 0:
+                if od.reduction_percent and od.reduction_percent > 0:
+                    reduction_percent = od.reduction_percent
+                else:
+                    reduction_amount = sconto
+            
+            details.append({
+                'product_name': od.product_name,
+                'product_qty': fdd.quantity,  # ✅ Sempre positiva (anche per note di credito)
+                'product_price': fdd.unit_price,
+                'reduction_percent': reduction_percent,
+                'reduction_amount': reduction_amount,
+                'id_tax': od.id_tax
+            })
+        
+        return details

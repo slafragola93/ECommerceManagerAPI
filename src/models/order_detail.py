@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, Float
+from sqlalchemy import Integer, Column, String, Float, ForeignKey
 from src.database import Base
 
 
@@ -8,7 +8,7 @@ class OrderDetail(Base):
     id_order_detail = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, index=True, default=0)
     id_order = Column(Integer, index=True, default=None)
-    id_invoice = Column(Integer, index=True, default=None)
+    id_fiscal_document = Column(Integer, index=True, default=None)  # FK verso fiscal_documents (senza vincolo per compatibilità)
     id_order_document = Column(Integer, index=True, default=None)
     id_product = Column(Integer, index=True, default=None)
     id_tax = Column(Integer, index=True, default=None)

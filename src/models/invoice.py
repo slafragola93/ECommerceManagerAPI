@@ -19,4 +19,5 @@ class Invoice(Base):
     date_upd = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    order = relationship("Order", back_populates="invoices")
+    # Nota: Questo modello è deprecato, usare FiscalDocument
+    # order = relationship("Order", back_populates="invoices")  # Disabilitato per compatibilità

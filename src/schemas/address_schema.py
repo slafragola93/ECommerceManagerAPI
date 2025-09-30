@@ -19,10 +19,10 @@ class AddressSchema(BaseModel):
     city: str = Field(..., max_length=64)
     phone: str = Field(..., max_length=32)
     mobile_phone: Optional[str] = Field(None, max_length=32)
-    vat: str = Field(..., max_length=32)
-    dni: str = Field(..., max_length=16)
-    pec: str = Field(..., max_length=128)
-    sdi: str = Field(..., max_length=128)
+    vat: Optional[str] = Field(None, max_length=32)
+    dni: Optional[str] = Field(None, max_length=16)
+    pec: Optional[str] = Field(None, max_length=128)
+    sdi: Optional[str] = Field(None, max_length=128)
     ipa: Optional[str] = Field(None, max_length=128)
 
 

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy.orm import Session
 from src.database import get_db
 from src.services.auth import get_current_user
@@ -29,11 +29,155 @@ db_dependency = Depends(get_db)
 @router.post("/", response_model=PreventivoResponseSchema, status_code=status.HTTP_201_CREATED,
              response_description="Preventivo creato con successo")
 async def create_preventivo(
-    preventivo_data: PreventivoCreateSchema,
+    preventivo_data: PreventivoCreateSchema = Body(
+        ...,
+        examples={
+            "con_id_esistenti": {
+                "summary": "Preventivo con customer e address esistenti (solo ID)",
+                "description": "Usa questo formato quando customer e indirizzi esistono già nel database. Passa solo gli ID.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "address_invoice": {"id": 470626},
+                    "note": "Preventivo per cliente esistente",
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 3,
+                            "id_tax": 9,
+                            "reduction_percent": 10.0
+                        }
+                    ]
+                }
+            },
+            "crea_nuovo_customer": {
+                "summary": "Preventivo creando nuovo customer e address",
+                "description": "Usa questo formato per creare un nuovo customer e i suoi indirizzi. Passa gli oggetti completi invece degli ID.",
+                "value": {
+                    "customer": {
+                        "data": {
+                            "firstname": "Mario",
+                            "lastname": "Rossi",
+                            "email": "mario.rossi@example.com",
+                            "company": "Rossi SRL",
+                            "id_origin": 0
+                        }
+                    },
+                    "address_delivery": {
+                        "data": {
+                            "id_customer": 0,
+                            "id_country": 1,
+                            "firstname": "Mario",
+                            "lastname": "Rossi",
+                            "address1": "Via Roma 123",
+                            "city": "Milano",
+                            "postcode": "20100",
+                            "phone": "02123456",
+                            "id_origin": 0
+                        }
+                    },
+                    "note": "Preventivo per nuovo cliente",
+                    "articoli": [
+                        {
+                            "product_name": "Prodotto personalizzato",
+                            "product_reference": "CUSTOM-001",
+                            "product_price": 120.50,
+                            "product_weight": 1.5,
+                            "product_qty": 3,
+                            "id_tax": 9
+                        }
+                    ]
+                }
+            },
+            "senza_address_invoice": {
+                "summary": "Preventivo senza address_invoice (usa delivery come invoice)",
+                "description": "Se non specifichi address_invoice, verrà usato automaticamente address_delivery come indirizzo di fatturazione.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "note": "Delivery = Invoice",
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 2,
+                            "id_tax": 9
+                        }
+                    ]
+                }
+            },
+            "prodotto_personalizzato": {
+                "summary": "Preventivo con prodotto personalizzato (id_origin=0)",
+                "description": "Puoi creare prodotti personalizzati al volo senza id_product. Specifica tutti i dettagli del prodotto.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "note": "Preventivo con articolo custom",
+                    "articoli": [
+                        {
+                            "product_name": "Servizio di consulenza",
+                            "product_reference": "SERV-CONS-2024",
+                            "product_price": 500.00,
+                            "product_weight": 0.0,
+                            "product_qty": 1,
+                            "id_tax": 9,
+                            "reduction_percent": 15.0
+                        }
+                    ]
+                }
+            },
+            "mix_prodotti": {
+                "summary": "Preventivo misto (prodotti esistenti + personalizzati)",
+                "description": "Puoi combinare prodotti esistenti (con id_product) e prodotti personalizzati nello stesso preventivo.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 2,
+                            "id_tax": 9
+                        },
+                        {
+                            "product_name": "Installazione",
+                            "product_reference": "INST-001",
+                            "product_price": 100.00,
+                            "product_qty": 1,
+                            "id_tax": 9,
+                            "reduction_amount": 20.0
+                        }
+                    ]
+                }
+            }
+        }
+    ),
     user: User = user_dependency,
     db: Session = db_dependency
 ):
-    """Crea un nuovo preventivo"""
+    """
+    Crea un nuovo preventivo
+    
+    ## Regole importanti:
+    
+    ### Customer e Address:
+    - **customer**: OBBLIGATORIO - Passa `{"id": X}` per usare un customer esistente, oppure `{"data": {...}}` per crearne uno nuovo
+    - **address_delivery**: OBBLIGATORIO - Passa `{"id": X}` per usare un indirizzo esistente, oppure `{"data": {...}}` per crearne uno nuovo
+    - **address_invoice**: OPZIONALE - Se non specificato, verrà usato `address_delivery` anche come indirizzo di fatturazione
+    
+    ### Articoli:
+    - **Con id_product**: Se specifichi `id_product`, verranno usati i dati del prodotto esistente (solo `product_qty` è obbligatorio)
+    - **Senza id_product**: Per prodotti personalizzati, devi specificare `product_name`, `product_reference`, `product_price`, `product_qty`
+    - **id_tax**: Sempre obbligatorio per ogni articolo
+    - **Sconti**: Usa `reduction_percent` (%) o `reduction_amount` (importo fisso), non entrambi
+    
+    ### Calcolo totali:
+    - Il totale viene calcolato automaticamente sommando (prezzo * quantità) di ogni articolo
+    - Gli sconti vengono applicati per riga
+    - La tassa viene applicata al totale finale (non per singolo articolo)
+    
+    ### Reference:
+    - La reference viene generata automaticamente nel formato `PRV{document_number}`
+    - Non è necessario specificarla
+    """
     try:
         service = get_preventivo_service(db)
         return service.create_preventivo(preventivo_data, user["id"])

@@ -5,7 +5,8 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
-from src import Country, Role, OrderState, Invoice, OrderPackage
+from src import Country, Role, OrderState, OrderPackage
+from src.models.fiscal_document import FiscalDocument  # Sostituisce Invoice
 from src.database import *
 from src.main import app
 from src.models import CarrierApi, Customer, Category, Brand, User, ShippingState, Product, Address, Carrier, Platform, \
@@ -742,49 +743,68 @@ def test_shipping_state():
 
 @pytest.fixture()
 def test_invoices():
+    """
+    Crea fiscal documents di test (compatibilità con vecchi test)
+    Nota: Ora usa FiscalDocument invece di Invoice
+    """
     anno_precedente = datetime.now() - relativedelta(years=1)
     due_anni_precedenti = datetime.now() - relativedelta(years=2)
 
     queries = [
-        Invoice(
+        FiscalDocument(
+            document_type='invoice',
+            tipo_documento_fe='TD01',
             id_order=1,
             document_number="00005",
+            is_electronic=True,
             filename="IT12345678901_00005.xml",
             xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
             status="sent",
             upload_result='{"status": "success", "message": "Fattura inviata a SdI"}',
             date_add=datetime.now()
         ),
-        Invoice(
+        FiscalDocument(
+            document_type='invoice',
+            tipo_documento_fe='TD01',
             id_order=10,
             document_number="00004",
+            is_electronic=True,
             filename="IT12345678901_00004.xml",
             xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
             status="uploaded",
             upload_result='{"status": "success", "message": "Upload completato"}',
             date_add=datetime.now()
         ),
-        Invoice(
+        FiscalDocument(
+            document_type='invoice',
+            tipo_documento_fe='TD01',
             id_order=1,
             document_number="00003",
+            is_electronic=True,
             filename="IT12345678901_00003.xml",
             xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
             status="error",
             upload_result='{"status": "error", "message": "Errore validazione"}',
             date_add=datetime.now()
         ),
-        Invoice(
+        FiscalDocument(
+            document_type='invoice',
+            tipo_documento_fe='TD01',
             id_order=1,
             document_number="00002",
+            is_electronic=True,
             filename="IT12345678901_00002.xml",
             xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
             status="pending",
             upload_result=None,
             date_add=anno_precedente
         ),
-        Invoice(
+        FiscalDocument(
+            document_type='invoice',
+            tipo_documento_fe='TD01',
             id_order=1,
             document_number="00001",
+            is_electronic=True,
             filename="IT12345678901_00001.xml",
             xml_content="<?xml version='1.0' encoding='utf-8'?><FatturaElettronica>...</FatturaElettronica>",
             status="uploaded",
@@ -797,7 +817,7 @@ def test_invoices():
     db.commit()
     yield queries
     with engine.connect() as conn:
-        conn.execute(text("DELETE FROM invoices;"))
+        conn.execute(text("DELETE FROM fiscal_documents;"))
         conn.commit()
 
 
@@ -960,7 +980,7 @@ def test_order_detail():
     """
     order_detail_test = OrderDetail(
         id_order=1,
-        id_invoice=None,
+        id_fiscal_document=None,
         id_order_document=None,
         id_origin=1,
         id_product=1,
@@ -992,7 +1012,7 @@ def test_order_details():
     order_details_test = [
         OrderDetail(
             id_order=1,
-            id_invoice=None,
+            id_fiscal_document=None,
             id_order_document=None,
             id_origin=1,
             id_product=1,
@@ -1007,7 +1027,7 @@ def test_order_details():
         ),
         OrderDetail(
             id_order=1,
-            id_invoice=None,
+            id_fiscal_document=None,
             id_order_document=None,
             id_origin=2,
             id_product=2,
@@ -1022,7 +1042,7 @@ def test_order_details():
         ),
         OrderDetail(
             id_order=2,
-            id_invoice=None,
+            id_fiscal_document=None,
             id_order_document=None,
             id_origin=3,
             id_product=3,

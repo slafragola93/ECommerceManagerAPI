@@ -54,6 +54,10 @@ class PreventivoRepository:
         delivery_address_id = self._handle_delivery_address(preventivo_data, customer_id, user_id)
         invoice_address_id = self._handle_invoice_address(preventivo_data, customer_id, user_id)
         
+        # Se address_invoice non è specificato, usa address_delivery
+        if invoice_address_id is None:
+            invoice_address_id = delivery_address_id
+        
         
         # Determina id_tax (usa la tassa più comune tra gli articoli)
         id_tax = None
@@ -293,27 +297,29 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
-        # Crea ordine
+        # Crea ordine basandosi sul modello Order corretto
         order = Order(
             id_origin=0,  # Ordine creato dall'app
             id_customer=preventivo.id_customer,
             id_address_delivery=conversion_data.get('id_address_delivery', preventivo.id_address_delivery),
             id_address_invoice=conversion_data.get('id_address_invoice', preventivo.id_address_invoice),
             reference=generate_preventivo_reference(preventivo.document_number),
-            payment=conversion_data.get('payment_method', ''),
-            total_paid_tax_excl=0.0,
-            total_paid_tax_incl=0.0,
-            total_products_tax_excl=0.0,
-            total_products_tax_incl=0.0,
-            total_shipping_tax_excl=0.0,
-            total_shipping_tax_incl=0.0,
-            total_discounts_tax_excl=0.0,
-            total_discounts_tax_incl=0.0,
-            total_tax_excl=0.0,
-            total_tax_incl=0.0,
-            status="pending",
-            created_by=user_id,
-            updated_by=user_id
+            id_platform=conversion_data.get('id_platform', 1),  # Default 1
+            id_payment=conversion_data.get('id_payment'),
+            id_shipping=conversion_data.get('id_shipping'),
+            id_sectional=conversion_data.get('id_sectional'),
+            id_order_state=conversion_data.get('id_order_state', 1),  # Default 1 (pending)
+            is_invoice_requested=conversion_data.get('is_invoice_requested', False),
+            is_payed=conversion_data.get('is_payed', False),
+            payment_date=conversion_data.get('payment_date'),
+            total_weight=preventivo.total_weight or 0.0,
+            total_price=preventivo.total_price or 0.0,
+            total_discounts=conversion_data.get('total_discounts', 0.0),
+            cash_on_delivery=conversion_data.get('cash_on_delivery', 0.0),
+            insured_value=conversion_data.get('insured_value', 0.0),
+            privacy_note=conversion_data.get('privacy_note'),
+            general_note=preventivo.note,
+            delivery_date=conversion_data.get('delivery_date')
         )
         
         self.db.add(order)
@@ -360,9 +366,7 @@ class PreventivoRepository:
                 id_lang=preventivo_data.customer.data.id_lang,
                 firstname=preventivo_data.customer.data.firstname,
                 lastname=preventivo_data.customer.data.lastname,
-                email=preventivo_data.customer.data.email,
-                created_by=user_id,
-                updated_by=user_id
+                email=preventivo_data.customer.data.email
             )
             self.db.add(customer)
             self.db.flush()
@@ -403,9 +407,7 @@ class PreventivoRepository:
                 dni=preventivo_data.address_delivery.data.dni,
                 pec=preventivo_data.address_delivery.data.pec,
                 sdi=preventivo_data.address_delivery.data.sdi,
-                ipa=preventivo_data.address_delivery.data.ipa,
-                created_by=user_id,
-                updated_by=user_id
+                ipa=preventivo_data.address_delivery.data.ipa
             )
             self.db.add(address)
             self.db.flush()
@@ -445,9 +447,7 @@ class PreventivoRepository:
                 dni=preventivo_data.address_invoice.data.dni,
                 pec=preventivo_data.address_invoice.data.pec,
                 sdi=preventivo_data.address_invoice.data.sdi,
-                ipa=preventivo_data.address_invoice.data.ipa,
-                created_by=user_id,
-                updated_by=user_id
+                ipa=preventivo_data.address_invoice.data.ipa
             )
             self.db.add(address)
             self.db.flush()
