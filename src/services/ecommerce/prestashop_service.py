@@ -105,11 +105,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages),
-                ("Countries", self.sync_countries),
-                ("Brands", self.sync_brands),
-                ("Categories", self.sync_categories),
-                ("Carriers", self.sync_carriers),
+                #("Languages", self.sync_languages),
+                #("Countries", self.sync_countries),
+                #("Brands", self.sync_brands),
+                #("Categories", self.sync_categories),
+                #("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -124,9 +124,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                ("Products", self.sync_products),
-                ("Customers", self.sync_customers),
-                ("Addresses", self.sync_addresses),
+                #("Products", self.sync_products),
+                #("Customers", self.sync_customers),
+                #("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -2352,6 +2352,8 @@ class PrestaShopService(BaseEcommerceService):
                     'display': 'full',
                     'limit': f'{offset},{limit}'
                 }
+                print(self.new_elements)
+                print(params)
                 # Always use date filter for orders sync to avoid old data
                 self.new_elements = False
                 if self.new_elements:
@@ -2505,15 +2507,14 @@ class PrestaShopService(BaseEcommerceService):
             
             # Pre-fetch all taxes using raw SQL
             all_taxes = {}
-            default_tax_id = None
+            default_tax_id = self._get_default_tax_id()
             query = text("SELECT id_tax, id_country, is_default FROM taxes")
             result = self.db.execute(query)
             for row in result:
-                if row.is_default == 1:
-                    default_tax_id = row.id_tax
                 if row.id_country is not None:
                     all_taxes[row.id_country] = row.id_tax
-            
+            print(f"DEBUG: Default tax ID: {default_tax_id}")
+
             # Pre-fetch product weights using raw SQL
             product_weight_mapping = {}
             if product_origins:
@@ -2539,9 +2540,7 @@ class PrestaShopService(BaseEcommerceService):
                     order_id_origin = safe_int(order.get('id', 0))
                     customer_origin = safe_int(order.get('id_customer', 0))
                     delivery_address_origin = safe_int(order.get('id_address_delivery', 0))
-                    print(f"DEBUG: ID ORDER {order_id_origin} Delivery address origin: {delivery_address_origin}")
                     invoice_address_origin = safe_int(order.get('id_address_invoice', 0))
-                    print(f"DEBUG: ID ORDER {order_id_origin} Invoice address origin: {invoice_address_origin}")
                     payment_name = order.get('payment', '')
                     reference = order.get('reference', None)
                     
@@ -2554,8 +2553,6 @@ class PrestaShopService(BaseEcommerceService):
                     customer_id = all_customers.get(customer_origin)
                     delivery_address_id = all_addresses.get(delivery_address_origin)
                     invoice_address_id = all_addresses.get(invoice_address_origin)
-                    print(f"DEBUG: ID ORDER {order_id_origin} match {delivery_address_origin} Delivery address ID: {delivery_address_id}")
-                    print(f"DEBUG: ID ORDER {order_id_origin} match {invoice_address_origin} Invoice address ID: {invoice_address_id}")
                     payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
                     total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
                     
@@ -2638,11 +2635,12 @@ class PrestaShopService(BaseEcommerceService):
                             if id_tax is None:
                                 id_tax = 1  # Fallback
                             
-                            # Calcola differenza per rilevare sconti prodotto
-                            product_price = safe_float(detail.get('product_price', 0.0))
+                            # Recupera prezzi da order_rows
+                            # product_price: prezzo unitario ORIGINALE (no sconto, no IVA)
+                            # unit_price_tax_excl: prezzo unitario SCONTATO (con sconto, no IVA)
+                            product_price_original = safe_float(detail.get('product_price', 0.0))
                             unit_price_tax_excl = safe_float(detail.get('unit_price_tax_excl', 0.0))
-                            price_difference = product_price - unit_price_tax_excl
-                            
+                            price_difference = product_price_original - unit_price_tax_excl
                             
                             # Inizializza valori sconto
                             reduction_percent = 0.0
@@ -2665,6 +2663,7 @@ class PrestaShopService(BaseEcommerceService):
                                     print(f"⚠️ Errore nel recupero sconti per ordine {order_id_origin}: {e}")
                             
                             # Prepare complete order detail data
+                            # IMPORTANTE: product_price deve essere il prezzo ORIGINALE senza sconto
                             order_detail_data = {
                                 'id_origin': detail.get('id', 0),
                                 'id_order': None,  # Will be set after order insert
@@ -2675,7 +2674,7 @@ class PrestaShopService(BaseEcommerceService):
                                 'product_reference': detail.get('product_reference', 'ND'),
                                 'product_qty': product_quantity,
                                 'product_weight': product_weight,
-                                'product_price': unit_price_tax_excl,
+                                'product_price': product_price_original,  # Prezzo ORIGINALE senza sconto
                                 'id_tax': id_tax,
                                 'reduction_percent': reduction_percent,
                                 'reduction_amount': reduction_amount,

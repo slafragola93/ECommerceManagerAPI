@@ -1,10 +1,13 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from io import BytesIO
 
 from src.database import get_db
 from src.services.auth import get_current_user
 from src.repository.fiscal_document_repository import FiscalDocumentRepository
+from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.services.fatturapa_service import FatturaPAService
 from src.schemas.fiscal_document_schema import (
     InvoiceCreateSchema,
@@ -534,3 +537,610 @@ async def send_to_sdi(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+# ==================== GENERAZIONE PDF ====================
+
+def _generate_pdf_with_fpdf(fiscal_document, order, invoice_address, delivery_address, 
+                            details_with_products, payment_name, company_config, 
+                            db, referenced_invoice=None) -> BytesIO:
+    """
+    Genera PDF del documento fiscale usando fpdf2
+    
+    Args:
+        fiscal_document: FiscalDocument (fattura o nota di credito)
+        order: Order collegato
+        invoice_address: Address di fatturazione
+        delivery_address: Address di consegna
+        details_with_products: Lista di dettagli con info prodotto
+        payment_name: Nome metodo di pagamento
+        company_config: Configurazioni aziendali
+        referenced_invoice: FiscalDocument di riferimento (per note di credito)
+    
+    Returns:
+        BytesIO: Buffer contenente il PDF
+    """
+    from datetime import datetime
+    from fpdf import FPDF
+    # Inizializza PDF
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Determina tipo documento
+    is_credit_note = fiscal_document.document_type == 'credit_note'
+    doc_title = "NOTA DI CREDITO" if is_credit_note else "FATTURA"
+    doc_number = fiscal_document.document_number or fiscal_document.internal_number or "N/A"
+    doc_date = fiscal_document.date_add.strftime("%d/%m/%Y") if fiscal_document.date_add else ""
+    
+    # Logo aziendale (se esiste)
+    import os
+    company_logo = company_config.get('company_logo', 'media/logos/logo.png')
+    if company_logo and os.path.exists(company_logo):
+        try:
+            pdf.image(company_logo, x=10, y=8, w=40)
+        except:
+            pass  # Se il logo non è leggibile, continua senza
+    
+    # Header - Titolo documento (spostato a destra se c'è logo)
+    pdf.set_xy(120, 10)
+    pdf.set_font('Arial', 'B', 18)
+    pdf.cell(0, 10, f"{doc_title} n. {doc_number}", 0, 1, 'R')
+    pdf.set_xy(120, 17)
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 7, f"Data: {doc_date}", 0, 1, 'R')
+    
+    # Riferimento fattura per note di credito
+    if is_credit_note and referenced_invoice:
+        ref_number = referenced_invoice.document_number or referenced_invoice.internal_number or "N/A"
+        ref_date = referenced_invoice.date_add.strftime("%d/%m/%Y") if referenced_invoice.date_add else ""
+        pdf.set_font('Arial', 'I', 10)
+        pdf.cell(0, 5, f"A storno di FATTURA n. {ref_number} del {ref_date}", 0, 1, 'C')
+    
+    pdf.ln(5)
+    
+    # Configurazioni azienda (recuperate da app_configuration)
+    company_name = company_config.get('company_name')
+    company_address = company_config.get('address')
+    company_postal_code = company_config.get('postal_code')
+    company_city = company_config.get('city')
+    company_province = company_config.get('province')
+    company_city_full = f"{company_postal_code} - {company_city} ({company_province})"
+    company_vat = company_config.get('vat_number')
+    company_cf = company_config.get('fiscal_code')
+    company_iban = company_config.get('iban')
+    company_bic = company_config.get('bic_swift',)
+    company_pec = company_config.get('pec', '')
+    company_sdi = company_config.get('sdi_code')
+    
+    # Box Venditore e Cliente (due colonne)
+    col_width = 95
+    y_start = pdf.get_y()
+    
+    # VENDITORE (colonna sinistra)
+    pdf.set_xy(10, y_start)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(col_width, 6, 'VENDITORE', 1, 0)
+    pdf.ln()
+    pdf.set_font('Arial', '', 8)
+    seller_info = f"{company_name or ''}\n{company_address or ''}\n{company_city_full or ''}\n"
+    
+    # P.IVA e C.F. solo se presenti
+    vat_cf_line = []
+    if company_vat:
+        vat_cf_line.append(f"P.I. {company_vat}")
+    if company_cf:
+        vat_cf_line.append(f"C.F. {company_cf}")
+    if vat_cf_line:
+        seller_info += " - ".join(vat_cf_line) + "\n"
+    
+    if company_iban:
+        seller_info += f"IBAN {company_iban}\n"
+    if company_bic:
+        seller_info += f"BIC/SWIFT {company_bic}\n"
+    if company_pec:
+        seller_info += f"PEC: {company_pec}\n"
+    if company_sdi:
+        seller_info += f"SDI: {company_sdi}"
+    
+    pdf.multi_cell(col_width, 4, seller_info, 1)
+    
+    # CLIENTE (colonna destra)
+    y_end_seller = pdf.get_y()
+    pdf.set_xy(10 + col_width, y_start)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(col_width, 6, 'CLIENTE', 1, 0)
+    pdf.ln()
+    pdf.set_xy(10 + col_width, y_start + 6)
+    
+    # Intestatario cliente
+    if invoice_address:
+        customer_name = invoice_address.company if invoice_address.company else f"{invoice_address.firstname or ''} {invoice_address.lastname or ''}".strip()
+        customer_info = f"{customer_name}\n" if customer_name else ""
+        
+        # Indirizzo solo se presente
+        if invoice_address.address1:
+            customer_info += f"{invoice_address.address1 or ''} {invoice_address.address2 or ''}".strip() + "\n"
+        
+        # Città solo se presente
+        city_line = f"{invoice_address.postcode or ''} {invoice_address.city or ''}".strip()
+        if invoice_address.state:
+            city_line += f" ({invoice_address.state})"
+        if city_line.strip():
+            customer_info += city_line.strip() + "\n"
+        
+        # P.IVA/CF solo se presenti
+        if invoice_address.vat:
+            customer_info += f"P.IVA/CF: {invoice_address.vat}\n"
+        elif invoice_address.dni:
+            customer_info += f"Cod. Fiscale: {invoice_address.dni}\n"
+        
+        # PEC solo se presente
+        if invoice_address.pec:
+            customer_info += f"PEC: {invoice_address.pec}\n"
+        
+        # SDI o IPA solo se presenti
+        if invoice_address.sdi:
+            customer_info += f"SDI: {invoice_address.sdi}"
+        elif invoice_address.ipa:
+            customer_info += f"IPA: {invoice_address.ipa}"
+        
+        # Se non c'è nessuna informazione, mostra N/A
+        if not customer_info.strip():
+            customer_info = "N/A"
+    else:
+        customer_info = "N/A"
+    
+    pdf.set_font('Arial', '', 9)
+    pdf.multi_cell(col_width, 5, customer_info, 1)
+    y_end_customer = pdf.get_y()
+    
+    # Posiziona dopo la colonna più lunga
+    pdf.set_y(max(y_end_seller, y_end_customer))
+    pdf.ln(3)
+    
+    # Box Consegna (se presente)
+    if delivery_address:
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(0, 6, 'DESTINAZIONE MERCE', 1, 1)
+        pdf.set_font('Arial', '', 9)
+        delivery_name = delivery_address.company if delivery_address.company else f"{delivery_address.firstname or ''} {delivery_address.lastname or ''}".strip()
+        delivery_info = f"{delivery_name}\n"
+        delivery_info += f"{delivery_address.address1 or ''} {delivery_address.address2 or ''}".strip() + "\n"
+        delivery_info += f"{delivery_address.postcode or ''} {delivery_address.city or ''} ({delivery_address.state or ''})".strip()
+        pdf.multi_cell(0, 5, delivery_info, 1)
+        pdf.ln(3)
+    
+    # Riferimento ordine
+    if order and order.reference:
+        pdf.set_font('Arial', 'B', 9)
+        pdf.cell(0, 5, f"Riferimento ordine: {order.reference}", 0, 1)
+        pdf.ln(2)
+    
+    # Tabella articoli - Header (IVA spostata prima del Totale)
+    pdf.set_font('Arial', 'B', 9)
+    pdf.set_fill_color(224, 224, 224)
+    pdf.cell(30, 6, 'Codice', 1, 0, 'L', True)
+    pdf.cell(60, 6, 'Descrizione', 1, 0, 'L', True)
+    pdf.cell(15, 6, 'Qta', 1, 0, 'R', True)
+    pdf.cell(25, 6, 'Prezzo No IVA', 1, 0, 'R', True)
+    pdf.cell(15, 6, 'Sc.%', 1, 0, 'C', True)
+    pdf.cell(20, 6, 'IVA', 1, 0, 'C', True)
+    pdf.cell(25, 6, 'Totale', 1, 1, 'R', True)
+    
+    # Tabella articoli - Righe
+    pdf.set_font('Arial', '', 8)
+    subtotal = 0.0  # Somma dei "Prezzo No IVA" (total_amount)
+    total_with_vat_sum = 0.0  # Somma dei "Totale" (con IVA)
+    total_quantity = 0
+    total_weight = 0.0
+    
+    for detail in details_with_products:
+        code = detail.get('product_reference', '')[:15]  # Trunca se troppo lungo
+        description = detail.get('product_name', '')[:30]
+        quantity = detail.get('quantity', 0)
+        unit_price = detail.get('unit_price', 0.0)  # Prezzo unitario senza IVA (già scontato)
+        total_amount = detail.get('total_amount', 0.0)  # Totale riga senza IVA (già scontato)
+ 
+        reduction_percent = detail.get('reduction_percent', 0.0)  # Solo a scopo informativo
+        vat_rate = detail.get('vat_rate', 0)
+        
+        # NOTA: total_amount è già comprensivo dello sconto applicato
+        # Lo sconto viene mostrato solo come informazione, NON viene ricalcolato
+        # Calcola il totale con IVA: total_amount (già scontato) * (1 + IVA%)
+        vat_multiplier = 1 + (vat_rate / 100.0) if vat_rate else 1.0
+        total_with_vat = total_amount * vat_multiplier
+        
+        pdf.cell(30, 5, code, 1, 0, 'L')
+        pdf.cell(60, 5, description, 1, 0, 'L')
+        pdf.cell(15, 5, f"{quantity:.0f}", 1, 0, 'R')
+        pdf.cell(25, 5, f"{unit_price:.2f} EUR", 1, 0, 'R')
+        pdf.cell(15, 5, f"{reduction_percent:.0f}%" if reduction_percent > 0 else "-", 1, 0, 'C')
+        pdf.cell(20, 5, f"{vat_rate}%" if vat_rate else "-", 1, 0, 'C')
+        pdf.cell(25, 5, f"{total_with_vat:.2f} EUR", 1, 1, 'R')
+        
+        # Somma per Imp. Merce / Merce netta (no IVA)
+        subtotal += total_amount
+        # Somma per Merce lorda (con IVA)
+        total_with_vat_sum += total_with_vat
+        total_quantity += quantity
+    
+    pdf.ln(3)
+    
+    # Sezione Info Spedizione e Riepilogo
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(0, 5, 'INFORMAZIONI SPEDIZIONE E RIEPILOGO', 0, 1, 'L')
+    pdf.ln(2)
+    
+    # Box con info spedizione (3 colonne)
+    y_shipping = pdf.get_y()
+    col_w = 63
+    
+    # Colonna 1
+    pdf.set_xy(10, y_shipping)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(col_w, 4, 'Tot. Quant.', 1, 0, 'L')
+    pdf.cell(col_w, 4, 'Peso (Kg)', 1, 0, 'L')
+    pdf.cell(col_w, 4, 'Colli', 1, 1, 'L')
+    
+    # Valori shipping
+    total_weight_kg = order.total_weight if order and order.total_weight else 0.0
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(col_w, 4, str(int(total_quantity)), 1, 0, 'C')
+    pdf.cell(col_w, 4, f"{total_weight_kg:.3f}", 1, 0, 'C')
+    pdf.cell(col_w, 4, '1', 1, 1, 'C')
+    
+    pdf.ln(2)
+    
+    # Porto, Causale, Inizio trasporto
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(col_w, 4, 'Porto', 1, 0, 'L')
+    pdf.cell(col_w, 4, 'Causale trasporto', 1, 0, 'L')
+    pdf.cell(col_w, 4, 'Inizio trasporto', 1, 1, 'L')
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(col_w, 4, '-', 1, 0, 'C')
+    pdf.cell(col_w, 4, '-', 1, 0, 'C')
+    pdf.cell(col_w, 4, '-', 1, 1, 'C')
+    
+    pdf.ln(3)
+    
+    # Tabella Riepilogo IVA e Totali
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(0, 5, 'RIEPILOGO IVA E TOTALI', 0, 1, 'L')
+    pdf.ln(1)
+    
+    # Header tabella riepilogo
+    pdf.set_font('Arial', 'B', 8)
+    pdf.set_fill_color(224, 224, 224)
+    pdf.cell(25, 5, 'Aliquota', 1, 0, 'C', True)
+    pdf.cell(35, 5, 'Imp. Merce', 1, 0, 'R', True)
+    pdf.cell(35, 5, 'Imp. Spese', 1, 0, 'R', True)
+    pdf.cell(35, 5, 'Tot. IVA', 1, 0, 'R', True)
+    pdf.cell(60, 5, '', 0, 1)  # Spazio per i totali a destra
+    
+    # Calcolo spese trasporto dalla tabella shipments
+    shipping_cost = 0.0
+    shipping_cost_with_vat = 0.0
+    shipping_vat_percentage = 0
+    
+    if order and order.shipments:
+        # Recupera il costo della spedizione dalla relazione shipments
+        shipping_cost = order.shipments.price_tax_excl
+        
+        # Recupera la percentuale IVA dalla tabella Tax usando il repository
+        if order.shipments.id_tax:
+            from src.repository.tax_repository import TaxRepository
+            tax_repo = TaxRepository(db)
+            shipping_vat_percentage = tax_repo.get_percentage_by_id(order.shipments.id_tax)
+            
+            if shipping_vat_percentage:
+                # Calcola il totale con IVA applicando la percentuale
+                shipping_cost_with_vat = shipping_cost * (1 + shipping_vat_percentage / 100.0)
+            else:
+                # Fallback: usa il valore già presente
+                shipping_cost_with_vat = order.shipments.price_tax_incl if order.shipments.price_tax_incl else 0.0
+        else:
+            shipping_cost_with_vat = order.shipments.price_tax_incl if order.shipments.price_tax_incl else 0.0
+    
+    # Calcola IVA sulla spedizione
+    shipping_vat = shipping_cost_with_vat - shipping_cost if shipping_cost_with_vat > shipping_cost else 0.0
+    
+    # Calcola totale documento
+    total_imponibile = fiscal_document.total_amount / (1 + (details_with_products[0]['vat_rate'] / 100.0))
+
+    total_doc = fiscal_document.total_amount
+    totale_imponibile = total_doc / (1 + (details_with_products[0]['vat_rate'] / 100.0))
+    total_vat = total_doc - totale_imponibile
+    
+    # Riga IVA (assumiamo 22% come nel tuo esempio)
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(25, 5, '22%', 1, 0, 'C')
+    pdf.cell(35, 5, f"{subtotal:.2f}", 1, 0, 'R')
+    pdf.cell(35, 5, f"{shipping_cost:.2f}", 1, 0, 'R')
+    pdf.cell(35, 5, f"{total_vat:.2f}", 1, 0, 'R')
+    
+    # Colonna destra - Totali dettagliati
+    pdf.set_xy(140, pdf.get_y())
+    pdf.set_font('Arial', 'B', 8)
+    shipping_label = f'Spese trasporto'
+    if shipping_vat_percentage:
+        shipping_label += f' (+{shipping_vat_percentage}% IVA)'
+    pdf.cell(35, 5, shipping_label, 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    # Mostra il totale con IVA delle spese di trasporto
+    pdf.cell(25, 5, f"{shipping_cost_with_vat:.2f}", 0, 1, 'R')
+    
+    pdf.ln(5)
+    
+    # Blocco totali finali (2 colonne)
+    y_totals = pdf.get_y()
+    
+    # Colonna sinistra
+    pdf.set_xy(10, y_totals)
+    pdf.set_font('Arial', 'B', 8)
+    
+    # Merce netta = Somma dei "Prezzo No IVA" (subtotal è già corretto)
+    # Merce lorda = Somma dei "Totale" (con IVA)
+    merce_lorda = total_with_vat_sum
+    
+    pdf.cell(45, 5, 'Merce netta', 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(25, 5, f"{subtotal:.2f}", 0, 1, 'R')
+    
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(45, 5, 'Totale imponibile', 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    # total_imponibile già calcolato sopra: subtotal + shipping_cost
+    pdf.cell(25, 5, f"{total_imponibile:.2f}", 0, 1, 'R')
+    
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(45, 5, 'Spese incasso', 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(25, 5, '0,00', 0, 1, 'R')
+    
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(45, 5, 'Merce lorda', 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(25, 5, f"{merce_lorda:.2f}", 0, 1, 'R')
+    
+    # Colonna destra
+    pdf.set_xy(130, y_totals)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(45, 5, 'Totale IVA', 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(25, 5, f"{total_vat:.2f}", 0, 1, 'R')
+    
+    pdf.set_xy(130, pdf.get_y())
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(45, 5, 'Spese varie', 0, 0, 'L')
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(25, 5, '0,00', 0, 1, 'R')
+    
+    # Totale documento (evidenziato)
+    pdf.ln(2)
+    pdf.set_xy(130, pdf.get_y())
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(45, 8, 'Totale documento', 0, 0, 'L')
+    pdf.cell(25, 8, f"{total_doc:.2f} EUR", 0, 1, 'R')
+    
+    pdf.ln(5)
+    
+    pdf.ln(3)
+    
+    # Sezione Pagamento e Scadenze
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(95, 5, 'Pagamento', 1, 0, 'L')
+    pdf.cell(95, 5, 'Scadenze', 1, 1, 'L')
+    
+    pdf.set_font('Arial', '', 9)
+    pdf.cell(95, 5, payment_name if payment_name else '-', 1, 0, 'L')
+    pdf.cell(95, 5, '', 1, 1, 'L')
+    
+    pdf.ln(2)
+    
+    # Firma trasporto
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(63, 5, 'Incaricato del trasporto', 1, 0, 'L')
+    pdf.cell(63, 5, 'Aspetto esteriore dei beni', 1, 0, 'L')
+    pdf.cell(64, 5, '', 0, 1)
+    
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(63, 8, '', 1, 0, 'L')
+    pdf.cell(63, 8, '', 1, 1, 'L')
+    
+    pdf.ln(1)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.cell(95, 5, 'Firma destinatario', 1, 0, 'L')
+    pdf.cell(95, 5, 'Firma conducente', 1, 1, 'L')
+    
+    pdf.set_font('Arial', '', 8)
+    pdf.cell(95, 8, '', 1, 0, 'L')
+    pdf.cell(95, 8, '', 1, 1, 'L')
+    
+    # Note
+    if is_credit_note and fiscal_document.credit_note_reason:
+        pdf.set_font('Arial', 'B', 9)
+        pdf.cell(0, 5, 'Motivo nota di credito:', 0, 1)
+        pdf.set_font('Arial', '', 9)
+        pdf.multi_cell(0, 5, fiscal_document.credit_note_reason)
+        pdf.ln(2)
+    
+    if order and order.general_note:
+        pdf.set_font('Arial', 'B', 9)
+        pdf.cell(0, 5, 'Note:', 0, 1)
+        pdf.set_font('Arial', '', 9)
+        pdf.multi_cell(0, 5, order.general_note)
+    
+    # Footer
+    pdf.ln(10)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.set_text_color(128, 128, 128)
+    pdf.cell(0, 5, f"Documento generato automaticamente - {datetime.now().strftime('%d/%m/%Y %H:%M')}", 0, 1, 'C')
+    
+    # Ritorna buffer PDF
+    pdf_buffer = BytesIO()
+    pdf_output = pdf.output()  # Restituisce bytes direttamente
+    pdf_buffer.write(pdf_output)
+    pdf_buffer.seek(0)
+    
+    return pdf_buffer
+
+
+@router.get("/{id_fiscal_document}/pdf")
+async def generate_fiscal_document_pdf(
+    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
+    user: dict = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Genera PDF per documento fiscale (fattura o nota di credito)
+    
+    ## Processo:
+    1. Recupera documento fiscale con ordine e indirizzi
+    2. Recupera dettagli articoli
+    3. Recupera configurazioni aziendali
+    4. Genera HTML del documento
+    5. Converte in PDF con WeasyPrint
+    
+    ## Output:
+    - Content-Type: application/pdf
+    - Content-Disposition: attachment con nome file
+    
+    ## Validazioni:
+    - Se nota di credito senza riferimento fattura → 400
+    - Se non ci sono dettagli → 404
+    """
+    try:
+        from src.models.fiscal_document import FiscalDocument
+        from src.models.fiscal_document_detail import FiscalDocumentDetail
+        from src.models.order import Order
+        from src.models.order_detail import OrderDetail
+        from src.models.address import Address
+        from src.models.payment import Payment
+        from src.models.tax import Tax
+        
+        # Recupera documento fiscale
+        fiscal_repo = get_fiscal_repository(db)
+        fiscal_document = fiscal_repo.get_fiscal_document_by_id(id_fiscal_document)
+        
+        if not fiscal_document:
+            raise HTTPException(status_code=404, detail=f"Documento fiscale {id_fiscal_document} non trovato")
+        
+        # Validazione: nota di credito deve avere riferimento
+        if fiscal_document.document_type == 'credit_note' and not fiscal_document.id_fiscal_document_ref:
+            raise HTTPException(
+                status_code=400, 
+                detail="Nota di credito senza riferimento a fattura. Impossibile generare PDF."
+            )
+        
+        # Recupera ordine
+        order = db.query(Order).filter(Order.id_order == fiscal_document.id_order).first()
+        if not order:
+            raise HTTPException(status_code=404, detail=f"Ordine {fiscal_document.id_order} non trovato")
+        
+        # Recupera indirizzi
+        invoice_address = db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
+        delivery_address = db.query(Address).filter(Address.id_address == order.id_address_delivery).first()
+        
+        # Recupera dettagli documento
+        details = db.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
+        ).all()
+        
+        if not details:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Nessun articolo trovato nel documento {id_fiscal_document}. Impossibile generare PDF."
+            )
+        
+        # Arricchisci dettagli con info prodotto e IVA
+        details_with_products = []
+        for detail in details:
+            order_detail = db.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == detail.id_order_detail
+            ).first()
+            
+            # Recupera IVA
+            vat_rate = 0
+            if order_detail and order_detail.id_tax:
+                tax = db.query(Tax).filter(Tax.id_tax == order_detail.id_tax).first()
+                if tax:
+                    vat_rate = tax.percentage
+            
+            details_with_products.append({
+                'id_fiscal_document_detail': detail.id_fiscal_document_detail,
+                'id_order_detail': detail.id_order_detail,
+                'quantity': detail.quantity,
+                'unit_price': detail.unit_price,
+                'total_amount': detail.total_amount,
+                'product_name': order_detail.product_name if order_detail else 'N/A',
+                'product_reference': order_detail.product_reference if order_detail else 'N/A',
+                'reduction_percent': order_detail.reduction_percent if order_detail else 0.0,
+                'vat_rate': vat_rate
+            })
+        
+        # Recupera metodo pagamento
+        payment_name = None
+        if order.id_payment:
+            payment = db.query(Payment).filter(Payment.id_payment == order.id_payment).first()
+            if payment:
+                payment_name = payment.name
+        
+        # Recupera configurazioni azienda
+        app_config_repo = AppConfigurationRepository(db)
+        company_config = {}
+        
+        # Prova a recuperare configurazioni dalla categoria 'company_info'
+        company_configs = app_config_repo.get_by_category('company_info')
+        for config in company_configs:
+            company_config[config.name] = config.value or ''
+        
+        # Fallback se non ci sono configurazioni
+        if not company_config:
+            company_config = {
+                'company_name': 'Azienda',
+                'company_vat': 'P.IVA',
+                'company_address': 'Indirizzo',
+                'company_city': 'Città',
+                'company_pec': 'PEC',
+                'company_sdi': 'SDI'
+            }
+        
+        # Recupera fattura di riferimento per note di credito
+        referenced_invoice = None
+        if fiscal_document.document_type == 'credit_note' and fiscal_document.id_fiscal_document_ref:
+            referenced_invoice = fiscal_repo.get_fiscal_document_by_id(fiscal_document.id_fiscal_document_ref)
+        
+        # Genera PDF
+        pdf_buffer = _generate_pdf_with_fpdf(
+            fiscal_document=fiscal_document,
+            order=order,
+            invoice_address=invoice_address,
+            delivery_address=delivery_address,
+            details_with_products=details_with_products,
+            payment_name=payment_name,
+            company_config=company_config,
+            db=db,
+            referenced_invoice=referenced_invoice
+        )
+        
+        # Determina nome file
+        doc_type = "nota-credito" if fiscal_document.document_type == 'credit_note' else "fattura"
+        doc_number = fiscal_document.document_number or fiscal_document.internal_number or str(id_fiscal_document)
+        filename = f"{doc_type}-{doc_number}.pdf"
+        
+        # Ritorna PDF con headers per forzare download
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-cache",
+                "Content-Type": "application/pdf"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore generazione PDF: {str(e)}")

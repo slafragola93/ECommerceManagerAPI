@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 from datetime import datetime
+import math
 
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
@@ -9,6 +10,7 @@ from src.models.order import Order
 from src.models.order_detail import OrderDetail
 from src.models.address import Address
 from src.models.country import Country
+from src.models.shipping import Shipping
 
 
 class FiscalDocumentRepository:
@@ -52,7 +54,7 @@ class FiscalDocumentRepository:
             document_number = self._get_next_electronic_number('invoice')
             tipo_documento_fe = 'TD01'
         
-        # Crea fattura
+        # Crea fattura (total_amount verrà calcolato dopo)
         invoice = FiscalDocument(
             document_type='invoice',
             tipo_documento_fe=tipo_documento_fe,
@@ -60,7 +62,7 @@ class FiscalDocumentRepository:
             document_number=document_number,
             is_electronic=is_electronic,
             status='pending',
-            total_amount=order.total_price
+            total_amount=0.0  # Verrà aggiornato dopo aver creato i dettagli
         )
         
         self.db.add(invoice)
@@ -71,13 +73,17 @@ class FiscalDocumentRepository:
             OrderDetail.id_order == id_order
         ).all()
         
+        total_details_amount = 0.0  # Somma dei total_amount dei dettagli (senza IVA, già scontati)
+        
         for od in order_details:
-            # Calcola total_amount considerando sconti
+            # unit_price: prezzo unitario originale senza alterazioni
             unit_price = od.product_price or 0.0
             quantity = od.product_qty or 0
+            
+            # Calcola total_amount applicando gli sconti
             total_base = unit_price * quantity
             
-            # Applica sconti
+            # Applica sconti a total_amount
             if od.reduction_percent and od.reduction_percent > 0:
                 sconto = total_base * (od.reduction_percent / 100)
                 total_amount = total_base - sconto
@@ -86,14 +92,47 @@ class FiscalDocumentRepository:
             else:
                 total_amount = total_base
             
+            # IMPORTANTE:
+            # - unit_price: prezzo unitario ORIGINALE (no sconto)
+            # - total_amount: totale riga SCONTATO (unit_price × qty - sconto), SENZA IVA
+            
             detail = FiscalDocumentDetail(
                 id_fiscal_document=invoice.id_fiscal_document,
                 id_order_detail=od.id_order_detail,
                 quantity=quantity,
-                unit_price=unit_price,
-                total_amount=total_amount
+                unit_price=unit_price,  # Prezzo originale senza sconto
+                total_amount=total_amount  # Totale con sconto applicato (SENZA IVA)
             )
             self.db.add(detail)
+            total_details_amount += total_amount
+        
+        # Recupera spese di spedizione e calcola IVA separatamente
+        shipping_cost_no_vat = 0.0
+        shipping_vat_amount = 0.0
+        if order.id_shipping:
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+            if shipping:
+                shipping_cost_no_vat = shipping.price_tax_excl or 0.0
+                # Recupera la percentuale IVA per le spese di spedizione
+                shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
+                shipping_vat_amount = shipping_cost_no_vat * (shipping_vat_percentage / 100)
+        
+        # Calcola total_amount del documento: somma dettagli SENZA IVA + spese SENZA IVA
+        # Sottrai gli sconti dell'ordine (se presenti)
+        total_imponibile = total_details_amount + shipping_cost_no_vat - (order.total_discounts or 0.0)
+        
+        # Recupera la percentuale IVA dai dettagli dell'ordine per i prodotti
+        products_vat_percentage = self._get_vat_percentage_from_order_details(order_details)
+        products_vat_amount = total_details_amount * (products_vat_percentage / 100)
+        
+        # Calcola il totale finale: imponibile + IVA prodotti + IVA spedizione
+        total_with_vat = total_imponibile + products_vat_amount + shipping_vat_amount
+        
+        # Tronca a 2 decimali senza arrotondare (es. 1.190,82614 -> 1.190,82)
+        total_with_vat_truncated = math.floor(total_with_vat * 100) / 100
+        
+        # Il total_amount della fattura è il totale CON IVA (troncato)
+        invoice.total_amount = total_with_vat_truncated
         
         self.db.commit()
         self.db.refresh(invoice)
@@ -188,8 +227,8 @@ class FiscalDocumentRepository:
         invoice_order_detail_ids = {d.id_order_detail for d in invoice_details}
         invoice_details_map = {d.id_order_detail: d for d in invoice_details}
         
-        # Calcola importo totale
-        total_amount = 0.0
+        # Calcola importo totale (SENZA IVA)
+        total_amount_no_vat = 0.0
         
         if is_partial and items:
             # Valida che gli articoli siano nella fattura
@@ -203,14 +242,60 @@ class FiscalDocumentRepository:
                 if item.get('quantity', 0) > invoice_detail.quantity:
                     raise ValueError(f"Quantità da stornare ({item['quantity']}) superiore a quella fatturata ({invoice_detail.quantity})")
             
-            # Somma importi degli articoli specificati
+            # Somma importi degli articoli specificati (SENZA IVA)
             for item in items:
                 qty = item.get('quantity', 0)
                 price = item.get('unit_price', 0)
-                total_amount += qty * price
+                
+                # Recupera order_detail per sconto
+                od = self.db.query(OrderDetail).filter(
+                    OrderDetail.id_order_detail == item['id_order_detail']
+                ).first()
+                
+                # Calcola total con sconto (SENZA IVA)
+                total_base = qty * price
+                if od and od.reduction_percent and od.reduction_percent > 0:
+                    sconto = total_base * (od.reduction_percent / 100)
+                    total_no_vat = total_base - sconto
+                elif od and od.reduction_amount and od.reduction_amount > 0:
+                    total_no_vat = total_base - od.reduction_amount
+                else:
+                    total_no_vat = total_base
+                    
+                total_amount_no_vat += total_no_vat
         else:
-            # Nota di credito totale = somma di tutti gli articoli fatturati
-            total_amount = sum(d.total_amount for d in invoice_details)
+            # Nota di credito totale = somma di tutti gli articoli fatturati (SENZA IVA)
+            total_amount_no_vat = sum(d.total_amount for d in invoice_details)
+            
+            # Aggiungi anche spese di spedizione SENZA IVA per note di credito totali
+            shipping_cost_no_vat = 0.0
+            if order.id_shipping:
+                shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+                if shipping:
+                    shipping_cost_no_vat = shipping.price_tax_excl or 0.0
+                    total_amount_no_vat += shipping_cost_no_vat
+        
+        # Applica la stessa logica dell'invoice: sottrai sconti e applica IVA separatamente
+        total_imponibile = total_amount_no_vat - (order.total_discounts or 0.0)
+        
+        # Calcola IVA per i prodotti
+        order_details = self.db.query(OrderDetail).filter(OrderDetail.id_order == order.id_order).all()
+        products_vat_percentage = self._get_vat_percentage_from_order_details(order_details)
+        products_vat_amount = (total_amount_no_vat - shipping_cost_no_vat) * (products_vat_percentage / 100)
+        
+        # Calcola IVA per le spese di spedizione
+        shipping_vat_amount = 0.0
+        if order.id_shipping:
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+            if shipping:
+                shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
+                shipping_vat_amount = shipping_cost_no_vat * (shipping_vat_percentage / 100)
+        
+        # Calcola il totale finale: imponibile + IVA prodotti + IVA spedizione
+        total_with_vat = total_imponibile + products_vat_amount + shipping_vat_amount
+        
+        # Tronca a 2 decimali senza arrotondare (es. 1.190,82614 -> 1.190,82)
+        total_with_vat_truncated = math.floor(total_with_vat * 100) / 100
         
         # Crea nota di credito
         credit_note = FiscalDocument(
@@ -223,7 +308,7 @@ class FiscalDocumentRepository:
             status='pending',
             credit_note_reason=reason,
             is_partial=is_partial,
-            total_amount=total_amount
+            total_amount=total_with_vat  # Totale CON IVA
         )
         
         self.db.add(credit_note)
@@ -232,12 +317,30 @@ class FiscalDocumentRepository:
         # Se parziale, aggiungi dettagli
         if is_partial and items:
             for item in items:
+                # Recupera order_detail per applicare lo sconto corretto
+                od = self.db.query(OrderDetail).filter(
+                    OrderDetail.id_order_detail == item['id_order_detail']
+                ).first()
+                
+                unit_price = item['unit_price']
+                quantity = item['quantity']
+                total_base = unit_price * quantity
+                
+                # Applica sconti se presenti nell'order_detail
+                if od and od.reduction_percent and od.reduction_percent > 0:
+                    sconto = total_base * (od.reduction_percent / 100)
+                    total_amount = total_base - sconto
+                elif od and od.reduction_amount and od.reduction_amount > 0:
+                    total_amount = total_base - od.reduction_amount
+                else:
+                    total_amount = total_base
+                
                 detail = FiscalDocumentDetail(
                     id_fiscal_document=credit_note.id_fiscal_document,
                     id_order_detail=item['id_order_detail'],
-                    quantity=item['quantity'],
-                    unit_price=item['unit_price'],
-                    total_amount=item['quantity'] * item['unit_price']
+                    quantity=quantity,
+                    unit_price=unit_price,  # Prezzo originale senza sconto
+                    total_amount=total_amount  # Totale con sconto applicato
                 )
                 self.db.add(detail)
         
@@ -256,6 +359,60 @@ class FiscalDocumentRepository:
         ).all()
     
     # ==================== UTILITY ====================
+    
+    def _get_vat_percentage_from_order_details(self, order_details) -> float:
+        """
+        Recupera la percentuale IVA dai dettagli dell'ordine.
+        Se ci sono più tax diverse, usa la più comune o la prima trovata.
+        
+        Args:
+            order_details: Lista di OrderDetail
+            
+        Returns:
+            float: Percentuale IVA (es. 22.0 per 22%)
+        """
+        if not order_details:
+            return 22.0  # Default 22%
+        
+        # Recupera gli id_tax unici dai dettagli
+        tax_ids = [od.id_tax for od in order_details if od.id_tax]
+        
+        if not tax_ids:
+            return 22.0  # Default 22%
+        
+        # Usa il primo id_tax trovato (potresti voler implementare una logica più sofisticata)
+        first_tax_id = tax_ids[0]
+        
+        # Recupera la percentuale dalla tabella Tax
+        from src.models.tax import Tax
+        tax = self.db.query(Tax).filter(Tax.id_tax == first_tax_id).first()
+        
+        if tax and tax.percentage:
+            return float(tax.percentage)
+        
+        return 22.0  # Default 22%
+    
+    def _get_vat_percentage_from_shipping(self, shipping) -> float:
+        """
+        Recupera la percentuale IVA per le spese di spedizione.
+        
+        Args:
+            shipping: Oggetto Shipping
+            
+        Returns:
+            float: Percentuale IVA (es. 22.0 per 22%)
+        """
+        if not shipping or not shipping.id_tax:
+            return 22.0  # Default 22%
+        
+        # Recupera la percentuale dalla tabella Tax
+        from src.models.tax import Tax
+        tax = self.db.query(Tax).filter(Tax.id_tax == shipping.id_tax).first()
+        
+        if tax and tax.percentage:
+            return float(tax.percentage)
+        
+        return 22.0  # Default 22%
     
     def _get_next_electronic_number(self, doc_type: str) -> str:
         """

@@ -1,0 +1,12 @@
+# Ignora tutti i file caricati
+*
+*/
+
+# Ma mantieni i file .gitkeep e README
+!.gitignore
+!.gitkeep
+!README.md
+!logos/.gitkeep
+!uploads/.gitkeep
+
+

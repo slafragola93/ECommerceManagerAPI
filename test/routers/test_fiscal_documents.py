@@ -872,5 +872,312 @@ def test_get_fiscal_documents_filter_by_electronic(client, db_session, test_data
     assert all(doc['is_electronic'] for doc in data['documents'])
 
 
+# ==================== TEST GENERAZIONE PDF ====================
+
+def test_generate_invoice_pdf_success(client, db_session, test_data, auth_token):
+    """Test generazione PDF per fattura completa"""
+    # Crea fattura con dettagli
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Genera PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{invoice_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    assert 'attachment' in response.headers['content-disposition']
+    assert 'fattura-000001.pdf' in response.headers['content-disposition']
+    
+    # Verifica che il contenuto sia un PDF valido
+    content = response.content
+    assert content.startswith(b'%PDF')  # Magic number PDF
+    assert len(content) > 1000  # PDF ha dimensione ragionevole
+
+
+def test_generate_credit_note_pdf_success(client, db_session, test_data, auth_token):
+    """Test generazione PDF per nota di credito con riferimento fattura"""
+    # Crea fattura
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Crea nota di credito
+    credit_response = client.post(
+        "/api/v1/fiscal-documents/credit-notes",
+        json={
+            "id_invoice": invoice_id,
+            "reason": "Reso merce completo",
+            "is_partial": False,
+            "is_electronic": True
+        },
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    credit_id = credit_response.json()['id_fiscal_document']
+    
+    # Genera PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{credit_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    assert 'nota-credito-000001.pdf' in response.headers['content-disposition']
+    
+    # Verifica contenuto PDF
+    content = response.content
+    assert content.startswith(b'%PDF')
+    assert len(content) > 1000
+
+
+def test_generate_pdf_partial_credit_note(client, db_session, test_data, auth_token):
+    """Test generazione PDF per nota di credito parziale"""
+    # Crea fattura
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Crea nota di credito parziale
+    credit_response = client.post(
+        "/api/v1/fiscal-documents/credit-notes",
+        json={
+            "id_invoice": invoice_id,
+            "reason": "Reso parziale - 1 articolo difettoso",
+            "is_partial": True,
+            "is_electronic": True,
+            "items": [
+                {
+                    "id_order_detail": test_data['order_detail_1'].id_order_detail,
+                    "quantity": 1,
+                    "unit_price": 155.033
+                }
+            ]
+        },
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    credit_id = credit_response.json()['id_fiscal_document']
+    
+    # Genera PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{credit_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+
+
+def test_generate_pdf_without_delivery_address(client, db_session, test_data, auth_token):
+    """Test generazione PDF senza indirizzo consegna"""
+    # Modifica order per rimuovere indirizzo consegna
+    test_data['order_it'].id_address_delivery = None
+    db_session.commit()
+    
+    # Crea fattura
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Genera PDF (non deve fallire)
+    response = client.get(
+        f"/api/v1/fiscal-documents/{invoice_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+
+
+def test_generate_pdf_document_not_found(client, db_session, test_data, auth_token):
+    """Test errore 404 per documento non esistente"""
+    response = client.get(
+        "/api/v1/fiscal-documents/9999/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 404
+    assert "non trovato" in response.json()['detail']
+
+
+def test_generate_pdf_credit_note_without_reference_error(client, db_session, test_data, auth_token):
+    """Test errore 400 per nota di credito senza riferimento fattura"""
+    # Crea nota di credito manualmente senza riferimento (simulazione errore)
+    # Nota: normalmente l'endpoint di creazione richiede id_invoice, 
+    # ma testiamo il caso edge in cui sia presente solo nel DB
+    from src.models.fiscal_document import FiscalDocument
+    
+    broken_credit_note = FiscalDocument(
+        document_type='credit_note',
+        id_order=test_data['order_it'].id_order,
+        id_fiscal_document_ref=None,  # Senza riferimento
+        status='pending',
+        is_electronic=True
+    )
+    db_session.add(broken_credit_note)
+    db_session.flush()
+    
+    # Aggiungi un dettaglio fittizio per superare il check "nessun dettaglio"
+    from src.models.fiscal_document_detail import FiscalDocumentDetail
+    detail = FiscalDocumentDetail(
+        id_fiscal_document=broken_credit_note.id_fiscal_document,
+        id_order_detail=test_data['order_detail_1'].id_order_detail,
+        quantity=1,
+        unit_price=100,
+        total_amount=100
+    )
+    db_session.add(detail)
+    db_session.commit()
+    
+    # Prova a generare PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{broken_credit_note.id_fiscal_document}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 400
+    assert "senza riferimento" in response.json()['detail']
+
+
+def test_generate_pdf_no_details_error(client, db_session, test_data, auth_token):
+    """Test errore 404 per documento senza dettagli"""
+    from src.models.fiscal_document import FiscalDocument
+    
+    # Crea documento senza dettagli
+    empty_invoice = FiscalDocument(
+        document_type='invoice',
+        tipo_documento_fe='TD01',
+        id_order=test_data['order_it'].id_order,
+        document_number='999999',
+        is_electronic=True,
+        status='pending',
+        total_amount=0
+    )
+    db_session.add(empty_invoice)
+    db_session.commit()
+    
+    # Prova a generare PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{empty_invoice.id_fiscal_document}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 404
+    assert "Nessun articolo trovato" in response.json()['detail']
+
+
+def test_generate_pdf_with_discount(client, db_session, test_data, auth_token):
+    """Test PDF con articoli scontati"""
+    # Aggiungi sconto al order_detail
+    test_data['order_detail_1'].reduction_percent = 10.0
+    db_session.commit()
+    
+    # Crea fattura
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Genera PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{invoice_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    
+    # Verifica che il PDF sia valido
+    content = response.content
+    assert content.startswith(b'%PDF')
+
+
+def test_generate_pdf_with_payment_method(client, db_session, test_data, auth_token):
+    """Test PDF con metodo di pagamento"""
+    from src.models.payment import Payment
+    
+    # Crea metodo pagamento
+    payment = Payment(id_payment=1, name="PayPal", is_complete_payment=True)
+    db_session.add(payment)
+    
+    # Associa pagamento all'ordine
+    test_data['order_it'].id_payment = 1
+    db_session.commit()
+    
+    # Crea fattura
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Genera PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{invoice_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+
+
+def test_generate_pdf_with_company_config(client, db_session, test_data, auth_token):
+    """Test PDF con configurazioni aziendali"""
+    from src.models.app_configuration import AppConfiguration
+    
+    # Aggiungi configurazioni aziendali
+    configs = [
+        AppConfiguration(category='company_info', name='company_name', value='ACME SRL'),
+        AppConfiguration(category='company_info', name='company_vat', value='IT12345678901'),
+        AppConfiguration(category='company_info', name='company_address', value='Via Roma 1'),
+        AppConfiguration(category='company_info', name='company_city', value='Milano'),
+        AppConfiguration(category='company_info', name='company_pec', value='acme@pec.it'),
+        AppConfiguration(category='company_info', name='company_sdi', value='0000000'),
+    ]
+    db_session.add_all(configs)
+    db_session.commit()
+    
+    # Crea fattura
+    invoice_response = client.post(
+        "/api/v1/fiscal-documents/invoices",
+        json={"id_order": test_data['order_it'].id_order, "is_electronic": True},
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    invoice_id = invoice_response.json()['id_fiscal_document']
+    
+    # Genera PDF
+    response = client.get(
+        f"/api/v1/fiscal-documents/{invoice_id}/pdf",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    
+    # Il PDF dovrebbe contenere i dati aziendali
+    # (Non possiamo verificare il contenuto del PDF facilmente, 
+    # ma almeno verifichiamo che sia stato generato)
+    content = response.content
+    assert len(content) > 1000
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

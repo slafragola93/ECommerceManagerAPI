@@ -75,3 +75,16 @@ class TaxRepository:
             list[Tax]: Lista delle tasse per il paese
         """
         return self.session.query(Tax).filter(Tax.id_country == id_country).all()
+    
+    def get_percentage_by_id(self, id_tax: int) -> int:
+        """
+        Recupera la percentuale IVA per un ID tax specifico
+        
+        Args:
+            id_tax (int): ID della tassa
+            
+        Returns:
+            int: Percentuale IVA (es. 22 per 22%), 0 se non trovato
+        """
+        tax = self.session.query(Tax).filter(Tax.id_tax == id_tax).first()
+        return tax.percentage if tax and tax.percentage else 0

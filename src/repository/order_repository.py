@@ -410,6 +410,15 @@ class OrderRepository:
                 "name": state.name
             } for state in order_states]
         
+        # Helper per formattare i dettagli dell'ordine
+        def format_order_details(order_id):
+            if not order_id:
+                return []
+            order_details = self.order_detail_repository.get_by_id_order(order_id)
+            if not order_details:
+                return []
+            return [self.order_detail_repository.formatted_output(detail) for detail in order_details]
+        
         return {
             "id_order": order.id_order,
             "id_origin": order.id_origin,

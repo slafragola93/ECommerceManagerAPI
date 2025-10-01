@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 class ShippingSchema(BaseModel):
     id_carrier_api: int = Field(..., gt=0)
     id_shipping_state: int = Field(..., gt=0)
-    id_tax: int = Field(..., gt=0)
+    id_tax: Optional[int] = Field(default=1, gt=0)  # Default a 1 se non specificato
     tracking: Optional[str] = None
     weight: float
     price_tax_incl: float
