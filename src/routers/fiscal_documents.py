@@ -842,8 +842,6 @@ def _generate_pdf_with_fpdf(fiscal_document, order, invoice_address, delivery_ad
         else:
             shipping_cost_with_vat = order.shipments.price_tax_incl if order.shipments.price_tax_incl else 0.0
     
-    # Calcola IVA sulla spedizione
-    shipping_vat = shipping_cost_with_vat - shipping_cost if shipping_cost_with_vat > shipping_cost else 0.0
     
     # Calcola totale documento
     total_imponibile = fiscal_document.total_amount / (1 + (details_with_products[0]['vat_rate'] / 100.0))

@@ -14,6 +14,7 @@ from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order_detail import OrderDetail
 from src.models.country import Country
 from src.repository.app_configuration_repository import AppConfigurationRepository
+from src.repository.tax_repository import TaxRepository
 from src.services.province_service import province_service
 
 logger = logging.getLogger(__name__)
@@ -97,11 +98,16 @@ class FatturaPAService:
                    a_inv.phone as invoice_phone,
                    c.name as country_name,
                    c.iso_code as country_iso,
+                   t.id_tax,
+                   t.percentage as tax_percentage,
                    t.electronic_code as tax_electronic_code,
                    t.note as tax_note,
                    a_del.id_country as delivery_country_id,
                    c_del.iso_code as delivery_country_iso,
-                   t_del.percentage as tax_percentage
+                   t_del.percentage as tax_percentage,
+                   s.price_tax_excl as shipping_price_tax_excl,
+                   s.id_tax as shipping_id_tax,
+                   t_ship.percentage as shipping_tax_percentage
             FROM orders o
             LEFT JOIN addresses a_inv ON o.id_address_invoice = a_inv.id_address
             LEFT JOIN countries c ON a_inv.id_country = c.id_country
@@ -110,6 +116,8 @@ class FatturaPAService:
             LEFT JOIN taxes t_del ON a_del.id_country = t_del.id_country
             LEFT JOIN orders_document od ON o.id_order = od.id_order
             LEFT JOIN taxes t ON od.id_tax = t.id_tax
+            LEFT JOIN shipments s ON o.id_shipping = s.id_shipping
+            LEFT JOIN taxes t_ship ON s.id_tax = t_ship.id_tax
             WHERE o.id_order = :order_id
         """)
         
@@ -156,13 +164,12 @@ class FatturaPAService:
 
     def _generate_xml(self, order_data: Dict[str, Any], order_details: list, document_number: str) -> str:
         """Genera l'XML FatturaPA secondo le specifiche ufficiali"""
+        print(f"=== _generate_xml CHIAMATO ===")
         print(f"=== INIZIO GENERAZIONE XML FATTURAPA ===")
         print(f"Documento: {document_number}")
-        print(f"Order data keys: {list(order_data.keys())}")
         print(f"Order details count: {len(order_details)}")
         
         # Estrai dati cliente
-        print(f"DEBUG FIRSTNAME: {order_data.get('invoice_firstname', '')} LASTNAME: {order_data.get('invoice_lastname', '')}")
         customer_name = order_data.get('invoice_firstname', '') + ' ' + order_data.get('invoice_lastname', '')
         customer_company = order_data.get('invoice_company', '')
         customer_cf = order_data.get('invoice_dni', '')
@@ -177,9 +184,9 @@ class FatturaPAService:
         
         # Calcola totali corretti
         # Recupera la percentuale IVA dal paese di delivery
-        tax_percentage = order_data.get('tax_percentage')
-        if tax_percentage is not None:
-            tax_rate = float(tax_percentage)
+        delivery_tax_percentage = order_data.get('tax_percentage')  # t_del.percentage
+        if delivery_tax_percentage is not None:
+            tax_rate = float(delivery_tax_percentage)
         else:
             tax_rate = 22.0  # Default IVA 22% se non trovata
             print(f"WARNING: Tax percentage not found for delivery country, using default {tax_rate}%")
@@ -218,14 +225,16 @@ class FatturaPAService:
             totale_imposta += float(imposta_linea)
         
         # Calcola il totale con IVA usando total_price dell'ordine * percentuale tassa
-        order_total_price = float(order_data.get('total_price', 0))
-        total_amount = order_total_price * (1 + tax_rate / 100)
+        total_amount = float(order_data.get('total_price', 0))
+        totale_imponibile = total_amount / (1 + tax_rate / 100)
+        totale_imposta = total_amount - totale_imponibile
         
         print(f"=== TOTALI CALCOLATI ===")
         print(f"Totale imponibile: {totale_imponibile:.2f}")
         print(f"Totale imposta: {totale_imposta:.2f}")
         print(f"Totale con IVA: {total_amount:.2f}")
         
+
         # Se non ci sono dettagli, usa il totale dell'ordine
         if totale_imponibile == 0:
             logger.warning("Nessun dettaglio ordine trovato, uso totale ordine")
@@ -311,7 +320,7 @@ class FatturaPAService:
         self._create_element(id_fiscale_cedente, "IdPaese", "IT")
         self._create_element(id_fiscale_cedente, "IdCodice", self.vat_number)
         
-        self._create_element(dati_anagrafici_cedente, "CodiceFiscale", self.vat_number)
+        self._create_element(dati_anagrafici_cedente, "CodiceFiscale", customer_cf)
         
         anagrafica_cedente = self._create_element(dati_anagrafici_cedente, "Anagrafica")
         self._create_element(anagrafica_cedente, "Denominazione", self.company_name)
@@ -488,7 +497,36 @@ class FatturaPAService:
             self._create_element(dettaglio_linea, "AliquotaIVA", f"{tax_rate:.2f}")
             if tax_electronic_code and tax_electronic_code.strip():
                 self._create_element(dettaglio_linea, "Natura", f"{tax_electronic_code:.2f}")
-  
+        
+        # Aggiungi linea per sconti se total_discounts > 0
+        print(tax_rate)
+        total_discounts = float(order_data.get('total_discounts', 0))
+        if total_discounts > 0:
+            total_discounts_no_iva = total_discounts / (1 + tax_rate / 100)
+            i += 1  # Incrementa numero linea
+            dettaglio_sconto = self._create_element(dati_beni_servizi, "DettaglioLinee")
+            self._create_element(dettaglio_sconto, "NumeroLinea", str(i))
+            self._create_element(dettaglio_sconto, "TipoCessionePrestazione", "SC")
+            self._create_element(dettaglio_sconto, "Descrizione", "Buoni Sconto")
+            self._create_element(dettaglio_sconto, "Quantita", "1.00")
+            self._create_element(dettaglio_sconto, "PrezzoUnitario", f"{-total_discounts_no_iva:.2f}")
+            self._create_element(dettaglio_sconto, "PrezzoTotale", f"{-total_discounts_no_iva:.2f}")
+            self._create_element(dettaglio_sconto, "AliquotaIVA", f"{tax_rate:.2f}")
+        
+        # Aggiungi linea per spese di spedizione
+        shipping_price = float(order_data.get('shipping_price_tax_excl', 0))
+        if shipping_price > 0:
+            i += 1  # Incrementa numero linea
+            dettaglio_spedizione = self._create_element(dati_beni_servizi, "DettaglioLinee")
+            self._create_element(dettaglio_spedizione, "NumeroLinea", str(i))
+            self._create_element(dettaglio_spedizione, "TipoCessionePrestazione", "AC")
+            self._create_element(dettaglio_spedizione, "Descrizione", "SPESE")
+            self._create_element(dettaglio_spedizione, "PrezzoUnitario", f"{shipping_price:.2f}")
+            self._create_element(dettaglio_spedizione, "PrezzoTotale", f"{shipping_price:.2f}")
+            
+            # Usa l'aliquota IVA delle spese di spedizione se disponibile, altrimenti quella generale
+            shipping_tax_rate = float(order_data.get('shipping_tax_percentage', tax_rate))
+            self._create_element(dettaglio_spedizione, "AliquotaIVA", f"{shipping_tax_rate:.2f}")
         
         # DatiRiepilogo
         dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
@@ -794,7 +832,6 @@ class FatturaPAService:
             
             # Recupera order details
             order_details = self._get_order_details_for_fiscal_document(fiscal_doc)
-            
             # Genera XML
             xml_content = self._generate_xml(order_data, order_details, fiscal_doc.document_number)
             
@@ -822,13 +859,26 @@ class FatturaPAService:
     ) -> Dict[str, Any]:
         """Prepara dizionario order_data da FiscalDocument"""
         
-        # Query per ottenere dati customer
+        # Query per ottenere dati customer, shipping e tax
         customer_query = text("""
-            SELECT c.*
+            SELECT c.*, 
+                   s.price_tax_excl as shipping_price_tax_excl,
+                   s.id_tax as shipping_id_tax,
+                   t_ship.percentage as shipping_tax_percentage,
+                   od.id_tax,
+                   t.percentage as tax_percentage
             FROM customers c
-            WHERE c.id_customer = :id_customer
+            LEFT JOIN orders o ON c.id_customer = o.id_customer
+            LEFT JOIN shipments s ON o.id_shipping = s.id_shipping
+            LEFT JOIN taxes t_ship ON s.id_tax = t_ship.id_tax
+            LEFT JOIN orders_document od ON o.id_order = od.id_order
+            LEFT JOIN taxes t ON od.id_tax = t.id_tax
+            WHERE c.id_customer = :id_customer AND o.id_order = :id_order
         """)
-        customer_result = self.db.execute(customer_query, {"id_customer": order.id_customer}).fetchone()
+        customer_result = self.db.execute(customer_query, {
+            "id_customer": order.id_customer,
+            "id_order": order.id_order
+        }).fetchone()
         
         if not customer_result:
             raise ValueError(f"Cliente {order.id_customer} non trovato")
@@ -887,7 +937,12 @@ class FatturaPAService:
             'provincia': provincia_abbreviation,
             'pec': address.pec,
             'sdi': address.sdi,
-            'total_price': fiscal_doc.total_amount or 0.0
+            'total_price': fiscal_doc.total_amount or 0.0,
+            'total_discounts': order.total_discounts or 0.0,
+            'shipping_price_tax_excl': customer.get('shipping_price_tax_excl', 0.0),
+            'shipping_tax_percentage': customer.get('shipping_tax_percentage', 22.0),
+            'id_tax': customer.get('id_tax'),
+            'tax_percentage': customer.get('tax_percentage', 22.0)
         }
     
     def _get_order_details_for_fiscal_document(self, fiscal_doc: FiscalDocument) -> list:

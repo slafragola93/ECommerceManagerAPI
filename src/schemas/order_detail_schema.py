@@ -5,11 +5,11 @@ from pydantic import BaseModel, Field
 
 class OrderDetailSchema(BaseModel):
     id_order: Optional[int] = 0
-    id_invoice: Optional[int] = 0
+    id_fiscal_document: Optional[int] = 0
     id_order_document: Optional[int] = 0
     id_origin: Optional[int] = 0
     id_tax: Optional[int] = 0
-    id_product: int = Field(..., gt=0)
+    id_product: int = Field(..., ge=0)
     product_name: str = Field(..., max_length=100)
     product_reference: str = Field(..., max_length=100)
     product_qty: int = Field(..., ge=0)
@@ -22,6 +22,7 @@ class OrderDetailSchema(BaseModel):
 class OrderDetailResponseSchema(BaseModel):
     id_order_detail: int
     id_order: int
+    id_fiscal_document: int
     id_order_document: int
     id_origin: int
     id_tax: int
