@@ -2667,7 +2667,7 @@ class PrestaShopService(BaseEcommerceService):
                             order_detail_data = {
                                 'id_origin': detail.get('id', 0),
                                 'id_order': None,  # Will be set after order insert
-                                'id_invoice': 0,
+                                'id_fiscal_document': 0,
                                 'id_order_document': 0,
                                 'id_product': product_id,
                                 'product_name': detail.get('product_name', 'ND'),
@@ -2766,12 +2766,12 @@ class PrestaShopService(BaseEcommerceService):
                 details_sql_file = "temp_order_details_insert.sql"
                 with open(details_sql_file, 'w', encoding='utf-8') as f:
                     f.write("-- Order details bulk insert\n")
-                    f.write("INSERT INTO order_details (id_origin, id_order, id_invoice, id_order_document, id_product, product_name, product_reference, product_qty, product_weight, product_price, id_tax, reduction_percent, reduction_amount, rda) VALUES\n")
+                    f.write("INSERT INTO order_details (id_origin, id_order, id_fiscal_document, id_order_document, id_product, product_name, product_reference, product_qty, product_weight, product_price, id_tax, reduction_percent, reduction_amount, rda) VALUES\n")
                     
                     for i, detail_data in enumerate(valid_order_detail_data):
                         if detail_data['id_order']:  # Only include details with valid order IDs
                             comma = "," if i < len(valid_order_detail_data) - 1 else ";"
-                            f.write(f"({detail_data['id_origin']}, {detail_data['id_order']}, {sql_value(detail_data['id_invoice'])}, {sql_value(detail_data['id_order_document'])}, {detail_data['id_product']}, {sql_value(detail_data['product_name'])}, {sql_value(detail_data['product_reference'])}, {detail_data['product_qty']}, {detail_data['product_weight']}, {detail_data['product_price']}, {sql_value(detail_data['id_tax'])}, {detail_data['reduction_percent']}, {detail_data['reduction_amount']}, {sql_value(detail_data['rda'])}){comma}\n")
+                            f.write(f"({detail_data['id_origin']}, {detail_data['id_order']}, {sql_value(detail_data.get('id_fiscal_document', 0))}, {sql_value(detail_data['id_order_document'])}, {detail_data['id_product']}, {sql_value(detail_data['product_name'])}, {sql_value(detail_data['product_reference'])}, {detail_data['product_qty']}, {detail_data['product_weight']}, {detail_data['product_price']}, {sql_value(detail_data['id_tax'])}, {detail_data['reduction_percent']}, {detail_data['reduction_amount']}, {sql_value(detail_data['rda'])}){comma}\n")
                 
                 # Execute order details SQL file
                 with open(details_sql_file, 'r', encoding='utf-8') as f:

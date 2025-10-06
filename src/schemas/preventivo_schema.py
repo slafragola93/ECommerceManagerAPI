@@ -38,7 +38,7 @@ class ArticoloPreventivoSchema(BaseModel):
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
     product_price: Optional[float] = Field(0.0, gt=0)
-    product_weight: Optional[float] = Field(0.0, gt=0)
+    product_weight: Optional[float] = Field(0.0, ge=0)
     product_qty: int = Field(1, gt=0)  # Integer come nel modello
     id_tax: int = Field(..., gt=0)  # Sempre obbligatorio
     reduction_percent: Optional[float] = Field(0.0, ge=0)  # Sconto percentuale
@@ -76,7 +76,7 @@ class ArticoloPreventivoUpdateSchema(BaseModel):
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
     product_price: Optional[float] = Field(None, gt=0)
-    product_weight: Optional[float] = Field(None, gt=0)
+    product_weight: Optional[float] = Field(None, ge=0)
     product_qty: Optional[int] = Field(None, gt=0)  # Integer come nel modello
     id_tax: Optional[int] = Field(None, gt=0)
     reduction_percent: Optional[float] = Field(None, ge=0)  # Sconto percentuale

@@ -368,7 +368,7 @@ class TestOrderEndpointsValidation:
         assert response.status_code == 200
         
         # Verifica che i campi di relazione siano stati aggiornati
-        get_response = client.get("/api/v1/orders/1")
+        get_response = client.get("/api/v1/orders/1?show_details=true")
         assert get_response.status_code == 200
         order = get_response.json()
         print(order)

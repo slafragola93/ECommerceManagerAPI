@@ -19,39 +19,75 @@ def get_repository(db: db_dependency) -> OrderRepository:
     return OrderRepository(db)
 
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=AllOrderResponseSchema)
+@router.get("/", 
+           status_code=status.HTTP_200_OK,
+           summary="Recupera lista ordini",
+           description="Recupera una lista di ordini con filtri opzionali e possibilità di includere dettagli completi delle relazioni",
+           response_description="Lista di ordini con metadati di paginazione")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_orders(user: user_dependency,
                         or_repo: OrderRepository = Depends(get_repository),
-                        orders_ids: Optional[str] = None,
-                        customers_ids: Optional[str] = None,
-                        order_states_ids: Optional[str] = None,
-                        platforms_ids: Optional[str] = None,
-                        payments_ids: Optional[str] = None,
-                        is_payed: Optional[bool] = None,
-                        is_invoice_requested: Optional[bool] = None,
-                        date_from: Optional[str] = None,
-                        date_to: Optional[str] = None,
-                        page: int = Query(1, gt=0),
-                        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
+                        orders_ids: Optional[str] = Query(None, description="ID degli ordini, separati da virgole (es: 1,2,3)"),
+                        customers_ids: Optional[str] = Query(None, description="ID dei clienti, separati da virgole (es: 1,2,3)"),
+                        order_states_ids: Optional[str] = Query(None, description="ID degli stati ordine, separati da virgole (es: 1,2,3)"),
+                        platforms_ids: Optional[str] = Query(None, description="ID delle piattaforme, separati da virgole (es: 1,2,3)"),
+                        payments_ids: Optional[str] = Query(None, description="ID dei pagamenti, separati da virgole (es: 1,2,3)"),
+                        is_payed: Optional[bool] = Query(None, description="Filtro per ordini pagati (true) o non pagati (false)"),
+                        is_invoice_requested: Optional[bool] = Query(None, description="Filtro per ordini con fattura richiesta (true) o no (false)"),
+                        date_from: Optional[str] = Query(None, description="Data inizio filtro (formato: YYYY-MM-DD)"),
+                        date_to: Optional[str] = Query(None, description="Data fine filtro (formato: YYYY-MM-DD)"),
+                        show_details: str = Query("false", description="Se 'true', include dettagli completi delle relazioni (customer, platform, payment, shipping, addresses, order_states, order_details)"),
+                        page: int = Query(1, gt=0, description="Numero di pagina (inizia da 1)"),
+                        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})")):
     """
-    Recupera una lista di ordini filtrata in base a vari criteri.
+    Recupera una lista di ordini con filtri opzionali e possibilità di includere dettagli completi.
 
-    Parametri:
-    - `user`: Dipendenza dell'utente autenticato.
-    - `orders_ids`: ID degli ordini, separati da virgole.
-    - `customers_ids`: ID dei clienti, separati da virgole.
-    - `order_states_ids`: ID degli stati ordine, separati da virgole.
-    - `platforms_ids`: ID delle piattaforme, separati da virgole.
-    - `payments_ids`: ID dei pagamenti, separati da virgole.
-    - `is_payed`: Filtro per ordini pagati/non pagati.
-    - `is_invoice_requested`: Filtro per ordini con fattura richiesta.
-    - `date_from`: Data di inizio per il filtro.
-    - `date_to`: Data di fine per il filtro.
-    - `page`: Pagina corrente per la paginazione.
-    - `limit`: Numero di record per pagina.
+    **Filtri disponibili:**
+    - `orders_ids`: ID degli ordini specifici (es: "1,2,3")
+    - `customers_ids`: ID dei clienti (es: "1,2,3") 
+    - `order_states_ids`: ID degli stati ordine (es: "1,2,3")
+    - `platforms_ids`: ID delle piattaforme (es: "1,2,3")
+    - `payments_ids`: ID dei metodi di pagamento (es: "1,2,3")
+    - `is_payed`: Filtro per ordini pagati (true) o non pagati (false)
+    - `is_invoice_requested`: Filtro per ordini con fattura richiesta (true) o no (false)
+    - `date_from`: Data inizio filtro (formato: YYYY-MM-DD)
+    - `date_to`: Data fine filtro (formato: YYYY-MM-DD)
+
+    **Parametro show_details:**
+    - `show_details=false` (default): Restituisce solo i campi base con ID delle relazioni
+    - `show_details=true`: Include dettagli completi delle entità correlate:
+      - `customer`: Dettagli completi del cliente
+      - `platform`: Dettagli della piattaforma
+      - `payment`: Dettagli del metodo di pagamento
+      - `shipping`: Dettagli della spedizione
+      - `address_delivery`: Indirizzo di consegna completo
+      - `address_invoice`: Indirizzo di fatturazione completo
+      - `sectional`: Dettagli della sezione
+      - `order_states`: Lista degli stati dell'ordine
+      - `order_details`: Lista dei dettagli/articoli dell'ordine
+
+    **Paginazione:**
+    - `page`: Numero di pagina (inizia da 1)
+    - `limit`: Numero di elementi per pagina (max 100)
+
+    **Risposta:**
+    ```json
+    {
+        "orders": [...],
+        "total": 150,
+        "page": 1,
+        "limit": 20
+    }
+    ```
+
+    **Esempi di utilizzo:**
+    - `/orders` - Tutti gli ordini (risposta base)
+    - `/orders?show_details=true` - Tutti gli ordini con dettagli completi
+    - `/orders?customers_ids=1,2&show_details=true` - Ordini di clienti specifici con dettagli
+    - `/orders?is_payed=true&date_from=2024-01-01` - Ordini pagati dal 1 gennaio 2024
     """
+    
     orders = or_repo.get_all(orders_ids=orders_ids,
                             customers_ids=customers_ids,
                             order_states_ids=order_states_ids,
@@ -61,6 +97,7 @@ async def get_all_orders(user: user_dependency,
                             is_invoice_requested=is_invoice_requested,
                             date_from=date_from,
                             date_to=date_to,
+                            show_details=show_details,
                             page=page,
                             limit=limit)
 
@@ -79,8 +116,7 @@ async def get_all_orders(user: user_dependency,
 
     results = []
     for order in orders:
-        results.append(or_repo.formatted_output(order))
-
+        results.append(or_repo.formatted_output(order, show_details=show_details))
     return {"orders": results, "total": total_count, "page": page, "limit": limit}
 
 

@@ -1012,8 +1012,6 @@ def test_order_details():
     order_details_test = [
         OrderDetail(
             id_order=1,
-            id_fiscal_document=None,
-            id_order_document=None,
             id_origin=1,
             id_product=1,
             product_name="Climatizzatore Daikin",
@@ -1027,8 +1025,6 @@ def test_order_details():
         ),
         OrderDetail(
             id_order=1,
-            id_fiscal_document=None,
-            id_order_document=None,
             id_origin=2,
             id_product=2,
             product_name="Smartphone Samsung",
@@ -1042,8 +1038,6 @@ def test_order_details():
         ),
         OrderDetail(
             id_order=2,
-            id_fiscal_document=None,
-            id_order_document=None,
             id_origin=3,
             id_product=3,
             product_name="Laptop Dell",

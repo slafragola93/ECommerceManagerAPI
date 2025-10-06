@@ -9,6 +9,8 @@ from .lang_repository import LangRepository
 from .order_detail_repository import OrderDetailRepository
 from .order_package_repository import OrderPackageRepository
 from .order_state_repository import OrderStateRepository
+from .payment_repository import PaymentRepository
+from .platform_repository import PlatformRepository
 from .sectional_repository import SectionalRepository
 from .shipping_repository import ShippingRepository
 from .shipping_state_repository import ShippingStateRepository
@@ -42,6 +44,8 @@ class OrderRepository:
         self.shipping_state_repository = ShippingStateRepository(session)
         self.order_package_repository = OrderPackageRepository(session)
         self.order_detail_repository = OrderDetailRepository(session)
+        self.platform_repository = PlatformRepository(session)
+        self.payment_repository = PaymentRepository(session)
 
     def get_all(self,
                 orders_ids: Optional[str] = None,
@@ -53,6 +57,7 @@ class OrderRepository:
                 is_invoice_requested: Optional[bool] = None,
                 date_from: Optional[str] = None,
                 date_to: Optional[str] = None,
+                show_details: bool = False,
                 page: int = 1, 
                 limit: int = 10
                 ):
@@ -238,12 +243,28 @@ class OrderRepository:
         self.session.commit()
 
     def set_price(self, id_order: int, order_details: list[OrderDetail]):
+        from src.services.tool import calculate_order_totals
+        from src.models.tax import Tax
+        
         order = self.get_by_id(_id=id_order)
 
         if order is None:
             raise HTTPException(status_code=404, detail="Ordine non trovato")
 
-        order.total_price = sum(order_detail.product_price * order_detail.product_qty for order_detail in order_details)
+        # Recupera le percentuali delle tasse
+        tax_ids = set()
+        for order_detail in order_details:
+            if hasattr(order_detail, 'id_tax') and order_detail.id_tax:
+                tax_ids.add(order_detail.id_tax)
+        
+        tax_percentages = {}
+        if tax_ids:
+            taxes = self.session.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+            tax_percentages = {tax.id_tax: tax.percentage for tax in taxes}
+
+        # Calcola i totali usando le funzioni pure
+        totals = calculate_order_totals(order_details, tax_percentages)
+        order.total_price = totals['total_price_with_tax']
 
         self.session.add(order)
         self.session.commit()
@@ -266,9 +287,13 @@ class OrderRepository:
         self.session.commit()
         return True
 
-    def formatted_output(self, order: Order):
+    def formatted_output(self, order: Order, show_details: bool = False):
         """
         Formatta l'output di un ordine con le relazioni popolate tramite query separate
+        
+        Args:
+            order: Oggetto Order da formattare
+            show_details: Se True, include dettagli completi delle relazioni
         """
         # Helper per formattare gli indirizzi
         def format_address(address_id):
@@ -419,11 +444,37 @@ class OrderRepository:
                 return []
             return [self.order_detail_repository.formatted_output(detail) for detail in order_details]
         
-        return {
+        # Helper per formattare la piattaforma
+        def format_platform(platform_id):
+            if not platform_id:
+                return None
+            platform = self.platform_repository.get_by_id(platform_id)
+            if not platform:
+                return None
+            return {
+                "id_platform": platform.id_platform,
+                "name": platform.name,
+                "url": platform.url
+            }
+        
+        # Helper per formattare il pagamento
+        def format_payment(payment_id):
+            if not payment_id:
+                return None
+            payment = self.payment_repository.get_by_id(payment_id)
+            if not payment:
+                return None
+            return {
+                "id_payment": payment.id_payment,
+                "name": payment.name,
+                "is_complete_payment": payment.is_complete_payment
+            }
+        
+        # Base response con campi essenziali
+        response = {
             "id_order": order.id_order,
             "id_origin": order.id_origin,
             "reference": order.reference,
-            # Campi ID per compatibilità con OrderIdSchema
             "id_address_delivery": order.id_address_delivery,
             "id_address_invoice": order.id_address_invoice,
             "id_customer": order.id_customer,
@@ -432,7 +483,6 @@ class OrderRepository:
             "id_shipping": order.id_shipping,
             "id_sectional": order.id_sectional,
             "id_order_state": order.id_order_state,
-            # Campi dati
             "is_invoice_requested": order.is_invoice_requested,
             "is_payed": order.is_payed,
             "payment_date": order.payment_date,
@@ -444,22 +494,39 @@ class OrderRepository:
             "privacy_note": order.privacy_note,
             "general_note": order.general_note,
             "delivery_date": order.delivery_date,
-            "date_add": order.date_add,
-            # Relazioni popolate tramite query separate
-            "address_delivery": format_address(order.id_address_delivery),
-            "address_invoice": format_address(order.id_address_invoice),
-            "customer": format_customer(order.id_customer),
-            "shipping": format_shipping(order.id_shipping),
-            "sectional": format_sectional(order.id_sectional),
-            "order_states": format_order_states(order.id_order)
+            "date_add": order.date_add
         }
+        
+        # Se show_details è True, aggiungi le relazioni popolate
+        if show_details:
+            # Rimuovi i campi ID duplicati (usa pop con default per evitare errori)
+            response.pop("id_address_delivery", None)
+            response.pop("id_address_invoice", None)
+            response.pop("id_customer", None)
+            response.pop("id_platform", None)
+            response.pop("id_payment", None)
+            response.pop("id_shipping", None)
+            response.pop("id_sectional", None)
+            response.pop("id_order_state", None)
+
+            response.update({
+                "address_delivery": format_address(order.id_address_delivery),
+                "address_invoice": format_address(order.id_address_invoice),
+                "customer": format_customer(order.id_customer),
+                "platform": format_platform(order.id_platform),
+                "payment": format_payment(order.id_payment),
+                "shipping": format_shipping(order.id_shipping),
+                "sectional": format_sectional(order.id_sectional),
+                "order_states": format_order_states(order.id_order),
+                "order_details": format_order_details(order.id_order)
+            })
+        return response
     
     def get_by_origin_id(self, id_origin: int) -> Optional[Order]:
         """Get order by origin ID (PrestaShop ID)"""
         try:
             return self.session.query(Order).filter(Order.id_origin == id_origin).first()
         except Exception as e:
-            print(f"DEBUG: Error getting order by origin ID {id_origin}: {str(e)}")
             return None
     
     def get_id_by_origin_id(self, id_origin: int) -> Optional[int]:
@@ -467,5 +534,4 @@ class OrderRepository:
         try:
             return self.session.query(Order.id_order).filter(Order.id_origin == id_origin).first()
         except Exception as e:
-            print(f"DEBUG: Error getting order ID by origin ID {id_origin}: {str(e)}")
             return None

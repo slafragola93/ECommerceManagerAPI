@@ -62,7 +62,38 @@ class OrderUpdateSchema(BaseModel):
         orm_mode = True
 
 
+class OrderSimpleResponseSchema(BaseModel):
+    """Schema per risposta semplice degli ordini (solo ID)"""
+    id_order: int
+    id_origin: Optional[int]
+    reference: Optional[str]
+    id_address_delivery: Optional[int]
+    id_address_invoice: Optional[int]
+    id_customer: Optional[int]
+    id_platform: Optional[int]
+    id_payment: Optional[int]
+    id_shipping: Optional[int]
+    id_sectional: Optional[int]
+    id_order_state: int
+    is_invoice_requested: bool
+    is_payed: Optional[bool]
+    payment_date: Optional[datetime]
+    total_weight: Optional[float]
+    total_price: Optional[float]
+    total_discounts: Optional[float]
+    cash_on_delivery: Optional[float]
+    insured_value: Optional[float]
+    privacy_note: Optional[str]
+    general_note: Optional[str]
+    delivery_date: Optional[datetime]
+    date_add: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class OrderResponseSchema(BaseModel):
+    """Schema per risposta completa degli ordini (con dettagli)"""
     id_order: int
     id_origin: Optional[int]
     reference: Optional[str]
@@ -87,13 +118,14 @@ class OrderResponseSchema(BaseModel):
     delivery_date: Optional[datetime]
     date_add: datetime
     
-    # Relazioni
+    # Relazioni popolate
     address_delivery: Optional[AddressResponseSchema] = None
     address_invoice: Optional[AddressResponseSchema] = None
     customer: Optional[CustomerResponseSchema] = None
     shipping: Optional[ShippingResponseSchema] = None
     sectional: Optional[SectionalResponseSchema] = None
     order_states: Optional[list[OrderStateResponseSchema]] = None
+    order_details: Optional[list] = None  # Aggiungiamo anche gli order_details
 
     class Config:
         from_attributes = True
@@ -140,7 +172,7 @@ class OrderIdSchema(BaseModel):
 
 
 class AllOrderResponseSchema(BaseModel):
-    orders: list[OrderIdSchema]
+    orders: list[OrderSimpleResponseSchema]
     total: int
     page: int
     limit: int

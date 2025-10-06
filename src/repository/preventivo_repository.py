@@ -14,7 +14,7 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoSchema,
     ArticoloPreventivoUpdateSchema
 )
-from src.services.tool import generate_preventivo_reference
+from src.services.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
 from datetime import datetime
 
 
@@ -124,7 +124,7 @@ class PreventivoRepository:
         order_detail = OrderDetail(
             id_origin=0,  # Per articoli preventivo
             id_order=0,  # Per articoli preventivo
-            id_invoice=0,  # Per articoli preventivo
+            id_fiscal_document=0,  # Per articoli preventivo
             id_order_document=id_order_document,
             id_product=product_id,
             product_name=product_name,
@@ -482,57 +482,53 @@ class PreventivoRepository:
             return product.id_product
     
     def _calculate_totals_from_articoli(self, articoli: List[ArticoloPreventivoSchema]) -> tuple[float, float]:
-        """Calcola totali da una lista di articoli"""
-        total_weight = 0.0
-        total_price = 0.0  # Prezzo base senza tassa
+        """Calcola totali da una lista di articoli usando le funzioni pure"""
+        if not articoli:
+            return 0.0, 0.0
         
-        for articolo in articoli:
-            tax = self.db.query(Tax).filter(Tax.id_tax == articoli[0].id_tax).first()
-            tax_rate = tax.percentage if tax else 0.0
-
-            # Calcola peso totale
-            total_weight += (articolo.product_weight or 0.0) * articolo.product_qty
-            
-            # Prezzo base
-            total_price += (articolo.product_price or 0.0) * articolo.product_qty * (1 + tax_rate / 100)
-            
-        return total_weight, total_price
+        # Converte ArticoloPreventivoSchema in oggetti simili a OrderDetail
+        class MockOrderDetail:
+            def __init__(self, articolo):
+                self.product_price = articolo.product_price
+                self.product_qty = articolo.product_qty
+                self.product_weight = articolo.product_weight
+                self.id_tax = articolo.id_tax
+                self.reduction_percent = articolo.reduction_percent
+                self.reduction_amount = articolo.reduction_amount
+        
+        mock_articoli = [MockOrderDetail(articolo) for articolo in articoli]
+        
+        # Recupera le percentuali delle tasse
+        tax_percentages = self._get_tax_percentages_preventivo(mock_articoli)
+        
+        # Calcola i totali usando le funzioni pure
+        totals = calculate_order_totals(mock_articoli, tax_percentages)
+        
+        return totals['total_weight'], totals['total_price_with_tax']
     
     def _calculate_totals(self, id_order_document: int):
-        """Calcola totali del preventivo basandosi sugli articoli"""
+        """Calcola totali del preventivo basandosi sugli articoli usando le funzioni pure"""
         # Recupera tutti gli articoli del preventivo
         articoli = self.db.query(OrderDetail).filter(
             OrderDetail.id_order_document == id_order_document
         ).all()
         
-        total_weight = 0.0
-        total_price_base = 0.0  # Prezzo base senza tassa
+        if not articoli:
+            # Se non ci sono articoli, azzera i totali
+            order_document = self.db.query(OrderDocument).filter(
+                OrderDocument.id_order_document == id_order_document
+            ).first()
+            if order_document:
+                order_document.total_weight = 0.0
+                order_document.total_price = 0.0
+                self.db.commit()
+            return
         
-        for articolo in articoli:
-            # Calcola peso totale
-            total_weight += (articolo.product_weight or 0.0) * articolo.product_qty
-            
-            # Prezzo base
-            prezzo_base = (articolo.product_price or 0.0) * articolo.product_qty
-            
-            # Applica sconto se presente
-            if articolo.reduction_percent and articolo.reduction_percent > 0:
-                sconto = prezzo_base * (articolo.reduction_percent / 100)
-                prezzo_base -= sconto
-            elif articolo.reduction_amount and articolo.reduction_amount > 0:
-                prezzo_base -= articolo.reduction_amount
-            
-            # Aggiungi al totale base (senza tassa)
-            total_price_base += prezzo_base
+        # Recupera le percentuali delle tasse
+        tax_percentages = self._get_tax_percentages_preventivo(articoli)
         
-        # Applica la tassa al totale (non a ogni articolo)
-        # Usa la tassa del primo articolo come riferimento
-        tax_rate = 0.0
-        if articoli:
-            tax = self.db.query(Tax).filter(Tax.id_tax == articoli[0].id_tax).first()
-            tax_rate = tax.percentage if tax else 0.0
-        
-        total_price = total_price_base * (1 + tax_rate / 100)
+        # Calcola i totali usando le funzioni pure
+        totals = calculate_order_totals(articoli, tax_percentages)
         
         # Aggiorna OrderDocument con i totali
         order_document = self.db.query(OrderDocument).filter(
@@ -540,7 +536,28 @@ class PreventivoRepository:
         ).first()
         
         if order_document:
-            order_document.total_weight = total_weight
-            order_document.total_price = total_price
-            # Commit le modifiche ai totali
+            # Usa il prezzo con tasse per i preventivi
+            order_document.total_weight = totals['total_weight']
+            order_document.total_price = totals['total_price_with_tax']
             self.db.commit()
+
+    def _get_tax_percentages_preventivo(self, articoli: list) -> dict:
+        """
+        Recupera le percentuali delle tasse per gli articoli del preventivo
+        
+        Args:
+            articoli: Lista di OrderDetail objects
+            
+        Returns:
+            dict: Dizionario {id_tax: percentage}
+        """
+        tax_ids = set()
+        for articolo in articoli:
+            if hasattr(articolo, 'id_tax') and articolo.id_tax:
+                tax_ids.add(articolo.id_tax)
+        
+        if not tax_ids:
+            return {}
+        
+        taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+        return {tax.id_tax: tax.percentage for tax in taxes}

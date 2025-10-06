@@ -229,6 +229,7 @@ class FiscalDocumentRepository:
         
         # Calcola importo totale (SENZA IVA)
         total_amount_no_vat = 0.0
+        shipping_cost_no_vat = 0.0  # Inizializza per evitare errori di scope
         
         if is_partial and items:
             # Valida che gli articoli siano nella fattura
@@ -314,8 +315,9 @@ class FiscalDocumentRepository:
         self.db.add(credit_note)
         self.db.flush()
         
-        # Se parziale, aggiungi dettagli
+        # Aggiungi dettagli della nota di credito
         if is_partial and items:
+            # Nota di credito parziale - usa gli articoli specificati
             for item in items:
                 # Recupera order_detail per applicare lo sconto corretto
                 od = self.db.query(OrderDetail).filter(
@@ -341,6 +343,17 @@ class FiscalDocumentRepository:
                     quantity=quantity,
                     unit_price=unit_price,  # Prezzo originale senza sconto
                     total_amount=total_amount  # Totale con sconto applicato
+                )
+                self.db.add(detail)
+        else:
+            # Nota di credito totale - crea dettagli per tutti gli articoli della fattura
+            for invoice_detail in invoice_details:
+                detail = FiscalDocumentDetail(
+                    id_fiscal_document=credit_note.id_fiscal_document,
+                    id_order_detail=invoice_detail.id_order_detail,
+                    quantity=invoice_detail.quantity,
+                    unit_price=invoice_detail.unit_price,
+                    total_amount=invoice_detail.total_amount
                 )
                 self.db.add(detail)
         

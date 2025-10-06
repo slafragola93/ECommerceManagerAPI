@@ -64,3 +64,144 @@ def sql_value(value: Any, null_value: str = "NULL") -> str:
 def generate_preventivo_reference(document_number: str) -> str:
     """Genera reference automatica per preventivo con formato PRV+document_number"""
     return f"PRV{document_number}"
+
+
+def calculate_price_with_tax(base_price: float, tax_percentage: float, quantity: int = 1) -> float:
+    """
+    Calcola il prezzo totale con tasse applicate
+    
+    Args:
+        base_price: Prezzo base del prodotto
+        tax_percentage: Percentuale della tassa (es. 22 per 22%)
+        quantity: Quantità del prodotto (default: 1)
+    
+    Returns:
+        float: Prezzo totale con tasse applicate
+    """
+    if base_price is None or base_price < 0:
+        return 0.0
+    
+    if tax_percentage is None or tax_percentage < 0:
+        tax_percentage = 0.0
+    
+    if quantity is None or quantity <= 0:
+        quantity = 1
+    
+    # Calcola il prezzo base totale
+    total_base_price = base_price * quantity
+    
+    # Applica la tassa
+    total_price_with_tax = total_base_price * (1 + tax_percentage / 100)
+    
+    return round(total_price_with_tax, 2)
+
+
+def calculate_order_total_with_taxes(order_details: list, tax_percentages: dict = None) -> float:
+    """
+    Calcola il totale dell'ordine con tasse applicate
+    
+    Args:
+        order_details: Lista di OrderDetail objects
+        tax_percentages: Dizionario {id_tax: percentage} con le percentuali delle tasse
+    
+    Returns:
+        float: Totale ordine con tasse applicate
+    """
+    if not order_details:
+        return 0.0
+    
+    total_with_taxes = 0.0
+    
+    for order_detail in order_details:
+        # Usa la tassa specifica dell'order_detail
+        current_tax_percentage = 0.0
+        if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
+            current_tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+        
+        # Calcola il prezzo con tasse per questo order_detail
+        price_with_tax = calculate_price_with_tax(
+            base_price=order_detail.product_price or 0.0,
+            tax_percentage=current_tax_percentage,
+            quantity=order_detail.product_qty or 1
+        )
+        
+        total_with_taxes += price_with_tax
+    
+    return round(total_with_taxes, 2)
+
+
+def calculate_order_totals(order_details: list, tax_percentages: dict = None) -> dict:
+    """
+    Calcola tutti i totali di un ordine (prezzo, peso, sconti) dinamicamente
+    
+    Args:
+        order_details: Lista di OrderDetail objects
+        tax_percentages: Dizionario {id_tax: percentage} con le percentuali delle tasse
+    
+    Returns:
+        dict: Dizionario con i totali calcolati
+    """
+    if not order_details:
+        return {
+            'total_price': 0.0,
+            'total_weight': 0.0,
+            'total_discounts': 0.0,
+            'total_price_with_tax': 0.0
+        }
+    
+    total_price_base = 0.0
+    total_weight = 0.0
+    total_discounts = 0.0
+    total_price_with_tax = 0.0
+    
+    for order_detail in order_details:
+        # Calcola peso totale
+        weight = (order_detail.product_weight or 0.0) * (order_detail.product_qty or 1)
+        total_weight += weight
+        
+        # Calcola prezzo base
+        price_base = (order_detail.product_price or 0.0) * (order_detail.product_qty or 1)
+        
+        # Applica sconti
+        discount_amount = 0.0
+        if order_detail.reduction_percent and order_detail.reduction_percent > 0:
+            discount_amount = price_base * (order_detail.reduction_percent / 100)
+        elif order_detail.reduction_amount and order_detail.reduction_amount > 0:
+            discount_amount = order_detail.reduction_amount
+        
+        price_after_discount = price_base - discount_amount
+        total_discounts += discount_amount
+        total_price_base += price_after_discount
+        
+        # Calcola prezzo con tasse
+        tax_percentage = 0.0
+        if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
+            tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+        
+        price_with_tax = price_after_discount * (1 + tax_percentage / 100)
+        total_price_with_tax += price_with_tax
+    
+    return {
+        'total_price': round(total_price_base, 2),
+        'total_weight': round(total_weight, 2),
+        'total_discounts': round(total_discounts, 2),
+        'total_price_with_tax': round(total_price_with_tax, 2)
+    }
+
+
+def apply_order_totals_to_order(order, totals: dict, use_tax_included: bool = True) -> None:
+    """
+    Applica i totali calcolati a un oggetto Order
+    
+    Args:
+        order: Oggetto Order da aggiornare
+        totals: Dizionario con i totali calcolati
+        use_tax_included: Se True usa total_price_with_tax, altrimenti total_price
+    """
+    if use_tax_included:
+        order.total_price = totals['total_price_with_tax']  # Prezzo con tasse
+    else:
+        order.total_price = totals['total_price']  # Prezzo base senza tasse
+    
+    order.total_weight = totals['total_weight']
+    order.total_discounts = totals['total_discounts']
