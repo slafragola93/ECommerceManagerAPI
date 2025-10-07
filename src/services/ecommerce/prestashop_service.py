@@ -2629,7 +2629,7 @@ class PrestaShopService(BaseEcommerceService):
                         'privacy_note': None,
                         'note': order.get('order_note', ''),
                         'delivery_date': None,
-                        'date_add': self._parse_prestashop_datetime(order.get('date_add', ''))
+                        'date_add': str(self._parse_prestashop_datetime(order.get('date_add', '')))
                     }
                     
                     order_total_weight = 0.0

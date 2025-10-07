@@ -15,6 +15,8 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoUpdateSchema
 )
 from src.services.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
+from .order_repository import OrderRepository
+from src.schemas.order_schema import OrderSchema
 from datetime import datetime
 
 
@@ -23,6 +25,7 @@ class PreventivoRepository:
     
     def __init__(self, db: Session):
         self.db = db
+        self.order_repository = OrderRepository(db)
     
     def get_next_document_number(self, type_document: str = "preventivo") -> str:
         """Genera il prossimo numero documento sequenziale"""
@@ -291,58 +294,61 @@ class PreventivoRepository:
             "total_finale": round(total_finale, 2)
         }
     
-    def convert_to_order(self, id_order_document: int, conversion_data: Dict[str, Any], user_id: int) -> Optional[Order]:
+    def convert_to_order(self, id_order_document: int, user_id: int) -> Optional[Order]:
         """Converte preventivo in ordine"""
         preventivo = self.get_preventivo_by_id(id_order_document)
         if not preventivo:
             return None
         
-        # Crea ordine basandosi sul modello Order corretto
-        order = Order(
+        # Crea ordine utilizzando OrderRepository per sfruttare tutte le funzioni collegate
+        order_data = OrderSchema(
             id_origin=0,  # Ordine creato dall'app
-            id_customer=preventivo.id_customer,
-            id_address_delivery=conversion_data.get('id_address_delivery', preventivo.id_address_delivery),
-            id_address_invoice=conversion_data.get('id_address_invoice', preventivo.id_address_invoice),
+            customer=preventivo.id_customer,
+            address_delivery=preventivo.id_address_delivery,
+            address_invoice=preventivo.id_address_invoice,
             reference=generate_preventivo_reference(preventivo.document_number),
-            id_platform=conversion_data.get('id_platform', 1),  # Default 1
-            id_payment=conversion_data.get('id_payment'),
-            id_shipping=conversion_data.get('id_shipping'),
-            id_sectional=conversion_data.get('id_sectional'),
-            id_order_state=conversion_data.get('id_order_state', 1),  # Default 1 (pending)
-            is_invoice_requested=conversion_data.get('is_invoice_requested', False),
-            is_payed=conversion_data.get('is_payed', False),
-            payment_date=conversion_data.get('payment_date'),
+            id_platform=1,  # Default 1
+            sectional=0,  # Default 0 (da configurare successivamente)
+            id_order_state=1,  # Default 1 (pending)
+            is_invoice_requested=False,
+            is_payed=0,
+            payment_date=None,
             total_weight=preventivo.total_weight or 0.0,
             total_price=preventivo.total_price or 0.0,
-            total_discounts=conversion_data.get('total_discounts', 0.0),
-            cash_on_delivery=conversion_data.get('cash_on_delivery', 0.0),
-            insured_value=conversion_data.get('insured_value', 0.0),
-            privacy_note=conversion_data.get('privacy_note'),
-            general_note=preventivo.note,
-            delivery_date=conversion_data.get('delivery_date')
+            total_discounts=0.0,
+            cash_on_delivery=0.0
         )
         
-        self.db.add(order)
-        self.db.flush()
+        # Utilizza OrderRepository per creare l'ordine con tutte le funzioni collegate
+        order_id = self.order_repository.create(order_data)
         
-        # Copia articoli dal preventivo all'ordine
+        # Recupera l'ordine creato
+        order = self.db.query(Order).filter(Order.id_order == order_id).first()
+        
+        # Copia articoli dal preventivo all'ordine utilizzando OrderDetailRepository
         articoli = self.get_articoli_preventivo(id_order_document)
         for articolo in articoli:
-            new_detail = OrderDetail(
+            # Crea order detail utilizzando lo schema e il repository
+            from src.schemas.order_detail_schema import OrderDetailSchema
+            detail_data = OrderDetailSchema(
+                id_origin=articolo.id_origin,
                 id_order=order.id_order,
+                id_fiscal_document=articolo.id_fiscal_document,
                 id_order_document=id_order_document,
-                id_product=articolo.id_product,
+                id_product=articolo.id_product or 0,  # Default 0 se None
                 product_name=articolo.product_name,
-                product_reference=articolo.product_reference,
+                product_reference=articolo.product_reference or "",
                 product_qty=articolo.product_qty,
-                product_price=articolo.product_price,
-                id_tax=articolo.id_tax,
-                reduction_percent=articolo.reduction_percent,
-                reduction_amount=articolo.reduction_amount
+                product_weight=articolo.product_weight or 0.0,
+                product_price=articolo.product_price or 0.0,
+                id_tax=articolo.id_tax or 0,
+                reduction_percent=articolo.reduction_percent or 0.0,
+                reduction_amount=articolo.reduction_amount or 0.0
             )
-            self.db.add(new_detail)
+            self.order_repository.order_detail_repository.create(detail_data)
         
-        # Aggiorna stato preventivo (se il campo esiste)
+        # Aggiorna il preventivo con l'ID dell'ordine creato
+        preventivo.id_order = order.id_order
         # preventivo.status = "converted"
         # preventivo.updated_by = user_id
         preventivo.updated_at = datetime.now()
@@ -561,3 +567,25 @@ class PreventivoRepository:
         
         taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
         return {tax.id_tax: tax.percentage for tax in taxes}
+    
+    def check_if_already_converted(self, id_order_document: int) -> Optional[Order]:
+        """Verifica se il preventivo è già stato convertito in ordine"""
+        # Cerca il preventivo
+        preventivo = self.get_preventivo_by_id(id_order_document)
+        if not preventivo:
+            return None
+        
+        # Se il preventivo ha già un id_order, è stato convertito
+        if preventivo.id_order:
+            existing_order = self.db.query(Order).filter(
+                Order.id_order == preventivo.id_order
+            ).first()
+            return existing_order
+        
+        # Fallback: cerca per reference (per compatibilità con conversioni precedenti)
+        expected_reference = generate_preventivo_reference(preventivo.document_number)
+        existing_order = self.db.query(Order).filter(
+            Order.reference == expected_reference
+        ).first()
+        
+        return existing_order

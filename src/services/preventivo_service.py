@@ -8,8 +8,7 @@ from src.schemas.preventivo_schema import (
     PreventivoUpdateSchema,
     PreventivoResponseSchema,
     ArticoloPreventivoSchema,
-    ArticoloPreventivoUpdateSchema,
-    ConvertiPreventivoSchema
+    ArticoloPreventivoUpdateSchema
 )
 from src.models.customer import Customer
 from src.models.tax import Tax
@@ -75,7 +74,10 @@ class PreventivoService:
         
         # Recupera articoli
         articoli = self.preventivo_repo.get_articoli_preventivo(id_order_document)
+        print(articoli)
         articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+        print("--------------------------------------------------------")
+        print(articoli_data)
         
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
@@ -92,7 +94,7 @@ class PreventivoService:
             articoli=articoli_data
         )
     
-    def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None) -> List[PreventivoResponseSchema]:
+    def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False) -> List[PreventivoResponseSchema]:
         """Recupera lista preventivi"""
         order_documents = self.preventivo_repo.get_preventivi(skip, limit, search)
         
@@ -105,6 +107,11 @@ class PreventivoService:
             # Calcola totali
             totals = self.preventivo_repo.calculate_totals(order_document.id_order_document)
             
+            # Recupera articoli solo se show_details è True
+            articoli_data = []
+            if show_details:
+                articoli = self.preventivo_repo.get_articoli_preventivo(order_document.id_order_document)
+                articoli_data = [self._format_articolo(articolo) for articolo in articoli]
             result.append(PreventivoResponseSchema(
                 id_order_document=order_document.id_order_document,
                 document_number=order_document.document_number,
@@ -119,7 +126,7 @@ class PreventivoService:
                 total_finale=totals["total_finale"],
                 date_add=order_document.date_add,
                 updated_at=order_document.updated_at,
-                articoli=[]  # Non carichiamo articoli nella lista per performance
+                articoli=articoli_data
             ))
         
         return result
@@ -161,21 +168,20 @@ class PreventivoService:
         """Rimuove articolo da preventivo"""
         return self.preventivo_repo.remove_articolo(id_order_detail)
     
-    def convert_to_order(self, id_order_document: int, conversion_data: ConvertiPreventivoSchema, user_id: int) -> Optional[Dict[str, Any]]:
+    def convert_to_order(self, id_order_document: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Converte preventivo in ordine"""
-        # Verifica che il preventivo esista e non sia già convertito
+        # Verifica che il preventivo esista
         preventivo = self.preventivo_repo.get_preventivo_by_id(id_order_document)
         if not preventivo:
             raise ValueError("Preventivo non trovato")
         
-        if preventivo.status == "converted":
-            raise ValueError("Preventivo già convertito in ordine")
-        
-        # Prepara dati conversione
-        conversion_dict = conversion_data.dict(exclude_unset=True)
+        # Controlla se esiste già un ordine collegato a questo preventivo
+        existing_order = self.preventivo_repo.check_if_already_converted(id_order_document)
+        if existing_order:
+            raise ValueError(f"Preventivo già convertito in ordine ID {existing_order.id_order}")
         
         # Converte in ordine
-        order = self.preventivo_repo.convert_to_order(id_order_document, conversion_dict, user_id)
+        order = self.preventivo_repo.convert_to_order(id_order_document, user_id)
         if not order:
             raise ValueError("Errore durante la conversione")
         

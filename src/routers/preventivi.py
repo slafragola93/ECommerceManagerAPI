@@ -11,8 +11,7 @@ from src.schemas.preventivo_schema import (
     PreventivoResponseSchema,
     PreventivoListResponseSchema,
     ArticoloPreventivoSchema,
-    ArticoloPreventivoUpdateSchema,
-    ConvertiPreventivoSchema
+    ArticoloPreventivoUpdateSchema
 )
 
 router = APIRouter(prefix="/api/v1/preventivi", tags=["Preventivi"])
@@ -193,15 +192,29 @@ async def get_preventivi(
     page: int = Query(1, ge=1, description="Numero pagina"),
     limit: int = Query(100, ge=1, le=1000, description="Elementi per pagina"),
     search: Optional[str] = Query(None, description="Ricerca per numero, riferimento o note"),
+    show_details: bool = Query(False, description="Se true, include gli articoli correlati per ogni preventivo"),
     user: User = user_dependency,
     db: Session = db_dependency
 ):
-    """Recupera lista preventivi con filtri"""
+    """
+    Recupera lista preventivi con filtri
+    
+    Parametri:
+    - page: Numero della pagina (default: 1)
+    - limit: Numero di elementi per pagina (default: 100, max: 1000)
+    - search: Testo di ricerca per numero documento o note (opzionale)
+    - show_details: Se true, include gli articoli correlati per ogni preventivo (default: false)
+    
+    Esempi di utilizzo:
+    - GET /api/v1/preventivi/ - Lista base senza articoli (performance ottimale)
+    - GET /api/v1/preventivi/?show_details=true - Lista con articoli inclusi
+    - GET /api/v1/preventivi/?search=000001&show_details=true - Ricerca con articoli
+    """
     try:
         service = get_preventivo_service(db)
         skip = (page - 1) * limit
         
-        preventivi = service.get_preventivi(skip, limit, search)
+        preventivi = service.get_preventivi(skip, limit, search, show_details)
         
         return PreventivoListResponseSchema(
             preventivi=preventivi,
@@ -334,18 +347,30 @@ async def remove_articolo(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
-@router.post("/{id_order_document}/converti", status_code=status.HTTP_200_OK,
+@router.post("/{id_order_document}/convert-to-order", status_code=status.HTTP_200_OK,
              response_description="Preventivo convertito in ordine con successo")
 async def convert_to_order(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
-    conversion_data: ConvertiPreventivoSchema = ...,
     user: User = user_dependency,
     db: Session = db_dependency
 ):
-    """Converte preventivo in ordine"""
+    """
+    Converte preventivo in ordine
+    
+    Converte automaticamente un preventivo in un ordine usando:
+    - Dati del cliente e indirizzi dal preventivo
+    - Articoli dal preventivo
+    - Valori di default per campi non specificati nel preventivo
+    
+    L'ordine creato avrà:
+    - Stato: "pending" (id_order_state = 1)
+    - Piattaforma: default (id_platform = 1)
+    - Pagamento/Spedizione: da configurare successivamente
+    - Reference: generata automaticamente (PRV{document_number})
+    """
     try:
         service = get_preventivo_service(db)
-        result = service.convert_to_order(id_order_document, conversion_data, user["id"])
+        result = service.convert_to_order(id_order_document, user["id"])
         
         if not result:
             raise HTTPException(status_code=404, detail="Preventivo non trovato")
