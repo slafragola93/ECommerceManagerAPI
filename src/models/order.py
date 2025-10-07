@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Integer, Column, Text, Boolean, Date, Float, Table, ForeignKey, String
+from sqlalchemy import Integer, Column, Text, Boolean, Date, DateTime, Float, Table, ForeignKey, String
 from sqlalchemy.orm import relationship
 from .relations.relations import orders_history
 
@@ -38,7 +38,7 @@ class Order(Base):
     privacy_note = Column(Text, nullable=True)
     general_note = Column(Text, nullable=True)
     delivery_date = Column(Date, nullable=True)
-    date_add = Column(Date, default=datetime.today)
+    date_add = Column(DateTime, default=datetime.now)
 
     # Relazioni
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")

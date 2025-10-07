@@ -140,6 +140,7 @@ class OrderRepository:
     def get_by_id(self, _id: int) -> Order:
         """Recupera un ordine per ID"""
         return self.session.query(Order).filter(Order.id_order == _id).first()
+    
 
     def create(self, data: OrderSchema):
         
@@ -423,8 +424,8 @@ class OrderRepository:
         def format_order_states(order_id):
             if not order_id:
                 return None
-            # Recupera gli order states per questo ordine
-            order_states = self.session.query(OrderState).join(
+            # Recupera gli order states per questo ordine con date_add
+            order_states = self.session.query(OrderState, orders_history.c.date_add).join(
                 orders_history, OrderState.id_order_state == orders_history.c.id_order_state
             ).filter(orders_history.c.id_order == order_id).all()
             
@@ -432,8 +433,9 @@ class OrderRepository:
                 return None
             return [{
                 "id_order_state": state.id_order_state,
-                "name": state.name
-            } for state in order_states]
+                "name": state.name,
+                "date": date_add
+            } for state, date_add in order_states]
         
         # Helper per formattare i dettagli dell'ordine
         def format_order_details(order_id):
@@ -508,7 +510,6 @@ class OrderRepository:
             response.pop("id_shipping", None)
             response.pop("id_sectional", None)
             response.pop("id_order_state", None)
-
             response.update({
                 "address_delivery": format_address(order.id_address_delivery),
                 "address_invoice": format_address(order.id_address_invoice),

@@ -120,25 +120,41 @@ async def get_all_orders(user: user_dependency,
     return {"orders": results, "total": total_count, "page": page, "limit": limit}
 
 
+
 @router.get("/{order_id}", status_code=status.HTTP_200_OK, response_model=OrderIdSchema)
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+@check_authentication  
+@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])  
 async def get_order_by_id(user: user_dependency,
                          or_repo: OrderRepository = Depends(get_repository),
                          order_id: int = Path(gt=0)):
     """
-    Recupera un singolo ordine per ID.
+    Recupera un singolo ordine per ID con tutti i dettagli delle relazioni.
 
     Parametri:
     - `user`: Dipendenza dell'utente autenticato.
     - `order_id`: ID dell'ordine da recuperare.
+
+    **Esempi di utilizzo:**
+    - `/orders/123` - Ordine con tutti i dettagli completi
+
+    **Risposta include sempre:**
+    - Dettagli completi del cliente
+    - Informazioni della piattaforma
+    - Dettagli del metodo di pagamento
+    - Informazioni di spedizione
+    - Indirizzi di consegna e fatturazione completi
+    - Stati dell'ordine
+    - Dettagli dei prodotti ordinati
     """
+    
+    # Usa sempre il metodo ottimizzato per caricare tutte le relazioni
     order = or_repo.get_by_id(_id=order_id)
 
     if order is None:
         raise HTTPException(status_code=404, detail="Ordine non trovato")
 
-    return or_repo.formatted_output(order)
+    # Restituisce sempre i dettagli completi
+    return or_repo.formatted_output(order, show_details=True)
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Ordine creato correttamente")
@@ -181,7 +197,6 @@ async def update_order(user: user_dependency,
     ```
     """
     order = or_repo.get_by_id(_id=order_id)
-
     if order is None:
         raise HTTPException(status_code=404, detail="Ordine non trovato")
 
@@ -238,10 +253,12 @@ async def update_order_status(user: user_dependency,
     order.id_order_state = new_status_id
     or_repo.session.add(order)
     
-    # Aggiungi record nell'order history
+    # Aggiungi record nell'order history con data e ora
+    from datetime import datetime
     order_history_insert = orders_history.insert().values(
         id_order=order_id,
-        id_order_state=new_status_id
+        id_order_state=new_status_id,
+        date_add=datetime.now()
     )
     or_repo.session.execute(order_history_insert)
     
@@ -282,64 +299,4 @@ async def update_order_payment(user: user_dependency,
     return {"message": "Stato pagamento aggiornato con successo", "order_id": order_id, "is_payed": is_payed}
 
 
-@router.get("/{order_id}/details", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_order_details(user: user_dependency,
-                           or_repo: OrderRepository = Depends(get_repository),
-                           order_id: int = Path(gt=0)):
-    """
-    Recupera i dettagli di un ordine (prodotti, quantità, prezzi).
-
-    Parametri:
-    - `user`: Dipendenza dell'utente autenticato.
-    - `order_id`: ID dell'ordine.
-    """
-    order = or_repo.get_by_id(_id=order_id)
-
-    if order is None:
-        raise HTTPException(status_code=404, detail="Ordine non trovato")
-
-    # Recupera i dettagli dell'ordine
-    order_details = or_repo.order_detail_repository.get_by_id_order(order_id)
-    
-    return {
-        "order_id": order_id,
-        "order_details": [or_repo.order_detail_repository.formatted_output(detail) for detail in order_details] if order_details else []
-    }
-
-
-@router.get("/{order_id}/summary", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_order_summary(user: user_dependency,
-                           or_repo: OrderRepository = Depends(get_repository),
-                           order_id: int = Path(gt=0)):
-    """
-    Recupera un riassunto completo di un ordine con tutte le informazioni correlate.
-
-    Parametri:
-    - `user`: Dipendenza dell'utente autenticato.
-    - `order_id`: ID dell'ordine.
-    """
-    order = or_repo.get_by_id(_id=order_id)
-
-    if order is None:
-        raise HTTPException(status_code=404, detail="Ordine non trovato")
-
-    # Recupera informazioni correlate
-    order_details = or_repo.order_detail_repository.get_by_id_order(order_id)
-    # order_packages = or_repo.order_package_repository.get_by_order_id(order_id)  # Da implementare se necessario
-    
-    return {
-        "order": or_repo.formatted_output(order),
-        "order_details": [or_repo.order_detail_repository.formatted_output(detail) for detail in order_details] if order_details else [],
-        "order_packages": [],  #TODO: Da implementare quando sarà disponibile il metodo
-        "summary": {
-            "total_items": len(order_details) if order_details else 0,
-            "total_packages": 0,  #TODO: Da implementare quando sarà disponibile
-            "total_weight": order.total_weight or 0,
-            "total_price": order.total_price or 0
-        }
-    }
 

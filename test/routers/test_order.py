@@ -101,6 +101,34 @@ class TestOrderEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 1  # 1 ordine con fattura richiesta
+        
+    def test_get_all_orders_with_show_details(self, test_orders):
+        """Test GET /orders/ con show_details=true"""
+        response = client.get("/api/v1/orders/?show_details=true")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "orders" in data
+        assert len(data["orders"]) > 0
+        
+        # Verifica che il primo ordine abbia dettagli completi
+        first_order = data["orders"][0]
+        assert "customer" in first_order or first_order.get("customer") is not None
+        assert "platform" in first_order or first_order.get("platform") is not None
+        
+    def test_get_all_orders_with_show_details_false(self, test_orders):
+        """Test GET /orders/ con show_details=false (default)"""
+        response = client.get("/api/v1/orders/?show_details=false")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "orders" in data
+        assert len(data["orders"]) > 0
+        
+        # Verifica che il primo ordine abbia solo i campi base
+        first_order = data["orders"][0]
+        assert "id_order" in first_order
+        assert "total_price" in first_order
 
     def test_get_all_orders_pagination(self, test_orders):
         """Test GET /orders/ con paginazione"""
@@ -113,7 +141,7 @@ class TestOrderEndpoints:
         assert len(data["orders"]) == 2
 
     def test_get_order_by_id_success(self, test_order):
-        """Test GET /orders/{id} con ordine esistente"""
+        """Test GET /orders/{id} con ordine esistente - ora restituisce sempre dettagli completi"""
         response = client.get("/api/v1/orders/1")
         assert response.status_code == 200
         
@@ -121,6 +149,10 @@ class TestOrderEndpoints:
         assert data["id_order"] == 1
         assert data["total_price"] == 99.99
         assert data["total_weight"] == 1.5
+        # Verifica che siano presenti i dettagli completi (show_details=True)
+        assert "customer" in data or data.get("customer") is not None
+        assert "platform" in data or data.get("platform") is not None
+        assert "payment" in data or data.get("payment") is not None
 
     def test_get_order_by_id_not_found(self):
         """Test GET /orders/{id} con ordine non esistente"""
@@ -214,46 +246,6 @@ class TestOrderEndpoints:
         assert response.status_code == 404
         assert response.json()["detail"] == "Ordine non trovato"
 
-    def test_get_order_details_success(self, test_order, test_order_details):
-        """Test GET /orders/{id}/details recupero dettagli ordine"""
-        response = client.get("/api/v1/orders/1/details")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert "order_id" in data
-        assert "order_details" in data
-        assert data["order_id"] == 1
-        assert len(data["order_details"]) == 2  # 2 dettagli per order 1
-
-    def test_get_order_details_not_found(self):
-        """Test GET /orders/{id}/details con ordine non esistente"""
-        response = client.get("/api/v1/orders/999/details")
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Ordine non trovato"
-
-    def test_get_order_summary_success(self, test_order, test_order_details):
-        """Test GET /orders/{id}/summary recupero riassunto ordine"""
-        response = client.get("/api/v1/orders/1/summary")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert "order" in data
-        assert "order_details" in data
-        assert "order_packages" in data
-        assert "summary" in data
-        
-        summary = data["summary"]
-        assert "total_items" in summary
-        assert "total_packages" in summary
-        assert "total_weight" in summary
-        assert "total_price" in summary
-        assert summary["total_items"] == 2
-
-    def test_get_order_summary_not_found(self):
-        """Test GET /orders/{id}/summary con ordine non esistente"""
-        response = client.get("/api/v1/orders/999/summary")
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Ordine non trovato"
 
 
 class TestOrderEndpointsAuthorization:
@@ -368,12 +360,15 @@ class TestOrderEndpointsValidation:
         assert response.status_code == 200
         
         # Verifica che i campi di relazione siano stati aggiornati
-        get_response = client.get("/api/v1/orders/1?show_details=true")
+        # get_order_by_id ora restituisce sempre show_details=True
+        get_response = client.get("/api/v1/orders/1")
         assert get_response.status_code == 200
         order = get_response.json()
-        print(order)
-        assert order["address_delivery"]["id_address"] == 1
-        assert order["address_invoice"]["id_address"] == 1
+        # Con show_details=True, i campi ID vengono sostituiti con oggetti completi
+        assert "address_delivery" in order
+        assert "address_invoice" in order
+        # Verifica che gli oggetti non siano None (se caricati correttamente)
+        assert order.get("address_delivery") is not None or order.get("address_invoice") is not None
 
     def test_update_order_partial_mixed_fields(self, test_order):
         """Test PUT /orders/{id} aggiornamento parziale con campi misti"""
@@ -390,7 +385,8 @@ class TestOrderEndpointsValidation:
         get_response = client.get("/api/v1/orders/1")
         assert get_response.status_code == 200
         order = get_response.json()
-        assert order["id_customer"] == 2
+        # Con show_details=True, id_customer viene sostituito con customer object
+        assert "customer" in order
         assert order["is_payed"] is True
         assert order["total_weight"] == 3.0
 

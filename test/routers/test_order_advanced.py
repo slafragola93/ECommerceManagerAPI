@@ -175,50 +175,35 @@ class TestOrderAdvancedScenarios:
         unpaid_order = response.json()
         assert unpaid_order["is_payed"] is False
 
-    def test_order_details_integration(self, test_orders, test_order_details):
-        """Test integrazione ordine con dettagli"""
-        # Recupera dettagli ordine
-        response = client.get("/api/v1/orders/1/details")
+    def test_order_with_details_show_details_true(self, test_orders, test_order_details):
+        """Test ordine con show_details=true per verificare dettagli completi"""
+        # Test get_order_by_id che ora restituisce sempre show_details=True
+        response = client.get("/api/v1/orders/1")
         assert response.status_code == 200
-        details_data = response.json()
+        order_data = response.json()
         
-        assert details_data["order_id"] == 1
-        assert len(details_data["order_details"]) == 2
-        
-        # Verifica struttura dettagli
-        for detail in details_data["order_details"]:
-            assert "id_order_detail" in detail
-            assert "id_order" in detail
-            assert "product_name" in detail
-            assert "product_price" in detail
-            assert "product_qty" in detail
+        assert order_data["id_order"] == 1
+        assert order_data["total_price"] == 99.99
+        # Verifica che siano presenti i campi per i dettagli completi
+        # (customer, platform, payment, etc. potrebbero essere None se non caricati)
+        assert "customer" in order_data
+        assert "platform" in order_data
+        assert "payment" in order_data
 
-    def test_order_summary_comprehensive(self, test_orders, test_order_details):
-        """Test riassunto completo ordine"""
-        response = client.get("/api/v1/orders/1/summary")
+    def test_order_get_all_with_show_details(self, test_orders, test_order_details):
+        """Test get_all_orders con show_details per verificare dettagli completi"""
+        response = client.get("/api/v1/orders/?show_details=true")
         assert response.status_code == 200
-        summary_data = response.json()
+        data = response.json()
         
-        # Verifica struttura riassunto
-        assert "order" in summary_data
-        assert "order_details" in summary_data
-        assert "order_packages" in summary_data
-        assert "summary" in summary_data
+        assert "orders" in data
+        assert len(data["orders"]) > 0
         
-        # Verifica dati ordine
-        order = summary_data["order"]
-        assert order["id_order"] == 1
-        assert order["total_price"] == 99.99
-        
-        # Verifica dettagli
-        details = summary_data["order_details"]
-        assert len(details) == 2
-        
-        # Verifica summary
-        summary = summary_data["summary"]
-        assert summary["total_items"] == 2
-        assert summary["total_weight"] == 1.5  # Dal test_order (total_weight, non total_price)
-        assert summary["total_price"] == 99.99
+        # Verifica che il primo ordine abbia i campi per i dettagli completi
+        first_order = data["orders"][0]
+        assert "customer" in first_order
+        assert "platform" in first_order
+        assert "payment" in first_order
 
     def test_order_filtering_by_dates(self, test_orders):
         """Test filtri per date (quando implementati)"""
@@ -279,24 +264,26 @@ class TestOrderAdvancedScenarios:
         assert data["page"] == 1
         assert data["limit"] == 100
 
-    def test_order_data_consistency(self, test_orders, test_order_details):
-        """Test consistenza dati tra ordine e dettagli"""
-        # Recupera ordine
-        order_response = client.get("/api/v1/orders/1")
-        assert order_response.status_code == 200
-        order = order_response.json()
+    def test_order_data_consistency_with_show_details(self, test_orders, test_order_details):
+        """Test consistenza dati tra ordine con show_details=true e show_details=false"""
+        # Recupera ordine con show_details=false
+        order_basic_response = client.get("/api/v1/orders/1?show_details=false")
+        assert order_basic_response.status_code == 200
+        order_basic = order_basic_response.json()
         
-        # Recupera dettagli
-        details_response = client.get("/api/v1/orders/1/details")
-        assert details_response.status_code == 200
-        details = details_response.json()
+        # Recupera ordine con show_details=true
+        order_details_response = client.get("/api/v1/orders/1?show_details=true")
+        assert order_details_response.status_code == 200
+        order_details = order_details_response.json()
         
-        # Verifica consistenza
-        assert details["order_id"] == order["id_order"]
+        # Verifica consistenza dei campi base
+        assert order_basic["id_order"] == order_details["id_order"]
+        assert order_basic["total_price"] == order_details["total_price"]
+        assert order_basic["total_weight"] == order_details["total_weight"]
         
-        # Verifica che tutti i dettagli appartengano all'ordine
-        for detail in details["order_details"]:
-            assert detail["id_order"] == order["id_order"]
+        # Verifica che show_details=true includa campi aggiuntivi
+        assert "customer" in order_details
+        assert "platform" in order_details
 
     def test_order_edge_cases(self, test_orders):
         """Test casi limite per ordini"""

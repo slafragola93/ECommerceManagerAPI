@@ -125,7 +125,7 @@ class OrderResponseSchema(BaseModel):
     shipping: Optional[ShippingResponseSchema] = None
     sectional: Optional[SectionalResponseSchema] = None
     order_states: Optional[list[OrderStateResponseSchema]] = None
-    order_details: Optional[list] = None  # Aggiungiamo anche gli order_details
+    order_details: Optional[list] = None 
 
     class Config:
         from_attributes = True
@@ -136,15 +136,6 @@ class OrderIdSchema(BaseModel):
     id_order: int
     id_origin: Optional[int]
     reference: Optional[str]
-    # Campi ID per compatibilità con i test
-    id_address_delivery: Optional[int] = None
-    id_address_invoice: Optional[int] = None
-    id_customer: Optional[int] = None
-    id_platform: Optional[int] = None
-    id_payment: Optional[int] = None
-    id_shipping: Optional[int] = None
-    id_sectional: Optional[int] = None
-    id_order_state: Optional[int] = None
     # Campi dati
     is_invoice_requested: bool
     is_payed: Optional[bool]
@@ -162,10 +153,14 @@ class OrderIdSchema(BaseModel):
     # Relazioni popolate
     address_delivery: Optional[dict] = None
     address_invoice: Optional[dict] = None
+    payment: Optional[dict] = None
+    platform: Optional[dict] = None
+    order_states: Optional[dict] = None
     customer: Optional[dict] = None
     shipping: Optional[dict] = None
     sectional: Optional[dict] = None
     order_states: Optional[list[dict]] = None
+    order_details: Optional[list] = None 
 
     class Config:
         from_attributes = True

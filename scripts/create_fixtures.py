@@ -85,7 +85,7 @@ def create_fixtures():
                 firstname=fake.first_name(),
                 lastname=fake.last_name(),
                 is_active=True,
-                date_add=datetime.now().date()
+                date_add=datetime.now()
             )
             db.add(user)
             users.append(user)
@@ -119,7 +119,7 @@ def create_fixtures():
                 lastname=fake.last_name(),
                 id_lang=random.choice(languages).id_lang,
                 id_origin=random.randint(1, 100),
-                date_add=datetime.now().date()
+                date_add=datetime.now()
             )
             db.add(customer)
             customers.append(customer)
@@ -144,7 +144,7 @@ def create_fixtures():
                     phone=fake.phone_number(),
                     company=fake.company() if random.choice([True, False]) else None,
                     vat=fake.bothify('IT###########') if random.choice([True, False]) else None,
-                    date_add=datetime.now().date()
+                    date_add=datetime.now()
                 )
                 db.add(address)
                 addresses.append(address)
@@ -346,7 +346,7 @@ def create_fixtures():
                 privacy_note=fake.text(max_nb_chars=200) if random.choice([True, False]) else None,
                 general_note=fake.text(max_nb_chars=200) if random.choice([True, False]) else None,
                 delivery_date=datetime.now().date() + timedelta(days=random.randint(1, 30)) if random.choice([True, False]) else None,
-                date_add=datetime.now().date() - timedelta(days=random.randint(1, 365))
+                date_add=datetime.now() - timedelta(days=random.randint(1, 365))
             )
             db.add(order)
             orders.append(order)
@@ -417,7 +417,7 @@ def create_fixtures():
                 price_tax_incl=round(random.uniform(5, 50), 2),
                 price_tax_excl=round(random.uniform(4, 40), 2),
                 shipping_message=fake.text(max_nb_chars=200) if random.choice([True, False]) else None,
-                date_add=datetime.now().date()
+                date_add=datetime.now()
             )
             db.add(shipment)
             shipments.append(shipment)
@@ -503,7 +503,7 @@ def create_fixtures():
                     total_price=order.total_price,
                     delivery_price=round(random.uniform(5, 50), 2),
                     note=fake.text(max_nb_chars=200) if random.choice([True, False]) else None,
-                    date_add=datetime.now().date()
+                    date_add=datetime.now()
                 )
                 db.add(order_document)
                 order_documents.append(order_document)

@@ -45,6 +45,27 @@ class PrestaShopService(BaseEcommerceService):
         six_months_ago = datetime.now() - timedelta(days=365)  # 6 months
         return six_months_ago.strftime('%Y-%m-%d')
     
+    def _parse_prestashop_datetime(self, date_string: str) -> Optional[datetime]:
+        """
+        Parse PrestaShop datetime string to Python datetime object
+        Handles various PrestaShop datetime formats
+        """
+        if not date_string:
+            return None
+            
+        try:
+            # PrestaShop typically uses format: "2024-01-15 14:30:25" or "2024-01-15"
+            if ' ' in date_string:
+                # Full datetime format
+                return datetime.strptime(date_string, '%Y-%m-%d %H:%M:%S')
+            else:
+                # Date only format - convert to datetime with current time
+                date_part = datetime.strptime(date_string, '%Y-%m-%d')
+                return datetime.combine(date_part.date(), datetime.now().time())
+        except (ValueError, TypeError) as e:
+            print(f"Warning: Could not parse datetime '{date_string}': {e}")
+            return datetime.now()  # Fallback to current datetime
+    
     def _get_date_range_filter(self) -> str:
         """Get date range filter string for PrestaShop API [start_date,end_date]"""
         from datetime import timedelta
@@ -1920,11 +1941,13 @@ class PrestaShopService(BaseEcommerceService):
                 
                 if new_values:
                     # Build the SQL query with direct values (safer approach)
+                    from datetime import datetime
+                    current_datetime = datetime.now()
                     values_list = []
                     for order_id, order_state in new_values:
-                        values_list.append(f"({order_id}, {order_state})")
+                        values_list.append(f"({order_id}, {order_state}, '{current_datetime.strftime('%Y-%m-%d %H:%M:%S')}')")
                     
-                    sql_query = f"INSERT INTO orders_history (id_order, id_order_state) VALUES {','.join(values_list)}"
+                    sql_query = f"INSERT INTO orders_history (id_order, id_order_state, date_add) VALUES {','.join(values_list)}"
                     
                     print(f"DEBUG: Creating {len(new_values)} new order history entries (skipped {len(order_history_values) - len(new_values)} existing)")
                     
@@ -2606,7 +2629,7 @@ class PrestaShopService(BaseEcommerceService):
                         'privacy_note': None,
                         'note': order.get('order_note', ''),
                         'delivery_date': None,
-                        'date_add': order.get('date_add', None)
+                        'date_add': self._parse_prestashop_datetime(order.get('date_add', ''))
                     }
                     
                     order_total_weight = 0.0
