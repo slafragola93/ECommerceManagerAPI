@@ -39,8 +39,6 @@ class ProvinceService:
                     provincia_normalized = provincia_nome.lower().strip()
                     self.province_mapping[provincia_normalized] = sigla.upper()
             
-            print(f"Caricate {len(self.province_mapping)} abbreviazioni province")
-            
         except Exception as e:
             print(f"Errore nel caricamento comuni.json: {e}")
             print("Inizializzazione con mapping manuale...")

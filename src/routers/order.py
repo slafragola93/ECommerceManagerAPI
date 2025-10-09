@@ -149,7 +149,6 @@ async def get_order_by_id(user: user_dependency,
     
     # Usa sempre il metodo ottimizzato per caricare tutte le relazioni
     order = or_repo.get_by_id(_id=order_id)
-
     if order is None:
         raise HTTPException(status_code=404, detail="Ordine non trovato")
 

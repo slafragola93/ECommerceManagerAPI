@@ -126,11 +126,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                #("Languages", self.sync_languages),
-                #("Countries", self.sync_countries),
-                #("Brands", self.sync_brands),
-                #("Categories", self.sync_categories),
-                #("Carriers", self.sync_carriers),
+                ("Languages", self.sync_languages),
+                ("Countries", self.sync_countries),
+                ("Brands", self.sync_brands),
+                ("Categories", self.sync_categories),
+                ("Carriers", self.sync_carriers),
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -145,9 +145,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                #("Products", self.sync_products),
-                #("Customers", self.sync_customers),
-                #("Addresses", self.sync_addresses),
+                ("Products", self.sync_products),
+                ("Customers", self.sync_customers),
+                ("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -1064,8 +1064,8 @@ class PrestaShopService(BaseEcommerceService):
                     'state': province_service.update_state_with_abbreviation(state_name),
                     'postcode': address.get('postcode', ''),
                     'city': address.get('city', ''),
-                    'phone': address.get('phone_mobile', None),
-                    'vat': address.get('vat', ''),
+                    'phone': address.get('phone', None),
+                    'vat': address.get('vat_number', ''),
                     'dni': address.get('dni', ''),
                     'pec': address.get('pec', ''),
                     'sdi': address.get('sdi', ''),
@@ -1357,7 +1357,6 @@ class PrestaShopService(BaseEcommerceService):
             # Extract data from PrestaShop format - handle empty fields
             lang_name = data.get('lang_name', data.get('name', ''))
             iso_code = data.get('iso_code', '')
-            print(data)
             
             # Skip if both fields are empty (invalid language data)
             if not lang_name and not iso_code:
@@ -1373,7 +1372,6 @@ class PrestaShopService(BaseEcommerceService):
             # Check if language already exists by ISO code
             existing_lang = lang_repo.get_by_iso_code(iso_code)
             if existing_lang:
-                print(f"DEBUG: Language with ISO code '{iso_code}' already exists (ID: {existing_lang.id_lang}), skipping creation")
                 return {"status": "skipped", "id_origin": data.get('id_origin', 'unknown'), "reason": "already_exists", "existing_id": existing_lang.id_lang}
             
             # Create LangSchema
@@ -1384,11 +1382,8 @@ class PrestaShopService(BaseEcommerceService):
             
             # Create language in database
             lang_repo.create(lang_schema)
-            
-            print(f"DEBUG: Successfully created language '{lang_name}' with ISO code '{iso_code}'")
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:
-            print(f"DEBUG: Error upserting language {data.get('id_origin', 'unknown')}: {str(e)}")
             return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
     async def _upsert_country(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1988,7 +1983,7 @@ class PrestaShopService(BaseEcommerceService):
                         width=10.0,
                         depth=10.0,
                         weight=1.0,
-                        value=order_data['total_price']
+                        value=order_data['total_paid']
                     )
                     order_package_repo.create(order_package_schema)
                     
@@ -2375,10 +2370,9 @@ class PrestaShopService(BaseEcommerceService):
                     'display': 'full',
                     'limit': f'{offset},{limit}'
                 }
-                print(self.new_elements)
-                print(params)
+
                 # Always use date filter for orders sync to avoid old data
-                self.new_elements = False
+                self.new_elements = True # DEBUG, DA TOGLIERE
                 if self.new_elements:
                     last_id = self.db.execute(text("SELECT MAX(id_origin) FROM orders WHERE id_origin IS NOT NULL")).scalar()
                     last_id = last_id if last_id else 0
@@ -2389,6 +2383,11 @@ class PrestaShopService(BaseEcommerceService):
                 
                 # Add timeout to prevent indefinite blocking
                 try:
+                    # Print complete URL with parameters
+                    url_params = '&'.join([f"{k}={v}" for k, v in params.items()])
+                    complete_url = f"{self.base_url}/api/orders?{url_params}&output_format=JSON"
+                    print(f"🔗 PRESTASHOP ORDERS URL: {complete_url}")
+                    
                     response = await asyncio.wait_for(
                         self._make_request_with_rate_limit('/api/orders', params),
                         timeout=60.0  # 60 second timeout
@@ -2578,6 +2577,7 @@ class PrestaShopService(BaseEcommerceService):
                     invoice_address_id = all_addresses.get(invoice_address_origin)
                     payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
                     total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
+                    total_paid = safe_float(order.get('total_paid', 0))
                     
                     # Extract shipping data
                     total_shipping_tax_escl = safe_float(order.get('total_shipping_tax_excl', 0))
@@ -2622,7 +2622,8 @@ class PrestaShopService(BaseEcommerceService):
                         'is_invoice_requested': order.get('fattura', 0),
                         'payed': is_payed,
                         'date_payment': None,  # Default
-                        'total_price': total_paid_tax_excl,
+                        'total_price_tax_excl': total_paid_tax_excl,
+                        'total_paid': total_paid,
                         'total_discounts': safe_float(order.get('total_discounts', 0.0)),
                         'cash_on_delivery': 0,  #TODO: controllare
                         'insured_value': 0,  # Default
@@ -2744,11 +2745,11 @@ class PrestaShopService(BaseEcommerceService):
             orders_sql_file = "temp_orders_insert.sql"
             with open(orders_sql_file, 'w', encoding='utf-8') as f:
                 f.write("-- Orders bulk insert\n")
-                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
+                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_tax_excl, total_paid, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
                 
                 for i, order_data in enumerate(valid_order_data):
                     comma = "," if i < len(valid_order_data) - 1 else ";"
-                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price']}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_tax_excl']}, {order_data['total_paid']}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
             with open(orders_sql_file, 'r', encoding='utf-8') as f:

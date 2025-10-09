@@ -26,12 +26,13 @@ class OrderSchema(BaseModel):
     is_payed: Optional[int] = 0
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
-    total_price: Optional[float] = None
+    total_price_tax_excl: Optional[float] = None
+    total_paid: Optional[float] = None
     total_discounts: Optional[float] = 0.0
     cash_on_delivery: Optional[float] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class OrderUpdateSchema(BaseModel):
@@ -50,7 +51,8 @@ class OrderUpdateSchema(BaseModel):
     is_payed: Optional[int] = None
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
-    total_price: Optional[float] = None
+    total_price_tax_excl: Optional[float] = None
+    total_paid: Optional[float] = None
     total_discounts: Optional[float] = None
     cash_on_delivery: Optional[float] = None
     insured_value: Optional[float] = None
@@ -59,7 +61,7 @@ class OrderUpdateSchema(BaseModel):
     delivery_date: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class OrderSimpleResponseSchema(BaseModel):
@@ -79,7 +81,8 @@ class OrderSimpleResponseSchema(BaseModel):
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
-    total_price: Optional[float]
+    total_price_tax_excl: Optional[float]
+    total_paid: Optional[float]
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -109,7 +112,8 @@ class OrderResponseSchema(BaseModel):
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
-    total_price: Optional[float]
+    total_price_tax_excl: Optional[float]
+    total_paid: Optional[float]
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -141,7 +145,8 @@ class OrderIdSchema(BaseModel):
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
-    total_price: Optional[float]
+    total_price_tax_excl: Optional[float]
+    total_paid: Optional[float]
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -161,6 +166,7 @@ class OrderIdSchema(BaseModel):
     sectional: Optional[dict] = None
     order_states: Optional[list[dict]] = None
     order_details: Optional[list] = None 
+    order_packages: Optional[list] = None
 
     class Config:
         from_attributes = True

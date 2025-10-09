@@ -21,4 +21,3 @@ class AllRolesResponseSchema(BaseModel):
 
 class ConfigDict:
     from_attributes = True
-    orm_mode = True

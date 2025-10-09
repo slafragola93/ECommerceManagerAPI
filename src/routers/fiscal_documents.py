@@ -110,121 +110,6 @@ async def get_invoices_by_order(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
-@router.get("/{id_fiscal_document}/details", response_model=List[FiscalDocumentDetailResponseSchema])
-async def get_fiscal_document_details(
-    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
-    user: dict = user_dependency,
-    db: Session = db_dependency
-):
-    """
-    Recupera gli articoli (dettagli) di un documento fiscale
-    
-    ## Utilità:
-    - Per **fatture**: Vedere quali articoli sono stati fatturati
-    - Per **note di credito**: Vedere quali articoli sono stati stornati
-    - Prima di creare una NC parziale: Vedere quali articoli sono disponibili per lo storno
-    
-    ## Response:
-    Lista di FiscalDocumentDetail con:
-    - id_order_detail: Riferimento all'articolo originale
-    - quantity: Quantità fatturata/stornata
-    - unit_price: Prezzo unitario
-    - total_amount: Importo totale (con sconti, IVA esclusa)
-    """
-    try:
-        from src.models.fiscal_document_detail import FiscalDocumentDetail
-        from src.models.order_detail import OrderDetail
-        
-        repo = get_fiscal_repository(db)
-        
-        # Verifica che il documento esista
-        doc = repo.get_fiscal_document_by_id(id_fiscal_document)
-        if not doc:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        # Recupera i dettagli
-        details = db.query(FiscalDocumentDetail).filter(
-            FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
-        ).all()
-        
-        if not details:
-            raise HTTPException(status_code=404, detail=f"Nessun articolo trovato nel documento {id_fiscal_document}")
-        
-        return details
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
-
-@router.get("/{id_fiscal_document}/details-with-products", response_model=List[FiscalDocumentDetailWithProductSchema])
-async def get_fiscal_document_details_with_products(
-    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
-    user: dict = user_dependency,
-    db: Session = db_dependency
-):
-    """
-    Recupera gli articoli di un documento fiscale CON informazioni prodotto
-    
-    ## Rispetto a /details:
-    - Questo endpoint include `product_name` e `product_reference`
-    - Utile per mostrare una lista user-friendly degli articoli fatturati
-    - Ideale prima di creare una nota di credito parziale
-    
-    ## Use Case:
-    ```
-    1. GET /fiscal-documents/1/details-with-products
-    2. L'utente vede: "Prodotto XYZ - Qty: 3 - €300"
-    3. Decide di stornare: id_order_detail=15, quantity=2
-    4. POST /credit-notes con questi dati
-    ```
-    """
-    try:
-        from src.models.fiscal_document_detail import FiscalDocumentDetail
-        from src.models.order_detail import OrderDetail
-        
-        repo = get_fiscal_repository(db)
-        
-        # Verifica che il documento esista
-        doc = repo.get_fiscal_document_by_id(id_fiscal_document)
-        if not doc:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        # Recupera i dettagli con JOIN per ottenere info prodotto
-        details_with_products = []
-        
-        details = db.query(FiscalDocumentDetail).filter(
-            FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
-        ).all()
-        
-        for detail in details:
-            # Recupera OrderDetail per info prodotto
-            order_detail = db.query(OrderDetail).filter(
-                OrderDetail.id_order_detail == detail.id_order_detail
-            ).first()
-            
-            details_with_products.append({
-                'id_fiscal_document_detail': detail.id_fiscal_document_detail,
-                'id_fiscal_document': detail.id_fiscal_document,
-                'id_order_detail': detail.id_order_detail,
-                'quantity': detail.quantity,
-                'unit_price': detail.unit_price,
-                'total_amount': detail.total_amount,
-                'product_name': order_detail.product_name if order_detail else None,
-                'product_reference': order_detail.product_reference if order_detail else None
-            })
-        
-        if not details_with_products:
-            raise HTTPException(status_code=404, detail=f"Nessun articolo trovato nel documento {id_fiscal_document}")
-        
-        return details_with_products
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
 
 # ==================== NOTE DI CREDITO ====================
 
@@ -235,14 +120,145 @@ async def create_credit_note(
     db: Session = db_dependency
 ):
     """
-    Crea una nota di credito per una fattura
+    Crea una nota di credito per una fattura esistente
     
-    ## Regole:
-    - La fattura di riferimento deve esistere
-    - Se `is_electronic=True`, la fattura deve essere elettronica e l'indirizzo italiano
-    - Se `is_partial=True`, devi specificare gli articoli da stornare in `items`
-    - Il tipo documento FatturaPA sarà TD04
-    - Per note parziali, le quantità possono essere minori dell'originale
+    ## 📋 Parametri principali
+    
+    - **`id_invoice`** (int, obbligatorio): ID della fattura da stornare
+    - **`reason`** (string, obbligatorio): Motivo della nota di credito (max 500 caratteri)
+    - **`is_partial`** (bool, default: false): Tipo di storno
+    - **`is_electronic`** (bool, default: true): Se generare XML FatturaPA (TD04)
+    - **`items`** (array, opzionale): Articoli da stornare (obbligatorio se `is_partial=true`)
+    
+    ---
+    
+    ## 🔴 Nota di Credito TOTALE (`is_partial: false`)
+    
+    Storna l'intera fattura con tutti gli articoli, spese di spedizione e sconti.
+    
+    ### Body esempio:
+    ```json
+    {
+      "id_invoice": 123,
+      "reason": "Reso completo merce",
+      "is_partial": false,
+      "is_electronic": true
+    }
+    ```
+    
+    ### Comportamento:
+    - ✅ Storna TUTTI gli articoli della fattura
+    - ✅ Include spese di spedizione
+    - ✅ Include sconti generali
+    - ❌ NON serve specificare `items`
+    
+    ---
+    
+    ## 🟡 Nota di Credito PARZIALE (`is_partial: true`)
+    
+    Storna solo alcuni articoli o quantità parziali.
+    
+    ### Body esempio:
+    ```json
+    {
+      "id_invoice": 123,
+      "reason": "Reso parziale - 2 articoli difettosi",
+      "is_partial": true,
+      "is_electronic": true,
+      "items": [
+        {
+          "id_order_detail": 456,
+          "quantity": 2.0,
+          "unit_price": 50.00
+        },
+        {
+          "id_order_detail": 457,
+          "quantity": 1.0,
+          "unit_price": 100.00
+        }
+      ]
+    }
+    ```
+    
+    ### Comportamento:
+    - ✅ Storna SOLO gli articoli specificati in `items`
+    - ✅ Può stornare quantità parziali (es: 2 su 5)
+    - ✅ Applica automaticamente sconti proporzionali
+    - ❌ NON include spese di spedizione
+    - ❌ NON include sconti generali ordine
+    
+    ### Come trovare gli `id_order_detail`:
+    ```
+    GET /api/v1/fiscal-documents/{id_fiscal_document}/details-with-products
+    ```
+    
+    ---
+    
+    ## ✅ Validazioni automatiche
+    
+    ### 1. Validazione fattura:
+    - La fattura deve esistere e essere di tipo `invoice`
+    - Se `is_electronic=true`: la fattura deve essere elettronica
+    - Se `is_electronic=true`: l'indirizzo deve essere italiano (IT)
+    
+    ### 2. Validazione articoli (solo se `is_partial=true`):
+    - Ogni `id_order_detail` DEVE essere nella fattura originale
+    - La `quantity` DEVE essere ≤ quantità fatturata
+    - Se superi → Errore 400: "Quantità da stornare (X) superiore a quella fatturata (Y)"
+    
+    ### 3. Calcoli automatici:
+    - **Sconti articolo**: Applicati proporzionalmente
+    - **IVA**: Calcolata automaticamente per aliquota
+    - **Totale**: Somma imponibile + IVA
+    
+    ---
+    
+    ## 📊 Differenze tra totale e parziale
+    
+    | Aspetto | is_partial=false | is_partial=true |
+    |---------|------------------|-----------------|
+    | Campo `items` | ❌ Non necessario | ✅ Obbligatorio |
+    | Articoli stornati | Tutti | Solo quelli in items |
+    | Spese spedizione | ✅ Incluse | ❌ Escluse |
+    | Sconti ordine | ✅ Inclusi | ❌ Esclusi |
+    
+    ---
+    
+    ## 🔄 Workflow consigliato
+    
+    ### Per nota TOTALE:
+    ```
+    1. POST /credit-notes con is_partial=false
+    2. Sistema storna automaticamente tutto
+    ```
+    
+    ### Per nota PARZIALE:
+    ```
+    1. GET /fiscal-documents/{id}/details-with-products
+    2. Identificare id_order_detail degli articoli da stornare
+    3. POST /credit-notes con is_partial=true e items[]
+    ```
+    
+    ---
+    
+    ## ⚠️ Errori comuni
+    
+    - **400**: "Fattura non trovata" → `id_invoice` errato
+    - **400**: "OrderDetail X non presente nella fattura" → `id_order_detail` non valido
+    - **400**: "Quantità superiore a quella fatturata" → quantity troppo alta
+    - **400**: "La fattura deve essere elettronica" → Fattura non elettronica con `is_electronic=true`
+    - **400**: "Nota di credito elettronica solo per indirizzi italiani" → Indirizzo estero
+    
+    ---
+    
+    ## 📄 Output
+    
+    Restituisce il documento fiscale creato con:
+    - `document_type`: "credit_note"
+    - `tipo_documento_fe`: "TD04" (se elettronico)
+    - `document_number`: Numero sequenziale (se elettronico)
+    - `total_amount`: Importo totale stornato (IVA inclusa)
+    - `id_fiscal_document_ref`: ID fattura di riferimento
     """
     try:
         repo = get_fiscal_repository(db)

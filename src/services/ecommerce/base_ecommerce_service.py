@@ -270,7 +270,7 @@ class BaseEcommerceService(ABC):
         timestamp = datetime.now().isoformat()
         status = "SUCCESS" if not errors else "ERROR"
         
-        print(f"[{timestamp}] {operation}: {count} records processed - {status}")
+        # Log removed - use logging framework if needed
         '''if errors:
             for error in errors:
                 print(f"  ERROR: {error}")'''

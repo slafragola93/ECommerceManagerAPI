@@ -196,12 +196,11 @@ def apply_order_totals_to_order(order, totals: dict, use_tax_included: bool = Tr
     Args:
         order: Oggetto Order da aggiornare
         totals: Dizionario con i totali calcolati
-        use_tax_included: Se True usa total_price_with_tax, altrimenti total_price
+        use_tax_included: Parametro deprecato, mantiene entrambi i valori
     """
-    if use_tax_included:
-        order.total_price = totals['total_price_with_tax']  # Prezzo con tasse
-    else:
-        order.total_price = totals['total_price']  # Prezzo base senza tasse
+    # Assegna sempre entrambi i campi
+    order.total_price_tax_excl = totals['total_price']  # Prezzo base senza tasse
+    order.total_paid = totals['total_price_with_tax']  # Prezzo con tasse incluse
     
     order.total_weight = totals['total_weight']
     order.total_discounts = totals['total_discounts']

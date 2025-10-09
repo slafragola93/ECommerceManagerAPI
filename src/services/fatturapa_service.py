@@ -30,6 +30,7 @@ class FatturaPAService:
         self.db = db
         self.vat_number = vat_number
         self.config_repo = AppConfigurationRepository(db)
+        self.tax_repo = TaxRepository(db)
         
         # Configurazione FatturaPA
         self.api_key = self._get_config_value("fatturapa", "api_key")
@@ -41,16 +42,17 @@ class FatturaPAService:
         if not self.vat_number:
             self.vat_number = self._get_config_value("company_info", "vat_number")
         
-        self.company_name = self._get_config_value("company_info", "company_name", "WEB MARKET S.R.L.")
-        self.company_address = self._get_config_value("company_info", "address", "CORSO VITTORIO EMANUELE")
-        self.company_civic = self._get_config_value("company_info", "civic_number", "110/5")
-        self.company_cap = self._get_config_value("company_info", "cap", "80121")
-        self.company_city = self._get_config_value("company_info", "city", "NAPOLI")
-        self.company_province = self._get_config_value("company_info", "province", "NA")
-        self.company_phone = self._get_config_value("company_info", "phone", "0815405273")
-        self.company_email = self._get_config_value("company_info", "email", "FATTURAZIONE@ELETTRONEW.COM")
-        self.company_contact = self._get_config_value("company_info", "contact", "CRISTIANO VINCENZO")
-        self.company_iban = self._get_config_value("company_info", "iban", "IT79A0306939845100000014622")
+        self.company_name = self._get_config_value("company_info", "company_name")
+        self.company_address = self._get_config_value("company_info", "address")
+        self.company_civic = self._get_config_value("company_info", "civic_number")
+        self.company_cap = self._get_config_value("company_info", "postal_code")
+        self.company_city = self._get_config_value("company_info", "city")
+        self.company_province = self._get_config_value("company_info", "province")
+        self.company_phone = self._get_config_value("company_info", "phone")
+        self.company_email = self._get_config_value("company_info", "email")
+        self.company_contact = self._get_config_value("company_info", "account_holder")
+        self.company_iban = self._get_config_value("company_info", "iban")
+        self.company_bank_name = self._get_config_value("company_info",  "bank_name")
     
     def _get_config_value(self, category: str, name: str, default: str = None) -> str:
         """Recupera un valore dalla configurazione"""
@@ -65,11 +67,13 @@ class FatturaPAService:
         """Genera il prossimo numero di documento sequenziale annuale"""
         current_year = datetime.now().year
         
-        # Trova l'ultimo numero di documento per l'anno corrente
+        # Trova l'ultimo numero di documento per l'anno corrente da fiscal_documents
         query = text("""
             SELECT MAX(CAST(SUBSTRING(document_number, 1, 5) AS UNSIGNED)) as max_num
-            FROM invoices 
-            WHERE YEAR(date_add) = :year
+            FROM fiscal_documents 
+            WHERE YEAR(date_add) = :year 
+            AND document_type = 'invoice'
+            AND is_electronic = TRUE
         """)
         
         result = self.db.execute(query, {"year": current_year}).fetchone()
@@ -103,11 +107,13 @@ class FatturaPAService:
                    t.electronic_code as tax_electronic_code,
                    t.note as tax_note,
                    a_del.id_country as delivery_country_id,
-                   c_del.iso_code as delivery_country_iso,
-                   t_del.percentage as tax_percentage,
+                   t_del.percentage as tax_percentage_customer,
                    s.price_tax_excl as shipping_price_tax_excl,
                    s.id_tax as shipping_id_tax,
-                   t_ship.percentage as shipping_tax_percentage
+                   t_ship.percentage as shipping_tax_percentage,
+                   p.name as payment_name,
+                   p.fiscal_mode_payment,
+                   p.is_complete_payment
             FROM orders o
             LEFT JOIN addresses a_inv ON o.id_address_invoice = a_inv.id_address
             LEFT JOIN countries c ON a_inv.id_country = c.id_country
@@ -118,10 +124,12 @@ class FatturaPAService:
             LEFT JOIN taxes t ON od.id_tax = t.id_tax
             LEFT JOIN shipments s ON o.id_shipping = s.id_shipping
             LEFT JOIN taxes t_ship ON s.id_tax = t_ship.id_tax
+            LEFT JOIN payments p ON o.id_payment = p.id_payment
             WHERE o.id_order = :order_id
         """)
         
         result = self.db.execute(query, {"order_id": order_id}).fetchone()
+        print(result)
         if not result:
             raise ValueError(f"Ordine {order_id} non trovato")
         
@@ -162,67 +170,76 @@ class FatturaPAService:
         """
         return f"{self.vat_number}_{document_number}.xml"
 
-    def _generate_xml(self, order_data: Dict[str, Any], order_details: list, document_number: str) -> str:
-        """Genera l'XML FatturaPA secondo le specifiche ufficiali"""
+    def _generate_xml(self, order_data: Dict[str, Any], line_items: list, document_number: str) -> str:
+        """
+        Genera l'XML FatturaPA secondo le specifiche ufficiali
+        
+        Args:
+            order_data: Dati dell'ordine/documento
+            line_items: Dettagli articoli (possono essere order_details o fiscal_document_details trasformati)
+            document_number: Numero documento progressivo
+        """
         print(f"=== _generate_xml CHIAMATO ===")
         print(f"=== INIZIO GENERAZIONE XML FATTURAPA ===")
         print(f"Documento: {document_number}")
-        print(f"Order details count: {len(order_details)}")
+        print(f"Line items count: {len(line_items)}")
         
+        print(order_data)
         # Estrai dati cliente
         customer_name = order_data.get('invoice_firstname', '') + ' ' + order_data.get('invoice_lastname', '')
         customer_company = order_data.get('invoice_company', '')
-        customer_cf = order_data.get('invoice_dni', '')
+        customer_cf = order_data.get('customer_fiscal_code', '')
         customer_pec = order_data.get('invoice_pec', '')
         customer_sdi = order_data.get('invoice_sdi', '')
+        
+        # Partita IVA - rimuovi lettere (es. "IT12345678901" → "12345678901")
+        customer_vat_raw = order_data.get('invoice_vat', '')
+        customer_vat = ''.join(filter(str.isdigit, customer_vat_raw)) if customer_vat_raw else ''
         
         print(f"=== DATI CLIENTE ===")
         print(f"Cliente: '{customer_name.strip()}' (company: '{customer_company}')")
         print(f"CodiceFiscale: '{customer_cf}' (lunghezza: {len(customer_cf) if customer_cf else 0})")
         print(f"SDI: '{customer_sdi}' (lunghezza: {len(customer_sdi) if customer_sdi else 0})")
         print(f"PEC: '{customer_pec}'")
+        print(f"VAT: '{customer_vat}' (originale: '{customer_vat_raw}')")
         
         # Calcola totali corretti
         # Recupera la percentuale IVA dal paese di delivery
-        delivery_tax_percentage = order_data.get('tax_percentage')  # t_del.percentage
+        delivery_tax_percentage = order_data.get('tax_percentage_customer')  # t_del.percentage
         if delivery_tax_percentage is not None:
             tax_rate = float(delivery_tax_percentage)
         else:
-            tax_rate = 22.0  # Default IVA 22% se non trovata
-            print(f"WARNING: Tax percentage not found for delivery country, using default {tax_rate}%")
-        
-        delivery_country_iso = order_data.get('delivery_country_iso')
-        print(f"=== CALCOLI IVA ===")
-        print(f"Paese di delivery: {delivery_country_iso}")
-        print(f"Aliquota IVA: {tax_rate}%")
+            # Recupera la percentuale IVA di default dal database
+            default_tax = self.tax_repo.get_default_tax_rate()
+            if default_tax and default_tax[0]:
+                tax_rate = float(default_tax[0])
+                print(f"[WARNING] Tax percentage not found for delivery country, using default {tax_rate}%")
+            else:
+                tax_rate = 22.0  # Fallback hardcoded se non c'è nemmeno il default nel DB
+                print(f"[WARNING] No default tax found in DB, using hardcoded fallback {tax_rate}%")
+            
         
         # Ricalcola imponibile e imposta dalle linee di dettaglio
         totale_imponibile = 0
         totale_imposta = 0
         
-        print(f"=== DETTAGLI ORDINE ===")
-        for i, detail in enumerate(order_details):
-            product_qty_debug = detail.get('product_qty', 1)
-            product_price_debug = detail.get('product_price', 0)
-            quantita = float(product_qty_debug) if product_qty_debug is not None else 1.0
-            prezzo_unitario_iva = float(product_price_debug) if product_price_debug is not None else 0.0
-            prezzo_unitario_netto = prezzo_unitario_iva / (1 + tax_rate / 100)
-            prezzo_totale_netto = prezzo_unitario_netto * quantita
-            imposta_linea = (prezzo_unitario_iva - prezzo_unitario_netto) * quantita
+        print(f"=== DETTAGLI ARTICOLI ===")
+        for i, detail in enumerate(line_items):
+            # PROBABILI ERRORI QUI
+            product_qty = float(detail.get('product_qty', 1))
+            product_price_no_tax = float(detail.get('product_price', 0))  # Prezzo unitario senza IVA
             
-            print(f"  Prezzo unitario netto: {prezzo_unitario_netto:.4f}")
-            print(f"  Prezzo totale netto: {prezzo_totale_netto:.4f}")
-            print(f"  Imposta linea: {imposta_linea:.4f}")
+            # Calcolo corretto imponibile e imposta
+            prezzo_totale_netto = product_price_no_tax * product_qty  # Imponibile (base imponibile)
+            imposta_linea = prezzo_totale_netto * (tax_rate / 100)  # IVA = imponibile * aliquota
             
-            # Arrotonda usando ROUND_HALF_UP per coerenza con SdI
-            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            imposta_linea = Decimal(str(imposta_linea)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            print(f"  Prezzo unitario senza IVA: {product_price_no_tax:.4f}")
+            print(f"  Quantità: {product_qty:.2f}")
+            print(f"  Imponibile linea: {prezzo_totale_netto:.4f}")
+            print(f"  Imposta linea ({tax_rate}%): {imposta_linea:.4f}")
             
-            print(f"  Prezzo totale netto (arrotondato): {prezzo_totale_netto}")
-            print(f"  Imposta linea (arrotondata): {imposta_linea}")
-            
-            totale_imponibile += float(prezzo_totale_netto)
-            totale_imposta += float(imposta_linea)
+            totale_imponibile += prezzo_totale_netto
+            totale_imposta += imposta_linea
         
         # Calcola il totale con IVA usando total_price dell'ordine * percentuale tassa
         total_amount = float(order_data.get('total_price', 0))
@@ -296,7 +313,7 @@ class FatturaPAService:
             print(f"CodiceDestinatario transfrontaliero: '{codice_destinatario}'")
             
         self._create_element(dati_trasmissione, "CodiceDestinatario", codice_destinatario)
-        print(f"✅ CodiceDestinatario validato: {codice_destinatario}")
+        print(f"[OK] CodiceDestinatario validato: {codice_destinatario}")
         
         # Gestione PEC del destinatario
         if customer_pec:
@@ -348,6 +365,14 @@ class FatturaPAService:
         
         dati_anagrafici_cessionario = self._create_element(cessionario, "DatiAnagrafici")
         
+        # IdFiscaleIVA - se presente la partita IVA del cliente
+        if customer_vat:
+            id_fiscale_iva = self._create_element(dati_anagrafici_cessionario, "IdFiscaleIVA")
+            # Usa il codice paese dell'indirizzo di fatturazione
+            paese_iso = order_data.get('country_iso', 'IT')
+            self._create_element(id_fiscale_iva, "IdPaese", paese_iso)
+            self._create_element(id_fiscale_iva, "IdCodice", customer_vat)
+        
         if customer_cf:
             if len(customer_cf) < 11 or len(customer_cf) > 16:
                 error_msg = f"CodiceFiscale deve essere tra 11 e 16 caratteri. Ricevuto: '{customer_cf}' (lunghezza: {len(customer_cf)})"
@@ -355,7 +380,7 @@ class FatturaPAService:
                 raise ValueError(error_msg)
             self._create_element(dati_anagrafici_cessionario, "CodiceFiscale", customer_cf)
         else:
-            logger.warning("⚠️ CodiceFiscale non presente")
+            logger.warning("[WARNING] CodiceFiscale non presente")
         
         anagrafica_cessionario = self._create_element(dati_anagrafici_cessionario, "Anagrafica")
         
@@ -418,7 +443,7 @@ class FatturaPAService:
         dati_generali_documento = self._create_element(dati_generali, "DatiGeneraliDocumento")
         
         # TipoDocumento viene passato come parametro (TD01 per fatture, TD04 per note di credito)
-        tipo_documento = order_data.get('tipo_documento_fe', 'TD01')
+        tipo_documento = order_data.get('tipo_documento_fe')
         self._create_element(dati_generali_documento, "TipoDocumento", tipo_documento)
         self._create_element(dati_generali_documento, "Divisa", "EUR")
         self._create_element(dati_generali_documento, "Data", date.today().strftime("%Y-%m-%d"))
@@ -436,7 +461,7 @@ class FatturaPAService:
         
         
         # DettaglioLinee
-        for i, detail in enumerate(order_details, 1):
+        for i, detail in enumerate(line_items, 1):
             dettaglio_linea = self._create_element(dati_beni_servizi, "DettaglioLinee")
             self._create_element(dettaglio_linea, "NumeroLinea", str(i))
             self._create_element(dettaglio_linea, "Descrizione", detail.get('product_name', 'Prodotto'))
@@ -448,11 +473,9 @@ class FatturaPAService:
             
             # Prezzo unitario (product_price è il prezzo con IVA)
             product_price_raw = detail.get('product_price', 0)
-            prezzo_unitario_iva = float(product_price_raw) if product_price_raw is not None else 0.0
-            prezzo_unitario_netto = prezzo_unitario_iva / (1 + tax_rate / 100)
-            # Arrotonda usando ROUND_HALF_UP
-            prezzo_unitario_netto = Decimal(str(prezzo_unitario_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            prezzo_unitario_netto = float(product_price_raw)
             self._create_element(dettaglio_linea, "PrezzoUnitario", f"{prezzo_unitario_netto:.2f}")
+            print(f"PrezzoUnitario: {prezzo_unitario_netto:.2f}")
 
                       
             # Controlla se ci sono sconti o maggiorazioni
@@ -499,7 +522,6 @@ class FatturaPAService:
                 self._create_element(dettaglio_linea, "Natura", f"{tax_electronic_code:.2f}")
         
         # Aggiungi linea per sconti se total_discounts > 0
-        print(tax_rate)
         total_discounts = float(order_data.get('total_discounts', 0))
         if total_discounts > 0:
             total_discounts_no_iva = total_discounts / (1 + tax_rate / 100)
@@ -513,9 +535,10 @@ class FatturaPAService:
             self._create_element(dettaglio_sconto, "PrezzoTotale", f"{-total_discounts_no_iva:.2f}")
             self._create_element(dettaglio_sconto, "AliquotaIVA", f"{tax_rate:.2f}")
         
-        # Aggiungi linea per spese di spedizione
+        # Aggiungi linea per spese di spedizione (SOLO per fatture, NON per note di credito)
+        tipo_documento = order_data.get('tipo_documento_fe')
         shipping_price = float(order_data.get('shipping_price_tax_excl', 0))
-        if shipping_price > 0:
+        if shipping_price > 0 and tipo_documento != 'TD04':
             i += 1  # Incrementa numero linea
             dettaglio_spedizione = self._create_element(dati_beni_servizi, "DettaglioLinee")
             self._create_element(dettaglio_spedizione, "NumeroLinea", str(i))
@@ -527,6 +550,9 @@ class FatturaPAService:
             # Usa l'aliquota IVA delle spese di spedizione se disponibile, altrimenti quella generale
             shipping_tax_rate = float(order_data.get('shipping_tax_percentage', tax_rate))
             self._create_element(dettaglio_spedizione, "AliquotaIVA", f"{shipping_tax_rate:.2f}")
+            print(f"Spese di spedizione aggiunte: EUR {shipping_price:.2f}")
+        elif tipo_documento == 'TD04':
+            print(f"[INFO] Spese di spedizione NON aggiunte (nota di credito TD04)")
         
         # DatiRiepilogo
         dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
@@ -540,12 +566,52 @@ class FatturaPAService:
                 self._create_element(dati_riepilogo, "RiferimentoNormativo", tax_note)
 
         # Arrotonda i totali usando ROUND_HALF_UP
-        totale_imponibile_arrotondato = Decimal(str(totale_imponibile)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        totale_imposta_arrotondato = Decimal(str(totale_imposta)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        self._create_element(dati_riepilogo, "ImponibileImporto", f"{totale_imponibile_arrotondato:.2f}")
-        self._create_element(dati_riepilogo, "Imposta", f"{totale_imposta_arrotondato:.2f}")
+        self._create_element(dati_riepilogo, "ImponibileImporto", f"{totale_imponibile:.2f}")
+        self._create_element(dati_riepilogo, "Imposta", f"{totale_imposta:.2f}")
         self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
         
+        # DatiPagamento
+        print(f"=== AGGIUNTA DATI PAGAMENTO ===")
+        dati_pagamento = self._create_element(body, "DatiPagamento")
+        
+        # CondizioniPagamento (TP01=immediato, TP02=scadenza, TP03=rate)
+        condizioni_pagamento = order_data.get('condizioni_pagamento', 'TP02')  # Default: scadenza
+        self._create_element(dati_pagamento, "CondizioniPagamento", condizioni_pagamento)
+        
+        # DettaglioPagamento
+        dettaglio_pagamento = self._create_element(dati_pagamento, "DettaglioPagamento")
+        
+        # ModalitaPagamento - recupera dal payment method
+        fiscal_mode_payment = order_data.get('fiscal_mode_payment', 'MP05')  # Default: bonifico
+        if not fiscal_mode_payment or fiscal_mode_payment not in [f'MP{i:02d}' for i in range(1, 24)]:
+            fiscal_mode_payment = 'MP05'  # Fallback a bonifico
+            print(f"[WARNING] Modalita pagamento non valida, uso default: {fiscal_mode_payment}")
+        
+        self._create_element(dettaglio_pagamento, "ModalitaPagamento", fiscal_mode_payment)
+        print(f"Modalità pagamento: {fiscal_mode_payment}")
+        
+        # Se bonifico (MP05), aggiungi dati bancari
+        if fiscal_mode_payment == 'MP05':
+            self._create_element(dettaglio_pagamento, "IstitutoFinanziario", self.company_bank_name)
+            self._create_element(dettaglio_pagamento, "IBAN", self.company_iban)
+            print(f"Dati bancari: {self.company_bank_name} - {self.company_iban}")
+        
+        # ImportoPagamento (totale documento)
+        self._create_element(dettaglio_pagamento, "ImportoPagamento", f"{total_amount:.2f}")
+        print(f"Importo pagamento: {total_amount:.2f}")
+        
+        # DataScadenzaPagamento (opzionale, solo se TP02)
+        if condizioni_pagamento == 'TP02':
+            # Aggiungi 30 giorni alla data ordine come scadenza
+            from datetime import timedelta
+            order_date = order_data.get('date_add', datetime.now())
+            if isinstance(order_date, str):
+                order_date = datetime.strptime(order_date, '%Y-%m-%d %H:%M:%S')
+            scadenza = order_date + timedelta(days=30)
+            self._create_element(dettaglio_pagamento, "DataScadenzaPagamento", scadenza.strftime('%Y-%m-%d'))
+            print(f"Data scadenza: {scadenza.strftime('%Y-%m-%d')}")
+        
+        print(f"=== DATI PAGAMENTO COMPLETATI ===")
         
         # Converti in stringa XML
         print(f"=== FINALIZZAZIONE XML ===")
@@ -613,16 +679,21 @@ class FatturaPAService:
     async def upload_xml(self, complete_url: str, xml_content: str) -> bool:
         """Carica l'XML su Azure Blob"""
         try:
+            # Converti la stringa XML in bytes UTF-8
+            xml_bytes = xml_content.encode('utf-8')
+            
+            # Calcola Content-Length sui bytes (non sulla stringa)
             headers = {
                 'Accept': 'application/json',
-                'Content-Type': 'application/xml',
-                'Content-Length': str(len(xml_content)),
+                'Content-Type': 'application/xml; charset=utf-8',
+                'Content-Length': str(len(xml_bytes)),
                 'x-ms-blob-type': 'BlockBlob',
                 'x-ms-version': '2018-03-28'
             }
             
+            # Invia i bytes invece della stringa
             status_code, _, body = await self._http_request('PUT', complete_url, 
-                                                          headers=headers, content=xml_content)
+                                                          headers=headers, content=xml_bytes)
             
             if 200 <= status_code < 300:
                 print("Upload XML completato con successo")
@@ -676,17 +747,23 @@ class FatturaPAService:
             logger.error(f"Errore nel recupero eventi: {e}")
             return {"status": "error", "message": str(e)}
     
-    async def generate_and_upload_invoice(self, order_id: int, iso_code: str = "IT") -> Dict[str, Any]:
+    async def generate_and_upload_invoice_DEPRECATED(self, order_id: int, iso_code: str = "IT") -> Dict[str, Any]:
         """
-        Genera e carica una fattura per un ordine
+        ⚠️ DEPRECATO: Usa i nuovi metodi con FiscalDocument invece!
+        
+        Questo metodo usava il vecchio modello Invoice che è stato sostituito da FiscalDocument.
+        Per generare fatture elettroniche usa generate_xml_from_fiscal_document() dopo aver creato un FiscalDocument.
         
         Args:
             order_id: ID dell'ordine
             iso_code: Codice ISO del paese (default: IT)
             
         Returns:
-            Dict con il risultato dell'operazione
+            Dict con errore deprecation
         """
+        raise DeprecationWarning(
+            "Metodo deprecato. Usa FiscalDocument e generate_xml_from_fiscal_document() invece."
+        )
         try:
             # 1. Verifica API
             if not await self.verify_api():
@@ -830,10 +907,12 @@ class FatturaPAService:
             # Prepara order_data con tipo documento
             order_data = self._prepare_order_data_from_fiscal_document(fiscal_doc, order, address)
             
-            # Recupera order details
-            order_details = self._get_order_details_for_fiscal_document(fiscal_doc)
+            # Recupera line items da fiscal_document_details (non da order_details)
+            # Per note di credito parziali, contiene SOLO gli articoli da stornare
+            line_items = self._get_order_details_for_fiscal_document(fiscal_doc)
+            
             # Genera XML
-            xml_content = self._generate_xml(order_data, order_details, fiscal_doc.document_number)
+            xml_content = self._generate_xml(order_data, line_items, fiscal_doc.document_number)
             
             # Genera filename
             filename = self._generate_filename(fiscal_doc.document_number)
@@ -859,16 +938,20 @@ class FatturaPAService:
     ) -> Dict[str, Any]:
         """Prepara dizionario order_data da FiscalDocument"""
         
-        # Query per ottenere dati customer, shipping e tax
+        # Query per ottenere dati customer, shipping, tax e delivery country tax
         customer_query = text("""
             SELECT c.*, 
                    s.price_tax_excl as shipping_price_tax_excl,
                    s.id_tax as shipping_id_tax,
                    t_ship.percentage as shipping_tax_percentage,
                    od.id_tax,
-                   t.percentage as tax_percentage
+                   t.percentage as tax_percentage,
+                   a_del.id_country as delivery_country_id,
+                   t_del.percentage as tax_percentage_customer
             FROM customers c
             LEFT JOIN orders o ON c.id_customer = o.id_customer
+            LEFT JOIN addresses a_del ON o.id_address_delivery = a_del.id_address
+            LEFT JOIN taxes t_del ON a_del.id_country = t_del.id_country
             LEFT JOIN shipments s ON o.id_shipping = s.id_shipping
             LEFT JOIN taxes t_ship ON s.id_tax = t_ship.id_tax
             LEFT JOIN orders_document od ON o.id_order = od.id_order
@@ -894,9 +977,8 @@ class FatturaPAService:
                 country_iso = country.iso_code
         
         # Determina company name da address o customer
-        customer_company = address.company if address.company else (
-            customer.get('company') or f"{customer.get('firstname', '')} {customer.get('lastname', '')}".strip()
-        )
+        customer_company = address.company
+        
         
         # Converti provincia usando ProvinceService
         provincia_abbreviation = None
@@ -927,6 +1009,7 @@ class FatturaPAService:
             'invoice_state': provincia_abbreviation,
             'invoice_pec': address.pec,
             'invoice_sdi': address.sdi,
+            'invoice_vat': address.vat,
             
             # Altri campi legacy
             'address_line1': address.address1,
@@ -942,13 +1025,22 @@ class FatturaPAService:
             'shipping_price_tax_excl': customer.get('shipping_price_tax_excl', 0.0),
             'shipping_tax_percentage': customer.get('shipping_tax_percentage', 22.0),
             'id_tax': customer.get('id_tax'),
-            'tax_percentage': customer.get('tax_percentage', 22.0)
+            'tax_percentage_customer': customer.get('tax_percentage_customer')  # Percentuale IVA del paese di delivery
         }
     
     def _get_order_details_for_fiscal_document(self, fiscal_doc: FiscalDocument) -> list:
-        """Recupera order details per fiscal document usando fiscal_document_details"""
+        """
+        Recupera i dettagli articoli per un fiscal document.
         
-        # Recupera fiscal_document_details
+        IMPORTANTE: Questo metodo usa FISCAL_DOCUMENT_DETAILS (non order_details).
+        Per note di credito parziali, restituisce SOLO gli articoli da stornare.
+        
+        Returns:
+            Lista di dict nel formato compatibile con _generate_xml:
+            [{'product_name': str, 'product_qty': float, 'product_price': float, ...}]
+        """
+        
+        # Recupera fiscal_document_details (NON order_details)
         fiscal_details = self.db.query(FiscalDocumentDetail).filter(
             FiscalDocumentDetail.id_fiscal_document == fiscal_doc.id_fiscal_document
         ).all()
@@ -982,7 +1074,7 @@ class FatturaPAService:
             
             details.append({
                 'product_name': od.product_name,
-                'product_qty': fdd.quantity,  # ✅ Sempre positiva (anche per note di credito)
+                'product_qty': fdd.quantity,  
                 'product_price': fdd.unit_price,
                 'reduction_percent': reduction_percent,
                 'reduction_amount': reduction_amount,

@@ -265,7 +265,8 @@ class OrderRepository:
 
         # Calcola i totali usando le funzioni pure
         totals = calculate_order_totals(order_details, tax_percentages)
-        order.total_price = totals['total_price_with_tax']
+        order.total_price_tax_excl = totals['total_price']
+        order.total_paid = totals['total_price_with_tax']
 
         self.session.add(order)
         self.session.commit()
@@ -454,9 +455,7 @@ class OrderRepository:
             if not platform:
                 return None
             return {
-                "id_platform": platform.id_platform,
-                "name": platform.name,
-                "url": platform.url
+                "name": platform.name
             }
         
         # Helper per formattare il pagamento
@@ -468,9 +467,34 @@ class OrderRepository:
                 return None
             return {
                 "id_payment": payment.id_payment,
-                "name": payment.name,
-                "is_complete_payment": payment.is_complete_payment
+                "name": payment.name
             }
+        
+        # Helper per formattare i packages dell'ordine
+        def format_order_packages(order_id):
+            if not order_id:
+                return []
+            from src.models.order_package import OrderPackage
+            packages = self.session.query(
+                OrderPackage.id_order_package,
+                OrderPackage.height,
+                OrderPackage.width,
+                OrderPackage.depth,
+                OrderPackage.weight,
+                OrderPackage.value
+            ).filter(
+                OrderPackage.id_order == order_id
+            ).all()
+            if not packages:
+                return []
+            return [{
+                "id_order_package": pkg.id_order_package,
+                "height": pkg.height,
+                "width": pkg.width,
+                "depth": pkg.depth,
+                "weight": pkg.weight,
+                "value": pkg.value
+            } for pkg in packages]
         
         # Base response con campi essenziali
         response = {
@@ -489,7 +513,8 @@ class OrderRepository:
             "is_payed": order.is_payed,
             "payment_date": order.payment_date,
             "total_weight": order.total_weight,
-            "total_price": order.total_price,
+            "total_price_tax_excl": order.total_price_tax_excl,
+            "total_paid": order.total_paid,
             "total_discounts": order.total_discounts,
             "cash_on_delivery": order.cash_on_delivery,
             "insured_value": order.insured_value,
@@ -519,8 +544,11 @@ class OrderRepository:
                 "shipping": format_shipping(order.id_shipping),
                 "sectional": format_sectional(order.id_sectional),
                 "order_states": format_order_states(order.id_order),
-                "order_details": format_order_details(order.id_order)
+                "order_details": format_order_details(order.id_order),
+                "order_packages": format_order_packages(order.id_order)
             })
+
+        
         return response
     
     def get_by_origin_id(self, id_origin: int) -> Optional[Order]:

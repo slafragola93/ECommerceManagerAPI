@@ -77,8 +77,6 @@ class ConditionalGetMiddleware(BaseHTTPMiddleware):
             "GET /api/v1/message",
             "GET /api/v1/message/{message_id}",
             "GET /api/v1/message/my_messages",
-            "GET /api/v1/invoices",
-            "GET /api/v1/invoices/{invoice_id}",
             "GET /api/v1/taxes",
             "GET /api/v1/taxes/{tax_id}",
             "GET /api/v1/users",

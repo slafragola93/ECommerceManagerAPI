@@ -19,7 +19,6 @@ from .role_schema import *
 from .order_state_schema import *
 from .shipping_schema import *
 from .order_schema import *
-from .invoice_schema import *
 from .order_package_schema import *
 from .order_detail_schema import *
 from .order_document_schema import *

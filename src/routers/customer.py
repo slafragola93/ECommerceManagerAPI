@@ -6,6 +6,7 @@ from .. import CustomerSchema, AllCustomerResponseSchema, CustomerResponseSchema
 from src.services.wrap import check_authentication
 from ..repository.customer_repository import CustomerRepository
 from ..services.auth import authorize
+from src.core.cached import cached
 
 router = APIRouter(
     prefix='/api/v1/customers',
@@ -18,6 +19,7 @@ def get_repository(db: db_dependency) -> CustomerRepository:
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCustomerResponseSchema)
+@cached(ttl=30, key="customers:all")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_customers(
@@ -47,6 +49,7 @@ async def get_all_customers(
 
 
 @router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)
+@cached(ttl=30, key="customers:id:{customer_id}")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_customer_by_id(user: user_dependency,

@@ -76,6 +76,15 @@ class TaxRepository:
         """
         return self.session.query(Tax).filter(Tax.id_country == id_country).all()
     
+    def get_default_tax_rate(self) -> int:
+        """
+        Recupera la percentuale IVA di default
+
+        Returns:
+            int: La percentuale IVA di default
+        """
+        return self.session.query(Tax.percentage).filter(Tax.is_default == 1).first()
+
     def get_percentage_by_id(self, id_tax: int) -> int:
         """
         Recupera la percentuale IVA per un ID tax specifico

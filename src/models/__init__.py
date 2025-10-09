@@ -27,4 +27,5 @@ from .order_detail import OrderDetail
 from .order_document import OrderDocument
 from .fiscal_document import FiscalDocument
 from .fiscal_document_detail import FiscalDocumentDetail
+from .purchase_invoice_sync import PurchaseInvoiceSync
 from .relations import *

@@ -205,7 +205,8 @@ class OrderDetailRepository:
                 # Se non ci sono order details, azzera i totali
                 order = self.session.query(Order).filter(Order.id_order == order_id).first()
                 if order:
-                    order.total_price = 0.0
+                    order.total_price_tax_excl = 0.0
+                    order.total_paid = 0.0
                     order.total_weight = 0.0
                     order.total_discounts = 0.0
                     self.session.add(order)

@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 import math
 
 from src.models.fiscal_document import FiscalDocument
@@ -55,6 +56,7 @@ class FiscalDocumentRepository:
             tipo_documento_fe = 'TD01'
         
         # Crea fattura (total_amount verrà calcolato dopo)
+        print(order)
         invoice = FiscalDocument(
             document_type='invoice',
             tipo_documento_fe=tipo_documento_fe,
@@ -62,7 +64,7 @@ class FiscalDocumentRepository:
             document_number=document_number,
             is_electronic=is_electronic,
             status='pending',
-            total_amount=0.0  # Verrà aggiornato dopo aver creato i dettagli
+            total_amount=order.total_paid  # Verrà aggiornato dopo aver creato i dettagli
         )
         
         self.db.add(invoice)
@@ -103,36 +105,10 @@ class FiscalDocumentRepository:
                 unit_price=unit_price,  # Prezzo originale senza sconto
                 total_amount=total_amount  # Totale con sconto applicato (SENZA IVA)
             )
+            
             self.db.add(detail)
-            total_details_amount += total_amount
-        
-        # Recupera spese di spedizione e calcola IVA separatamente
-        shipping_cost_no_vat = 0.0
-        shipping_vat_amount = 0.0
-        if order.id_shipping:
-            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
-            if shipping:
-                shipping_cost_no_vat = shipping.price_tax_excl or 0.0
-                # Recupera la percentuale IVA per le spese di spedizione
-                shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
-                shipping_vat_amount = shipping_cost_no_vat * (shipping_vat_percentage / 100)
-        
-        # Calcola total_amount del documento: somma dettagli SENZA IVA + spese SENZA IVA
-        # Sottrai gli sconti dell'ordine (se presenti)
-        total_imponibile = total_details_amount + shipping_cost_no_vat - (order.total_discounts or 0.0)
-        
-        # Recupera la percentuale IVA dai dettagli dell'ordine per i prodotti
-        products_vat_percentage = self._get_vat_percentage_from_order_details(order_details)
-        products_vat_amount = total_details_amount * (products_vat_percentage / 100)
-        
-        # Calcola il totale finale: imponibile + IVA prodotti + IVA spedizione
-        total_with_vat = total_imponibile + products_vat_amount + shipping_vat_amount
-        
-        # Tronca a 2 decimali senza arrotondare (es. 1.190,82614 -> 1.190,82)
-        total_with_vat_truncated = math.floor(total_with_vat * 100) / 100
-        
-        # Il total_amount della fattura è il totale CON IVA (troncato)
-        invoice.total_amount = total_with_vat_truncated
+
+    
         
         self.db.commit()
         self.db.refresh(invoice)
@@ -227,76 +203,73 @@ class FiscalDocumentRepository:
         invoice_order_detail_ids = {d.id_order_detail for d in invoice_details}
         invoice_details_map = {d.id_order_detail: d for d in invoice_details}
         
-        # Calcola importo totale (SENZA IVA)
-        total_amount_no_vat = 0.0
-        shipping_cost_no_vat = 0.0  # Inizializza per evitare errori di scope
+        # Prepara i dettagli della nota di credito PRIMA di calcolare il totale
+        credit_note_details_data = []
         
         if is_partial and items:
-            # Valida che gli articoli siano nella fattura
+            # NOTA PARZIALE: Prepara i dettagli degli articoli specificati
             for item in items:
                 id_order_detail = item.get('id_order_detail')
+                
+                # Validazioni
                 if id_order_detail not in invoice_order_detail_ids:
                     raise ValueError(f"OrderDetail {id_order_detail} non presente nella fattura {id_invoice}")
                 
-                # Verifica che la quantità non superi quella fatturata
                 invoice_detail = invoice_details_map[id_order_detail]
                 if item.get('quantity', 0) > invoice_detail.quantity:
                     raise ValueError(f"Quantità da stornare ({item['quantity']}) superiore a quella fatturata ({invoice_detail.quantity})")
-            
-            # Somma importi degli articoli specificati (SENZA IVA)
-            for item in items:
-                qty = item.get('quantity', 0)
-                price = item.get('unit_price', 0)
                 
                 # Recupera order_detail per sconto
                 od = self.db.query(OrderDetail).filter(
-                    OrderDetail.id_order_detail == item['id_order_detail']
+                    OrderDetail.id_order_detail == id_order_detail
                 ).first()
-                
-                # Calcola total con sconto (SENZA IVA)
-                total_base = qty * price
+
+                unit_price = item['unit_price']
+                quantity = item['quantity']
+                total_base = unit_price * quantity
+
+
+                # Applica sconti se presenti
                 if od and od.reduction_percent and od.reduction_percent > 0:
                     sconto = total_base * (od.reduction_percent / 100)
-                    total_no_vat = total_base - sconto
+                    total_amount = total_base - sconto
                 elif od and od.reduction_amount and od.reduction_amount > 0:
-                    total_no_vat = total_base - od.reduction_amount
+                    total_amount = total_base - od.reduction_amount
                 else:
-                    total_no_vat = total_base
-                    
-                total_amount_no_vat += total_no_vat
+                    total_amount = total_base
+
+                credit_note_details_data.append({
+                    'id_order_detail': id_order_detail,
+                    'quantity': quantity,
+                    'unit_price': unit_price,
+                    'total_amount': total_amount  # Imponibile (senza IVA)
+                })
         else:
-            # Nota di credito totale = somma di tutti gli articoli fatturati (SENZA IVA)
-            total_amount_no_vat = sum(d.total_amount for d in invoice_details)
-            
-            # Aggiungi anche spese di spedizione SENZA IVA per note di credito totali
-            shipping_cost_no_vat = 0.0
-            if order.id_shipping:
-                shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
-                if shipping:
-                    shipping_cost_no_vat = shipping.price_tax_excl or 0.0
-                    total_amount_no_vat += shipping_cost_no_vat
+            # NOTA TOTALE: Prepara dettagli da TUTTI gli articoli della fattura
+            for invoice_detail in invoice_details:
+                credit_note_details_data.append({
+                    'id_order_detail': invoice_detail.id_order_detail,
+                    'quantity': invoice_detail.quantity,
+                    'unit_price': invoice_detail.unit_price,
+                    'total_amount': invoice_detail.total_amount  # Imponibile (senza IVA)
+                })
         
-        # Applica la stessa logica dell'invoice: sottrai sconti e applica IVA separatamente
-        total_imponibile = total_amount_no_vat - (order.total_discounts or 0.0)
+        # Calcola il totale IMPONIBILE (senza IVA) dai dettagli preparati
+        total_imponibile = sum(d['total_amount'] for d in credit_note_details_data)
         
-        # Calcola IVA per i prodotti
-        order_details = self.db.query(OrderDetail).filter(OrderDetail.id_order == order.id_order).all()
-        products_vat_percentage = self._get_vat_percentage_from_order_details(order_details)
-        products_vat_amount = (total_amount_no_vat - shipping_cost_no_vat) * (products_vat_percentage / 100)
+        # Recupera l'aliquota IVA (assumiamo sia la stessa per tutti gli articoli)
+        # Prendi dal primo order_detail
+        first_detail_id = credit_note_details_data[0]['id_order_detail']
+        od_first = self.db.query(OrderDetail).filter(OrderDetail.id_order_detail == first_detail_id).first()
         
-        # Calcola IVA per le spese di spedizione
-        shipping_vat_amount = 0.0
-        if order.id_shipping:
-            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
-            if shipping:
-                shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
-                shipping_vat_amount = shipping_cost_no_vat * (shipping_vat_percentage / 100)
-        
-        # Calcola il totale finale: imponibile + IVA prodotti + IVA spedizione
-        total_with_vat = total_imponibile + products_vat_amount + shipping_vat_amount
-        
-        # Tronca a 2 decimali senza arrotondare (es. 1.190,82614 -> 1.190,82)
-        total_with_vat_truncated = math.floor(total_with_vat * 100) / 100
+        # Calcola l'IVA
+        vat_percentage = self._get_vat_percentage_from_order_details([od_first]) 
+        print(f"vat_percentage: {vat_percentage}")
+        vat_amount = total_imponibile * (vat_percentage / 100)
+        print(f"vat_amount: {vat_amount}")
+        # Totale con IVA
+        total_with_vat = total_imponibile + vat_amount
+        print(f"total_with_vat: {total_with_vat}")
         
         # Crea nota di credito
         credit_note = FiscalDocument(
@@ -311,51 +284,23 @@ class FiscalDocumentRepository:
             is_partial=is_partial,
             total_amount=total_with_vat  # Totale CON IVA
         )
+
+        if not is_partial:
+            credit_note.total_amount = invoice.total_amount
         
         self.db.add(credit_note)
         self.db.flush()
         
-        # Aggiungi dettagli della nota di credito
-        if is_partial and items:
-            # Nota di credito parziale - usa gli articoli specificati
-            for item in items:
-                # Recupera order_detail per applicare lo sconto corretto
-                od = self.db.query(OrderDetail).filter(
-                    OrderDetail.id_order_detail == item['id_order_detail']
-                ).first()
-                
-                unit_price = item['unit_price']
-                quantity = item['quantity']
-                total_base = unit_price * quantity
-                
-                # Applica sconti se presenti nell'order_detail
-                if od and od.reduction_percent and od.reduction_percent > 0:
-                    sconto = total_base * (od.reduction_percent / 100)
-                    total_amount = total_base - sconto
-                elif od and od.reduction_amount and od.reduction_amount > 0:
-                    total_amount = total_base - od.reduction_amount
-                else:
-                    total_amount = total_base
-                
-                detail = FiscalDocumentDetail(
-                    id_fiscal_document=credit_note.id_fiscal_document,
-                    id_order_detail=item['id_order_detail'],
-                    quantity=quantity,
-                    unit_price=unit_price,  # Prezzo originale senza sconto
-                    total_amount=total_amount  # Totale con sconto applicato
-                )
-                self.db.add(detail)
-        else:
-            # Nota di credito totale - crea dettagli per tutti gli articoli della fattura
-            for invoice_detail in invoice_details:
-                detail = FiscalDocumentDetail(
-                    id_fiscal_document=credit_note.id_fiscal_document,
-                    id_order_detail=invoice_detail.id_order_detail,
-                    quantity=invoice_detail.quantity,
-                    unit_price=invoice_detail.unit_price,
-                    total_amount=invoice_detail.total_amount
-                )
-                self.db.add(detail)
+        # Crea i FiscalDocumentDetail usando i dati già preparati
+        for detail_data in credit_note_details_data:
+            detail = FiscalDocumentDetail(
+                id_fiscal_document=credit_note.id_fiscal_document,
+                id_order_detail=detail_data['id_order_detail'],
+                quantity=detail_data['quantity'],
+                unit_price=detail_data['unit_price'],
+                total_amount=detail_data['total_amount']  # Imponibile (senza IVA)
+            )
+            self.db.add(detail)
         
         self.db.commit()
         self.db.refresh(credit_note)
