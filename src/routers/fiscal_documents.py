@@ -128,27 +128,40 @@ async def create_credit_note(
     - **`reason`** (string, obbligatorio): Motivo della nota di credito (max 500 caratteri)
     - **`is_partial`** (bool, default: false): Tipo di storno
     - **`is_electronic`** (bool, default: true): Se generare XML FatturaPA (TD04)
+    - **`include_shipping`** (bool, default: true): Se includere spese di spedizione
     - **`items`** (array, opzionale): Articoli da stornare (obbligatorio se `is_partial=true`)
     
     ---
     
     ## 🔴 Nota di Credito TOTALE (`is_partial: false`)
     
-    Storna l'intera fattura con tutti gli articoli, spese di spedizione e sconti.
+    Storna l'intera fattura con tutti gli articoli. Include spese di spedizione solo se `include_shipping=true`.
     
-    ### Body esempio:
+    ### Body esempio (CON spese di spedizione):
     ```json
     {
       "id_invoice": 123,
       "reason": "Reso completo merce",
       "is_partial": false,
-      "is_electronic": true
+      "is_electronic": true,
+      "include_shipping": true
+    }
+    ```
+    
+    ### Body esempio (SENZA spese di spedizione):
+    ```json
+    {
+      "id_invoice": 123,
+      "reason": "Reso merce - spedizione già stornata",
+      "is_partial": false,
+      "is_electronic": true,
+      "include_shipping": false
     }
     ```
     
     ### Comportamento:
     - ✅ Storna TUTTI gli articoli della fattura
-    - ✅ Include spese di spedizione
+    - ✅ Include spese di spedizione (se `include_shipping=true`)
     - ✅ Include sconti generali
     - ❌ NON serve specificare `items`
     
@@ -156,25 +169,43 @@ async def create_credit_note(
     
     ## 🟡 Nota di Credito PARZIALE (`is_partial: true`)
     
-    Storna solo alcuni articoli o quantità parziali.
+    Storna solo alcuni articoli o quantità parziali. Può includere spese di spedizione se non già stornate.
     
-    ### Body esempio:
+    ### Body esempio (articoli SENZA spese):
     ```json
     {
       "id_invoice": 123,
       "reason": "Reso parziale - 2 articoli difettosi",
       "is_partial": true,
       "is_electronic": true,
+      "include_shipping": false,
       "items": [
         {
           "id_order_detail": 456,
-          "quantity": 2.0,
-          "unit_price": 50.00
+          "quantity": 2.0
         },
         {
           "id_order_detail": 457,
-          "quantity": 1.0,
-          "unit_price": 100.00
+          "quantity": 1.0
+        }
+      ]
+    }
+    ```
+    
+    **Nota**: Il `unit_price` viene recuperato automaticamente dalla fattura originale.
+    
+    ### Body esempio (articoli CON spese):
+    ```json
+    {
+      "id_invoice": 123,
+      "reason": "Reso parziale + spedizione",
+      "is_partial": true,
+      "is_electronic": true,
+      "include_shipping": true,
+      "items": [
+        {
+          "id_order_detail": 456,
+          "quantity": 2.0
         }
       ]
     }
@@ -184,7 +215,7 @@ async def create_credit_note(
     - ✅ Storna SOLO gli articoli specificati in `items`
     - ✅ Può stornare quantità parziali (es: 2 su 5)
     - ✅ Applica automaticamente sconti proporzionali
-    - ❌ NON include spese di spedizione
+    - ✅ Include spese di spedizione (se `include_shipping=true` e non già stornate)
     - ❌ NON include sconti generali ordine
     
     ### Come trovare gli `id_order_detail`:
@@ -201,12 +232,17 @@ async def create_credit_note(
     - Se `is_electronic=true`: la fattura deve essere elettronica
     - Se `is_electronic=true`: l'indirizzo deve essere italiano (IT)
     
-    ### 2. Validazione articoli (solo se `is_partial=true`):
-    - Ogni `id_order_detail` DEVE essere nella fattura originale
-    - La `quantity` DEVE essere ≤ quantità fatturata
-    - Se superi → Errore 400: "Quantità da stornare (X) superiore a quella fatturata (Y)"
+    ### 2. Validazione note di credito esistenti:
+    - **Blocco nota totale duplicata**: Se esiste già una NC totale → Errore
+    - **Articoli già stornati**: Verifica che gli articoli non siano già completamente stornati
+    - **Spese già stornate**: Se `include_shipping=true` e spese già stornate → Errore
     
-    ### 3. Calcoli automatici:
+    ### 3. Validazione articoli (solo se `is_partial=true`):
+    - Ogni `id_order_detail` DEVE essere nella fattura originale
+    - La `quantity` DEVE essere ≤ quantità residua (fatturata - già stornata)
+    - Se superi → Errore 400: "Quantità da stornare (X) superiore a quella residua (Y)"
+    
+    ### 4. Calcoli automatici:
     - **Sconti articolo**: Applicati proporzionalmente
     - **IVA**: Calcolata automaticamente per aliquota
     - **Totale**: Somma imponibile + IVA
@@ -219,7 +255,7 @@ async def create_credit_note(
     |---------|------------------|-----------------|
     | Campo `items` | ❌ Non necessario | ✅ Obbligatorio |
     | Articoli stornati | Tutti | Solo quelli in items |
-    | Spese spedizione | ✅ Incluse | ❌ Escluse |
+    | Spese spedizione | Opzionale (`include_shipping`) | Opzionale (`include_shipping`) |
     | Sconti ordine | ✅ Inclusi | ❌ Esclusi |
     
     ---
@@ -243,11 +279,21 @@ async def create_credit_note(
     
     ## ⚠️ Errori comuni
     
+    ### Errori fattura:
     - **400**: "Fattura non trovata" → `id_invoice` errato
-    - **400**: "OrderDetail X non presente nella fattura" → `id_order_detail` non valido
-    - **400**: "Quantità superiore a quella fatturata" → quantity troppo alta
     - **400**: "La fattura deve essere elettronica" → Fattura non elettronica con `is_electronic=true`
     - **400**: "Nota di credito elettronica solo per indirizzi italiani" → Indirizzo estero
+    
+    ### Errori note duplicate:
+    - **400**: "Esiste già una nota di credito TOTALE" → Non puoi creare altre note dopo una totale
+    
+    ### Errori articoli:
+    - **400**: "OrderDetail X non presente nella fattura" → `id_order_detail` non valido
+    - **400**: "L'articolo X è già stato completamente stornato" → Articolo già stornato in note precedenti
+    - **400**: "Quantità superiore alla quantità residua" → Stai provando a stornare più del disponibile
+    
+    ### Errori spese spedizione:
+    - **400**: "Le spese di spedizione sono già state stornate" → Imposta `include_shipping=false`
     
     ---
     
@@ -257,8 +303,33 @@ async def create_credit_note(
     - `document_type`: "credit_note"
     - `tipo_documento_fe`: "TD04" (se elettronico)
     - `document_number`: Numero sequenziale (se elettronico)
+    - `status`: "pending" (se elettronica) o "issued" (se non elettronica)
+    - `is_partial`: true/false
+    - `includes_shipping`: true/false (traccia se include spese)
     - `total_amount`: Importo totale stornato (IVA inclusa)
     - `id_fiscal_document_ref`: ID fattura di riferimento
+    - `details[]`: Elenco articoli stornati
+    
+    ### Esempio risposta:
+    ```json
+    {
+      "id_fiscal_document": 456,
+      "document_type": "credit_note",
+      "tipo_documento_fe": "TD04",
+      "id_order": 789,
+      "id_fiscal_document_ref": 123,
+      "document_number": "00042",
+      "status": "pending",
+      "is_electronic": true,
+      "credit_note_reason": "Reso parziale",
+      "is_partial": true,
+      "includes_shipping": false,
+      "total_amount": 122.00,
+      "date_add": "2025-10-10T10:30:00",
+      "date_upd": "2025-10-10T10:30:00",
+      "details": [...]
+    }
+    ```
     """
     try:
         repo = get_fiscal_repository(db)
@@ -269,8 +340,7 @@ async def create_credit_note(
             items = [
                 {
                     'id_order_detail': item.id_order_detail,
-                    'quantity': item.quantity,
-                    'unit_price': item.unit_price
+                    'quantity': item.quantity
                 }
                 for item in credit_note_data.items
             ]
@@ -280,7 +350,8 @@ async def create_credit_note(
             reason=credit_note_data.reason,
             is_partial=credit_note_data.is_partial,
             items=items,
-            is_electronic=credit_note_data.is_electronic
+            is_electronic=credit_note_data.is_electronic,
+            include_shipping=credit_note_data.include_shipping
         )
         
         return credit_note

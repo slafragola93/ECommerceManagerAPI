@@ -9,7 +9,6 @@ class FiscalDocumentDetailSchema(BaseModel):
     """Schema per dettaglio nota di credito parziale"""
     id_order_detail: int = Field(..., gt=0, description="ID dell'order detail da stornare")
     quantity: float = Field(..., gt=0, description="Quantità da stornare")
-    unit_price: float = Field(..., ge=0, description="Prezzo unitario")
     
     class Config:
         from_attributes = True
@@ -72,6 +71,7 @@ class InvoiceResponseSchema(BaseModel):
     filename: Optional[str]
     status: str
     is_electronic: bool
+    includes_shipping: bool
     total_amount: Optional[float]
     date_add: datetime
     date_upd: datetime
@@ -88,6 +88,7 @@ class CreditNoteCreateSchema(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500, description="Motivo della nota di credito")
     is_partial: bool = Field(False, description="Se True, nota di credito parziale")
     is_electronic: bool = Field(True, description="Se True, genera XML elettronico")
+    include_shipping: bool = Field(True, description="Se True, include spese di spedizione (solo per note totali o se non già stornate)")
     items: Optional[List[FiscalDocumentDetailSchema]] = Field(
         None, 
         description="Articoli da stornare (obbligatorio se is_partial=True)"
@@ -97,12 +98,23 @@ class CreditNoteCreateSchema(BaseModel):
         json_schema_extra = {
             "examples": [
                 {
-                    "summary": "Nota di credito totale",
+                    "summary": "Nota di credito totale (con spedizione)",
                     "value": {
                         "id_invoice": 123,
                         "reason": "Reso merce",
                         "is_partial": False,
-                        "is_electronic": True
+                        "is_electronic": True,
+                        "include_shipping": True
+                    }
+                },
+                {
+                    "summary": "Nota di credito totale (senza spedizione)",
+                    "value": {
+                        "id_invoice": 123,
+                        "reason": "Reso merce - spedizione già stornata",
+                        "is_partial": False,
+                        "is_electronic": True,
+                        "include_shipping": False
                     }
                 },
                 {
@@ -112,11 +124,11 @@ class CreditNoteCreateSchema(BaseModel):
                         "reason": "Reso parziale - articolo difettoso",
                         "is_partial": True,
                         "is_electronic": True,
+                        "include_shipping": False,
                         "items": [
                             {
                                 "id_order_detail": 456,
-                                "quantity": 2.0,
-                                "unit_price": 50.00
+                                "quantity": 2.0
                             }
                         ]
                     }
@@ -139,6 +151,7 @@ class CreditNoteResponseSchema(BaseModel):
     is_electronic: bool
     credit_note_reason: Optional[str]
     is_partial: bool
+    includes_shipping: bool
     total_amount: Optional[float]
     date_add: datetime
     date_upd: datetime

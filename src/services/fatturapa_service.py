@@ -170,7 +170,7 @@ class FatturaPAService:
         """
         return f"{self.vat_number}_{document_number}.xml"
 
-    def _generate_xml(self, order_data: Dict[str, Any], line_items: list, document_number: str) -> str:
+    def _generate_xml(self, order_data: Dict[str, Any], line_items: list, document_number: str, include_shipping: bool = True) -> str:
         """
         Genera l'XML FatturaPA secondo le specifiche ufficiali
         
@@ -178,6 +178,7 @@ class FatturaPAService:
             order_data: Dati dell'ordine/documento
             line_items: Dettagli articoli (possono essere order_details o fiscal_document_details trasformati)
             document_number: Numero documento progressivo
+            include_shipping: Se True, include le spese di spedizione (default: True)
         """
         print(f"=== _generate_xml CHIAMATO ===")
         print(f"=== INIZIO GENERAZIONE XML FATTURAPA ===")
@@ -538,7 +539,7 @@ class FatturaPAService:
         # Aggiungi linea per spese di spedizione (SOLO per fatture, NON per note di credito)
         tipo_documento = order_data.get('tipo_documento_fe')
         shipping_price = float(order_data.get('shipping_price_tax_excl', 0))
-        if shipping_price > 0 and tipo_documento != 'TD04':
+        if include_shipping and shipping_price > 0:
             i += 1  # Incrementa numero linea
             dettaglio_spedizione = self._create_element(dati_beni_servizi, "DettaglioLinee")
             self._create_element(dettaglio_spedizione, "NumeroLinea", str(i))
@@ -551,8 +552,8 @@ class FatturaPAService:
             shipping_tax_rate = float(order_data.get('shipping_tax_percentage', tax_rate))
             self._create_element(dettaglio_spedizione, "AliquotaIVA", f"{shipping_tax_rate:.2f}")
             print(f"Spese di spedizione aggiunte: EUR {shipping_price:.2f}")
-        elif tipo_documento == 'TD04':
-            print(f"[INFO] Spese di spedizione NON aggiunte (nota di credito TD04)")
+        else:
+            print(f"[INFO] Spese di spedizione NON aggiunte (include_shipping={include_shipping})")
         
         # DatiRiepilogo
         dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
@@ -747,124 +748,7 @@ class FatturaPAService:
             logger.error(f"Errore nel recupero eventi: {e}")
             return {"status": "error", "message": str(e)}
     
-    async def generate_and_upload_invoice_DEPRECATED(self, order_id: int, iso_code: str = "IT") -> Dict[str, Any]:
-        """
-        ⚠️ DEPRECATO: Usa i nuovi metodi con FiscalDocument invece!
-        
-        Questo metodo usava il vecchio modello Invoice che è stato sostituito da FiscalDocument.
-        Per generare fatture elettroniche usa generate_xml_from_fiscal_document() dopo aver creato un FiscalDocument.
-        
-        Args:
-            order_id: ID dell'ordine
-            iso_code: Codice ISO del paese (default: IT)
-            
-        Returns:
-            Dict con errore deprecation
-        """
-        raise DeprecationWarning(
-            "Metodo deprecato. Usa FiscalDocument e generate_xml_from_fiscal_document() invece."
-        )
-        try:
-            # 1. Verifica API
-            if not await self.verify_api():
-                return {"status": "error", "message": "Verifica API fallita"}
-            
-            # 2. Recupera dati ordine
-            order_data = self._get_order_data(order_id)
-            order_details = self._get_order_details(order_id)
-            
-            if not order_details:
-                return {"status": "error", "message": "Nessun dettaglio ordine trovato"}
-            
-            # 3. Genera numero documento sequenziale
-            document_number = self._get_next_document_number()
-            
-            # 4. Genera XML
-            xml_content = self._generate_xml(order_data, order_details, document_number)
-            
-            # 5. Genera nome file
-            filename = f"{self.vat_number}_{document_number}.xml"
-            
-            # 6. Upload Start
-            name, complete_url = await self.upload_start(filename)
-            if not name or not complete_url:
-                return {"status": "error", "message": "UploadStart fallito"}
-            
-            # 7. Upload XML
-            upload_success = await self.upload_xml(complete_url, xml_content)
-            
-            # 8. Upload Stop (senza invio a SdI)
-            stop_result = await self.upload_stop(name, send_to_sdi=False)
-            
-            print(stop_result)
-            # Determina lo status finale
-            if upload_success and stop_result.get("status") != "error":
-                final_status = "uploaded"
-            else:
-                final_status = "error"
-                if not upload_success:
-                    stop_result = {"status": "error", "message": "Upload XML fallito"}
-            
-            # 9. Crea record Invoice nel database
-            invoice_id = None
-            if final_status == "uploaded":
-                # Salva con document_number per fatture riuscite
-                invoice_data = {
-                    "id_order": order_id,
-                    "document_number": document_number,
-                    "filename": filename,
-                    "xml_content": xml_content,
-                    "status": final_status,
-                    "upload_result": json.dumps(stop_result) if stop_result else None,
-                    "date_add": datetime.now()
-                }
-                
-                invoice_id = self.invoice_repo.create_invoice(invoice_data)
-            else:
-                # Salva senza document_number per fatture fallite
-                error_data = {
-                    "id_order": order_id,
-                    "document_number": None,  # Nessun document_number per preservare la numerazione
-                    "filename": filename,
-                    "xml_content": None,  # Non salvare XML se errore
-                    "status": "error",
-                    "upload_result": json.dumps(stop_result) if stop_result else None,
-                    "date_add": datetime.now()
-                }
-                
-                invoice_id = self.invoice_repo.create_invoice(error_data)
-            
-            return {
-                "status": "success" if final_status == "uploaded" else "error",
-                "message": "Fattura generata e caricata con successo" if final_status == "uploaded" else "Fattura generata ma upload fallito",
-                "invoice_id": invoice_id,
-                "document_number": document_number,
-                "filename": filename,
-                "upload_result": stop_result
-            }
-            
-        except Exception as e:
-            logger.error(f"Errore nella generazione fattura: {e}")
-            
-            # Salva record con status "error" senza document_number per tracciabilità
-            try:
-                error_filename = f"{self.vat_number}_error.xml"
-                
-                error_data = {
-                    "id_order": order_id,
-                    "document_number": None,  # Nessun document_number per preservare la numerazione
-                    "filename": error_filename,
-                    "xml_content": None,
-                    "status": "error",
-                    "upload_result": json.dumps({"status": "error", "message": str(e)}),
-                    "date_add": datetime.now()
-                }
-                
-                self.invoice_repo.create_invoice(error_data)
-            except Exception as db_error:
-                logger.error(f"Errore nel salvataggio errore nel database: {db_error}")
-            
-            return {"status": "error", "message": str(e)}
+    
     
     # ==================== NUOVI METODI PER FISCAL DOCUMENTS ====================
     
@@ -911,8 +795,12 @@ class FatturaPAService:
             # Per note di credito parziali, contiene SOLO gli articoli da stornare
             line_items = self._get_order_details_for_fiscal_document(fiscal_doc)
             
+            # Determina se includere spese di spedizione dal campo includes_shipping del documento
+            # Usa il valore salvato nel FiscalDocument (gestito al momento della creazione)
+            include_shipping = fiscal_doc.includes_shipping
+            
             # Genera XML
-            xml_content = self._generate_xml(order_data, line_items, fiscal_doc.document_number)
+            xml_content = self._generate_xml(order_data, line_items, fiscal_doc.document_number, include_shipping=include_shipping)
             
             # Genera filename
             filename = self._generate_filename(fiscal_doc.document_number)

@@ -34,13 +34,14 @@ class FiscalDocument(Base):
     xml_content = Column(Text, nullable=True)
     
     # Status
-    status = Column(String(50), nullable=False, default="pending")  # pending, generated, uploaded, sent, error
+    status = Column(String(50), nullable=False, default="pending")  # pending, generated, uploaded, sent, issued, error
     is_electronic = Column(Boolean, default=False, nullable=False)  # True se FatturaPA elettronica
     upload_result = Column(Text, nullable=True)  # JSON result from upload
     
     # Dati specifici note di credito
     credit_note_reason = Column(Text, nullable=True)  # Motivo nota di credito
     is_partial = Column(Boolean, default=False, nullable=False)  # True se parziale
+    includes_shipping = Column(Boolean, default=True, nullable=False)  # True se include spese di spedizione
     
     # Importi (per note parziali)
     total_amount = Column(Float, nullable=True)  # Importo totale documento
