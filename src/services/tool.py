@@ -165,7 +165,7 @@ def calculate_order_totals(order_details: list, tax_percentages: dict = None) ->
         # Applica sconti
         discount_amount = 0.0
         if order_detail.reduction_percent and order_detail.reduction_percent > 0:
-            discount_amount = price_base * (order_detail.reduction_percent / 100)
+            discount_amount = calculate_amount_with_percentage(price_base, order_detail.reduction_percent)
         elif order_detail.reduction_amount and order_detail.reduction_amount > 0:
             discount_amount = order_detail.reduction_amount
         
@@ -204,3 +204,21 @@ def apply_order_totals_to_order(order, totals: dict, use_tax_included: bool = Tr
     
     order.total_weight = totals['total_weight']
     order.total_discounts = totals['total_discounts']
+
+
+def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
+    """
+    Calcola l'importo risultante applicando una percentuale
+    
+    Args:
+        amount: Importo base
+        percentage: Percentuale da applicare (es. 22 per 22%)
+    
+    Returns:
+        float: Importo calcolato (amount × percentage / 100)
+    
+    Esempio:
+        calculate_amount_with_percentage(100, 22) → 22.0
+        calculate_amount_with_percentage(50.5, 10) → 5.05
+    """
+    return amount * (percentage / 100)

@@ -7,6 +7,7 @@ from src.models.order_detail import OrderDetail
 from src.models.customer import Customer
 from src.models.address import Address
 from src.models.tax import Tax
+from src.services.tool import calculate_amount_with_percentage
 from src.models.product import Product
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema, 
@@ -122,7 +123,6 @@ class PreventivoRepository:
         tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
         tax_rate = tax.percentage if tax else 0.0
         
-        prezzo_totale_riga = product_price * product_qty * (1 + tax_rate / 100)
         
         order_detail = OrderDetail(
             id_origin=0,  # Per articoli preventivo
@@ -281,7 +281,7 @@ class PreventivoRepository:
             
             # Calcola prezzi
             prezzo_netto = articolo.product_price * articolo.product_qty
-            prezzo_iva = prezzo_netto * (tax_rate / 100)
+            prezzo_iva = calculate_amount_with_percentage(prezzo_netto, tax_rate)
             
             total_imponibile += prezzo_netto
             total_iva += prezzo_iva

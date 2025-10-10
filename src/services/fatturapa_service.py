@@ -8,11 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
 
-from src.models import Order, Address, AppConfiguration
-from src.models.fiscal_document import FiscalDocument
-from src.models.fiscal_document_detail import FiscalDocumentDetail
-from src.models.order_detail import OrderDetail
-from src.models.country import Country
+from src.services.tool import calculate_amount_with_percentage
+from src.models import Order, Address, FiscalDocument, FiscalDocumentDetail, OrderDetail, Country
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.tax_repository import TaxRepository
 from src.services.province_service import province_service
@@ -232,7 +229,7 @@ class FatturaPAService:
             
             # Calcolo corretto imponibile e imposta
             prezzo_totale_netto = product_price_no_tax * product_qty  # Imponibile (base imponibile)
-            imposta_linea = prezzo_totale_netto * (tax_rate / 100)  # IVA = imponibile * aliquota
+            imposta_linea = calculate_amount_with_percentage(prezzo_totale_netto, tax_rate)  # IVA = imponibile * aliquota 
             
             print(f"  Prezzo unitario senza IVA: {product_price_no_tax:.4f}")
             print(f"  Quantità: {product_qty:.2f}")

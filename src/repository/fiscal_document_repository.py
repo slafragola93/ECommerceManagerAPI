@@ -12,6 +12,7 @@ from src.models.order_detail import OrderDetail
 from src.models.address import Address
 from src.models.country import Country
 from src.models.shipping import Shipping
+from src.services.tool import calculate_amount_with_percentage
 
 
 class FiscalDocumentRepository:
@@ -55,8 +56,6 @@ class FiscalDocumentRepository:
             document_number = self._get_next_electronic_number('invoice')
             tipo_documento_fe = 'TD01'
         
-        # Crea fattura (total_amount verrà calcolato dopo)
-        print(order)
         
         # Determina status iniziale
         # - 'pending': fatture elettroniche in attesa di generazione XML
@@ -81,9 +80,7 @@ class FiscalDocumentRepository:
         order_details = self.db.query(OrderDetail).filter(
             OrderDetail.id_order == id_order
         ).all()
-        
-        total_details_amount = 0.0  # Somma dei total_amount dei dettagli (senza IVA, già scontati)
-        
+                
         for od in order_details:
             # unit_price: prezzo unitario originale senza alterazioni
             unit_price = od.product_price or 0.0
@@ -94,7 +91,7 @@ class FiscalDocumentRepository:
             
             # Applica sconti a total_amount
             if od.reduction_percent and od.reduction_percent > 0:
-                sconto = total_base * (od.reduction_percent / 100)
+                sconto = calculate_amount_with_percentage(total_base, od.reduction_percent)
                 total_amount = total_base - sconto
             elif od.reduction_amount and od.reduction_amount > 0:
                 total_amount = total_base - od.reduction_amount
@@ -412,7 +409,7 @@ class FiscalDocumentRepository:
                     shipping_cost_no_vat = shipping.price_tax_excl
                     # Calcola IVA spedizione
                     shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
-                    shipping_vat_amount = shipping_cost_no_vat * (shipping_vat_percentage / 100)
+                    shipping_vat_amount = calculate_amount_with_percentage(shipping_cost_no_vat, shipping_vat_percentage)
                     print(f"Spese spedizione: {shipping_cost_no_vat}€ (IVA {shipping_vat_percentage}% = {shipping_vat_amount}€)")
         
         # Totale imponibile (prodotti + spedizione)
@@ -425,7 +422,7 @@ class FiscalDocumentRepository:
         # Calcola l'IVA sui prodotti
         vat_percentage = self._get_vat_percentage_from_order_details([od_first]) 
         print(f"vat_percentage prodotti: {vat_percentage}")
-        products_vat_amount = total_imponibile_prodotti * (vat_percentage / 100)
+        products_vat_amount = calculate_amount_with_percentage(total_imponibile_prodotti, vat_percentage)
         print(f"IVA prodotti: {products_vat_amount}")
         
         # Totale IVA (prodotti + spedizione)
