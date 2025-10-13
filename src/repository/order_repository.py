@@ -175,6 +175,9 @@ class OrderRepository:
         if data.shipping:
             if isinstance(data.shipping, ShippingSchema):
                 order.id_shipping = self.shipping_repository.create_and_get_id(data=data.shipping)
+            elif isinstance(data.shipping, int):
+                # Se è un ID, usa la spedizione esistente
+                order.id_shipping = data.shipping
         else:
 
             # Debug per capire se è un oggetto o un ID
@@ -205,6 +208,9 @@ class OrderRepository:
             order.id_sectional = QueryUtils.create_and_set_id(repository=self.sectional_repository,
                                                               schema_datas=data,
                                                               field_name="sectional")
+        elif isinstance(data.sectional, int):
+            # Se è un ID, usa direttamente l'ID
+            order.id_sectional = data.sectional
 
         # Set stato di default per l'ordine
         order.order_states = [self.order_state_repository.get_by_id(1)]

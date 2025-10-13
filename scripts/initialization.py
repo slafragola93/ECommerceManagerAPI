@@ -161,8 +161,7 @@ try:
         if platform not in platforms_already_presents:
             platform = Platform(
                 name=platform,
-                url="",
-                api_key=""
+                is_default=False
             )
             dest_session.add(platform)
 

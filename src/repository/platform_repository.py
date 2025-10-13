@@ -63,6 +63,15 @@ class PlatformRepository:
             Optional[Platform]: Platform if found, None otherwise
         """
         return self.db.query(Platform).filter(Platform.name == name).first()
+    
+    def get_default(self) -> Optional[Platform]:
+        """
+        Get default platform (where is_default = 1)
+
+        Returns:
+            Optional[Platform]: Default platform if found, None otherwise
+        """
+        return self.db.query(Platform).filter(Platform.is_default == True).first()
 
     def create(self, platform_data: dict) -> Platform:
         """

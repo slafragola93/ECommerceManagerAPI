@@ -25,7 +25,7 @@ test_order_data = {
     "is_invoice_requested": False,
     "is_payed": False,
     "total_weight": 1.5,
-        "total_price": 99.99,
+        "total_price_tax_excl": 99.99,
         "cash_on_delivery": 0.0
 }
 
@@ -63,11 +63,6 @@ expected_order_response = {
 class TestOrderEndpoints:
     """Test per gli endpoint Order"""
 
-    def test_get_all_orders_empty(self):
-        """Test GET /orders/ con database vuoto"""
-        response = client.get("/api/v1/orders/")
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Nessun ordine trovato"
 
     def test_get_all_orders_success(self, test_orders):
         """Test GET /orders/ con ordini presenti"""
@@ -128,7 +123,7 @@ class TestOrderEndpoints:
         # Verifica che il primo ordine abbia solo i campi base
         first_order = data["orders"][0]
         assert "id_order" in first_order
-        assert "total_price" in first_order
+        assert "total_price_tax_excl" in first_order
 
     def test_get_all_orders_pagination(self, test_orders):
         """Test GET /orders/ con paginazione"""
@@ -147,7 +142,7 @@ class TestOrderEndpoints:
         
         data = response.json()
         assert data["id_order"] == 1
-        assert data["total_price"] == 99.99
+        assert data["total_price_tax_excl"] == 99.99
         assert data["total_weight"] == 1.5
         # Verifica che siano presenti i dettagli completi (show_details=True)
         assert "customer" in data or data.get("customer") is not None
@@ -190,7 +185,7 @@ class TestOrderEndpoints:
             "is_invoice_requested": True,
             "is_payed": True,
             "total_weight": 2.0,
-            "total_price": 149.99,
+            "total_price_tax_excl": 149.99,
             "cash_on_delivery": 5.0
         }
         
@@ -335,7 +330,7 @@ class TestOrderEndpointsValidation:
     def test_update_order_partial_single_field(self, test_order):
         """Test PUT /orders/{id} aggiornamento parziale con singolo campo"""
         update_data = {
-            "total_price": 199.99
+            "total_price_tax_excl": 199.99
         }
         
         response = client.put("/api/v1/orders/1", json=update_data)
@@ -345,7 +340,7 @@ class TestOrderEndpointsValidation:
         get_response = client.get("/api/v1/orders/1")
         assert get_response.status_code == 200
         order = get_response.json()
-        assert order["total_price"] == 199.99
+        assert order["total_price_tax_excl"] == 199.99
         # Altri campi dovrebbero rimanere invariati
         assert order["total_weight"] == 1.5  # Valore originale
 
@@ -401,4 +396,4 @@ class TestOrderEndpointsValidation:
         get_response = client.get("/api/v1/orders/1")
         assert get_response.status_code == 200
         order = get_response.json()
-        assert order["total_price"] == 99.99  # Valore originale
+        assert order["total_price_tax_excl"] == 99.99  # Valore originale

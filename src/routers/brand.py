@@ -40,25 +40,6 @@ async def get_all_brands(user: user_dependency,
     return {"brands": brands, "total": total_count, "page": page, "limit": limit}
 
 
-@router.get("/all", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_list_all_brands(user: user_dependency,
-                              br: BrandRepository = Depends(get_repository)):
-    """
-    Restituisce l'elenco di tutti i marchi disponibili.
-
-    - **user**: Utente autenticato (dipendenza).
-    - **db**: Sessione del database (dipendenza).
-    """
-
-    brands = br.list_all()
-
-    if brands is None:
-        raise HTTPException(status_code=404, detail="Brands non trovati")
-
-    return brands
-
 
 @router.get("/{brand_id}", status_code=status.HTTP_200_OK, response_model=BrandResponseSchema)
 @check_authentication

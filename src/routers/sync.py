@@ -23,6 +23,27 @@ def get_platform_repository(db: db_dependency) -> PlatformRepository:
     return PlatformRepository(db)
 
 
+def get_default_platform(pr: PlatformRepository = Depends(get_platform_repository)):
+    """
+    Dependency per recuperare la piattaforma di default (is_default = 1)
+    
+    Raises:
+        HTTPException 400: Se non viene trovata nessuna piattaforma di default
+    
+    Returns:
+        Platform: La piattaforma di default
+    """
+    platform = pr.get_default()
+    
+    if not platform:
+        raise HTTPException(
+            status_code=400, 
+            detail="No default platform found (is_default = 1). Please set a default platform."
+        )
+    
+    return platform
+
+
 @router.post("/prestashop", status_code=status.HTTP_202_ACCEPTED)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
@@ -30,53 +51,29 @@ async def sync_prestashop(
     background_tasks: BackgroundTasks,
     user: user_dependency,
     db: db_dependency,
-    pr: PlatformRepository = Depends(get_platform_repository),
+    platform = Depends(get_default_platform),
     limit: int = None
 ):
     """
-    Start PrestaShop full synchronization process
+    Start PrestaShop incremental synchronization process
     
     This endpoint starts an asynchronous synchronization process that will:
-    1. Retrieve PrestaShop API credentials from platforms table (ID 1)
+    1. Retrieve the default platform (is_default = 1)
     2. Sync all data in the correct order (base tables first, then dependent tables)
     3. Process data in batches to avoid timeouts
     4. Log all operations for tracking
     
     Returns:
         202 Accepted: Synchronization started successfully
-        400 Bad Request: Missing configuration or invalid credentials
+        400 Bad Request: Missing configuration or invalid platform
         500 Internal Server Error: Failed to start synchronization
     """
     try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        api_key = platform.api_key
-        base_url = platform.url
-        
-        if not api_key:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop API key not found in platforms table"
-            )
-        
-        if not base_url:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop base URL not found in platforms table"
-            )
-        
         # Start background synchronization
         background_tasks.add_task(
             _run_prestashop_sync,
             db=db,
-            platform_id=1,
+            platform_id=platform.id_platform,
             new_elements=True,
             limit=limit
         )
@@ -85,7 +82,9 @@ async def sync_prestashop(
             "message": "PrestaShop incremental synchronization started",
             "status": "accepted",
             "sync_type": "incremental",
-            "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
+            "platform_id": platform.id_platform,
+            "platform_name": platform.name,
+            "sync_id": f"prestashop_incremental_{user['id']}_{int(__import__('time').time())}"
         }
         
     except HTTPException:
@@ -103,52 +102,28 @@ async def sync_prestashop_full(
     background_tasks: BackgroundTasks,
     user: user_dependency,
     db: db_dependency,
-    pr: PlatformRepository = Depends(get_platform_repository)
+    platform = Depends(get_default_platform)
 ):
     """
     Start PrestaShop full synchronization process
     
     This endpoint starts an asynchronous synchronization process that will:
-    1. Retrieve PrestaShop API credentials from platforms table (ID 1)
+    1. Retrieve the default platform (is_default = 1)
     2. Sync all data in the correct order (base tables first, then dependent tables)
     3. Process data in batches to avoid timeouts
     4. Log all operations for tracking
     
     Returns:
         202 Accepted: Synchronization started successfully
-        400 Bad Request: Missing configuration or invalid credentials
+        400 Bad Request: Missing configuration or invalid platform
         500 Internal Server Error: Failed to start synchronization
     """
     try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        api_key = platform.api_key
-        base_url = platform.url
-        
-        if not api_key:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop API key not found in platforms table"
-            )
-        
-        if not base_url:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop base URL not found in platforms table"
-            )
-        
         # Start background synchronization
         background_tasks.add_task(
             _run_prestashop_sync,
             db=db,
-            platform_id=1,
+            platform_id=platform.id_platform,
             new_elements=False
         )
         
@@ -156,6 +131,8 @@ async def sync_prestashop_full(
             "message": "PrestaShop full synchronization started",
             "status": "accepted",
             "sync_type": "full",
+            "platform_id": platform.id_platform,
+            "platform_name": platform.name,
             "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
         }
         
@@ -198,7 +175,8 @@ async def get_prestashop_sync_status(
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_prestashop_last_imported_ids(
     user: user_dependency,
-    db: db_dependency
+    db: db_dependency,
+    platform = Depends(get_default_platform)
 ):
     """
     Get the last imported ID origin for each table
@@ -213,15 +191,19 @@ async def get_prestashop_last_imported_ids(
     """
     try:
         # Create a temporary service instance to get last IDs
-        async with PrestaShopService(db, platform_id=1) as ps_service:
+        async with PrestaShopService(db, platform_id=platform.id_platform) as ps_service:
             last_ids = await ps_service._get_last_imported_ids()
             
             return {
                 "last_imported_ids": last_ids,
+                "platform_id": platform.id_platform,
+                "platform_name": platform.name,
                 "message": "Last imported IDs retrieved successfully",
                 "note": "These IDs represent the highest ID origin imported for each table"
             }
             
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -293,12 +275,12 @@ async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: 
 async def test_prestashop_connection(
     user: user_dependency,
     db: db_dependency,
-    pr: PlatformRepository = Depends(get_platform_repository)
+    platform = Depends(get_default_platform)
 ):
     """
     Test PrestaShop API connection
     
-    This endpoint tests the connection to PrestaShop API using the configured credentials.
+    This endpoint tests the connection to PrestaShop API using the ecommerce configurations.
     Useful for verifying configuration before starting a full synchronization.
     
     Returns:
@@ -308,32 +290,8 @@ async def test_prestashop_connection(
         500 Internal Server Error: Connection failed
     """
     try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        api_key = platform.api_key
-        base_url = platform.url
-        
-        if not api_key:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop API key not found in platforms table"
-            )
-        
-        if not base_url:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop base URL not found in platforms table"
-            )
-        
         # Test connection
-        async with PrestaShopService(db, platform_id=1) as ps_service:
+        async with PrestaShopService(db, platform_id=platform.id_platform) as ps_service:
             # Try to get a simple endpoint (languages)
             try:
                 response = await ps_service._make_request('/api/languages')
@@ -341,8 +299,10 @@ async def test_prestashop_connection(
                 return {
                     "status": "success",
                     "message": "PrestaShop connection successful",
-                    "base_url": base_url,
-                    "api_key_preview": f"{api_key[:10]}...",
+                    "platform_id": platform.id_platform,
+                    "platform_name": platform.name,
+                    "base_url": ps_service.base_url,
+                    "api_key_preview": f"{ps_service.api_key[:10]}..." if len(ps_service.api_key) > 10 else "***",
                     "test_endpoint": "/api/languages",
                     "response_keys": list(response.keys()) if response else [],
                     "response_sample": str(response)[:500] if response else "No response"
@@ -351,8 +311,8 @@ async def test_prestashop_connection(
                 return {
                     "status": "error",
                     "message": f"PrestaShop connection failed: {str(e)}",
-                    "base_url": base_url,
-                    "api_key_preview": f"{api_key[:10]}...",
+                    "platform_id": platform.id_platform,
+                    "platform_name": platform.name,
                     "test_endpoint": "/api/languages",
                     "error_details": str(e)
                 }
@@ -363,267 +323,4 @@ async def test_prestashop_connection(
         raise HTTPException(
             status_code=500,
             detail=f"PrestaShop connection test failed: {str(e)}"
-        )
-
-
-@router.post("/prestashop/test-endpoint", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
-async def test_prestashop_endpoint(
-    user: user_dependency,
-    db: db_dependency,
-    endpoint: str = "/api/languages",
-    pr: PlatformRepository = Depends(get_platform_repository)
-):
-    """
-    Test a specific PrestaShop API endpoint
-    
-    This endpoint allows testing specific PrestaShop API endpoints to debug issues.
-    
-    Args:
-        endpoint: The API endpoint to test (e.g., "/api/languages", "/api/products")
-        
-    Returns:
-        Detailed response from the endpoint
-    """
-    try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        api_key = platform.api_key
-        base_url = platform.url
-        
-        if not api_key:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop API key not found in platforms table"
-            )
-        
-        if not base_url:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop base URL not found in platforms table"
-            )
-        
-        # Test specific endpoint
-        async with PrestaShopService(db, platform_id=1) as ps_service:
-            try:
-                response = await ps_service._make_request(endpoint)
-                
-                return {
-                    "status": "success",
-                    "message": f"Endpoint {endpoint} test successful",
-                    "endpoint": endpoint,
-                    "base_url": base_url,
-                    "api_key_preview": f"{api_key[:10]}...",
-                    "response_keys": list(response.keys()) if isinstance(response, dict) else "Not a dict",
-                    "response_type": type(response).__name__,
-                    "response_sample": str(response)[:1000] if response else "No response"
-                }
-            except Exception as e:
-                return {
-                    "status": "error",
-                    "message": f"Endpoint {endpoint} test failed: {str(e)}",
-                    "endpoint": endpoint,
-                    "base_url": base_url,
-                    "api_key_preview": f"{api_key[:10]}...",
-                    "error_details": str(e)
-                }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Endpoint test failed: {str(e)}"
-        )
-
-
-@router.post("/prestashop/debug-response", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
-async def debug_prestashop_response(
-    user: user_dependency,
-    db: db_dependency,
-    endpoint: str = "/api/languages",
-    pr: PlatformRepository = Depends(get_platform_repository)
-):
-    """
-    Debug PrestaShop API response structure
-    
-    This endpoint shows the raw response structure to help debug parsing issues.
-    """
-    try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        # Test specific endpoint
-        async with PrestaShopService(db, platform_id=1) as ps_service:
-            try:
-                response = await ps_service._make_request(endpoint)
-                
-                return {
-                    "status": "success",
-                    "endpoint": endpoint,
-                    "response_type": type(response).__name__,
-                    "response_structure": str(response)[:2000] if response else "No response",
-                    "response_keys": list(response.keys()) if isinstance(response, dict) else "Not a dict",
-                    "response_length": len(response) if hasattr(response, '__len__') else "No length"
-                }
-            except Exception as e:
-                return {
-                    "status": "error",
-                    "endpoint": endpoint,
-                    "error_details": str(e)
-                }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Debug failed: {str(e)}"
-        )
-
-
-@router.post("/prestashop/test-order-details", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
-async def test_order_details_endpoint(
-    user: user_dependency,
-    db: db_dependency,
-    pr: PlatformRepository = Depends(get_platform_repository)
-):
-    """
-    Test order_details endpoint specifically
-    
-    This endpoint tests the order_details endpoint to see the exact structure.
-    """
-    try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        # Test order_details endpoint
-        async with PrestaShopService(db, platform_id=1) as ps_service:
-            try:
-                # Test with a small limit to see structure
-                response = await ps_service._make_request('/api/order_details', {'limit': '5'})
-                
-                return {
-                    "status": "success",
-                    "endpoint": "/api/order_details",
-                    "response_type": type(response).__name__,
-                    "response_structure": str(response)[:2000] if response else "No response",
-                    "response_keys": list(response.keys()) if isinstance(response, dict) else "Not a dict",
-                    "response_length": len(response) if hasattr(response, '__len__') else "No length"
-                }
-            except Exception as e:
-                return {
-                    "status": "error",
-                    "endpoint": "/api/order_details",
-                    "error_details": str(e)
-                }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Test failed: {str(e)}"
-        )
-
-
-@router.post("/prestashop/test-endpoints", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
-async def test_all_endpoints(
-    user: user_dependency,
-    db: db_dependency,
-    pr: PlatformRepository = Depends(get_platform_repository)
-):
-    """
-    Test all PrestaShop endpoints to see which ones work
-    
-    This endpoint tests all the endpoints we use to identify working ones.
-    """
-    try:
-        # Get PrestaShop configuration from platforms table (ID 1)
-        platform = pr.get_by_id(1)
-        
-        if not platform:
-            raise HTTPException(
-                status_code=400, 
-                detail="PrestaShop platform not found in platforms table (ID 1)"
-            )
-        
-        # Test all endpoints
-        endpoints_to_test = [
-            '/api/languages',
-            '/api/countries', 
-            '/api/manufacturers',
-            '/api/categories',
-            '/api/carriers',
-            '/api/products',
-            '/api/customers',
-            '/api/orders',
-            '/api/addresses',
-            '/api/order_details',
-            '/api/order_detail'
-        ]
-        
-        results = {}
-        
-        async with PrestaShopService(db, platform_id=1) as ps_service:
-            for endpoint in endpoints_to_test:
-                try:
-                    print(f"Testing endpoint: {endpoint}")
-                    response = await ps_service._make_request(endpoint, {'limit': '5'})
-                    
-                    results[endpoint] = {
-                        'status': 'success',
-                        'response_type': type(response).__name__,
-                        'response_keys': list(response.keys()) if isinstance(response, dict) else "Not a dict",
-                        'response_length': len(response) if hasattr(response, '__len__') else "No length"
-                    }
-                    
-                except Exception as e:
-                    results[endpoint] = {
-                        'status': 'error',
-                        'error': str(e)
-                    }
-                
-                # Small delay between requests
-                import asyncio
-                await asyncio.sleep(0.5)
-        
-        return {
-            "status": "completed",
-            "endpoints_tested": len(endpoints_to_test),
-            "results": results
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Test failed: {str(e)}"
         )

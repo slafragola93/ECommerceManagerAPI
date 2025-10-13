@@ -37,19 +37,6 @@ async def get_all_payments(user: user_dependency,
     return {"payments": payments, "total": total_count, "page": page, "limit": limit}
 
 
-@router.get("/all", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_list_all_payments(user: user_dependency,
-                                pr: PaymentRepository = Depends(get_repository)):
-
-    payments = pr.list_all()
-
-    if not payments:
-        raise HTTPException(status_code=404, detail="Nessun sezionale trovato")
-
-    return payments
-
 
 @router.get("/{payment_id}", status_code=status.HTTP_200_OK, response_model=PaymentResponseSchema)
 @check_authentication

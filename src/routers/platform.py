@@ -147,6 +147,5 @@ def formatted_output(platform: Platform):
     return {
         "id_platform": platform.id_platform,
         "name": platform.name,
-        "url": platform.url,
-        "api_key": platform.api_key,
+        "is_default": platform.is_default
     }

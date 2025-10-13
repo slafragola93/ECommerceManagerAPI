@@ -146,6 +146,129 @@ async def create_preventivo(
                         }
                     ]
                 }
+            },
+            "con_spedizione": {
+                "summary": "Preventivo con spedizione inclusa",
+                "description": "Include i costi di spedizione nel preventivo. La spedizione crea un oggetto Shipping separato.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "shipping": {
+                        "price_tax_excl": 10.00,
+                        "price_tax_incl": 12.20,
+                        "id_carrier_api": 1,
+                        "id_tax": 1,
+                        "shipping_message": "Spedizione express"
+                    },
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 2,
+                            "id_tax": 9
+                        }
+                    ]
+                }
+            },
+            "con_sectional_esistente": {
+                "summary": "Preventivo con sezionale esistente (ID)",
+                "description": "Usa un sezionale già esistente nel database passando solo l'ID.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "sectional": {"id": 1},
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 1,
+                            "id_tax": 1
+                        }
+                    ]
+                }
+            },
+            "con_sectional_nuovo": {
+                "summary": "Preventivo con sezionale nuovo o riutilizzo per nome",
+                "description": "Se esiste già un sezionale con lo stesso nome, viene riutilizzato. Altrimenti ne viene creato uno nuovo.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "sectional": {
+                        "data": {
+                            "name": "Preventivi 2025"
+                        }
+                    },
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 1,
+                            "id_tax": 1
+                        }
+                    ]
+                }
+            },
+            "con_fattura": {
+                "summary": "Preventivo con richiesta fattura",
+                "description": "Esempio di preventivo che richiede fatturazione.",
+                "value": {
+                    "customer": {"id": 294488},
+                    "address_delivery": {"id": 470625},
+                    "is_invoice_requested": True,
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 1,
+                            "id_tax": 1
+                        }
+                    ]
+                }
+            },
+            "stesso_indirizzo": {
+                "summary": "Indirizzo fatturazione = consegna (deduplica automatica)",
+                "description": "Se address_invoice è uguale a address_delivery, viene creato un solo indirizzo e riutilizzato per entrambi.",
+                "value": {
+                    "customer": {
+                        "data": {
+                            "firstname": "Mario",
+                            "lastname": "Rossi",
+                            "email": "mario@example.com",
+                            "id_origin": 0
+                        }
+                    },
+                    "address_delivery": {
+                        "data": {
+                            "firstname": "Mario",
+                            "lastname": "Rossi",
+                            "address1": "Via Roma 1",
+                            "address2": "",
+                            "city": "Milano",
+                            "postcode": "20100",
+                            "state": "MI",
+                            "phone": "123456789",
+                            "id_country": 1,
+                            "id_origin": 0
+                        }
+                    },
+                    "address_invoice": {
+                        "data": {
+                            "firstname": "Mario",
+                            "lastname": "Rossi",
+                            "address1": "Via Roma 1",
+                            "address2": "",
+                            "city": "Milano",
+                            "postcode": "20100",
+                            "state": "MI",
+                            "phone": "123456789",
+                            "id_country": 1,
+                            "id_origin": 0
+                        }
+                    },
+                    "articoli": [
+                        {
+                            "id_product": 123,
+                            "product_qty": 1,
+                            "id_tax": 1
+                        }
+                    ]
+                }
             }
         }
     ),
@@ -155,27 +278,116 @@ async def create_preventivo(
     """
     Crea un nuovo preventivo
     
-    ## Regole importanti:
+    ## Parametri Principali
     
-    ### Customer e Address:
-    - **customer**: OBBLIGATORIO - Passa `{"id": X}` per usare un customer esistente, oppure `{"data": {...}}` per crearne uno nuovo
-    - **address_delivery**: OBBLIGATORIO - Passa `{"id": X}` per usare un indirizzo esistente, oppure `{"data": {...}}` per crearne uno nuovo
-    - **address_invoice**: OPZIONALE - Se non specificato, verrà usato `address_delivery` anche come indirizzo di fatturazione
+    ### Customer (OBBLIGATORIO)
+    - **Con ID esistente**: `{"id": 123}` -> Usa customer già presente in database
+    - **Crea nuovo**: `{"data": {"firstname": "Mario", "lastname": "Rossi", "email": "...", ...}}` -> Crea nuovo customer
+    - Il campo `id_customer` negli indirizzi viene **sempre ignorato** e sostituito con l'ID generato/esistente
     
-    ### Articoli:
-    - **Con id_product**: Se specifichi `id_product`, verranno usati i dati del prodotto esistente (solo `product_qty` è obbligatorio)
-    - **Senza id_product**: Per prodotti personalizzati, devi specificare `product_name`, `product_reference`, `product_price`, `product_qty`
-    - **id_tax**: Sempre obbligatorio per ogni articolo
-    - **Sconti**: Usa `reduction_percent` (%) o `reduction_amount` (importo fisso), non entrambi
+    ### Address Delivery (OBBLIGATORIO)
+    - **Con ID esistente**: `{"id": 456}` -> Usa indirizzo già presente
+    - **Crea nuovo**: `{"data": {"firstname": "...", "address1": "...", ...}}` -> Crea nuovo indirizzo
+    - Viene automaticamente associato al customer
     
-    ### Calcolo totali:
-    - Il totale viene calcolato automaticamente sommando (prezzo * quantità) di ogni articolo
-    - Gli sconti vengono applicati per riga
-    - La tassa viene applicata al totale finale (non per singolo articolo)
+    ### Address Invoice (OPZIONALE)
+    - **Non specificato**: Usa automaticamente `address_delivery` anche per fatturazione
+    - **Con ID**: `{"id": 789}` -> Usa indirizzo esistente
+    - **Crea nuovo**: `{"data": {...}}` -> Crea nuovo indirizzo
+    - **Deduplica intelligente**: Se i dati sono identici a `address_delivery`, viene **riutilizzato lo stesso ID** (evita duplicati)
     
-    ### Reference:
-    - La reference viene generata automaticamente nel formato `PRV{document_number}`
-    - Non è necessario specificarla
+    ### Sectional (OPZIONALE)
+    - **Con ID esistente**: `{"id": 1}` -> Usa sezionale esistente
+    - **Con nome**: `{"data": {"name": "Preventivi 2025"}}` -> Comportamento intelligente:
+      - Se esiste un sezionale con quel **nome** -> **riutilizza** (deduplica automatica)
+      - Se NON esiste -> **crea** nuovo sezionale
+    - Se omesso: `id_sectional` sarà `null`
+    
+    ### Shipping (OPZIONALE)
+    - **Campi obbligatori**:
+      - `price_tax_excl`: Prezzo senza IVA (es. 7.99)
+      - `price_tax_incl`: Prezzo con IVA (es. 9.74)
+      - `id_carrier_api`: ID del corriere
+      - `id_tax`: ID aliquota IVA per la spedizione
+           - **Campi opzionali**:
+             - `shipping_message`: Note sulla spedizione
+    - Crea un oggetto `Shipping` separato collegato tramite `id_shipping`
+    - Il campo `weight` della spedizione viene impostato automaticamente uguale al peso totale dei prodotti
+    - Quando converti in ordine, la spedizione viene **riutilizzata** (non duplicata)
+    
+    ### Is Invoice Requested (OPZIONALE)
+    - **Default**: `false` se non specificato
+    - **Valori**: `true` o `false`
+    - **Funzione**: Indica se il preventivo richiede fatturazione
+    - **Trasferimento**: Questo valore viene trasferito all'ordine durante la conversione
+    
+    ### Articoli (Lista)
+    - **Prodotto esistente**: Specifica solo `id_product`, `product_qty`, `id_tax`
+    - **Prodotto personalizzato**: Specifica `product_name`, `product_reference`, `product_price`, `product_qty`, `id_tax`
+    - **id_tax**: Sempre obbligatorio per calcolare l'IVA
+    - **Sconti**: Usa `reduction_percent` (%) O `reduction_amount` (EUR), non entrambi
+    - **IMPORTANTE**: Prezzi devono essere **SEMPRE SENZA IVA** (l'IVA viene calcolata automaticamente)
+    
+    ---
+    
+    ## Calcolo Totali Automatico
+    
+    ### Formula
+    ```
+    total_price = Somma(articoli con IVA) + shipping.price_tax_incl
+    total_weight = Somma(peso articoli)
+    ```
+    
+    **Nota**: Il campo `weight` della spedizione viene impostato automaticamente uguale al peso totale dei prodotti.
+    
+    ### Esempio Pratico
+    - Articolo: 10,50 EUR (senza IVA) x 1 qty, IVA 22% -> **12,81 EUR**
+    - Spedizione: 9,74 EUR (con IVA)
+    - **Total_price = 12,81 + 9,74 = 22,55 EUR**
+    
+    ### Dettaglio Calcolo per Articolo
+    1. **Prezzo base** = `product_price x product_qty`
+    2. **Sconto** = prezzo_base x (reduction_percent / 100) o reduction_amount
+    3. **Prezzo scontato** = prezzo_base - sconto
+    4. **IVA** = prezzo_scontato x (tax_percentage / 100)
+    5. **Prezzo finale** = prezzo_scontato + IVA
+    
+    ---
+    
+    ## Deduplicazione Automatica
+    
+    Il sistema evita duplicati in due modi:
+    
+    1. **Indirizzi identici**: Se `address_invoice` = `address_delivery` -> crea **1 solo indirizzo**
+    2. **Sectional per nome**: Se esiste già `name = "X"` -> **riutilizza ID esistente**
+    
+    ---
+    
+    ## Campi Generati Automaticamente
+    
+    - `document_number`: Numero sequenziale (es. "000001")
+    - `total_price`: Totale con IVA inclusa
+    - `total_weight`: Peso totale
+    - `id_shipping`: ID dell'oggetto Shipping creato (se presente)
+    - `id_sectional`: ID del sezionale (creato/riutilizzato se presente)
+    - `date_add`: Data di creazione
+    - `updated_at`: Data ultimo aggiornamento
+    
+    ---
+    
+    ## Esempi Disponibili
+    
+    Vedi gli esempi in Swagger per casi d'uso specifici:
+    - `con_id_esistenti`: Usa entità esistenti (customer, address)
+    - `crea_nuovo_customer`: Crea tutto da zero
+    - `senza_address_invoice`: Usa delivery come invoice
+    - `prodotto_personalizzato`: Articolo custom
+    - `mix_prodotti`: Mix prodotti esistenti + personalizzati
+    - `con_spedizione`: Include spedizione
+    - `con_sectional_esistente`: Usa sezionale esistente
+    - `con_sectional_nuovo`: Crea/riutilizza sezionale per nome
+    - `con_fattura`: Richiesta fatturazione
+    - `stesso_indirizzo`: Deduplica automatica indirizzi
     """
     try:
         service = get_preventivo_service(db)
@@ -347,6 +559,39 @@ async def remove_articolo(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
+@router.delete("/{id_order_document}", status_code=status.HTTP_204_NO_CONTENT,
+               response_description="Preventivo eliminato con successo")
+async def delete_preventivo(
+    id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Elimina un preventivo
+    
+    Elimina il preventivo e tutti i suoi articoli associati.
+    
+    ## Note:
+    - L'eliminazione è **definitiva e non reversibile**
+    - Vengono eliminati anche **tutti gli articoli** del preventivo
+    - L'oggetto **Shipping** (se presente) NON viene eliminato - potrebbe essere usato da altri preventivi/ordini
+    - Se il preventivo è già stato convertito in ordine, l'**ordine NON verrà eliminato**
+    - Il customer e gli indirizzi NON vengono eliminati (possono essere usati da altri preventivi/ordini)
+    """
+    try:
+        service = get_preventivo_service(db)
+        success = service.delete_preventivo(id_order_document)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Preventivo non trovato")
+        
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
 @router.post("/{id_order_document}/convert-to-order", status_code=status.HTTP_200_OK,
              response_description="Preventivo convertito in ordine con successo")
 async def convert_to_order(
@@ -357,16 +602,52 @@ async def convert_to_order(
     """
     Converte preventivo in ordine
     
-    Converte automaticamente un preventivo in un ordine usando:
-    - Dati del cliente e indirizzi dal preventivo
-    - Articoli dal preventivo
-    - Valori di default per campi non specificati nel preventivo
+    Converte automaticamente un preventivo in un ordine trasferendo tutti i dati.
     
-    L'ordine creato avrà:
-    - Stato: "pending" (id_order_state = 1)
-    - Piattaforma: default (id_platform = 1)
-    - Pagamento/Spedizione: da configurare successivamente
-    - Reference: generata automaticamente (PRV{document_number})
+    ## Dati Trasferiti
+    
+    ### Informazioni Base
+    - **Customer**: ID cliente dal preventivo
+    - **Indirizzi**: Consegna e fatturazione dal preventivo
+    - **Sectional**: Sezionale dal preventivo (se presente)
+    - **Reference**: Generata automaticamente come `PRV{document_number}`
+    
+    ### Articoli
+    - Tutti gli articoli vengono **copiati** mantenendo:
+      - Prezzi originali
+      - Quantità
+      - Sconti applicati
+      - IVA
+    
+    ### Spedizione
+    - Se il preventivo ha `id_shipping`, viene **riutilizzato** nell'ordine
+    - **NON** viene creata una nuova spedizione (riutilizzo oggetto esistente)
+    
+    ### Totali
+    - `total_price`: Copiato dal preventivo (già con IVA inclusa)
+    - `total_weight`: Copiato dal preventivo
+    
+    ## L'ordine creato avrà
+    
+    - **id_order_state**: 1 (pending)
+    - **id_platform**: 1 (default)
+    - **id_sectional**: Ereditato dal preventivo (se presente)
+    - **id_shipping**: Ereditato dal preventivo (se presente)
+    - **reference**: PRV{document_number}
+    - **is_payed**: false
+    - **id_payment**: null (da configurare successivamente)
+    
+    ## Validazioni
+    
+    - Il preventivo deve esistere
+    - Il preventivo NON deve essere già stato convertito (controllo automatico)
+    
+    ## Note
+    
+    - La spedizione viene **riutilizzata**, non duplicata
+    - Gli articoli vengono copiati mantenendo tutti i dettagli
+    - Il preventivo rimane nel database e viene collegato all'ordine tramite `id_order`
+    - Non puoi convertire lo stesso preventivo due volte
     """
     try:
         service = get_preventivo_service(db)
@@ -380,27 +661,5 @@ async def convert_to_order(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
-
-@router.get("/{id_order_document}/totali", status_code=status.HTTP_200_OK,
-            response_description="Totali calcolati con successo")
-async def get_totals(
-    id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
-    user: User = user_dependency,
-    db: Session = db_dependency
-):
-    """Recupera totali calcolati del preventivo"""
-    try:
-        service = get_preventivo_service(db)
-        totals = service.get_totals(id_order_document)
-        
-        if not totals:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return totals
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")

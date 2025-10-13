@@ -13,11 +13,12 @@ class OrderDocumentSchema(BaseModel):
     id_address_invoice: Optional[int] = 0
     id_customer: Optional[int] = 0
     id_sectional: int = Field(..., gt=0)
+    id_shipping: int = Field(..., gt=0)
     document_number: str = Field(..., max_length=32)
     type_document: str = Field(..., max_length=32)
     total_weight: Optional[float] = 0.0
     total_price: Optional[float] = 0.0
-    delivery_price: Optional[float] = 0.0
+    is_invoice_requested: Optional[bool] = False
     note: Optional[str] = None
 
 
@@ -28,11 +29,12 @@ class OrderDocumentResponseSchema(BaseModel):
     address_invoice: AddressResponseSchema | None
     customer: CustomerResponseSchema | None
     sectional: str
+    id_shipping: int
     document_number: str
     type_document: str
     total_weight: float
     total_price: float
-    delivery_price: float
+    is_invoice_requested: bool
     note: str | None
 
 

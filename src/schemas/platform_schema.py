@@ -4,15 +4,13 @@ from pydantic import BaseModel, Field
 
 class PlatformSchema(BaseModel):
     name: str = Field(..., max_length=200)
-    url: Optional[str] = None
-    api_key: Optional[str] = None
+    is_default: bool = False
 
 
 class PlatformResponseSchema(BaseModel):
     id_platform: int
     name: str
-    url: str
-    api_key: str
+    is_default: bool
 
 
 class AllPlatformsResponseSchema(BaseModel):

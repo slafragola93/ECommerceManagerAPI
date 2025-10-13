@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from .customer_schema import CustomerSchema
 from .address_schema import AddressSchema
+from .shipping_schema import ShippingSchema
+from .sectional_schema import SectionalSchema
 
 
 class CustomerField(BaseModel):
@@ -32,6 +34,29 @@ class AddressField(BaseModel):
         return v
 
 
+class SectionalField(BaseModel):
+    """Campo sectional che può essere ID o oggetto completo"""
+    id: Optional[int] = Field(None, gt=0)
+    data: Optional[SectionalSchema] = None
+    
+    @validator('id', 'data')
+    def validate_sectional_field(cls, v, values):
+        """Valida che sia presente o id o data"""
+        if not v and not values.get('data') and not values.get('id'):
+            # Sectional è opzionale
+            return v
+        return v
+
+
+class ShippingField(BaseModel):
+    """Campo shipping opzionale per preventivi"""
+    price_tax_excl: float = Field(..., ge=0, description="Prezzo spedizione senza IVA")
+    price_tax_incl: float = Field(..., ge=0, description="Prezzo spedizione con IVA")
+    id_carrier_api: int = Field(..., gt=0, description="ID carrier API")
+    id_tax: int = Field(..., gt=0, description="ID aliquota IVA per spedizione")
+    shipping_message: Optional[str] = Field(None, max_length=200)
+
+
 class ArticoloPreventivoSchema(BaseModel):
     """Schema per articolo in preventivo (OrderDetail)"""
     id_product: Optional[int] = None  # Se articolo esistente
@@ -43,10 +68,6 @@ class ArticoloPreventivoSchema(BaseModel):
     id_tax: int = Field(..., gt=0)  # Sempre obbligatorio
     reduction_percent: Optional[float] = Field(0.0, ge=0)  # Sconto percentuale
     reduction_amount: Optional[float] = Field(0.0, ge=0)  # Sconto importo
-    rda: Optional[str] = Field(None, max_length=10)  # RDA
-    # Campi calcolati automaticamente
-    prezzo_totale_riga: Optional[float] = None
-    aliquota_iva: Optional[float] = None
     
     @validator('product_name', 'product_reference', 'product_price', 'product_qty')
     def validate_fields_when_no_product(cls, v, values):
@@ -61,6 +82,9 @@ class PreventivoCreateSchema(BaseModel):
     customer: CustomerField = Field(..., description="Customer (ID o oggetto completo)")
     address_delivery: AddressField = Field(..., description="Address delivery (ID o oggetto completo) - obbligatorio")
     address_invoice: Optional[AddressField] = Field(None, description="Address invoice (ID o oggetto completo) - se non specificato usa address_delivery")
+    sectional: Optional[SectionalField] = Field(None, description="Sezionale (ID o oggetto completo) - se esiste un sectional con lo stesso nome viene riutilizzato")
+    shipping: Optional[ShippingField] = Field(None, description="Dati spedizione (opzionale)")
+    is_invoice_requested: Optional[bool] = Field(False, description="Se richiedere fattura")
     note: Optional[str] = None
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
 

@@ -7,6 +7,8 @@ from src.models.order_detail import OrderDetail
 from src.models.customer import Customer
 from src.models.address import Address
 from src.models.tax import Tax
+from src.models.shipping import Shipping
+from src.models.sectional import Sectional
 from src.services.tool import calculate_amount_with_percentage
 from src.models.product import Product
 from src.schemas.preventivo_schema import (
@@ -15,6 +17,7 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoSchema,
     ArticoloPreventivoUpdateSchema
 )
+from src.schemas.address_schema import AddressSchema
 from src.services.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
 from .order_repository import OrderRepository
 from src.schemas.order_schema import OrderSchema
@@ -54,9 +57,12 @@ class PreventivoRepository:
         # Gestisci customer
         customer_id = self._handle_customer(preventivo_data, user_id)
         
+        # Gestisci sectional
+        sectional_id = self._handle_sectional(preventivo_data, user_id)
+        
         # Gestisci addresses
         delivery_address_id = self._handle_delivery_address(preventivo_data, customer_id, user_id)
-        invoice_address_id = self._handle_invoice_address(preventivo_data, customer_id, user_id)
+        invoice_address_id = self._handle_invoice_address(preventivo_data, customer_id, user_id, delivery_address_id)
         
         # Se address_invoice non è specificato, usa address_delivery
         if invoice_address_id is None:
@@ -76,16 +82,40 @@ class PreventivoRepository:
             id_customer=customer_id,
             id_address_delivery=delivery_address_id,
             id_address_invoice=invoice_address_id,
+            id_sectional=sectional_id,
             id_tax=id_tax,
+            is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
             note=preventivo_data.note
         )
         
-
         
         # Calcola totali prima di aggiungere OrderDocument
-        total_weight, total_price = self._calculate_totals_from_articoli(preventivo_data.articoli)
+        total_weight, total_price_with_tax = self._calculate_totals_from_articoli_with_tax(preventivo_data.articoli)
+        
+        # Crea Shipping se presente e aggiungi al totale
+        shipping_id = None
+        if preventivo_data.shipping:
+            # Crea oggetto Shipping
+            shipping = Shipping(
+                id_carrier_api=preventivo_data.shipping.id_carrier_api,  # Non necessario per preventivi
+                id_shipping_state=1, 
+                id_tax=preventivo_data.shipping.id_tax,
+                tracking=None,
+                weight=total_weight,  # Imposta automaticamente dal total_weight dei prodotti
+                price_tax_incl=preventivo_data.shipping.price_tax_incl,
+                price_tax_excl=preventivo_data.shipping.price_tax_excl,
+                shipping_message=preventivo_data.shipping.shipping_message
+            )
+            self.db.add(shipping)
+            self.db.flush()  # Per ottenere l'ID
+            shipping_id = shipping.id_shipping
+            
+            # Aggiungi le spese di spedizione al totale
+            total_price_with_tax += preventivo_data.shipping.price_tax_incl
+        
         order_document.total_weight = total_weight
-        order_document.total_price = total_price
+        order_document.total_price = total_price_with_tax
+        order_document.id_shipping = shipping_id
         
         self.db.add(order_document)
         self.db.flush()  # Per ottenere l'ID
@@ -119,15 +149,10 @@ class PreventivoRepository:
             product_price = articolo.product_price or 0.0
             product_qty = articolo.product_qty or 1.0
         
-        # Calcola prezzi
-        tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
-        tax_rate = tax.percentage if tax else 0.0
-        
         
         order_detail = OrderDetail(
             id_origin=0,  # Per articoli preventivo
             id_order=0,  # Per articoli preventivo
-            id_fiscal_document=0,  # Per articoli preventivo
             id_order_document=id_order_document,
             id_product=product_id,
             product_name=product_name,
@@ -264,7 +289,8 @@ class PreventivoRepository:
     def get_articoli_preventivo(self, id_order_document: int) -> List[OrderDetail]:
         """Recupera articoli di un preventivo"""
         return self.db.query(OrderDetail).filter(
-            OrderDetail.id_order_document == id_order_document
+            OrderDetail.id_order_document == id_order_document,
+            OrderDetail.id_order == 0  # Solo articoli del preventivo, non dell'ordine
         ).all()
     
     def calculate_totals(self, id_order_document: int) -> Dict[str, float]:
@@ -300,6 +326,9 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
+        # Calcola total_price_tax_excl corretto (prodotti + spedizione senza IVA)
+        total_price_tax_excl = self._calculate_total_tax_excl_for_order(preventivo)
+        print(f"total_price_tax_excl {total_price_tax_excl}")
         # Crea ordine utilizzando OrderRepository per sfruttare tutte le funzioni collegate
         order_data = OrderSchema(
             id_origin=0,  # Ordine creato dall'app
@@ -308,13 +337,14 @@ class PreventivoRepository:
             address_invoice=preventivo.id_address_invoice,
             reference=generate_preventivo_reference(preventivo.document_number),
             id_platform=1,  # Default 1
-            sectional=0,  # Default 0 (da configurare successivamente)
+            shipping=preventivo.id_shipping or 0,  # Usa spedizione del preventivo, altrimenti 0
+            sectional=preventivo.id_sectional or 0,  # Usa sectional del preventivo, altrimenti 0
             id_order_state=1,  # Default 1 (pending)
-            is_invoice_requested=False,
+            is_invoice_requested=preventivo.is_invoice_requested,
             is_payed=0,
             payment_date=None,
             total_weight=preventivo.total_weight or 0.0,
-            total_price=preventivo.total_price or 0.0,
+            total_price_tax_excl=total_price_tax_excl,  # Include prodotti + spedizione senza IVA
             total_discounts=0.0,
             cash_on_delivery=0.0
         )
@@ -333,8 +363,7 @@ class PreventivoRepository:
             detail_data = OrderDetailSchema(
                 id_origin=articolo.id_origin,
                 id_order=order.id_order,
-                id_fiscal_document=articolo.id_fiscal_document,
-                id_order_document=id_order_document,
+                id_order_document=0,
                 id_product=articolo.id_product or 0,  # Default 0 se None
                 product_name=articolo.product_name,
                 product_reference=articolo.product_reference or "",
@@ -346,6 +375,10 @@ class PreventivoRepository:
                 reduction_amount=articolo.reduction_amount or 0.0
             )
             self.order_repository.order_detail_repository.create(detail_data)
+        
+        # Imposta il total_price_tax_excl corretto dopo aver creato tutti gli articoli
+        order.total_price_tax_excl = total_price_tax_excl
+        self.db.flush()
         
         # Aggiorna il preventivo con l'ID dell'ordine creato
         preventivo.id_order = order.id_order
@@ -381,6 +414,38 @@ class PreventivoRepository:
         else:
             raise ValueError("Deve essere specificato o id o data per customer")
     
+    def _handle_sectional(self, preventivo_data: PreventivoCreateSchema, user_id: int) -> Optional[int]:
+        """Gestisce sectional: usa esistente per nome o crea nuovo, restituisce ID"""
+        if not preventivo_data.sectional:
+            return None
+        
+        if preventivo_data.sectional.id:
+            # Verifica che il sectional esista
+            sectional = self.db.query(Sectional).filter(Sectional.id_sectional == preventivo_data.sectional.id).first()
+            if not sectional:
+                raise ValueError(f"Sectional con ID {preventivo_data.sectional.id} non trovato")
+            return preventivo_data.sectional.id
+        
+        elif preventivo_data.sectional.data:
+            # Cerca prima se esiste un sectional con lo stesso nome
+            existing_sectional = self.db.query(Sectional).filter(
+                Sectional.name == preventivo_data.sectional.data.name
+            ).first()
+            
+            if existing_sectional:
+                # Usa il sectional esistente
+                return existing_sectional.id_sectional
+            
+            # Crea nuovo sectional se non esiste
+            sectional = Sectional(
+                name=preventivo_data.sectional.data.name
+            )
+            self.db.add(sectional)
+            self.db.flush()
+            return sectional.id_sectional
+        
+        return None
+    
     def _handle_delivery_address(self, preventivo_data: PreventivoCreateSchema, customer_id: int, user_id: int) -> Optional[int]:
         """Gestisce delivery address: crea se necessario, restituisce ID"""
         if not preventivo_data.address_delivery:
@@ -394,11 +459,11 @@ class PreventivoRepository:
             return preventivo_data.address_delivery.id
         
         elif preventivo_data.address_delivery.data:
-            # Crea nuovo address
+            # Crea nuovo address - ignora id_customer dall'input e usa sempre customer_id generato
             address = Address(
                 id_origin=preventivo_data.address_delivery.data.id_origin,
                 id_country=preventivo_data.address_delivery.data.id_country,
-                id_customer=customer_id,
+                id_customer=customer_id,  # Usa sempre l'ID del customer creato/esistente
                 company=preventivo_data.address_delivery.data.company,
                 firstname=preventivo_data.address_delivery.data.firstname,
                 lastname=preventivo_data.address_delivery.data.lastname,
@@ -421,7 +486,7 @@ class PreventivoRepository:
         
         return None
     
-    def _handle_invoice_address(self, preventivo_data: PreventivoCreateSchema, customer_id: int, user_id: int) -> Optional[int]:
+    def _handle_invoice_address(self, preventivo_data: PreventivoCreateSchema, customer_id: int, user_id: int, delivery_address_id: Optional[int] = None) -> Optional[int]:
         """Gestisce invoice address: crea se necessario, restituisce ID"""
         if not preventivo_data.address_invoice:
             return None
@@ -434,11 +499,17 @@ class PreventivoRepository:
             return preventivo_data.address_invoice.id
         
         elif preventivo_data.address_invoice.data:
-            # Crea nuovo address
+            # Controlla se invoice_address è uguale a delivery_address
+            if (preventivo_data.address_delivery and 
+                preventivo_data.address_delivery.data and 
+                self._are_addresses_equal(preventivo_data.address_invoice.data, preventivo_data.address_delivery.data)):
+                # Se gli indirizzi sono uguali, usa lo stesso ID
+                return delivery_address_id
+            # Crea nuovo address - ignora id_customer dall'input e usa sempre customer_id generato
             address = Address(
                 id_origin=preventivo_data.address_invoice.data.id_origin,
                 id_country=preventivo_data.address_invoice.data.id_country,
-                id_customer=customer_id,
+                id_customer=customer_id,  # Usa sempre l'ID del customer creato/esistente
                 company=preventivo_data.address_invoice.data.company,
                 firstname=preventivo_data.address_invoice.data.firstname,
                 lastname=preventivo_data.address_invoice.data.lastname,
@@ -460,6 +531,31 @@ class PreventivoRepository:
             return address.id_address
         
         return None
+    
+    def _are_addresses_equal(self, addr1: AddressSchema, addr2: AddressSchema) -> bool:
+        """
+        Confronta due indirizzi per vedere se sono uguali
+        
+        Args:
+            addr1: Primo indirizzo
+            addr2: Secondo indirizzo
+            
+        Returns:
+            bool: True se gli indirizzi sono uguali, False altrimenti
+        """
+        # Confronta i campi principali dell'indirizzo
+        return (
+            addr1.firstname == addr2.firstname and
+            addr1.lastname == addr2.lastname and
+            addr1.address1 == addr2.address1 and
+            addr1.address2 == addr2.address2 and
+            addr1.city == addr2.city and
+            addr1.postcode == addr2.postcode and
+            addr1.state == addr2.state and
+            addr1.id_country == addr2.id_country and
+            addr1.company == addr2.company and
+            addr1.phone == addr2.phone
+        )
     
     def _handle_product(self, articolo: ArticoloPreventivoSchema) -> Optional[int]:
         """Gestisce prodotto: usa esistente o crea nuovo con id_origin=0"""
@@ -487,8 +583,8 @@ class PreventivoRepository:
             self.db.flush()
             return product.id_product
     
-    def _calculate_totals_from_articoli(self, articoli: List[ArticoloPreventivoSchema]) -> tuple[float, float]:
-        """Calcola totali da una lista di articoli usando le funzioni pure"""
+    def _calculate_totals_from_articoli_with_tax(self, articoli: List[ArticoloPreventivoSchema]) -> tuple[float, float]:
+        """Calcola totali da una lista di articoli con IVA inclusa"""
         if not articoli:
             return 0.0, 0.0
         
@@ -516,7 +612,8 @@ class PreventivoRepository:
         """Calcola totali del preventivo basandosi sugli articoli usando le funzioni pure"""
         # Recupera tutti gli articoli del preventivo
         articoli = self.db.query(OrderDetail).filter(
-            OrderDetail.id_order_document == id_order_document
+            OrderDetail.id_order_document == id_order_document,
+            OrderDetail.id_order == 0  # Solo articoli del preventivo, non dell'ordine
         ).all()
         
         if not articoli:
@@ -589,3 +686,67 @@ class PreventivoRepository:
         ).first()
         
         return existing_order
+    
+    def delete_preventivo(self, id_order_document: int) -> bool:
+        """
+        Elimina un preventivo e tutti i suoi articoli
+        
+        Args:
+            id_order_document: ID del preventivo da eliminare
+            
+        Returns:
+            bool: True se eliminato con successo, False se non trovato
+        """
+        preventivo = self.db.query(OrderDocument).filter(
+            and_(
+                OrderDocument.id_order_document == id_order_document,
+                OrderDocument.type_document == 'preventivo'
+            )
+        ).first()
+        
+        if not preventivo:
+            return False
+        
+        # Elimina tutti gli articoli associati
+        self.db.query(OrderDetail).filter(
+            OrderDetail.id_order_document == id_order_document
+        ).delete()
+        
+        # Elimina il preventivo
+        self.db.delete(preventivo)
+        self.db.commit()
+        
+        return True
+    
+    def _calculate_total_tax_excl_for_order(self, preventivo) -> float:
+        """
+        Calcola il totale senza IVA per un ordine basato sui dati del preventivo.
+        Include sia i prodotti che la spedizione.
+        
+        Args:
+            preventivo: Oggetto OrderDocument del preventivo
+            
+        Returns:
+            float: Totale senza IVA (prodotti + spedizione)
+        """
+        # Recupera tutti gli articoli del preventivo
+        articoli = self.db.query(OrderDetail).filter(
+            OrderDetail.id_order_document == preventivo.id_order_document,
+            OrderDetail.id_order == 0  # Solo articoli del preventivo, non dell'ordine
+        ).all()
+        
+        # Calcola totale prodotti senza IVA
+        total_tax_excl = 0.0
+        if articoli:
+            for articolo in articoli:
+                total_tax_excl += articolo.product_price * articolo.product_qty
+        
+        # Calcola totale spedizione senza IVA
+        if preventivo.id_shipping:
+            shipping = self.db.query(Shipping).filter(
+                Shipping.id_shipping == preventivo.id_shipping
+            ).first()
+
+            total_tax_excl += shipping.price_tax_excl
+        
+        return total_tax_excl

@@ -130,3 +130,9 @@ class EmailSettingsSchema(BaseModel):
 class ApiKeysSchema(BaseModel):
     """Schema per le chiavi API dell'app"""
     app_api_key: Optional[str] = Field(default=None, description="Chiave API App")
+
+
+class EcommerceSchema(BaseModel):
+    """Schema per le configurazioni ecommerce"""
+    base_url: Optional[str] = Field(default=None, description="URL base della piattaforma ecommerce")
+    api_key: Optional[str] = Field(default=None, description="Chiave API della piattaforma ecommerce")

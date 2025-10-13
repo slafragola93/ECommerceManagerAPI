@@ -472,18 +472,15 @@ def test_platform():
     queries = [
         Platform(
             name="Prestashop",
-            url="https://prestashop.com",
-            api_key="GMFDJLKGDSJLGKD"
+            is_default=True
         ),
         Platform(
             name="Amazon",
-            url="https://amazon.com",
-            api_key=""
+            is_default=False
         ),
         Platform(
             name="EBAY",
-            url="https://ebay.com",
-            api_key="ASFGGSDHJFR"
+            is_default=False
         ),
     ]
     db = TestingSessionLocal()
@@ -877,7 +874,7 @@ def test_order():
         is_invoice_requested=False,
         is_payed=False,
         total_weight=1.5,
-        total_price=99.99,
+        total_price_tax_excl=99.99,
         cash_on_delivery=0.0,
         insured_value=0.0,
         privacy_note="Privacy note test",
@@ -914,7 +911,7 @@ def test_orders():
             is_invoice_requested=False,
             is_payed=False,
             total_weight=1.5,
-            total_price=99.99,
+            total_price_tax_excl=99.99,
             cash_on_delivery=0.0,
             insured_value=0.0,
             privacy_note="Privacy note test 1",
@@ -934,7 +931,7 @@ def test_orders():
             is_invoice_requested=True,
             is_payed=True,
             total_weight=2.5,
-            total_price=199.99,
+            total_price_tax_excl=199.99,
             cash_on_delivery=5.0,
             insured_value=10.0,
             privacy_note="Privacy note test 2",
@@ -954,7 +951,7 @@ def test_orders():
             is_invoice_requested=False,
             is_payed=False,
             total_weight=0.8,
-            total_price=49.99,
+            total_price_tax_excl=49.99,
             cash_on_delivery=0.0,
             insured_value=0.0,
             privacy_note="Privacy note test 3",

@@ -15,7 +15,8 @@ from ..schemas.app_configuration_schema import (
     ExemptRatesSchema,
     FatturapaSchema,
     EmailSettingsSchema,
-    ApiKeysSchema
+    ApiKeysSchema,
+    EcommerceSchema
 )
 from ..services.auth import authorize
 
@@ -246,6 +247,25 @@ async def get_api_keys(user: user_dependency,
     )
 
 
+@router.get("/ecommerce", status_code=status.HTTP_200_OK, response_model=EcommerceSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_ecommerce_config(user: user_dependency,
+                               acr: AppConfigurationRepository = Depends(get_repository)):
+    """Recupera le configurazioni ecommerce (URL e API Key)"""
+    configurations = acr.get_by_category("ecommerce")
+    
+    # Converti le configurazioni in un dizionario
+    ecommerce_config = {}
+    for config in configurations:
+        ecommerce_config[config.name] = config.value
+    
+    return EcommerceSchema(
+        base_url=ecommerce_config.get("base_url"),
+        api_key=ecommerce_config.get("api_key")
+    )
+
+
 @router.get("/{configuration_id}", status_code=status.HTTP_200_OK, response_model=AppConfigurationResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
@@ -292,17 +312,6 @@ async def create_app_configuration(user: user_dependency,
     acr.create(data=acs)
 
 
-@router.post("/bulk", status_code=status.HTTP_201_CREATED, response_description="Configurazioni create correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
-async def create_bulk_app_configurations(user: user_dependency,
-                                       configurations: list[AppConfigurationSchema],
-                                       acr: AppConfigurationRepository = Depends(get_repository)):
-    """Crea multiple configurazioni in batch"""
-    if not configurations:
-        raise HTTPException(status_code=422, detail="Lista configurazioni non può essere vuota")
-    
-    acr.create_bulk(configurations)
 
 
 @router.put("/{configuration_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -352,19 +361,3 @@ async def delete_app_configuration(user: user_dependency,
         raise HTTPException(status_code=404, detail="Configurazione non trovata")
 
     acr.delete(configuration)
-
-
-@router.delete("/{category}/{name}", status_code=status.HTTP_204_NO_CONTENT,
-               response_description="Configurazione eliminata correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
-async def delete_app_configuration_by_name(user: user_dependency,
-                                         acr: AppConfigurationRepository = Depends(get_repository),
-                                         category: str = Path(..., description="Categoria della configurazione"),
-                                         name: str = Path(..., description="Nome della configurazione")):
-    """Elimina una configurazione per nome e categoria"""
-    success = acr.delete_by_name_and_category(name, category)
-    
-    if not success:
-        raise HTTPException(status_code=404, detail="Configurazione non trovata")
-

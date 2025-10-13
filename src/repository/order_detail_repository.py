@@ -43,7 +43,6 @@ class OrderDetailRepository:
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail',
                                             order_details_ids) if order_details_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
-            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_fiscal_document', invoice_ids) if invoice_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
                                             document_ids) if document_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_origin', origin_ids) if origin_ids else query
@@ -79,7 +78,6 @@ class OrderDetailRepository:
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_detail',
                                             order_details_ids) if order_details_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order', order_ids) if order_ids else query
-            query = QueryUtils.filter_by_id(query, OrderDetail, 'id_fiscal_document', invoice_ids) if invoice_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_order_document',
                                             document_ids) if document_ids else query
             query = QueryUtils.filter_by_id(query, OrderDetail, 'id_origin', origin_ids) if origin_ids else query
@@ -299,7 +297,6 @@ class OrderDetailRepository:
         return {
             "id_order_detail": order_detail.id_order_detail,
             "id_order": order_detail.id_order,
-            "id_fiscal_document": order_detail.id_fiscal_document,
             "id_order_document": order_detail.id_order_document,
             "id_origin": order_detail.id_origin,
             "id_tax": order_detail.id_tax,

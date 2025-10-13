@@ -22,14 +22,14 @@ class BaseEcommerceService(ABC):
         
         Args:
             db: Database session
-            platform_id: ID of the platform in the platforms table (default: 1 for PrestaShop)
+            platform_id: ID of the platform in the platforms table (deprecated, kept for compatibility)
             batch_size: Number of records to process in each batch
         """
         self.db = db
         self.platform_id = platform_id
         self.batch_size = batch_size
         self.session = None
-        self._platform_data = None
+        self._ecommerce_config = None
         
     async def __aenter__(self):
         """Async context manager entry"""
@@ -43,27 +43,40 @@ class BaseEcommerceService(ABC):
             await self.session.close()
     
     async def _load_platform_data(self):
-        """Load platform data from database"""
-        from ...repository.platform_repository import PlatformRepository
-        platform_repo = PlatformRepository(self.db)
-        self._platform_data = platform_repo.get_by_id(self.platform_id)
+        """Load ecommerce configuration from app_configurations"""
+        from ...repository.app_configuration_repository import AppConfigurationRepository
+        config_repo = AppConfigurationRepository(self.db)
         
-        if not self._platform_data:
-            raise ValueError(f"Platform with ID {self.platform_id} not found")
+        # Recupera le configurazioni dalla categoria "ecommerce"
+        configurations = config_repo.get_by_category("ecommerce")
+        
+        if not configurations:
+            raise ValueError("Ecommerce configurations not found in app_configurations. Please configure 'base_url' and 'api_key' in category 'ecommerce'.")
+        
+        # Converti in dizionario
+        self._ecommerce_config = {}
+        for config in configurations:
+            self._ecommerce_config[config.name] = config.value
+        
+        # Verifica che le configurazioni essenziali siano presenti
+        if not self._ecommerce_config.get('base_url'):
+            raise ValueError("Missing 'base_url' in ecommerce configurations")
+        if not self._ecommerce_config.get('api_key'):
+            raise ValueError("Missing 'api_key' in ecommerce configurations")
     
     @property
     def api_key(self) -> str:
-        """Get API key from platform data"""
-        if not self._platform_data:
-            raise RuntimeError("Platform data not loaded. Use async context manager.")
-        return self._platform_data.api_key
+        """Get API key from ecommerce configuration"""
+        if not self._ecommerce_config:
+            raise RuntimeError("Ecommerce configuration not loaded. Use async context manager.")
+        return self._ecommerce_config.get('api_key')
     
     @property
     def base_url(self) -> str:
-        """Get base URL from platform data"""
-        if not self._platform_data:
-            raise RuntimeError("Platform data not loaded. Use async context manager.")
-        return self._platform_data.url.rstrip('/')
+        """Get base URL from ecommerce configuration"""
+        if not self._ecommerce_config:
+            raise RuntimeError("Ecommerce configuration not loaded. Use async context manager.")
+        return self._ecommerce_config.get('base_url').rstrip('/')
     
     @abstractmethod
     async def sync_all_data(self) -> Dict[str, Any]:

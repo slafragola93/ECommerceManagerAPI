@@ -74,10 +74,7 @@ class PreventivoService:
         
         # Recupera articoli
         articoli = self.preventivo_repo.get_articoli_preventivo(id_order_document)
-        print(articoli)
         articoli_data = [self._format_articolo(articolo) for articolo in articoli]
-        print("--------------------------------------------------------")
-        print(articoli_data)
         
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
@@ -214,20 +211,27 @@ class PreventivoService:
     
     def _format_articolo(self, order_detail) -> ArticoloPreventivoSchema:
         """Formatta articolo per risposta"""
-        # Recupera tassa per calcolare aliquota
-        tax = self.tax_repo.get_by_id(order_detail.id_tax)
-        tax_rate = tax.percentage if tax else 0.0
-        
-        # Calcola prezzi
-        prezzo_totale_riga = order_detail.product_price * order_detail.product_qty * (1 + tax_rate / 100)
-        
         return ArticoloPreventivoSchema(
             id_product=order_detail.id_product,
             product_name=order_detail.product_name,
             product_reference=order_detail.product_reference,
             product_price=order_detail.product_price,
             product_qty=order_detail.product_qty,
+            product_weight=order_detail.product_weight,
             id_tax=order_detail.id_tax,
-            prezzo_totale_riga=round(prezzo_totale_riga, 2),
-            aliquota_iva=tax_rate
+            reduction_percent=order_detail.reduction_percent,
+            reduction_amount=order_detail.reduction_amount,
+            rda=order_detail.rda
         )
+    
+    def delete_preventivo(self, id_order_document: int) -> bool:
+        """
+        Elimina un preventivo
+        
+        Args:
+            id_order_document: ID del preventivo da eliminare
+            
+        Returns:
+            bool: True se eliminato con successo, False se non trovato
+        """
+        return self.preventivo_repo.delete_preventivo(id_order_document)

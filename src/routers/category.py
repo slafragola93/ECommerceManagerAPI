@@ -47,20 +47,6 @@ async def get_all_categories(user: user_dependency,
     return {"categories": categories, "total": total_count, "page": page, "limit": limit}
 
 
-@router.get("/all", status_code=status.HTTP_200_OK)
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_list_all_categories(user: user_dependency,
-                                  cr: CategoryRepository = Depends(get_repository)):
-
-    categories = cr.list_all()
-
-    if categories is None:
-        raise HTTPException(status_code=404, detail="Categoria non trovate")
-
-    return categories
-
-
 @router.get("/{category_id}", status_code=status.HTTP_200_OK, response_model=CategoryResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
