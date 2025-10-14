@@ -298,4 +298,129 @@ async def update_order_payment(user: user_dependency,
     return {"message": "Stato pagamento aggiornato con successo", "order_id": order_id, "is_payed": is_payed}
 
 
+@router.post("/{id_order}/generate-ddt",
+             status_code=status.HTTP_201_CREATED,
+             summary="Genera DDT da ordine",
+             description="Genera un Documento di Trasporto (DDT) a partire da un ordine esistente. Il DDT può essere generato solo se l'ordine non è stato fatturato e non è stato spedito.",
+             response_description="DDT generato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
+async def generate_ddt_from_order(
+    id_order: int = Path(..., description="ID dell'ordine da cui generare il DDT"),
+    user: user_dependency = None,
+    or_repo: OrderRepository = Depends(get_repository)
+):
+    """
+    Genera un DDT (Documento di Trasporto) da un ordine esistente
+    
+    Args:
+        id_order: ID dell'ordine da cui generare il DDT
+        user: Utente autenticato
+        or_repo: Repository degli ordini
+        
+    Returns:
+        dict: Risposta con il DDT generato
+        
+    Raises:
+        HTTPException: Se l'ordine non esiste o non può essere convertito in DDT
+    """
+    try:
+        # Importa il DDTService
+        from src.services.ddt_service import DDTService
+        ddt_service = DDTService(or_repo.session)
+        
+        # Genera il DDT
+        result = ddt_service.generate_ddt_from_order(id_order, user["id"])
+        
+        if not result.success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.message
+            )
+        
+        return {
+            "message": result.message,
+            "ddt": result.ddt.dict() if result.ddt else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Errore interno: {str(e)}"
+        )
+
+
+@router.get("/generate-ddt-pdf/{id_order_document}",
+            status_code=status.HTTP_200_OK,
+            summary="Genera PDF DDT",
+            description="Genera il PDF del Documento di Trasporto (DDT) specificato",
+            response_description="File PDF del DDT")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
+async def generate_ddt_pdf(
+    id_order_document: int = Path(..., description="ID del DDT"),
+    user: user_dependency = None,
+    or_repo: OrderRepository = Depends(get_repository)
+):
+    """
+    Genera il PDF del DDT specificato
+    
+    Args:
+        id_order_document: ID del DDT
+        user: Utente autenticato
+        or_repo: Repository degli ordini
+        
+    Returns:
+        Response: File PDF del DDT
+        
+    Raises:
+        HTTPException: Se il DDT non esiste
+    """
+    try:
+        # Importa il DDTService
+        from src.services.ddt_service import DDTService
+        ddt_service = DDTService(or_repo.session)
+        
+        # Verifica che il DDT esista
+        ddt = ddt_service.get_ddt_complete(id_order_document)
+        if not ddt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DDT non trovato"
+            )
+        
+        # Genera il PDF
+        pdf_content = ddt_service.generate_ddt_pdf(id_order_document)
+        
+        # Restituisce il PDF come risposta
+        from fastapi.responses import StreamingResponse
+        from io import BytesIO
+        
+        # Crea un buffer per il PDF
+        pdf_buffer = BytesIO(pdf_content)
+        
+        # Determina nome file
+        filename = f"DDT-{ddt.document_number}.pdf"
+        
+        # Ritorna PDF con headers per forzare download
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-cache",
+                "Content-Type": "application/pdf"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Errore interno: {str(e)}"
+        )
+
 

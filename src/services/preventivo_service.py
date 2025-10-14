@@ -235,3 +235,27 @@ class PreventivoService:
             bool: True se eliminato con successo, False se non trovato
         """
         return self.preventivo_repo.delete_preventivo(id_order_document)
+    
+    def duplicate_preventivo(self, id_order_document: int, user_id: int) -> Optional[PreventivoResponseSchema]:
+        """
+        Duplica un preventivo esistente
+        
+        Args:
+            id_order_document: ID del preventivo da duplicare
+            user_id: ID dell'utente che esegue la duplicazione
+            
+        Returns:
+            PreventivoResponseSchema: Il nuovo preventivo duplicato, None se il preventivo originale non esiste
+        """
+        # Verifica che il preventivo originale esista
+        original_preventivo = self.preventivo_repo.get_preventivo_by_id(id_order_document)
+        if not original_preventivo:
+            return None
+        
+        # Duplica il preventivo
+        new_preventivo = self.preventivo_repo.duplicate_preventivo(id_order_document, user_id)
+        if not new_preventivo:
+            return None
+        
+        # Restituisce il preventivo duplicato usando la logica esistente
+        return self.get_preventivo(new_preventivo.id_order_document)

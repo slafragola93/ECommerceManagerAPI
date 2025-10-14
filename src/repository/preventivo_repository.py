@@ -114,7 +114,7 @@ class PreventivoRepository:
             total_price_with_tax += preventivo_data.shipping.price_tax_incl
         
         order_document.total_weight = total_weight
-        order_document.total_price = total_price_with_tax
+        order_document.total_price_with_tax = total_price_with_tax
         order_document.id_shipping = shipping_id
         
         self.db.add(order_document)
@@ -149,7 +149,7 @@ class PreventivoRepository:
             product_price = articolo.product_price or 0.0
             product_qty = articolo.product_qty or 1.0
         
-        
+        # Crea direttamente l'OrderDetail
         order_detail = OrderDetail(
             id_origin=0,  # Per articoli preventivo
             id_order=0,  # Per articoli preventivo
@@ -166,16 +166,29 @@ class PreventivoRepository:
         )
         
         self.db.add(order_detail)
+        self.db.flush()  # Per ottenere l'ID
+        
         return order_detail
     
     def get_preventivo_by_id(self, id_order_document: int) -> Optional[OrderDocument]:
         """Recupera preventivo per ID"""
         return self.db.query(OrderDocument).filter(
             and_(
-                OrderDocument.id_order_document == id_order_document,
-                OrderDocument.type_document == "preventivo"
+                OrderDocument.id_order_document == id_order_document
             )
         ).first()
+    
+    def _check_preventivo_not_converted(self, id_order_document: int):
+        """Verifica che il preventivo non sia stato convertito in ordine"""
+        # Recupera solo il campo id_order per verificare se è stato convertito
+        result = self.db.query(OrderDocument.id_order).filter(
+                OrderDocument.id_order_document == id_order_document
+        ).first()
+        if not result:
+            raise ValueError(f"Preventivo con ID {id_order_document} non trovato")
+        
+        if result.id_order != 0 and result.id_order is not None:
+            raise ValueError("Il preventivo è stato già convertito in ordine. Per tanto, non è possibile effettuare modifiche.")
     
     def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None) -> List[OrderDocument]:
         """Recupera lista preventivi con filtri"""
@@ -215,6 +228,9 @@ class PreventivoRepository:
     
     def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema) -> Optional[OrderDetail]:
         """Aggiunge articolo a preventivo"""
+        # Verifica che il preventivo non sia stato convertito in ordine
+        self._check_preventivo_not_converted(id_order_document)
+        
         preventivo = self.get_preventivo_by_id(id_order_document)
         if not preventivo:
             return None
@@ -226,8 +242,8 @@ class PreventivoRepository:
         
         self.db.commit()
         
-        # Ricalcola totali dopo il commit
-        self._calculate_totals(id_order_document)
+        # Ricalcola completamente i totali (articoli + spedizione)
+        self._recalculate_preventivo_totals(id_order_document)
         
         return order_detail
     
@@ -239,6 +255,9 @@ class PreventivoRepository:
         
         if not order_detail:
             return None
+        
+        # Verifica che il preventivo non sia stato convertito in ordine
+        self._check_preventivo_not_converted(order_detail.id_order_document)
         
         # Aggiorna campi
         if articolo_data.product_name is not None:
@@ -259,8 +278,8 @@ class PreventivoRepository:
         
         self.db.commit()
         
-        # Ricalcola totali dopo il commit
-        self._calculate_totals(order_detail.id_order_document)
+        # Ricalcola completamente i totali (articoli + spedizione)
+        self._recalculate_preventivo_totals(order_detail.id_order_document)
         
         return order_detail
     
@@ -272,6 +291,8 @@ class PreventivoRepository:
         
         if not order_detail:
             return False
+        # Verifica che il preventivo non sia stato convertito in ordine
+        self._check_preventivo_not_converted(order_detail.id_order_document)
         
         # Aggiorna updated_at del preventivo prima di rimuovere l'articolo
         preventivo = self.get_preventivo_by_id(order_detail.id_order_document)
@@ -281,8 +302,8 @@ class PreventivoRepository:
         self.db.delete(order_detail)
         self.db.commit()
         
-        # Ricalcola totali dopo la rimozione e il commit
-        self._calculate_totals(order_detail.id_order_document)
+        # Ricalcola completamente i totali (articoli + spedizione)
+        self._recalculate_preventivo_totals(order_detail.id_order_document)
         
         return True
     
@@ -328,7 +349,7 @@ class PreventivoRepository:
         
         # Calcola total_price_tax_excl corretto (prodotti + spedizione senza IVA)
         total_price_tax_excl = self._calculate_total_tax_excl_for_order(preventivo)
-        print(f"total_price_tax_excl {total_price_tax_excl}")
+
         # Crea ordine utilizzando OrderRepository per sfruttare tutte le funzioni collegate
         order_data = OrderSchema(
             id_origin=0,  # Ordine creato dall'app
@@ -615,7 +636,6 @@ class PreventivoRepository:
             OrderDetail.id_order_document == id_order_document,
             OrderDetail.id_order == 0  # Solo articoli del preventivo, non dell'ordine
         ).all()
-        
         if not articoli:
             # Se non ci sono articoli, azzera i totali
             order_document = self.db.query(OrderDocument).filter(
@@ -623,7 +643,7 @@ class PreventivoRepository:
             ).first()
             if order_document:
                 order_document.total_weight = 0.0
-                order_document.total_price = 0.0
+                order_document.total_price_with_tax = 0.0
                 self.db.commit()
             return
         
@@ -641,8 +661,36 @@ class PreventivoRepository:
         if order_document:
             # Usa il prezzo con tasse per i preventivi
             order_document.total_weight = totals['total_weight']
-            order_document.total_price = totals['total_price_with_tax']
+            order_document.total_price_with_tax = totals['total_price_with_tax']
             self.db.commit()
+
+    def _recalculate_preventivo_totals(self, id_order_document: int):
+        """Ricalcola completamente i totali del preventivo includendo articoli + spedizione"""
+        # Recupera il preventivo
+        preventivo = self.db.query(OrderDocument).filter(
+            OrderDocument.id_order_document == id_order_document
+        ).first()
+        
+        if not preventivo:
+            return
+        
+        # Ricalcola totali degli articoli
+        self._calculate_totals(id_order_document)
+        
+        # Recupera il preventivo aggiornato
+        preventivo = self.db.query(OrderDocument).filter(
+            OrderDocument.id_order_document == id_order_document
+        ).first()
+        
+        # Aggiungi la spedizione se presente
+        if preventivo.id_shipping:
+            shipping = self.db.query(Shipping).filter(
+                Shipping.id_shipping == preventivo.id_shipping
+            ).first()
+            if shipping and shipping.price_tax_incl:
+                preventivo.total_price_with_tax += shipping.price_tax_incl
+        
+        self.db.commit()
 
     def _get_tax_percentages_preventivo(self, articoli: list) -> dict:
         """
@@ -699,8 +747,7 @@ class PreventivoRepository:
         """
         preventivo = self.db.query(OrderDocument).filter(
             and_(
-                OrderDocument.id_order_document == id_order_document,
-                OrderDocument.type_document == 'preventivo'
+                OrderDocument.id_order_document == id_order_document
             )
         ).first()
         
@@ -750,3 +797,97 @@ class PreventivoRepository:
             total_tax_excl += shipping.price_tax_excl
         
         return total_tax_excl
+    
+    def duplicate_preventivo(self, id_order_document: int, user_id: int) -> Optional[OrderDocument]:
+        """
+        Duplica un preventivo esistente creando una copia con le stesse caratteristiche
+        
+        Args:
+            id_order_document: ID del preventivo da duplicare
+            user_id: ID dell'utente che esegue la duplicazione
+            
+        Returns:
+            OrderDocument: Il nuovo preventivo duplicato, None se il preventivo originale non esiste
+        """
+        # Verifica che il preventivo non sia stato convertito in ordine
+        self._check_preventivo_not_converted(id_order_document)
+        
+        # Recupera il preventivo originale
+        original_preventivo = self.get_preventivo_by_id(id_order_document)
+        if not original_preventivo:
+            return None
+        
+        # Genera nuovo numero documento
+        new_document_number = self.get_next_document_number("preventivo")
+        
+        # Crea una nuova spedizione copiando i dati dell'originale
+        new_shipping_id = None
+        if original_preventivo.id_shipping:
+            original_shipping = self.db.query(Shipping).filter(
+                Shipping.id_shipping == original_preventivo.id_shipping
+            ).first()
+            
+            if original_shipping:
+                new_shipping = Shipping(
+                    id_carrier_api=original_shipping.id_carrier_api,
+                    id_shipping_state=original_shipping.id_shipping_state,
+                    id_tax=original_shipping.id_tax,
+                    tracking=None,  # Reset tracking per la nuova spedizione
+                    weight=original_shipping.weight,
+                    price_tax_incl=original_shipping.price_tax_incl,
+                    price_tax_excl=original_shipping.price_tax_excl,
+                    shipping_message=original_shipping.shipping_message,
+                    date_add=datetime.now().date()
+                )
+                self.db.add(new_shipping)
+                self.db.flush()  # Per ottenere l'ID
+                new_shipping_id = new_shipping.id_shipping
+        
+        # Crea nuovo OrderDocument copiando i dati dell'originale
+        new_preventivo = OrderDocument(
+            type_document="preventivo",
+            document_number=new_document_number,
+            id_customer=original_preventivo.id_customer,
+            id_address_delivery=original_preventivo.id_address_delivery,
+            id_address_invoice=original_preventivo.id_address_invoice,
+            id_sectional=original_preventivo.id_sectional,
+            id_tax=original_preventivo.id_tax,
+            id_shipping=new_shipping_id,  # Usa la nuova spedizione creata
+            is_invoice_requested=original_preventivo.is_invoice_requested,
+            note=f"Copia di {original_preventivo.document_number}" + (f" - {original_preventivo.note}" if original_preventivo.note else ""),
+            total_weight=original_preventivo.total_weight,
+            total_price_with_tax=original_preventivo.total_price_with_tax
+        )
+        
+        self.db.add(new_preventivo)
+        self.db.flush()  # Per ottenere l'ID
+        
+        # Copia tutti gli articoli del preventivo originale senza ricalcolare i totali
+        original_articoli = self.get_articoli_preventivo(id_order_document)
+        for articolo in original_articoli:
+            # Crea direttamente l'OrderDetail senza utilizzare OrderDetailRepository
+            # per evitare il ricalcolo automatico dei totali
+            new_articolo = OrderDetail(
+                id_origin=articolo.id_origin,
+                id_order=0,  # Per articoli preventivo
+                id_order_document=new_preventivo.id_order_document,
+                id_product=articolo.id_product,
+                product_name=articolo.product_name,
+                product_reference=articolo.product_reference,
+                product_qty=articolo.product_qty,
+                product_weight=articolo.product_weight,
+                product_price=articolo.product_price,
+                id_tax=articolo.id_tax,
+                reduction_percent=articolo.reduction_percent,
+                reduction_amount=articolo.reduction_amount
+            )
+            
+            # Aggiungi direttamente alla sessione senza ricalcolare i totali
+            self.db.add(new_articolo)
+        
+        self.db.commit()
+        
+        # I totali del preventivo sono già stati copiati dall'originale
+        # Non è necessario ricalcolarli perché sono identici all'originale
+        
+        return new_preventivo

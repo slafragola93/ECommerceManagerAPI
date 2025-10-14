@@ -334,7 +334,7 @@ async def create_preventivo(
     
     ### Formula
     ```
-    total_price = Somma(articoli con IVA) + shipping.price_tax_incl
+    total_price_with_tax = Somma(articoli con IVA) + shipping.price_tax_incl
     total_weight = Somma(peso articoli)
     ```
     
@@ -366,7 +366,7 @@ async def create_preventivo(
     ## Campi Generati Automaticamente
     
     - `document_number`: Numero sequenziale (es. "000001")
-    - `total_price`: Totale con IVA inclusa
+    - `total_price_with_tax`: Totale con IVA inclusa
     - `total_weight`: Peso totale
     - `id_shipping`: ID dell'oggetto Shipping creato (se presente)
     - `id_sectional`: ID del sezionale (creato/riutilizzato se presente)
@@ -510,10 +510,9 @@ async def add_articolo(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
-@router.put("/{id_order_document}/articoli/{id_order_detail}", response_model=ArticoloPreventivoSchema,
+@router.put("/articoli/{id_order_detail}", response_model=ArticoloPreventivoSchema,
             response_description="Articolo aggiornato con successo")
 async def update_articolo(
-    id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
     articolo_data: ArticoloPreventivoUpdateSchema = ...,
     user: User = user_dependency,
@@ -536,10 +535,9 @@ async def update_articolo(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
-@router.delete("/{id_order_document}/articoli/{id_order_detail}", status_code=status.HTTP_204_NO_CONTENT,
+@router.delete("/articoli/{id_order_detail}", status_code=status.HTTP_204_NO_CONTENT,
                response_description="Articolo rimosso con successo")
 async def remove_articolo(
-    id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
     user: User = user_dependency,
     db: Session = db_dependency
@@ -592,6 +590,78 @@ async def delete_preventivo(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
+@router.post("/{id_order_document}/duplicate", response_model=PreventivoResponseSchema,
+             status_code=status.HTTP_201_CREATED, response_description="Preventivo duplicato con successo")
+async def duplicate_preventivo(
+    id_order_document: int = Path(..., gt=0, description="ID del preventivo da duplicare"),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Duplica un preventivo esistente
+    
+    Crea una copia completa del preventivo specificato con tutte le sue caratteristiche.
+    
+    ## Dati Copiati
+    
+    ### Informazioni Base
+    - **Customer**: Stesso cliente del preventivo originale
+    - **Indirizzi**: Stessi indirizzi di consegna e fatturazione
+    - **Sectional**: Stesso sezionale (se presente)
+    - **Shipping**: Stessa spedizione (riutilizzo oggetto esistente)
+    - **Note**: Aggiunge prefisso "Copia di {numero_originale}" alle note esistenti
+    
+    ### Articoli
+    - Tutti gli articoli vengono **copiati identicamente** mantenendo:
+      - Stessi prodotti (id_product)
+      - Stessi prezzi
+      - Stesse quantità
+      - Stessi sconti (percentuali e importi)
+      - Stessa IVA
+      - Stesso peso
+    
+    ### Totali
+    - `total_price_with_tax`: Stesso totale del preventivo originale
+    - `total_weight`: Stesso peso totale
+    
+    ## Il nuovo preventivo avrà
+    
+    - **document_number**: Nuovo numero sequenziale automatico
+    - **type_document**: "preventivo"
+    - **date_add**: Data di creazione corrente
+    - **updated_at**: Data di creazione corrente
+    - **id_order**: null (non collegato ad alcun ordine)
+    - **note**: "Copia di {numero_originale}" + note originali (se presenti)
+    
+    ## Validazioni
+    
+    - Il preventivo originale deve esistere
+    - Il preventivo originale deve essere di tipo "preventivo"
+    
+    ## Note
+    
+    - La spedizione viene **riutilizzata** (stesso ID), non duplicata
+    - Customer e indirizzi vengono **riutilizzati** (stessi ID)
+    - Il sezionale viene **riutilizzato** (stesso ID)
+    - Tutti gli articoli vengono **copiati** come nuovi record
+    - Il nuovo preventivo è completamente indipendente dall'originale
+    """
+    try:
+        service = get_preventivo_service(db)
+        result = service.duplicate_preventivo(id_order_document, user["id"])
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Preventivo non trovato")
+        
+        return result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
 @router.post("/{id_order_document}/convert-to-order", status_code=status.HTTP_200_OK,
              response_description="Preventivo convertito in ordine con successo")
 async def convert_to_order(
@@ -624,7 +694,7 @@ async def convert_to_order(
     - **NON** viene creata una nuova spedizione (riutilizzo oggetto esistente)
     
     ### Totali
-    - `total_price`: Copiato dal preventivo (già con IVA inclusa)
+    - `total_price_with_tax`: Copiato dal preventivo (già con IVA inclusa)
     - `total_weight`: Copiato dal preventivo
     
     ## L'ordine creato avrà

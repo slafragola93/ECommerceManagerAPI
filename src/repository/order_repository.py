@@ -141,6 +141,30 @@ class OrderRepository:
         """Recupera un ordine per ID"""
         return self.session.query(Order).filter(Order.id_order == _id).first()
     
+    def generate_shipping(self, data: OrderSchema) -> int:
+        """Genera una spedizione di default basata sull'indirizzo di consegna"""
+        # Debug per capire se è un oggetto o un ID
+        if hasattr(data.address_delivery, 'id_country'):
+            country_id = data.address_delivery.id_country
+        elif isinstance(data.address_delivery, int):
+            # Se è un ID, dobbiamo recuperare l'address dal database per ottenere il country_id
+            address_obj = self.address_repository.get_by_id(data.address_delivery)
+            if address_obj:
+                country_id = address_obj.id_country if hasattr(address_obj, 'id_country') else 1
+            else:
+                country_id = 1  # Default fallback
+        else:
+            country_id = 1  # Default fallback
+        
+        return self.shipping_repository.create_and_get_id(ShippingSchema(
+            id_carrier_api=1,
+            id_shipping_state=1,
+            id_tax=self.tax_repository.define_tax(country_id),
+            tracking=None,
+            weight=0.0,
+            price_tax_incl=0.0,
+            price_tax_excl=0.0
+        ))
 
     def create(self, data: OrderSchema):
         
@@ -179,30 +203,8 @@ class OrderRepository:
                 # Se è un ID, usa la spedizione esistente
                 order.id_shipping = data.shipping
         else:
-
-            # Debug per capire se è un oggetto o un ID
-            if hasattr(data.address_delivery, 'id_country'):
-                country_id = data.address_delivery.id_country
-            elif isinstance(data.address_delivery, int):
-                # Se è un ID, dobbiamo recuperare l'address dal database per ottenere il country_id
-                address_obj = self.address_repository.get_by_id(data.address_delivery)
-                if address_obj:
-                    country_id = address_obj.id_country if hasattr(address_obj, 'id_country') else 1
-                else:
-                    country_id = 1  # Default fallback
-            else:
-                country_id = 1  # Default fallback
-            
-            
-            order.id_shipping = self.shipping_repository.create_and_get_id(ShippingSchema(
-                id_carrier_api=1,
-                id_shipping_state=1,
-                id_tax=self.tax_repository.define_tax(country_id),
-                tracking=None,
-                weight=0.0,
-                price_tax_incl=0.0,
-                price_tax_excl=0.0
-            ))
+            # Genera una spedizione di default
+            order.id_shipping = self.generate_shipping(data)
 
         if isinstance(data.sectional, SectionalSchema):
             order.id_sectional = QueryUtils.create_and_set_id(repository=self.sectional_repository,

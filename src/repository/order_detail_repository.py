@@ -255,10 +255,11 @@ class OrderDetailRepository:
             if not order_details:
                 # Se non ci sono articoli, azzera i totali
                 order_document = self.session.query(OrderDocument).filter(
-                    OrderDocument.id_order_document == order_document_id
+                    OrderDocument.id_order_document == order_document_id,
+                    OrderDocument.type_document == "preventivo"
                 ).first()
                 if order_document:
-                    order_document.total_price = 0.0
+                    order_document.total_price_with_tax = 0.0
                     order_document.total_weight = 0.0
                     self.session.add(order_document)
                     self.session.commit()
@@ -277,7 +278,7 @@ class OrderDetailRepository:
             
             if order_document:
                 # Per i preventivi usiamo il prezzo con tasse
-                order_document.total_price = totals['total_price_with_tax']
+                order_document.total_price_with_tax = totals['total_price_with_tax']
                 order_document.total_weight = totals['total_weight']
                 self.session.add(order_document)
                 self.session.commit()

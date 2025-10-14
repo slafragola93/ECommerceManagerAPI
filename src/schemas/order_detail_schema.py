@@ -8,7 +8,7 @@ class OrderDetailSchema(BaseModel):
     id_order_document: Optional[int] = 0
     id_origin: Optional[int] = 0
     id_tax: Optional[int] = 0
-    id_product: int = Field(..., ge=0)
+    id_product: Optional[int] = Field(None, ge=0)
     product_name: str = Field(..., max_length=100)
     product_reference: str = Field(..., max_length=100)
     product_qty: int = Field(..., ge=0)

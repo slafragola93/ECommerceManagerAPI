@@ -19,7 +19,7 @@ class OrderDocument(Base):
     document_number = Column(String(32))
     type_document = Column(String(32))
     total_weight = Column(Float)
-    total_price = Column(Float)
+    total_price_with_tax = Column(Float)
     is_invoice_requested = Column(Boolean, default=False)
     note = Column(String(200))
     date_add = Column(Date, default=func.now())
