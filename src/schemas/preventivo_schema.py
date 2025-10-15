@@ -91,8 +91,23 @@ class PreventivoCreateSchema(BaseModel):
 
 class PreventivoUpdateSchema(BaseModel):
     """Schema per modifica preventivo"""
-    reference: Optional[str] = Field(None, max_length=32)
-    note: Optional[str] = None
+    # Campi che possono essere modificati
+    id_order: Optional[int] = Field(None, gt=0)
+    id_tax: Optional[int] = Field(None, gt=0)
+    id_address_delivery: Optional[int] = Field(None, gt=0)
+    id_address_invoice: Optional[int] = Field(None, gt=0)
+    id_customer: Optional[int] = Field(None, gt=0)
+    id_sectional: Optional[int] = Field(None, gt=0)
+    id_shipping: Optional[int] = Field(None, gt=0)
+    is_invoice_requested: Optional[bool] = None
+    note: Optional[str] = Field(None, max_length=200)
+    
+    # Campi NON modificabili (esclusi dallo schema):
+    # - document_number (generato automaticamente)
+    # - type_document (sempre "preventivo")
+    # - total_weight (calcolato automaticamente)
+    # - total_price_with_tax (calcolato automaticamente)
+    # - date_add (data di creazione, immutabile)
 
 
 class ArticoloPreventivoUpdateSchema(BaseModel):

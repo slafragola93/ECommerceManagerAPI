@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from src.repository.preventivo_repository import PreventivoRepository
 from src.repository.customer_repository import CustomerRepository
 from src.repository.tax_repository import TaxRepository
+from src.services.order_document_service import OrderDocumentService
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema,
     PreventivoUpdateSchema,
@@ -22,6 +23,7 @@ class PreventivoService:
         self.preventivo_repo = PreventivoRepository(db)
         self.customer_repo = CustomerRepository(db)
         self.tax_repo = TaxRepository(db)
+        self.order_doc_service = OrderDocumentService(db)
     
     def create_preventivo(self, preventivo_data: PreventivoCreateSchema, user_id: int) -> PreventivoResponseSchema:
         """Crea nuovo preventivo"""
@@ -36,10 +38,10 @@ class PreventivoService:
         customer_name = f"{customer.firstname} {customer.lastname}" if customer else None
         
         # Calcola totali
-        totals = self.preventivo_repo.calculate_totals(order_document.id_order_document)
+        totals = self.order_doc_service.calculate_totals(order_document.id_order_document, "preventivo")
         
         # Recupera articoli
-        articoli = self.preventivo_repo.get_articoli_preventivo(order_document.id_order_document)
+        articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
         articoli_data = [self._format_articolo(articolo) for articolo in articoli]
         
         return PreventivoResponseSchema(
@@ -70,10 +72,10 @@ class PreventivoService:
         customer_name = f"{customer.firstname} {customer.lastname}" if customer else None
         
         # Calcola totali
-        totals = self.preventivo_repo.calculate_totals(id_order_document)
+        totals = self.order_doc_service.calculate_totals(id_order_document, "preventivo")
         
         # Recupera articoli
-        articoli = self.preventivo_repo.get_articoli_preventivo(id_order_document)
+        articoli = self.order_doc_service.get_articoli_order_document(id_order_document, "preventivo")
         articoli_data = [self._format_articolo(articolo) for articolo in articoli]
         
         return PreventivoResponseSchema(
@@ -102,12 +104,12 @@ class PreventivoService:
             customer_name = f"{customer.firstname} {customer.lastname}" if customer else None
             
             # Calcola totali
-            totals = self.preventivo_repo.calculate_totals(order_document.id_order_document)
+            totals = self.order_doc_service.calculate_totals(order_document.id_order_document, "preventivo")
             
             # Recupera articoli solo se show_details è True
             articoli_data = []
             if show_details:
-                articoli = self.preventivo_repo.get_articoli_preventivo(order_document.id_order_document)
+                articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
                 articoli_data = [self._format_articolo(articolo) for articolo in articoli]
             result.append(PreventivoResponseSchema(
                 id_order_document=order_document.id_order_document,
@@ -130,6 +132,9 @@ class PreventivoService:
     
     def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int) -> Optional[PreventivoResponseSchema]:
         """Aggiorna preventivo"""
+        # Valida i riferimenti alle entità correlate se specificati
+        self._validate_preventivo_references(preventivo_data)
+        
         order_document = self.preventivo_repo.update_preventivo(id_order_document, preventivo_data, user_id)
         if not order_document:
             return None
@@ -141,7 +146,7 @@ class PreventivoService:
         # Valida articolo
         self._validate_single_articolo(articolo)
         
-        order_detail = self.preventivo_repo.add_articolo(id_order_document, articolo)
+        order_detail = self.order_doc_service.add_articolo(id_order_document, articolo, "preventivo")
         if not order_detail:
             return None
         
@@ -155,7 +160,7 @@ class PreventivoService:
             if not tax:
                 raise ValueError(f"Tassa con ID {articolo_data.id_tax} non trovata")
         
-        order_detail = self.preventivo_repo.update_articolo(id_order_detail, articolo_data)
+        order_detail = self.order_doc_service.update_articolo(id_order_detail, articolo_data, "preventivo")
         if not order_detail:
             return None
         
@@ -163,7 +168,7 @@ class PreventivoService:
     
     def remove_articolo(self, id_order_detail: int) -> bool:
         """Rimuove articolo da preventivo"""
-        return self.preventivo_repo.remove_articolo(id_order_detail)
+        return self.order_doc_service.remove_articolo(id_order_detail, "preventivo")
     
     def convert_to_order(self, id_order_document: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Converte preventivo in ordine"""
@@ -190,7 +195,7 @@ class PreventivoService:
     
     def get_totals(self, id_order_document: int) -> Dict[str, float]:
         """Recupera totali calcolati del preventivo"""
-        return self.preventivo_repo.calculate_totals(id_order_document)
+        return self.order_doc_service.calculate_totals(id_order_document, "preventivo")
     
     def _validate_articoli(self, articoli: List[ArticoloPreventivoSchema]) -> None:
         """Valida lista articoli"""
@@ -223,6 +228,23 @@ class PreventivoService:
             reduction_amount=order_detail.reduction_amount,
             rda=order_detail.rda
         )
+    
+    def _validate_preventivo_references(self, preventivo_data: PreventivoUpdateSchema) -> None:
+        """Valida i riferimenti alle entità correlate nel preventivo"""
+        # Valida tassa se specificata
+        if preventivo_data.id_tax is not None:
+            tax = self.tax_repo.get_by_id(preventivo_data.id_tax)
+            if not tax:
+                raise ValueError(f"Tassa con ID {preventivo_data.id_tax} non trovata")
+        
+        # Valida customer se specificato
+        if preventivo_data.id_customer is not None:
+            customer = self.customer_repo.get_by_id(preventivo_data.id_customer)
+            if not customer:
+                raise ValueError(f"Customer con ID {preventivo_data.id_customer} non trovato")
+        
+        # Note: Per gli altri campi (address, sectional, shipping) potresti aggiungere validazioni simili
+        # se necessario, ma per ora lasciamo la validazione al livello del database
     
     def delete_preventivo(self, id_order_document: int) -> bool:
         """

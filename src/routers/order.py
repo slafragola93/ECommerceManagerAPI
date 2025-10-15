@@ -1,13 +1,18 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from starlette import status
+from sqlalchemy.orm import Session
 from .dependencies import db_dependency, user_dependency, MAX_LIMIT, LIMIT_DEFAULT
 from .. import OrderSchema
 from ..schemas.order_schema import OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
+from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
 from src.services.wrap import check_authentication
 from ..repository.order_repository import OrderRepository
 from ..services.auth import authorize
 from ..models.relations.relations import orders_history
+from src.database import get_db
+from src.services.auth import get_current_user
+from src.models.user import User
 
 router = APIRouter(
     prefix='/api/v1/orders',
@@ -422,5 +427,136 @@ async def generate_ddt_pdf(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Errore interno: {str(e)}"
         )
+
+
+@router.put("/ddt/articoli/{id_order_detail}",
+           status_code=status.HTTP_200_OK,
+           summary="Aggiorna articolo DDT",
+           description="Aggiorna un articolo collegato a un DDT. L'articolo deve essere collegato a un DDT e l'ordine associato non deve essere fatturato o spedito.",
+           response_description="Articolo DDT aggiornato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
+async def update_ddt_articolo(
+    id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
+    articolo_data: ArticoloPreventivoUpdateSchema = ...,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Aggiorna un articolo in un DDT
+    
+    ## Descrizione
+    
+    Questo endpoint permette di modificare un order_detail collegato a un DDT.
+    Il sistema ricalcola automaticamente i totali del DDT dopo la modifica.
+    
+    ## Campi Modificabili
+    
+    Puoi aggiornare tutti i seguenti campi dell'articolo:
+    
+    ### Informazioni Prodotto
+    - **product_name**: Nome del prodotto (max 100 caratteri)
+    - **product_reference**: Riferimento del prodotto (max 100 caratteri)
+    - **product_price**: Prezzo del prodotto (deve essere > 0)
+    - **product_weight**: Peso del prodotto (deve essere >= 0)
+    - **product_qty**: Quantità del prodotto (deve essere > 0)
+    
+    ### Tassazione e Sconti
+    - **id_tax**: ID dell'aliquota IVA (deve esistere)
+    - **reduction_percent**: Sconto percentuale (deve essere >= 0)
+    - **reduction_amount**: Sconto in importo (deve essere >= 0)
+    
+    ### Altri Campi
+    - **rda**: Codice RDA (max 10 caratteri)
+    
+    ## Validazioni
+    
+    - Tutti i campi sono opzionali (solo i campi forniti vengono aggiornati)
+    - L'articolo deve esistere ed essere collegato a un DDT
+    - Il DDT deve essere modificabile (ordine non fatturato e non spedito)
+    - La tassa specificata deve esistere nel sistema
+    - I totali del DDT vengono ricalcolati automaticamente
+    
+    ## Esempio
+    
+    ```json
+    {
+        "product_name": "Prodotto aggiornato",
+        "product_price": 150.50,
+        "product_qty": 2,
+        "id_tax": 1,
+        "reduction_percent": 10.0
+    }
+    ```
+    
+    ## Note
+    
+    - Il ricalcolo automatico include: total_price_with_tax, total_weight
+    - La modifica è permessa solo se l'ordine collegato non è stato fatturato o spedito
+    - Il timestamp updated_at del DDT viene aggiornato automaticamente
+    """
+    try:
+        from src.services.order_document_service import OrderDocumentService
+        order_doc_service = OrderDocumentService(db)
+        
+        # Verifica che l'articolo esista e sia collegato a un DDT
+        from src.models.order_detail import OrderDetail
+        from src.models.order_document import OrderDocument
+        
+        order_detail = db.query(OrderDetail).filter(
+            OrderDetail.id_order_detail == id_order_detail
+        ).first()
+        
+        if not order_detail:
+            raise HTTPException(status_code=404, detail="Articolo non trovato")
+        
+        # Verifica che sia collegato a un DDT
+        order_document = db.query(OrderDocument).filter(
+            OrderDocument.id_order_document == order_detail.id_order_document
+        ).first()
+        
+        if not order_document or order_document.type_document != "DDT":
+            raise HTTPException(status_code=400, detail="L'articolo non è collegato a un DDT")
+        
+        # Verifica che il DDT sia modificabile
+        if order_document.id_order:
+            is_modifiable = order_doc_service.is_ddt_modifiable(order_document.id_order)
+            if not is_modifiable:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Il DDT non può essere modificato: l'ordine è già stato fatturato o spedito"
+                )
+        
+        # Aggiorna l'articolo
+        updated_articolo = order_doc_service.update_articolo(
+            id_order_detail, 
+            articolo_data, 
+            "DDT"
+        )
+        
+        if not updated_articolo:
+            raise HTTPException(status_code=404, detail="Errore durante l'aggiornamento dell'articolo")
+        
+        # Restituisci l'articolo aggiornato
+        return {
+            "id_order_detail": updated_articolo.id_order_detail,
+            "product_name": updated_articolo.product_name,
+            "product_reference": updated_articolo.product_reference,
+            "product_price": updated_articolo.product_price,
+            "product_qty": updated_articolo.product_qty,
+            "product_weight": updated_articolo.product_weight,
+            "id_tax": updated_articolo.id_tax,
+            "reduction_percent": updated_articolo.reduction_percent,
+            "reduction_amount": updated_articolo.reduction_amount,
+            "rda": updated_articolo.rda,
+            "message": "Articolo DDT aggiornato con successo"
+        }
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 

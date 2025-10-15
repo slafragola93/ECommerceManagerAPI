@@ -11,11 +11,11 @@ from src.models.shipping import Shipping
 from src.models.sectional import Sectional
 from src.services.tool import calculate_amount_with_percentage
 from src.models.product import Product
+from src.services.order_document_service import OrderDocumentService
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema, 
     PreventivoUpdateSchema,
-    ArticoloPreventivoSchema,
-    ArticoloPreventivoUpdateSchema
+    ArticoloPreventivoSchema
 )
 from src.schemas.address_schema import AddressSchema
 from src.services.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
@@ -212,134 +212,36 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
-        # Aggiorna campi
-        # if preventivo_data.reference is not None:
-        #     preventivo.reference = preventivo_data.reference
+        # Aggiorna campi modificabili
+        if preventivo_data.id_order is not None:
+            preventivo.id_order = preventivo_data.id_order
+        if preventivo_data.id_tax is not None:
+            preventivo.id_tax = preventivo_data.id_tax
+        if preventivo_data.id_address_delivery is not None:
+            preventivo.id_address_delivery = preventivo_data.id_address_delivery
+        if preventivo_data.id_address_invoice is not None:
+            preventivo.id_address_invoice = preventivo_data.id_address_invoice
+        if preventivo_data.id_customer is not None:
+            preventivo.id_customer = preventivo_data.id_customer
+        if preventivo_data.id_sectional is not None:
+            preventivo.id_sectional = preventivo_data.id_sectional
+        if preventivo_data.id_shipping is not None:
+            preventivo.id_shipping = preventivo_data.id_shipping
+        if preventivo_data.is_invoice_requested is not None:
+            preventivo.is_invoice_requested = preventivo_data.is_invoice_requested
         if preventivo_data.note is not None:
             preventivo.note = preventivo_data.note
-        # if preventivo_data.status is not None:
-        #     preventivo.status = preventivo_data.status
         
-        # preventivo.updated_by = user_id
+        # Aggiorna timestamp
         preventivo.updated_at = datetime.now()
         
         self.db.commit()
         return preventivo
     
-    def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema) -> Optional[OrderDetail]:
-        """Aggiunge articolo a preventivo"""
-        # Verifica che il preventivo non sia stato convertito in ordine
-        self._check_preventivo_not_converted(id_order_document)
-        
-        preventivo = self.get_preventivo_by_id(id_order_document)
-        if not preventivo:
-            return None
-        
-        order_detail = self._create_order_detail(id_order_document, articolo)
-        
-        # Aggiorna updated_at del preventivo
-        preventivo.updated_at = datetime.now()
-        
-        self.db.commit()
-        
-        # Ricalcola completamente i totali (articoli + spedizione)
-        self._recalculate_preventivo_totals(id_order_document)
-        
-        return order_detail
+    # METODI DEPRECATI - Centralizzati in OrderDocumentService
+    # def add_articolo, update_articolo, remove_articolo sono ora gestiti da OrderDocumentService
     
-    def update_articolo(self, id_order_detail: int, articolo_data: ArticoloPreventivoUpdateSchema) -> Optional[OrderDetail]:
-        """Aggiorna articolo in preventivo"""
-        order_detail = self.db.query(OrderDetail).filter(
-            OrderDetail.id_order_detail == id_order_detail
-        ).first()
-        
-        if not order_detail:
-            return None
-        
-        # Verifica che il preventivo non sia stato convertito in ordine
-        self._check_preventivo_not_converted(order_detail.id_order_document)
-        
-        # Aggiorna campi
-        if articolo_data.product_name is not None:
-            order_detail.product_name = articolo_data.product_name
-        if articolo_data.product_reference is not None:
-            order_detail.product_reference = articolo_data.product_reference
-        if articolo_data.product_price is not None:
-            order_detail.product_price = articolo_data.product_price
-        if articolo_data.product_qty is not None:
-            order_detail.product_qty = articolo_data.product_qty
-        if articolo_data.id_tax is not None:
-            order_detail.id_tax = articolo_data.id_tax
-        
-        # Aggiorna updated_at del preventivo
-        preventivo = self.get_preventivo_by_id(order_detail.id_order_document)
-        if preventivo:
-            preventivo.updated_at = datetime.now()
-        
-        self.db.commit()
-        
-        # Ricalcola completamente i totali (articoli + spedizione)
-        self._recalculate_preventivo_totals(order_detail.id_order_document)
-        
-        return order_detail
     
-    def remove_articolo(self, id_order_detail: int) -> bool:
-        """Rimuove articolo da preventivo"""
-        order_detail = self.db.query(OrderDetail).filter(
-            OrderDetail.id_order_detail == id_order_detail
-        ).first()
-        
-        if not order_detail:
-            return False
-        # Verifica che il preventivo non sia stato convertito in ordine
-        self._check_preventivo_not_converted(order_detail.id_order_document)
-        
-        # Aggiorna updated_at del preventivo prima di rimuovere l'articolo
-        preventivo = self.get_preventivo_by_id(order_detail.id_order_document)
-        if preventivo:
-            preventivo.updated_at = datetime.now()
-        
-        self.db.delete(order_detail)
-        self.db.commit()
-        
-        # Ricalcola completamente i totali (articoli + spedizione)
-        self._recalculate_preventivo_totals(order_detail.id_order_document)
-        
-        return True
-    
-    def get_articoli_preventivo(self, id_order_document: int) -> List[OrderDetail]:
-        """Recupera articoli di un preventivo"""
-        return self.db.query(OrderDetail).filter(
-            OrderDetail.id_order_document == id_order_document,
-            OrderDetail.id_order == 0  # Solo articoli del preventivo, non dell'ordine
-        ).all()
-    
-    def calculate_totals(self, id_order_document: int) -> Dict[str, float]:
-        """Calcola totali del preventivo"""
-        articoli = self.get_articoli_preventivo(id_order_document)
-        
-        total_imponibile = 0.0
-        total_iva = 0.0
-        
-        for articolo in articoli:
-            # Recupera tassa
-            tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
-            tax_rate = tax.percentage if tax else 0.0
-            
-            # Calcola prezzi
-            prezzo_netto = articolo.product_price * articolo.product_qty
-            prezzo_iva = calculate_amount_with_percentage(prezzo_netto, tax_rate)
-            
-            total_imponibile += prezzo_netto
-            total_iva += prezzo_iva
-        
-        total_finale = total_imponibile + total_iva
-        
-        return {
-            "total_imponibile": round(total_imponibile, 2),
-            "total_iva": round(total_iva, 2),
-            "total_finale": round(total_finale, 2)
-        }
     
     def convert_to_order(self, id_order_document: int, user_id: int) -> Optional[Order]:
         """Converte preventivo in ordine"""
@@ -376,8 +278,8 @@ class PreventivoRepository:
         # Recupera l'ordine creato
         order = self.db.query(Order).filter(Order.id_order == order_id).first()
         
-        # Copia articoli dal preventivo all'ordine utilizzando OrderDetailRepository
-        articoli = self.get_articoli_preventivo(id_order_document)
+        order_doc_service = OrderDocumentService(self.db)
+        articoli = order_doc_service.get_articoli_order_document(id_order_document, "preventivo")
         for articolo in articoli:
             # Crea order detail utilizzando lo schema e il repository
             from src.schemas.order_detail_schema import OrderDetailSchema

@@ -468,7 +468,55 @@ async def update_preventivo(
     user: User = user_dependency,
     db: Session = db_dependency
 ):
-    """Aggiorna preventivo"""
+    """
+    Aggiorna un preventivo esistente
+    
+    ## Campi Modificabili
+    
+    Puoi aggiornare tutti i seguenti campi del preventivo:
+    
+    ### Informazioni Base
+    - **id_customer**: ID del cliente (deve esistere)
+    - **id_tax**: ID dell'aliquota IVA (deve esistere)
+    - **note**: Note del preventivo (max 200 caratteri)
+    - **is_invoice_requested**: Se richiedere fattura (true/false)
+    
+    ### Indirizzi
+    - **id_address_delivery**: ID indirizzo di consegna (deve esistere)
+    - **id_address_invoice**: ID indirizzo di fatturazione (deve esistere)
+    
+    ### Collegamenti
+    - **id_order**: ID ordine collegato (se presente)
+    - **id_sectional**: ID sezionale (deve esistere)
+    - **id_shipping**: ID spedizione (deve esistere)
+    
+    ## Campi NON Modificabili
+    
+    I seguenti campi non possono essere modificati per garantire l'integrità dei dati:
+    - **document_number**: Numero documento (generato automaticamente)
+    - **type_document**: Tipo documento (sempre "preventivo")
+    - **total_weight**: Peso totale (calcolato automaticamente)
+    - **total_price_with_tax**: Totale con IVA (calcolato automaticamente)
+    - **date_add**: Data di creazione (immutabile)
+    
+    ## Validazioni
+    
+    - Tutti gli ID specificati devono esistere nelle rispettive tabelle
+    - I campi sono tutti opzionali (solo i campi forniti vengono aggiornati)
+    - La validazione avviene prima dell'aggiornamento
+    
+    ## Esempio
+    
+    ```json
+    {
+        "id_customer": 123,
+        "id_address_delivery": 456,
+        "id_address_invoice": 457,
+        "note": "Preventivo aggiornato",
+        "is_invoice_requested": true
+    }
+    ```
+    """
     try:
         service = get_preventivo_service(db)
         preventivo = service.update_preventivo(id_order_document, preventivo_data, user["id"])
