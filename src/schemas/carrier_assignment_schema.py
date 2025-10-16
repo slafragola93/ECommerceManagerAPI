@@ -1,6 +1,7 @@
 from typing import Optional, List, Union
 from pydantic import BaseModel, Field, validator
 import json
+from .carrier_api_schema import CarrierApiResponseSchema
 
 
 class CarrierAssignmentSchema(BaseModel):
@@ -100,7 +101,7 @@ class CarrierAssignmentResponseSchema(BaseModel):
     origin_carriers: Optional[str]
     min_weight: Optional[float]
     max_weight: Optional[float]
-    carrier_api: Optional[dict] = None  # Popolato dalla repository
+    carrier_api: Optional[CarrierApiResponseSchema] = None  # Popolato dalla repository
 
     class Config:
         from_attributes = True

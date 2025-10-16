@@ -335,7 +335,10 @@ class FatturaPAService:
         self._create_element(id_fiscale_cedente, "IdPaese", "IT")
         self._create_element(id_fiscale_cedente, "IdCodice", self.vat_number)
         
-        self._create_element(dati_anagrafici_cedente, "CodiceFiscale", customer_cf)
+        
+        # Aggiungi CodiceFiscale solo se presente
+        if customer_cf:
+            self._create_element(dati_anagrafici_cedente, "CodiceFiscale", customer_cf) 
         
         anagrafica_cedente = self._create_element(dati_anagrafici_cedente, "Anagrafica")
         self._create_element(anagrafica_cedente, "Denominazione", self.company_name)

@@ -1,126 +1,156 @@
-from fastapi import APIRouter, Path, HTTPException, Query, Depends
-from starlette import status
-from .dependencies import db_dependency, user_dependency, MAX_LIMIT, LIMIT_DEFAULT
-from .. import BrandSchema, BrandResponseSchema, AllBrandsResponseSchema
+"""
+Brand Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.brand_service_interface import IBrandService
+from src.repository.interfaces.brand_repository_interface import IBrandRepository
+from src.schemas.brand_schema import BrandSchema, BrandResponseSchema, AllBrandsResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..repository.brand_repository import BrandRepository
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/brands',
-    tags=['Brand'],
+    prefix="/api/v1/brands",
+    tags=["Brand"]
 )
 
-
-def get_repository(db: db_dependency) -> BrandRepository:
-    return BrandRepository(db)
-
+def get_brand_service(db: db_dependency) -> IBrandService:
+    """Dependency injection per Brand Service"""
+    # Configura il container se necessario
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    # Crea il repository con la sessione DB usando il metodo specifico
+    brand_repo = configured_container.resolve_with_session(IBrandRepository, db)
+    
+    # Crea il service con il repository
+    brand_service = configured_container.resolve(IBrandService)
+    # Inietta il repository nel service
+    if hasattr(brand_service, '_brand_repository'):
+        brand_service._brand_repository = brand_repo
+    
+    return brand_service
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllBrandsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_all_brands(user: user_dependency,
-                         br: BrandRepository = Depends(get_repository),
-                         page: int = Query(1, gt=0),
-                         limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_all_brands(
+    user: dict = Depends(get_current_user),
+    brand_service: IBrandService = Depends(get_brand_service),
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+):
     """
-    Restituisce l'elenco di tutti i marchi disponibili.
-
-    - **user**: Utente autenticato (dipendenza).
-    - **db**: Sessione del database (dipendenza).
+    Restituisce tutti i brand con supporto alla paginazione.
+    
+    - **page**: La pagina da restituire, per la paginazione dei risultati.
+    - **limit**: Il numero massimo di risultati per pagina.
     """
+    try:
+        brands = await brand_service.get_brands(page=page, limit=limit)
+        if not brands:
+            raise HTTPException(status_code=404, detail="Nessun brand trovato")
 
-    brands = br.get_all(page=page, limit=limit)
+        total_count = await brand_service.get_brands_count()
 
-    if brands is None:
-        raise HTTPException(status_code=404, detail="Brands non trovati")
-
-    total_count = br.get_count()
-
-    return {"brands": brands, "total": total_count, "page": page, "limit": limit}
-
-
+        return {"brands": brands, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/{brand_id}", status_code=status.HTTP_200_OK, response_model=BrandResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_brand_by_id(user: user_dependency,
-                          br: BrandRepository = Depends(get_repository),
-                          brand_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_brand_by_id(
+    user: dict = Depends(get_current_user),
+    brand_service: IBrandService = Depends(get_brand_service),
+    brand_id: int = Path(gt=0)
+):
     """
-    Restituisce i dettagli di un singolo marchio specificato dall'ID.
+    Restituisce un singolo brand basato sull'ID specificato.
 
-    - **user**: Utente autenticato (dipendenza).
-    - **db**: Sessione del database (dipendenza).
-    - **brand_id**: ID del marchio da ricercare.
+    - **brand_id**: Identificativo del brand da ricercare.
     """
-    brand = br.get_by_id(_id=brand_id)
-
-    if brand is None:
+    try:
+        brand = await brand_service.get_brand(brand_id)
+        return brand
+    except NotFoundException as e:
         raise HTTPException(status_code=404, detail="Brand non trovato")
-
-    return brand
-
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Brand creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_brand(user: user_dependency,
-                       bs: BrandSchema,
-                       br: BrandRepository = Depends(get_repository), ):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def create_brand(
+    brand_data: BrandSchema,
+    user: dict = Depends(get_current_user),
+    brand_service: IBrandService = Depends(get_brand_service)
+):
     """
-    Crea un nuovo marchio con i dettagli forniti.
-
-    - **user**: Utente autenticato (dipendenza).
-    - **db**: Sessione del database (dipendenza).
-    - **bs**: Schema del marchio contenente i dati per la creazione.
+    Crea un nuovo brand con i dati forniti.
     """
+    try:
+        return await brand_service.create_brand(brand_data)
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    br.create(data=bs)
-
-
-@router.delete("/{brand_id}", status_code=status.HTTP_204_NO_CONTENT,
-               response_description="Brand eliminato correttamente")
+@router.put("/{brand_id}", status_code=status.HTTP_200_OK, response_description="Brand aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_brand(user: user_dependency,
-                       br: BrandRepository = Depends(get_repository),
-                       brand_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def update_brand(
+    brand_data: BrandSchema,
+    brand_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    brand_service: IBrandService = Depends(get_brand_service)
+):
     """
-    Elimina il marchio specificato dall'ID.
+    Aggiorna i dati di un brand esistente basato sull'ID specificato.
 
-    - **user**: Utente autenticato (dipendenza).
-    - **db**: Sessione del database (dipendenza).
-    - **brand_id**: ID del marchio da eliminare.
+    - **brand_id**: Identificativo del brand da aggiornare.
     """
+    try:
+        return await brand_service.update_brand(brand_id, brand_data)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Brand non trovato")
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    brand = br.get_by_id(_id=brand_id)
-
-    if brand is None:
-        raise HTTPException(status_code=404, detail="Brand non trovato.")
-
-    br.delete(brand)
-
-
-@router.put("/{brand_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{brand_id}", status_code=status.HTTP_200_OK, response_description="Brand eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_brand(user: user_dependency,
-                       bs: BrandSchema,
-                       br: BrandRepository = Depends(get_repository),
-                       brand_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
+async def delete_brand(
+    user: dict = Depends(get_current_user),
+    brand_service: IBrandService = Depends(get_brand_service),
+    brand_id: int = Path(gt=0)
+):
     """
-    Aggiorna i dettagli del marchio specificato dall'ID con i nuovi dati forniti.
+    Elimina un brand basato sull'ID specificato.
 
-    - **user**: Utente autenticato (dipendenza).
-    - **db**: Sessione del database (dipendenza).
-    - **bs**: Schema del marchio contenente i dati aggiornati.
-    - **brand_id**: ID del marchio da aggiornare.
+    - **brand_id**: Identificativo del brand da eliminare.
     """
-
-    brand = br.get_by_id(_id=brand_id)
-
-    if brand is None:
-        raise HTTPException(status_code=404, detail="Brand non trovato.")
-
-    br.update(edited_brand=brand, data=bs)
+    try:
+        await brand_service.delete_brand(brand_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Brand non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

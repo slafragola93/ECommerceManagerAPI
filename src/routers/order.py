@@ -2,10 +2,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from starlette import status
 from sqlalchemy.orm import Session
-from .dependencies import db_dependency, user_dependency, MAX_LIMIT, LIMIT_DEFAULT
+from .dependencies import MAX_LIMIT, LIMIT_DEFAULT
+from src.database import get_db
+from src.services.auth import get_current_user
 from .. import OrderSchema
 from ..schemas.order_schema import OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
 from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
+from ..schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema, ReturnResponseSchema, AllReturnsResponseSchema
 from src.services.wrap import check_authentication
 from ..repository.order_repository import OrderRepository
 from ..services.auth import authorize
@@ -13,6 +16,8 @@ from ..models.relations.relations import orders_history
 from src.database import get_db
 from src.services.auth import get_current_user
 from src.models.user import User
+from src.routers.dependencies import get_fiscal_document_service
+from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 
 router = APIRouter(
     prefix='/api/v1/orders',
@@ -20,7 +25,7 @@ router = APIRouter(
 )
 
 
-def get_repository(db: db_dependency) -> OrderRepository:
+def get_repository(db: Session = Depends(get_db)) -> OrderRepository:
     return OrderRepository(db)
 
 
@@ -31,7 +36,7 @@ def get_repository(db: db_dependency) -> OrderRepository:
            response_description="Lista di ordini con metadati di paginazione")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_all_orders(user: user_dependency,
+async def get_all_orders(user: dict = Depends(get_current_user),
                         or_repo: OrderRepository = Depends(get_repository),
                         orders_ids: Optional[str] = Query(None, description="ID degli ordini, separati da virgole (es: 1,2,3)"),
                         customers_ids: Optional[str] = Query(None, description="ID dei clienti, separati da virgole (es: 1,2,3)"),
@@ -129,9 +134,9 @@ async def get_all_orders(user: user_dependency,
 @router.get("/{order_id}", status_code=status.HTTP_200_OK, response_model=OrderIdSchema)
 @check_authentication  
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])  
-async def get_order_by_id(user: user_dependency,
-                         or_repo: OrderRepository = Depends(get_repository),
-                         order_id: int = Path(gt=0)):
+async def get_order_by_id(order_id: int = Path(gt=0),
+                         user: dict = Depends(get_current_user),
+                         or_repo: OrderRepository = Depends(get_repository)):
     """
     Recupera un singolo ordine per ID con tutti i dettagli delle relazioni.
 
@@ -164,8 +169,8 @@ async def get_order_by_id(user: user_dependency,
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Ordine creato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_order(user: user_dependency,
-                       order: OrderSchema,
+async def create_order(order: OrderSchema,
+                       user: dict = Depends(get_current_user),
                        or_repo: OrderRepository = Depends(get_repository)):
     """
     Crea un nuovo ordine con i dati forniti.
@@ -180,10 +185,10 @@ async def create_order(user: user_dependency,
 @router.put("/{order_id}", status_code=status.HTTP_200_OK, response_description="Ordine aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_order(user: user_dependency,
-                      order_schema: OrderUpdateSchema,
-                      or_repo: OrderRepository = Depends(get_repository),
-                      order_id: int = Path(gt=0)):
+async def update_order(order_schema: OrderUpdateSchema,
+                      order_id: int = Path(gt=0),
+                      user: dict = Depends(get_current_user),
+                      or_repo: OrderRepository = Depends(get_repository)):
     """
     Aggiorna un ordine esistente con aggiornamenti parziali.
 
@@ -210,9 +215,9 @@ async def update_order(user: user_dependency,
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Ordine eliminato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_order(user: user_dependency,
-                      or_repo: OrderRepository = Depends(get_repository),
-                      order_id: int = Path(gt=0)):
+async def delete_order(order_id: int = Path(gt=0),
+                      user: dict = Depends(get_current_user),
+                      or_repo: OrderRepository = Depends(get_repository)):
     """
     Elimina un ordine dal sistema per l'ID specificato.
 
@@ -233,10 +238,10 @@ async def delete_order(user: user_dependency,
 @router.patch("/{order_id}/status", status_code=status.HTTP_200_OK, response_description="Stato ordine aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
-async def update_order_status(user: user_dependency,
-                             or_repo: OrderRepository = Depends(get_repository),
-                             order_id: int = Path(gt=0),
-                             new_status_id: int = Query(gt=0)):
+async def update_order_status(order_id: int = Path(gt=0),
+                             new_status_id: int = Query(gt=0),
+                             user: dict = Depends(get_current_user),
+                             or_repo: OrderRepository = Depends(get_repository)):
     """
     Aggiorna lo stato di un ordine e crea un record nell'order history.
 
@@ -274,10 +279,10 @@ async def update_order_status(user: user_dependency,
 @router.patch("/{order_id}/payment", status_code=status.HTTP_200_OK, response_description="Stato pagamento aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
-async def update_order_payment(user: user_dependency,
-                              or_repo: OrderRepository = Depends(get_repository),
-                              order_id: int = Path(gt=0),
-                              is_payed: bool = Query()):
+async def update_order_payment(order_id: int = Path(gt=0),
+                              is_payed: bool = Query(),
+                              user: dict = Depends(get_current_user),
+                              or_repo: OrderRepository = Depends(get_repository)):
     """
     Aggiorna lo stato di pagamento di un ordine.
 
@@ -312,7 +317,7 @@ async def update_order_payment(user: user_dependency,
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
 async def generate_ddt_from_order(
     id_order: int = Path(..., description="ID dell'ordine da cui generare il DDT"),
-    user: user_dependency = None,
+    user: dict = Depends(get_current_user),
     or_repo: OrderRepository = Depends(get_repository)
 ):
     """
@@ -366,7 +371,7 @@ async def generate_ddt_from_order(
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def generate_ddt_pdf(
     id_order_document: int = Path(..., description="ID del DDT"),
-    user: user_dependency = None,
+    user: dict = Depends(get_current_user),
     or_repo: OrderRepository = Depends(get_repository)
 ):
     """
@@ -556,6 +561,254 @@ async def update_ddt_articolo(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+# ==================== ENDPOINT PER I RESI ====================
+
+@router.post("/{id_order}/returns", 
+            status_code=status.HTTP_201_CREATED,
+            summary="Crea un reso per un ordine",
+            description="Crea un nuovo documento di reso per un ordine specifico",
+            response_description="Reso creato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
+async def create_return(
+    id_order: int = Path(..., description="ID dell'ordine"),
+    user: dict = Depends(get_current_user),
+    return_data: ReturnCreateSchema = None,
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Crea un nuovo reso per un ordine specifico.
+    
+    Il reso può includere:
+    - Articoli specifici dell'ordine con quantità personalizzate
+    - Spese di spedizione (opzionale)
+    - Note aggiuntive
+    
+    Il sistema calcola automaticamente:
+    - Il numero sequenziale del reso
+    - Il totale con IVA inclusa
+    - Se il reso è parziale o totale
+    """
+    try:
+        # Verifica che l'ordine esista
+        from src.models.order import Order
+        from src.database import get_db
+        db = next(get_db())
+        order = db.query(Order).filter(Order.id_order == id_order).first()
+        if not order:
+            raise HTTPException(status_code=404, detail=f"Ordine {id_order} non trovato")
+        
+        # Crea il reso
+        return_doc = await fiscal_document_service.create_return(id_order, return_data)
+        
+        return {
+            "message": "Reso creato con successo",
+            "return_document": ReturnResponseSchema.from_orm(return_doc),
+            "return_id": return_doc.id_fiscal_document
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.get("/{id_order}/returns", 
+           status_code=status.HTTP_200_OK,
+           summary="Recupera i resi di un ordine",
+           description="Recupera tutti i documenti di reso per un ordine specifico",
+           response_description="Lista dei resi dell'ordine")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
+async def get_order_returns(
+    id_order: int = Path(..., description="ID dell'ordine"),
+    user: dict = Depends(get_current_user),
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Recupera tutti i documenti di reso per un ordine specifico.
+    """
+    try:
+        returns = await fiscal_document_service.get_fiscal_documents_by_order(id_order, 'return')
+        
+        return {
+            "returns": [ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
+            "total": len(returns),
+            "order_id": id_order
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.put("/returns/{id_fiscal_document}", 
+           status_code=status.HTTP_200_OK,
+           summary="Aggiorna un reso",
+           description="Aggiorna i dati di un documento di reso esistente",
+           response_description="Reso aggiornato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
+async def update_return(
+    id_fiscal_document: int = Path(..., description="ID del documento di reso"),
+    user: dict = Depends(get_current_user),
+    update_data: ReturnUpdateSchema = None,
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Aggiorna un documento di reso esistente.
+    
+    Permette di modificare:
+    - Lo stato del reso (pending, processed, cancelled)
+    - Le note del reso
+    - Se includere le spese di spedizione (con ricalcolo automatico del totale)
+    """
+    try:
+        updated_return = await fiscal_document_service.update_fiscal_document(id_fiscal_document, update_data)
+        
+        return {
+            "message": "Reso aggiornato con successo",
+            "return_document": ReturnResponseSchema.from_orm(updated_return)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.delete("/returns/{id_fiscal_document}", 
+              status_code=status.HTTP_200_OK,
+              summary="Elimina un reso",
+              description="Elimina un documento di reso (solo se in stato pending)",
+              response_description="Reso eliminato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['D'])
+async def delete_return(
+    id_fiscal_document: int = Path(..., description="ID del documento di reso"),
+    user: dict = Depends(get_current_user),
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Elimina un documento di reso.
+    
+    Nota: Solo i resi in stato 'pending' possono essere eliminati.
+    """
+    try:
+        deleted = await fiscal_document_service.delete_fiscal_document(id_fiscal_document)
+        
+        if deleted:
+            return {"message": "Reso eliminato con successo"}
+        else:
+            raise HTTPException(status_code=404, detail="Reso non trovato o non eliminabile")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.put("/returns/details/{id_fiscal_document_detail}", 
+           status_code=status.HTTP_200_OK,
+           summary="Aggiorna un dettaglio di reso",
+           description="Aggiorna quantità o prezzo di un singolo articolo nel reso",
+           response_description="Dettaglio reso aggiornato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
+async def update_return_detail(
+    id_fiscal_document_detail: int = Path(..., description="ID del dettaglio di reso"),
+    user: dict = Depends(get_current_user),
+    update_data: ReturnDetailUpdateSchema = None,
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Aggiorna un singolo dettaglio (articolo) di un reso.
+    
+    Permette di modificare:
+    - La quantità da restituire
+    - Il prezzo unitario
+    
+    Il totale del reso viene ricalcolato automaticamente.
+    """
+    try:
+        updated_detail = await fiscal_document_service.update_fiscal_document_detail(id_fiscal_document_detail, update_data)
+        
+        return {
+            "message": "Dettaglio reso aggiornato con successo",
+            "detail": updated_detail
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.delete("/returns/details/{id_fiscal_document_detail}", 
+              status_code=status.HTTP_200_OK,
+              summary="Elimina un dettaglio di reso",
+              description="Elimina un singolo articolo dal reso",
+              response_description="Dettaglio reso eliminato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['D'])
+async def delete_return_detail(
+    id_fiscal_document_detail: int = Path(..., description="ID del dettaglio di reso"),
+    user: dict = Depends(get_current_user),
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Elimina un singolo dettaglio (articolo) da un reso.
+    
+    Il totale del reso viene ricalcolato automaticamente.
+    """
+    try:
+        deleted = await fiscal_document_service.delete_fiscal_document_detail(id_fiscal_document_detail)
+        
+        if deleted:
+            return {"message": "Dettaglio reso eliminato con successo"}
+        else:
+            raise HTTPException(status_code=404, detail="Dettaglio reso non trovato")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.get("/returns/", 
+           status_code=status.HTTP_200_OK,
+           summary="Recupera tutti i resi",
+           description="Recupera tutti i documenti di reso con paginazione",
+           response_description="Lista di tutti i resi")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
+async def get_all_returns(
+    user: dict = Depends(get_current_user),
+    page: int = Query(1, gt=0, description="Numero di pagina"),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+):
+    """
+    Recupera tutti i documenti di reso con paginazione.
+    """
+    try:
+        returns = await fiscal_document_service.get_fiscal_documents_by_type('return', page, limit)
+        total_count = await fiscal_document_service.get_fiscal_document_count_by_type('return')
+        
+        return AllReturnsResponseSchema(
+            returns=[ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
+            total=total_count,
+            page=page,
+            limit=limit
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 

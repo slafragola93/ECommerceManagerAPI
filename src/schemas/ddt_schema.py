@@ -54,7 +54,7 @@ class DDTResponseSchema(BaseModel):
     id_order_document: int
     document_number: str
     type_document: str
-    date_add: datetime
+    date_add: Optional[datetime] = None
     updated_at: datetime
     note: Optional[str] = None
     total_weight: float

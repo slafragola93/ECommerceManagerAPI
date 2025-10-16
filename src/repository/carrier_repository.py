@@ -1,106 +1,48 @@
-from http.client import HTTPException
-
+"""
+Carrier Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
+from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc
-from sqlalchemy.orm import Session
-
-from .. import AllCarriersResponseSchema, CarrierResponseSchema, CarrierSchema
-from ..models import Carrier
-from src.schemas.brand_schema import *
+from src.models.carrier import Carrier
+from src.repository.interfaces.carrier_repository_interface import ICarrierRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
 
-
-class CarrierRepository:
-    """Repository brand"""
-
+class CarrierRepository(BaseRepository[Carrier, int], ICarrierRepository):
+    """Carrier Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_all(self,
-                carriers_ids: Optional[str] = None,
-                origin_ids: Optional[str] = None,
-                carrier_name: Optional[str] = None,
-                page: int = 1, limit: int = 10) -> AllCarriersResponseSchema:
-        """
-        Recupera tutti i corrieri salvati nel gestionale
-
-        Returns:
-            AllBrandsResponseSchema: Tutti i brand
-        """
-        query = self.session.query(Carrier).order_by(desc(Carrier.id_carrier))
-
+        super().__init__(session, Carrier)
+    
+    def get_all(self, **filters) -> List[Carrier]:
+        """Ottiene tutte le entità con filtri opzionali"""
         try:
-            query = QueryUtils.filter_by_id(query, Carrier, 'id_carrier', carriers_ids)
-            query = QueryUtils.filter_by_id(query, Carrier, 'id_origin', origin_ids)
-
-            query = QueryUtils.filter_by_string(query, Carrier, 'name', carrier_name)
-
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
-
-        return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-    def get_count(self,
-                  carriers_ids: Optional[str] = None,
-                  origin_ids: Optional[str] = None,
-                  carrier_name: Optional[str] = None) -> int:
-
-        query = self.session.query(func.count(Carrier.id_carrier))
-
+            query = self._session.query(self._model_class).order_by(desc(Carrier.id_carrier))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
         try:
-            query = QueryUtils.filter_by_id(query, Carrier, 'id_carrier', carriers_ids)
-            query = QueryUtils.filter_by_id(query, Carrier, 'id_origin', origin_ids)
-
-            query = QueryUtils.filter_by_string(query, Carrier, 'name', carrier_name)
-
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
-
-        total_count = query.scalar()
-
-        return total_count
-
-    def get_by_id(self, _id: int) -> CarrierResponseSchema:
-        """
-        Ottieni brand per ID
-
-        Args:
-            _id (int):  ID Brand.
-
-        Returns:
-            BrandResponseSchema: Istanza del brand
-        """
-        return self.session.query(Carrier).filter(Carrier.id_carrier == _id).first()
-
-    def create(self, data: BrandSchema):
-
-        carrier = Carrier(**data.model_dump())
-
-        self.session.add(carrier)
-        self.session.commit()
-        self.session.refresh(carrier)
-
-    def update(self,
-               edited_carrier: Carrier,
-               data: CarrierSchema):
-
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
-        # Set su ogni proprietà
-        for key, value in entity_updated.items():
-            if hasattr(edited_carrier, key) and value is not None:
-                setattr(edited_carrier, key, value)
-
-        self.session.add(edited_carrier)
-        self.session.commit()
-
-    def delete(self, carrier: Carrier) -> bool:
-        self.session.delete(carrier)
-        self.session.commit()
-
-        return True
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[Carrier]:
+        """Ottiene un carrier per nome (case insensitive)"""
+        try:
+            return self._session.query(Carrier).filter(
+                func.lower(Carrier.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving carrier by name: {str(e)}")

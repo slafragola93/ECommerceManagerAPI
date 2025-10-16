@@ -25,6 +25,10 @@ class FiscalDocumentDetail(Base):
     unit_price = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
     
+    # Tassa applicata (riferimento all'order detail originale)
+    id_tax = Column(Integer, ForeignKey("taxes.id_tax"), nullable=True, index=True)
+    
     # Relationships
     fiscal_document = relationship("FiscalDocument", back_populates="details")
     order_detail = relationship("OrderDetail")
+    tax = relationship("Tax")

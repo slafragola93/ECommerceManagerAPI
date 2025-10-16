@@ -1,85 +1,56 @@
-from fastapi import HTTPException
-from sqlalchemy import func
+"""
+API Carrier Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
 from sqlalchemy.orm import Session
-from ..models import CarrierApi
-from src.schemas.carrier_api_schema import *
-from src.services import QueryUtils
+from sqlalchemy import func, desc
+from src.models.carrier_api import CarrierApi
+from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 
-
-class CarrierApiRepository:
-    """Repository corrieri API"""
-
+class ApiCarrierRepository(BaseRepository[CarrierApi, int], IApiCarrierRepository):
+    """API Carrier Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_all(self, page: int = 1, limit: int = 10) -> AllCarriersApiResponseSchema:
-        """
-        Recupera tutti i corrieri API
-
-        Returns:
-            AllCarriersApiResponseSchema: Tutti i corrieri API
-        """
-
-        return self.session.query(CarrierApi).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-    def get_count(self) -> int:
-
-        return self.session.query(func.count(CarrierApi.id_carrier_api)).scalar()
-
-
-    def get_by_id(self, _id: int) -> CarrierApiResponseSchema:
-        """
-        Ottieni corriere per ID
-
-        Args:
-            _id (int): Indirizzo ID.
-
-        Returns:
-            AddressResponseSchema: Istanza dell'indirizzo.
-        """
-        return self.session.query(CarrierApi).filter(CarrierApi.id_carrier_api == _id).first()
-
-    def create(self, data: CarrierApiSchema):
-
-        carrier = CarrierApi(**data.model_dump())
-
-        self.session.add(carrier)
-        self.session.commit()
-        self.session.refresh(carrier)
-
-    def update(self,
-               edited_carrier: CarrierApi,
-               data: CarrierApiSchema):
-
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
-        # Set su ogni proprietà
-        for key, value in entity_updated.items():
-            if hasattr(edited_carrier, key) and value is not None:
-                setattr(edited_carrier, key, value)
-
-        self.session.add(edited_carrier)
-        self.session.commit()
-
-    def delete(self, carrier_api: CarrierApi) -> bool:
-        # Prima elimina tutti i carrier_assignments associati
-        from src.models.carrier_assignment import CarrierAssignment
-        carrier_assignments = self.session.query(CarrierAssignment).filter(
-            CarrierAssignment.id_carrier_api == carrier_api.id_carrier_api
-        ).all()
-        
-        for assignment in carrier_assignments:
-            self.session.delete(assignment)
-        
-        # Poi elimina il carrier_api
-        self.session.delete(carrier_api)
-        self.session.commit()
-
-        return True
-
+        super().__init__(session, CarrierApi)
+    
+    def get_all(self, **filters) -> List[CarrierApi]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(CarrierApi.id_carrier_api))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[CarrierApi]:
+        """Ottiene un API carrier per nome (case insensitive)"""
+        try:
+            return self._session.query(CarrierApi).filter(
+                func.lower(CarrierApi.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving API carrier by name: {str(e)}")
+    
+    def get_by_account_number(self, account_number: int) -> Optional[CarrierApi]:
+        """Ottiene un API carrier per numero account"""
+        try:
+            return self._session.query(CarrierApi).filter(
+                CarrierApi.account_number == account_number
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving API carrier by account number: {str(e)}")

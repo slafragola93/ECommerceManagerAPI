@@ -1,165 +1,139 @@
-from datetime import date
-from fastapi import HTTPException
-from sqlalchemy import func, desc
+"""
+Customer Repository rifattorizzato seguendo i principi SOLID
+"""
+from typing import Optional, List
 from sqlalchemy.orm import Session, noload
-
-from ..models import Customer
-from src.schemas.customer_schema import *
+from sqlalchemy import func, desc, or_
+from src.models.customer import Customer
+from src.repository.interfaces.customer_repository_interface import ICustomerRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
 
-
-class CustomerRepository:
-    """
-    Repository clienti
-    """
-
-    def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_all(self,
-                with_address: bool = False,
-                page: int = 1,
-                limit: int = 100,
-                **kwargs
-                ) -> AllCustomerResponseSchema:
-        """
-        Recupera tutti i clienti
-
-        Returns:
-            AllCustomerResponseSchema: Tutti i clienti
-        """
-        lang_ids = kwargs.get('lang_ids')
-        param = kwargs.get('param')
-
-        query = self.session.query(Customer).order_by(desc(Customer.id_customer))
-        if not with_address:
-            query = query.options(noload(Customer.addresses))
-        try:
-
-            query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids) if lang_ids else query
-            query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer,
-                                                                                         param) if param else query
-
-            return query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
-
-
-    def get_count(self,
-                  **kwargs,
-                  ) -> AllCustomerResponseSchema:
-        """
-        Recupera tutti i clienti
-
-        Returns:
-            AllCustomerResponseSchema: Tutti i clienti
-        """
-        lang_ids = kwargs.get('lang_ids')
-        param = kwargs.get('param')
-
-        query = self.session.query(func.count(Customer.id_customer))
-
-        try:
-
-            query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids) if lang_ids else query
-            query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer,
-                                                                                         param) if param else query
-
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
-
-        return query.scalar()
-
-    def get_by_id(self, _id: int) -> CustomerResponseSchema:
-        return self.session.query(Customer).filter(Customer.id_customer == _id).first()
+class CustomerRepository(ICustomerRepository, BaseRepository[Customer, int]):
+    """Customer Repository rifattorizzato seguendo SOLID"""
     
-    def get_by_origin_id(self, origin_id: str) -> Customer:
-        """Get customer by origin ID"""
-        return self.session.query(Customer).filter(Customer.id_origin == origin_id).first()
-
-    def get_by_email(self, email: str) -> CustomerResponseSchema:
-        return self.session.query(Customer).filter(func.lower(Customer.email) == email.lower()).first()
-
-    def create(self, data: CustomerSchema):
-        customer = Customer(**data.model_dump())
-        if self.get_by_origin_id(str(customer.id_origin)) is None or customer.id_origin == 0:
-            customer.date_add = date.today()
-
-            self.session.add(customer)
-            self.session.commit()
-            self.session.refresh(customer)
-            return customer.id_customer
-        else:
-            raise HTTPException(status_code=409, detail="Customer con questo id_origin già presente in database")
-
-    def create_and_get_id(self, data: CustomerSchema):
-        """Funzione normalmente utilizzata nelle repository degli altri modelli per creare e recuperare ID"""
-        customer_new = Customer(**data.model_dump())
-        customer = self.get_by_origin_id(str(customer_new.id_origin))
-        if customer is None:
-            customer_new.date_add = date.today()
-
-            self.session.add(customer_new)
-            self.session.commit()
-            self.session.refresh(customer_new)
-            return customer_new.id_customer
-        else:
-            return customer.id_customer
-
-    def bulk_create(self, data_list: list[CustomerSchema], batch_size: int = 1000):
-        """Bulk insert customers for better performance"""
-        from datetime import date
-        
-        # Get existing origin IDs to avoid duplicates
-        origin_ids = [str(data.id_origin) for data in data_list]
-        existing_customers = self.session.query(Customer).filter(Customer.id_origin.in_(origin_ids)).all()
-        existing_origin_ids = {str(customer.id_origin) for customer in existing_customers}
-        
-        # Filter out existing customers
-        new_customers_data = [data for data in data_list if str(data.id_origin) not in existing_origin_ids]
-        
-        if not new_customers_data:
-            return 0
-        
-        # Process in batches
-        total_inserted = 0
-        for i in range(0, len(new_customers_data), batch_size):
-            batch = new_customers_data[i:i + batch_size]
-            customers = []
+    def __init__(self, session: Session):
+        super().__init__(session, Customer)
+    
+    def get_all(self, **filters) -> List[Customer]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(Customer.id_customer))
             
-            for data in batch:
-                customer = Customer(**data.model_dump())
-                customer.date_add = date.today()
-                customers.append(customer)
+            # Gestisci filtri specifici per Customer
+            with_address = filters.get('with_address', False)
+            if not with_address:
+                query = query.options(noload(Customer.addresses))
             
-            self.session.bulk_save_objects(customers)
-            total_inserted += len(customers)
+            # Filtro per lingue
+            lang_ids = filters.get('lang_ids')
+            if lang_ids:
+                query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids)
             
-            # Commit every batch
-            self.session.commit()
+            # Filtro per ricerca testuale
+            param = filters.get('param')
+            if param:
+                query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer, param)
             
-        return total_inserted
-
-    def update(self, edited_customer: Customer, data: CustomerSchema):
-
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
-        for key, value in entity_updated.items():
-            if hasattr(edited_customer, key) and value is not None:
-                setattr(edited_customer, key, value)
-
-        self.session.add(edited_customer)
-        self.session.commit()
-
-    def delete(self, customer: Customer) -> bool:
-        self.session.delete(customer)
-        self.session.commit()
-
-        return True
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except ValueError:
+            raise InfrastructureException("Parametri di ricerca non validi")
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            
+            # Filtro per lingue
+            lang_ids = filters.get('lang_ids')
+            if lang_ids:
+                query = QueryUtils.filter_by_id(query, Customer, 'id_lang', lang_ids)
+            
+            # Filtro per ricerca testuale
+            param = filters.get('param')
+            if param:
+                query = QueryUtils.search_customer_in_every_field_and_firstname_and_lastname(query, Customer, param)
+            
+            return query.count()
+        except ValueError:
+            raise InfrastructureException("Parametri di ricerca non validi")
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_email(self, email: str) -> Optional[Customer]:
+        """Ottiene un cliente per email (case insensitive)"""
+        try:
+            return self._session.query(Customer).filter(
+                func.lower(Customer.email) == email.lower()
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving customer by email: {str(e)}")
+    
+    def get_by_origin_id(self, origin_id: str) -> Optional[Customer]:
+        """Ottiene un cliente per origin ID"""
+        try:
+            return self._session.query(Customer).filter(
+                Customer.id_origin == origin_id
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving customer by origin_id: {str(e)}")
+    
+    def search_by_name(self, name: str) -> List[Customer]:
+        """Cerca clienti per nome (firstname o lastname)"""
+        try:
+            search_term = f"%{name}%"
+            return self._session.query(Customer).filter(
+                or_(
+                    Customer.firstname.ilike(search_term),
+                    Customer.lastname.ilike(search_term)
+                )
+            ).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error searching customers by name: {str(e)}")
+    
+    def get_customers_with_addresses(self, page: int = 1, limit: int = 10) -> List[Customer]:
+        """Ottiene clienti con i loro indirizzi"""
+        try:
+            offset = self.get_offset(limit, page)
+            return self._session.query(Customer).offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving customers with addresses: {str(e)}")
+    
+    def get_customers_without_addresses(self, page: int = 1, limit: int = 10) -> List[Customer]:
+        """Ottiene clienti senza caricare gli indirizzi (performance optimization)"""
+        try:
+            offset = self.get_offset(limit, page)
+            return self._session.query(Customer).options(
+                noload(Customer.addresses)
+            ).offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving customers without addresses: {str(e)}")
+    
+    def get_customers_by_lang(self, lang_id: int, page: int = 1, limit: int = 10) -> List[Customer]:
+        """Ottiene clienti per lingua"""
+        try:
+            offset = self.get_offset(limit, page)
+            return self._session.query(Customer).filter(
+                Customer.id_lang == lang_id
+            ).offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving customers by language: {str(e)}")
+    
+    def get_active_customers_count(self) -> int:
+        """Conta i clienti attivi (con almeno un ordine)"""
+        try:
+            # Subquery per clienti con ordini
+            subquery = self._session.query(Customer.id_customer).distinct().subquery()
+            return self._session.query(Customer).filter(
+                Customer.id_customer.in_(subquery)
+            ).count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting active customers: {str(e)}")

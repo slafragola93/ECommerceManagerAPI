@@ -1,56 +1,48 @@
-from datetime import date
-from sqlalchemy.orm import Session
-from ..models import Shipping
-from src.schemas.shipping_schema import *
+"""
+Shipping Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
+from sqlalchemy.orm import Session, noload
+from sqlalchemy import func, desc
+from src.models.shipping import Shipping
+from src.repository.interfaces.shipping_repository_interface import IShippingRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
+from src.services import QueryUtils
 
-
-class ShippingRepository:
-    """
-    Repository clienti
-    """
-
+class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
+    """Shipping Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_by_id(self, _id: int) -> ShippingResponseSchema:
-        return self.session.query(Shipping).filter(Shipping.id_shipping == _id).first()
-
-    def create(self, data: ShippingSchema):
-        shipping = Shipping(**data.model_dump())
-        shipping.date_add = date.today()
-
-        self.session.add(shipping)
-        self.session.commit()
-
-    def create_and_get_id(self, data: ShippingSchema):
-        shipping = Shipping(**data.model_dump())
-        shipping.date_add = date.today()
-
-        self.session.add(shipping)
-        self.session.commit()
-        self.session.refresh(shipping)
-
-        return shipping.id_shipping
-
-    def update(self, edited_shipping: Shipping, data: ShippingSchema):
-
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
-        for key, value in entity_updated.items():
-            if hasattr(edited_shipping, key) and value is not None:
-                setattr(edited_shipping, key, value)
-
-        self.session.add(edited_shipping)
-        self.session.commit()
-
-    def delete(self, shipping: Shipping) -> bool:
-        self.session.delete(shipping)
-        self.session.commit()
-
-        return True
+        super().__init__(session, Shipping)
+    
+    def get_all(self, **filters) -> List[Shipping]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(Shipping.id_shipping))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[Shipping]:
+        """Ottiene un shipping per nome (case insensitive)"""
+        try:
+            return self._session.query(Shipping).filter(
+                func.lower(Shipping.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving shipping by name: {str(e)}")

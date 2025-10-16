@@ -18,7 +18,7 @@ class FiscalDocument(Base):
     id_fiscal_document = Column(Integer, primary_key=True, index=True)
     
     # Tipo documento
-    document_type = Column(String(20), nullable=False, index=True)  # 'invoice' o 'credit_note'
+    document_type = Column(String(20), nullable=False, index=True)  # 'invoice', 'credit_note' o 'return'
     tipo_documento_fe = Column(String(4), nullable=True)  # TD01, TD04, ecc. (null se non elettronico)
     
     # Relazioni
@@ -34,7 +34,7 @@ class FiscalDocument(Base):
     xml_content = Column(Text, nullable=True)
     
     # Status
-    status = Column(String(50), nullable=False, default="pending")  # pending, generated, uploaded, sent, issued, error
+    status = Column(String(50), nullable=False, default="pending")  # pending, processed, cancelled, generated, uploaded, sent, issued, error
     is_electronic = Column(Boolean, default=False, nullable=False)  # True se FatturaPA elettronica
     upload_result = Column(Text, nullable=True)  # JSON result from upload
     

@@ -1,73 +1,48 @@
-from sqlalchemy import or_, desc
-from sqlalchemy.orm import Session
-from ..models import Message
-from src.schemas.message_schema import *
+"""
+Message Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
+from sqlalchemy.orm import Session, noload
+from sqlalchemy import func, desc
+from src.models.message import Message
+from src.repository.interfaces.message_repository_interface import IMessageRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
 
-
-class MessageRepository:
-    """
-    Repository messaggio
-    """
-
+class MessageRepository(BaseRepository[Message, int], IMessageRepository):
+    """Message Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_all(self,
-                user_id: int = None,
-                page: int = 1, limit: int = 10
-                ) -> CurrentMessagesResponseSchema:
-        """
-        Recupera tutti i messaggi disponibili
-
-        Returns:
-            AllMessagesResponseSchema: Tutte i messaggi disponibili
-        """
-        query = self.session.query(Message).order_by(desc(Message.id_message))
-
-        if user_id is not None:
-            query = query.filter(or_(Message.id_user == user_id))
-
-        messages = query.offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-        return messages
-
-    def get_by_id(self, _id: int) -> MessageResponseSchema:
-        return self.session.query(Message).filter(Message.id_message == _id).first()
-
-    def get_by_id_user(self, _id: int, generic: bool = True) -> AllMessagesResponseSchema:
-        if generic:
-            messages = self.session.query(Message).filter(or_(Message.id_user == _id, Message.id_user == None)).all()
-        else:
-            messages = self.session.query(Message).filter(Message.id_user == _id).all()
-        return messages
-
-    def create(self, data: MessageSchema):
-        message = Message(**data.model_dump())
-
-        self.session.add(message)
-        self.session.commit()
-        self.session.refresh(message)
-
-    def update(self, edited_message: Message, data: MessageSchema):
-
-        entity_updated = data.dict(exclude_unset=True)
-
-        for key, value in entity_updated.items():
-            if hasattr(edited_message, key) and value is not None:
-                setattr(edited_message, key, value)
-
-        self.session.add(edited_message)
-        self.session.commit()
-
-    def delete(self, message: Message) -> bool:
-        self.session.delete(message)
-        self.session.commit()
-
-        return True
+        super().__init__(session, Message)
+    
+    def get_all(self, **filters) -> List[Message]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(Message.id_message))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[Message]:
+        """Ottiene un message per nome (case insensitive)"""
+        try:
+            return self._session.query(Message).filter(
+                func.lower(Message.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving message by name: {str(e)}")

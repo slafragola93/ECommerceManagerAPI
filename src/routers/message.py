@@ -1,138 +1,156 @@
-from fastapi import APIRouter, HTTPException, Path, Depends, Query
-from starlette import status
-from .dependencies import db_dependency, user_dependency, MAX_LIMIT, LIMIT_DEFAULT
-from .. import MessageSchema, MessageResponseSchema, AllMessagesResponseSchema, Message, CurrentMessagesResponseSchema
+"""
+Message Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.message_service_interface import IMessageService
+from src.repository.interfaces.message_repository_interface import IMessageRepository
+from src.schemas.message_schema import MessageSchema, MessageResponseSchema, AllMessagesResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..repository.message_repository import MessageRepository
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/message',
-    tags=['Message'],
+    prefix="/api/v1/messages",
+    tags=["Message"]
 )
 
-
-def get_repository(db: db_dependency) -> MessageRepository:
-    return MessageRepository(db)
-
+def get_message_service(db: db_dependency) -> IMessageService:
+    """Dependency injection per Message Service"""
+    # Configura il container se necessario
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    # Crea il repository con la sessione DB usando il metodo specifico
+    message_repo = configured_container.resolve_with_session(IMessageRepository, db)
+    
+    # Crea il service con il repository
+    message_service = configured_container.resolve(IMessageService)
+    # Inietta il repository nel service
+    if hasattr(message_service, '_message_repository'):
+        message_service._message_repository = message_repo
+    
+    return message_service
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllMessagesResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_all_messages(user: user_dependency,
-                           mr: MessageRepository = Depends(get_repository),
-                           user_id: int = Query(None, gt=0),
-                           page: int = Query(1, gt=0),
-                           limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_all_messages(
+    user: dict = Depends(get_current_user),
+    message_service: IMessageService = Depends(get_message_service),
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+):
     """
-     Recupera tutti i messaggi.
+    Restituisce tutti i message con supporto alla paginazione.
+    
+    - **page**: La pagina da restituire, per la paginazione dei risultati.
+    - **limit**: Il numero massimo di risultati per pagina.
+    """
+    try:
+        messages = await message_service.get_messages(page=page, limit=limit)
+        if not messages:
+            raise HTTPException(status_code=404, detail="Nessun message trovato")
 
-     Parametri:
-     - `page`: Pagina corrente per la paginazione.
-     - `limit`: Numero di record per pagina.
-     """
+        total_count = await message_service.get_messages_count()
 
-    messages = mr.get_all(user_id=user_id, page=page, limit=limit)
-
-    if not messages:
-        raise HTTPException(status_code=404, detail="Nessun messaggio trovato")
-
-    return {"messages": messages, "total": len(messages), "page": page, "limit": limit}
-
+        return {"messages": messages, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/{message_id}", status_code=status.HTTP_200_OK, response_model=MessageResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_message_by_id(user: user_dependency,
-                            mr: MessageRepository = Depends(get_repository),
-                            message_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_message_by_id(
+    user: dict = Depends(get_current_user),
+    message_service: IMessageService = Depends(get_message_service),
+    message_id: int = Path(gt=0)
+):
     """
-     Recupera un singolo messaggio per ID.
+    Restituisce un singolo message basato sull'ID specificato.
 
-     Parametri:
-     - `message_id`: ID del messaggio da recuperare.
-     """
+    - **message_id**: Identificativo del message da ricercare.
+    """
+    try:
+        message = await message_service.get_message(message_id)
+        return message
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Message non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    message = mr.get_by_id(_id=message_id)
-
-    if message is None:
-        raise HTTPException(status_code=404, detail="Messaggio non trovato")
-
-    return message
-
-
-@router.get("/my_messages/", status_code=status.HTTP_200_OK, response_model=CurrentMessagesResponseSchema)
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Message creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_current_messages(user: user_dependency,
-                               mr: MessageRepository = Depends(get_repository)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def create_message(
+    message_data: MessageSchema,
+    user: dict = Depends(get_current_user),
+    message_service: IMessageService = Depends(get_message_service)
+):
     """
-     Recupera messaggi collegati all'user.
-     """
+    Crea un nuovo message con i dati forniti.
+    """
+    try:
+        return await message_service.create_message(message_data)
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    message = mr.get_by_id_user(_id=user.get("id"), generic=False)
-
-    if message is None:
-        raise HTTPException(status_code=404, detail="Nessun Messaggio trovato")
-
-    return {"messages": message, "total": len(message)}
-
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Messaggio creato correttamente")
+@router.put("/{message_id}", status_code=status.HTTP_200_OK, response_description="Message aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_message(user: user_dependency,
-                         ms: MessageSchema,
-                         relate_to_user: bool = Query(False),
-                         mr: MessageRepository = Depends(get_repository)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def update_message(
+    message_data: MessageSchema,
+    user: dict = Depends(get_current_user),
+    message_service: IMessageService = Depends(get_message_service),
+    message_id: int = Path(gt=0)
+):
     """
-    Crea un nuovo messaggio nel sistema.
+    Aggiorna i dati di un message esistente basato sull'ID specificato.
 
-    Parametri:
-    - `ms`: Schema del messaggio da creare.
+    - **message_id**: Identificativo del message da aggiornare.
     """
-    if relate_to_user:
-        ms.id_user = user.get("id")
-    mr.create(data=ms)
+    try:
+        return await message_service.update_message(message_id, message_data)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Message non trovato")
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-
-@router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT,
-               response_description="Indirizzo eliminato correttamente")
+@router.delete("/{message_id}", status_code=status.HTTP_200_OK, response_description="Message eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_message(user: user_dependency,
-                         mr: MessageRepository = Depends(get_repository),
-                         message_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
+async def delete_message(
+    user: dict = Depends(get_current_user),
+    message_service: IMessageService = Depends(get_message_service),
+    message_id: int = Path(gt=0)
+):
     """
-    Elimina un messaggio dal sistema per l'ID specificato.
+    Elimina un message basato sull'ID specificato.
 
-    Parametri:
-    - `message_id`: ID del messaggio da eliminare.
+    - **message_id**: Identificativo del message da eliminare.
     """
-    message = mr.get_by_id(_id=message_id)
-
-    if message is None:
-        raise HTTPException(status_code=404, detail="Messaggio non trovato")
-
-    mr.delete(message=message)
-
-
-@router.put("/{message_id}", status_code=status.HTTP_200_OK, response_description="Messaggio aggiornato correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_message(user: user_dependency,
-                         ms: MessageSchema,
-                         mr: MessageRepository = Depends(get_repository),
-                         message_id: int = Path(gt=0)):
-    """
-     Aggiorna un messaggio esistente.
-
-     Parametri:
-     - `message_id`: ID del messaggio da aggiornare.
-     """
-    message = mr.get_by_id(_id=message_id)
-
-    if message is None:
-        raise HTTPException(status_code=404, detail="Messaggio non trovato")
-
-    mr.update(edited_message=message, data=ms)
+    try:
+        await message_service.delete_message(message_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Message non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

@@ -22,8 +22,8 @@ class AppConfigurationResponseSchema(BaseModel):
     value: Optional[str]
     description: Optional[str]
     is_encrypted: bool
-    date_add: datetime
-    date_upd: datetime
+    date_add: Optional[datetime] = None
+    date_upd: Optional[datetime] = None
 
     class Config:
         from_attributes = True

@@ -217,6 +217,7 @@ class PreventivoService:
     def _format_articolo(self, order_detail) -> ArticoloPreventivoSchema:
         """Formatta articolo per risposta"""
         return ArticoloPreventivoSchema(
+            id_order_detail=order_detail.id_order_detail,
             id_product=order_detail.id_product,
             product_name=order_detail.product_name,
             product_reference=order_detail.product_reference,

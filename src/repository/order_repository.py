@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import Optional
 from .address_repository import AddressRepository
-from .api_carrier_repository import CarrierApiRepository
+from .api_carrier_repository import ApiCarrierRepository
 from .customer_repository import CustomerRepository
 from .lang_repository import LangRepository
 from .order_detail_repository import OrderDetailRepository
@@ -40,7 +40,7 @@ class OrderRepository:
         self.tax_repository = TaxRepository(session)
         self.customer_repository = CustomerRepository(session)
         self.lang_repository = LangRepository(session)
-        self.api_carrier_repository = CarrierApiRepository(session)
+        self.api_carrier_repository = ApiCarrierRepository(session)
         self.shipping_state_repository = ShippingStateRepository(session)
         self.order_package_repository = OrderPackageRepository(session)
         self.order_detail_repository = OrderDetailRepository(session)
@@ -222,14 +222,13 @@ class OrderRepository:
         self.session.refresh(order)
         
         # Creazione di Order Package
-        self.order_package_repository.create(
-            OrderPackageSchema(id_order=order.id_order,
-                               height=0.0,
-                               width=0.0,
-                               depth=0.0,
-                               weight=0.0,
-                               value=0.0)
-        )
+        order_package_data = OrderPackageSchema(id_order=order.id_order,
+                                               height=0.0,
+                                               width=0.0,
+                                               depth=0.0,
+                                               weight=0.0,
+                                               value=0.0)
+        self.order_package_repository.create(order_package_data.model_dump())
         
         return order.id_order
 
@@ -450,7 +449,7 @@ class OrderRepository:
         def format_order_details(order_id):
             if not order_id:
                 return []
-            order_details = self.order_detail_repository.get_by_id_order(order_id)
+            order_details = self.order_detail_repository.get_by_order_id(order_id)
             if not order_details:
                 return []
             return [self.order_detail_repository.formatted_output(detail) for detail in order_details]

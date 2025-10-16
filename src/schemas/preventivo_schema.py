@@ -59,6 +59,7 @@ class ShippingField(BaseModel):
 
 class ArticoloPreventivoSchema(BaseModel):
     """Schema per articolo in preventivo (OrderDetail)"""
+    id_order_detail: Optional[int] 
     id_product: Optional[int] = None  # Se articolo esistente
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
@@ -135,7 +136,7 @@ class PreventivoResponseSchema(BaseModel):
     total_imponibile: float
     total_iva: float
     total_finale: float
-    date_add: datetime
+    date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
 

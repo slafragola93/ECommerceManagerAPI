@@ -12,6 +12,7 @@ from src.database import Base, engine
 from src.core.cache import get_cache_manager, close_cache_manager
 from src.middleware.conditional import setup_conditional_middleware
 from src.core.settings import get_cache_settings
+from src.core.container_config import get_configured_container
 
 # Legacy cache (keep for compatibility)
 try:
@@ -56,6 +57,9 @@ app = FastAPI(
     title="Elettronew API",
     lifespan=lifespan
 )
+
+# Inizializza il container DI
+get_configured_container()
 
 if REDIS_AVAILABLE:
     @cache()

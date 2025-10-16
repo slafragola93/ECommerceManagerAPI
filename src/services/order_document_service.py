@@ -5,6 +5,7 @@ from datetime import datetime
 from src.models.order_document import OrderDocument
 from src.models.order_detail import OrderDetail
 from src.models.tax import Tax
+from src.models.shipping import Shipping
 from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
 from src.models.order import Order
@@ -198,11 +199,29 @@ class OrderDocumentService:
             total_imponibile += prezzo_netto
             total_iva += prezzo_iva
         
-        total_finale = total_imponibile + total_iva
+        # Calcola totale articoli
+        total_articoli = total_imponibile + total_iva
+        
+        # Aggiungi spese di spedizione se presente
+        shipping_cost = 0.0
+        document = self.db.query(OrderDocument).filter(
+            OrderDocument.id_order_document == id_order_document
+        ).first()
+        
+        if document and document.id_shipping:
+            shipping = self.db.query(Shipping).filter(
+                Shipping.id_shipping == document.id_shipping
+            ).first()
+            if shipping and shipping.price_tax_incl:
+                shipping_cost = shipping.price_tax_incl
+        
+        total_finale = total_articoli + shipping_cost
         
         return {
             "total_imponibile": round(total_imponibile, 2),
             "total_iva": round(total_iva, 2),
+            "total_articoli": round(total_articoli, 2),
+            "shipping_cost": round(shipping_cost, 2),
             "total_finale": round(total_finale, 2)
         }
     

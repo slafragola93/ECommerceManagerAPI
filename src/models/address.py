@@ -28,7 +28,7 @@ class Address(Base):
     ipa = Column(String(128), default=None)
     date_add = Column(Date, default=func.now())
 
-    customers = relationship("Customer", back_populates="addresses")
+    customer = relationship("Customer", back_populates="addresses")
     country = relationship("Country", back_populates="addresses")
     address_delivery = relationship("OrderDocument", foreign_keys="OrderDocument.id_address_delivery", back_populates="address_delivery")
     address_invoice = relationship("OrderDocument", foreign_keys="OrderDocument.id_address_invoice", back_populates="address_invoice")

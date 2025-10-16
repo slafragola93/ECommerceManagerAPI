@@ -7,7 +7,8 @@ from starlette import status
 from sqlalchemy.orm import Session
 from typing import Dict, Any
 
-from .dependencies import db_dependency, user_dependency
+from src.database import get_db
+from src.services.auth import db_dependency, get_current_user
 from src.services.wrap import check_authentication
 from src.services.auth import authorize
 from src.services.ecommerce import PrestaShopService
@@ -49,10 +50,10 @@ def get_default_platform(pr: PlatformRepository = Depends(get_platform_repositor
 @authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def sync_prestashop(
     background_tasks: BackgroundTasks,
-    user: user_dependency,
-    db: db_dependency,
+    db: Session = Depends(get_db),
     platform = Depends(get_default_platform),
-    limit: int = None
+    limit: int = None,
+    user: dict = Depends(get_current_user)
 ):
     """
     Start PrestaShop incremental synchronization process
@@ -100,9 +101,9 @@ async def sync_prestashop(
 @authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def sync_prestashop_full(
     background_tasks: BackgroundTasks,
-    user: user_dependency,
-    db: db_dependency,
-    platform = Depends(get_default_platform)
+    db: Session = Depends(get_db),
+    platform = Depends(get_default_platform),
+    user: dict = Depends(get_current_user)
 ):
     """
     Start PrestaShop full synchronization process
@@ -149,7 +150,7 @@ async def sync_prestashop_full(
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_prestashop_sync_status(
-    user: user_dependency,
+    user: dict = Depends(get_current_user),
     sync_id: str = None
 ):
     """
@@ -174,9 +175,9 @@ async def get_prestashop_sync_status(
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_prestashop_last_imported_ids(
-    user: user_dependency,
-    db: db_dependency,
-    platform = Depends(get_default_platform)
+    db: Session = Depends(get_db),
+    platform = Depends(get_default_platform),
+    user: dict = Depends(get_current_user)
 ):
     """
     Get the last imported ID origin for each table
@@ -273,9 +274,9 @@ async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: 
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def test_prestashop_connection(
-    user: user_dependency,
-    db: db_dependency,
-    platform = Depends(get_default_platform)
+    db: Session = Depends(get_db),
+    platform = Depends(get_default_platform),
+    user: dict = Depends(get_current_user)
 ):
     """
     Test PrestaShop API connection

@@ -1,1 +1,1 @@
-# Core module for ECommerceManagerAPI
+# Core module for SOLID refactoring

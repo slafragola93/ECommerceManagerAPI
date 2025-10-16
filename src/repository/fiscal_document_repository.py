@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
+from sqlalchemy import and_, or_, desc, func
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import math
@@ -12,12 +12,16 @@ from src.models.order_detail import OrderDetail
 from src.models.address import Address
 from src.models.country import Country
 from src.models.shipping import Shipping
+from src.models.tax import Tax
 from src.services.tool import calculate_amount_with_percentage
+from src.core.base_repository import BaseRepository
+from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
+from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
 
 
-class FiscalDocumentRepository:
-    def __init__(self, db: Session):
-        self.db = db
+class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocumentRepository):
+    def __init__(self, session: Session):
+        super().__init__(session, FiscalDocument)
     
     # ==================== FATTURE ====================
     
@@ -33,18 +37,18 @@ class FiscalDocumentRepository:
             FiscalDocument creato
         """
         # Verifica che l'ordine esista
-        order = self.db.query(Order).filter(Order.id_order == id_order).first()
+        order = self._session.query(Order).filter(Order.id_order == id_order).first()
         if not order:
             raise ValueError(f"Ordine {id_order} non trovato")
         
         # Se is_electronic=True, verifica che l'indirizzo sia italiano
         if is_electronic:
             # Recupera ID Italia da iso_code
-            italy = self.db.query(Country).filter(Country.iso_code == 'IT').first()
+            italy = self._session.query(Country).filter(Country.iso_code == 'IT').first()
             if not italy:
                 raise ValueError("Paese Italia (IT) non trovato nel database")
             
-            address = self.db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
+            address = self._session.query(Address).filter(Address.id_address == order.id_address_invoice).first()
             if not address or address.id_country != italy.id_country:
                 raise ValueError("La fattura elettronica può essere emessa solo per indirizzi italiani")
         
@@ -73,11 +77,11 @@ class FiscalDocumentRepository:
             total_amount=order.total_paid  # Verrà aggiornato dopo aver creato i dettagli
         )
         
-        self.db.add(invoice)
-        self.db.flush()  # Per ottenere id_fiscal_document
+        self._session.add(invoice)
+        self._session.flush()  # Per ottenere id_fiscal_document
         
         # Crea fiscal_document_details per ogni order_detail dell'ordine
-        order_details = self.db.query(OrderDetail).filter(
+        order_details = self._session.query(OrderDetail).filter(
             OrderDetail.id_order == id_order
         ).all()
                 
@@ -110,18 +114,18 @@ class FiscalDocumentRepository:
                 total_amount=total_amount  # Totale con sconto applicato (SENZA IVA)
             )
             
-            self.db.add(detail)
+            self._session.add(detail)
 
     
         
-        self.db.commit()
-        self.db.refresh(invoice)
+        self._session.commit()
+        self._session.refresh(invoice)
         
         return invoice
     
     def get_invoice_by_order(self, id_order: int) -> Optional[FiscalDocument]:
         """Recupera la prima fattura di un ordine (deprecato, usare get_invoices_by_order)"""
-        return self.db.query(FiscalDocument).filter(
+        return self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.id_order == id_order,
                 FiscalDocument.document_type == 'invoice'
@@ -130,7 +134,7 @@ class FiscalDocumentRepository:
     
     def get_invoices_by_order(self, id_order: int) -> List[FiscalDocument]:
         """Recupera tutte le fatture di un ordine"""
-        return self.db.query(FiscalDocument).filter(
+        return self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.id_order == id_order,
                 FiscalDocument.document_type == 'invoice'
@@ -161,7 +165,7 @@ class FiscalDocumentRepository:
             ValueError: Se i controlli falliscono
         """
         # Recupera tutte le note di credito esistenti per questa fattura
-        existing_credit_notes = self.db.query(FiscalDocument).filter(
+        existing_credit_notes = self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.id_fiscal_document_ref == invoice.id_fiscal_document,
                 FiscalDocument.document_type == 'credit_note'
@@ -179,7 +183,7 @@ class FiscalDocumentRepository:
         # CONTROLLO 2: Se ci sono note parziali, verifica articoli già stornati
         if existing_credit_notes and is_partial and items:
             # Recupera tutti gli articoli già stornati dalle note precedenti
-            already_refunded_details = self.db.query(FiscalDocumentDetail).filter(
+            already_refunded_details = self._session.query(FiscalDocumentDetail).filter(
                 FiscalDocumentDetail.id_fiscal_document.in_([cn.id_fiscal_document for cn in existing_credit_notes])
             ).all()
             
@@ -252,7 +256,7 @@ class FiscalDocumentRepository:
             FiscalDocument creato (nota di credito)
         """
         # Verifica che la fattura esista
-        invoice = self.db.query(FiscalDocument).filter(
+        invoice = self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.id_fiscal_document == id_invoice,
                 FiscalDocument.document_type == 'invoice'
@@ -269,17 +273,17 @@ class FiscalDocumentRepository:
         # Se is_electronic, verifica indirizzo italiano
         if is_electronic:
             # Recupera ID Italia da iso_code
-            italy = self.db.query(Country).filter(Country.iso_code == 'IT').first()
+            italy = self._session.query(Country).filter(Country.iso_code == 'IT').first()
             if not italy:
                 raise ValueError("Paese Italia (IT) non trovato nel database")
             
-            order = self.db.query(Order).filter(Order.id_order == invoice.id_order).first()
-            address = self.db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
+            order = self._session.query(Order).filter(Order.id_order == invoice.id_order).first()
+            address = self._session.query(Address).filter(Address.id_address == order.id_address_invoice).first()
             if not address or address.id_country != italy.id_country:
                 raise ValueError("La nota di credito elettronica può essere emessa solo per indirizzi italiani")
         
         # Recupera articoli della fattura (serve per i controlli)
-        invoice_details = self.db.query(FiscalDocumentDetail).filter(
+        invoice_details = self._session.query(FiscalDocumentDetail).filter(
             FiscalDocumentDetail.id_fiscal_document == id_invoice
         ).all()
         
@@ -339,7 +343,7 @@ class FiscalDocumentRepository:
         else:
             # NOTA TOTALE: Prepara dettagli SOLO degli articoli NON ancora stornati completamente
             # Recupera le note di credito esistenti per calcolare quantità residue
-            existing_credit_notes = self.db.query(FiscalDocument).filter(
+            existing_credit_notes = self._session.query(FiscalDocument).filter(
                 and_(
                     FiscalDocument.id_fiscal_document_ref == id_invoice,
                     FiscalDocument.document_type == 'credit_note'
@@ -349,7 +353,7 @@ class FiscalDocumentRepository:
             # Calcola quantità già stornate per ogni articolo
             refunded_quantities = {}
             if existing_credit_notes:
-                already_refunded_details = self.db.query(FiscalDocumentDetail).filter(
+                already_refunded_details = self._session.query(FiscalDocumentDetail).filter(
                     FiscalDocumentDetail.id_fiscal_document.in_([cn.id_fiscal_document for cn in existing_credit_notes])
                 ).all()
                 
@@ -402,9 +406,9 @@ class FiscalDocumentRepository:
         shipping_vat_amount = 0.0
         
         if include_shipping:
-            order = self.db.query(Order).filter(Order.id_order == invoice.id_order).first()
+            order = self._session.query(Order).filter(Order.id_order == invoice.id_order).first()
             if order and order.id_shipping:
-                shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+                shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
                 if shipping and shipping.price_tax_excl and shipping.price_tax_excl > 0:
                     shipping_cost_no_vat = shipping.price_tax_excl
                     # Calcola IVA spedizione
@@ -417,7 +421,7 @@ class FiscalDocumentRepository:
         
         # Recupera l'aliquota IVA dei prodotti
         first_detail_id = credit_note_details_data[0]['id_order_detail']
-        od_first = self.db.query(OrderDetail).filter(OrderDetail.id_order_detail == first_detail_id).first()
+        od_first = self._session.query(OrderDetail).filter(OrderDetail.id_order_detail == first_detail_id).first()
         
         # Calcola l'IVA sui prodotti
         vat_percentage = self._get_vat_percentage_from_order_details([od_first]) 
@@ -452,8 +456,8 @@ class FiscalDocumentRepository:
             total_amount=total_with_vat  # Totale CON IVA calcolato dai dettagli residui + spese
         )
         
-        self.db.add(credit_note)
-        self.db.flush()
+        self._session.add(credit_note)
+        self._session.flush()
         
         # Crea i FiscalDocumentDetail usando i dati già preparati
         for detail_data in credit_note_details_data:
@@ -464,16 +468,16 @@ class FiscalDocumentRepository:
                 unit_price=detail_data['unit_price'],
                 total_amount=detail_data['total_amount']  # Imponibile (senza IVA)
             )
-            self.db.add(detail)
+            self._session.add(detail)
         
-        self.db.commit()
-        self.db.refresh(credit_note)
+        self._session.commit()
+        self._session.refresh(credit_note)
         
         return credit_note
     
     def get_credit_notes_by_invoice(self, id_invoice: int) -> List[FiscalDocument]:
         """Recupera tutte le note di credito di una fattura"""
-        return self.db.query(FiscalDocument).filter(
+        return self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.id_fiscal_document_ref == id_invoice,
                 FiscalDocument.document_type == 'credit_note'
@@ -507,7 +511,7 @@ class FiscalDocumentRepository:
         
         # Recupera la percentuale dalla tabella Tax
         from src.models.tax import Tax
-        tax = self.db.query(Tax).filter(Tax.id_tax == first_tax_id).first()
+        tax = self._session.query(Tax).filter(Tax.id_tax == first_tax_id).first()
         
         if tax and tax.percentage:
             return float(tax.percentage)
@@ -529,7 +533,7 @@ class FiscalDocumentRepository:
         
         # Recupera la percentuale dalla tabella Tax
         from src.models.tax import Tax
-        tax = self.db.query(Tax).filter(Tax.id_tax == shipping.id_tax).first()
+        tax = self._session.query(Tax).filter(Tax.id_tax == shipping.id_tax).first()
         
         if tax and tax.percentage:
             return float(tax.percentage)
@@ -547,7 +551,7 @@ class FiscalDocumentRepository:
             Numero sequenziale come stringa (es. "000123")
         """
         # Recupera l'ultimo numero elettronico per questo tipo
-        last_doc = self.db.query(FiscalDocument).filter(
+        last_doc = self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.document_type == doc_type,
                 FiscalDocument.is_electronic == True,
@@ -568,7 +572,7 @@ class FiscalDocumentRepository:
     
     def get_fiscal_document_by_id(self, id_fiscal_document: int) -> Optional[FiscalDocument]:
         """Recupera documento fiscale per ID"""
-        return self.db.query(FiscalDocument).filter(
+        return self._session.query(FiscalDocument).filter(
             FiscalDocument.id_fiscal_document == id_fiscal_document
         ).first()
     
@@ -590,7 +594,7 @@ class FiscalDocumentRepository:
             is_electronic: Filtra per elettronici/non elettronici
             status: Filtra per status
         """
-        query = self.db.query(FiscalDocument)
+        query = self._session.query(FiscalDocument)
         
         if document_type:
             query = query.filter(FiscalDocument.document_type == document_type)
@@ -619,8 +623,8 @@ class FiscalDocumentRepository:
         if upload_result:
             doc.upload_result = upload_result
         
-        self.db.commit()
-        self.db.refresh(doc)
+        self._session.commit()
+        self._session.refresh(doc)
         
         return doc
     
@@ -640,8 +644,8 @@ class FiscalDocumentRepository:
         doc.xml_content = xml_content
         doc.status = 'generated'
         
-        self.db.commit()
-        self.db.refresh(doc)
+        self._session.commit()
+        self._session.refresh(doc)
         
         return doc
     
@@ -652,7 +656,7 @@ class FiscalDocumentRepository:
         if not doc:
             return False
         
-        if doc.status != 'pending':
+        if doc.status != 'pending' and doc.document_type != 'return':
             raise ValueError("Non è possibile eliminare un documento già generato/inviato")
         
         # Verifica che non ci siano note di credito collegate
@@ -661,7 +665,313 @@ class FiscalDocumentRepository:
             if credit_notes:
                 raise ValueError("Non è possibile eliminare una fattura con note di credito collegate")
         
-        self.db.delete(doc)
-        self.db.commit()
+        self._session.delete(doc)
+        self._session.commit()
         
         return True
+    
+    # ==================== RESI ====================
+    
+    def create_return(self, id_order: int, order_details: List[dict], includes_shipping: bool = False, note: Optional[str] = None) -> FiscalDocument:
+        """
+        Crea un reso per un ordine
+        
+        Args:
+            id_order: ID dell'ordine
+            order_details: Lista di dettagli da restituire [{"id_order_detail": X, "quantity": Y, "unit_price": Z}, ...]
+            includes_shipping: Se includere spese di spedizione
+            note: Note aggiuntive
+        
+        Returns:
+            FiscalDocument creato (reso)
+        """
+        # Verifica che l'ordine esista
+        order = self._session.query(Order).filter(Order.id_order == id_order).first()
+        if not order:
+            raise ValueError(f"Ordine {id_order} non trovato")
+        
+        # Valida gli articoli del reso
+        self.validate_return_items(id_order, order_details)
+        
+        # Genera numero sequenziale per reso
+        document_number = self.get_next_document_number('return')
+        
+        # Calcola il totale del reso
+        total_amount = self.calculate_return_totals(order_details, includes_shipping, id_order)
+        # Determina se il reso è parziale confrontando con le quantità totali dell'ordine
+        original_order_details = self._session.query(OrderDetail).filter(OrderDetail.id_order == id_order).all()
+        
+        # Se non ci sono tutti gli articoli dell'ordine nel reso, è parziale
+        if len(order_details) < len(original_order_details):
+            is_partial = True
+        else:
+            # Controlla se per ogni articolo la quantità del reso è uguale alla quantità totale
+            is_partial = False
+            for item in order_details:
+                original_detail = next((od for od in original_order_details if od.id_order_detail == item['id_order_detail']), None)
+                if original_detail and item['quantity'] < original_detail.product_qty:
+                    is_partial = True
+                    break
+        
+        # Crea il documento reso
+        return_doc = FiscalDocument(
+            document_type='return',
+            id_order=id_order,
+            document_number=str(document_number),
+            status='issued',
+            is_electronic=False,  # I resi non sono elettronici per ora
+            credit_note_reason=note,
+            is_partial=is_partial,
+            includes_shipping=includes_shipping,
+            total_amount=total_amount
+        )
+        
+        self._session.add(return_doc)
+        self._session.flush()  # Per ottenere id_fiscal_document
+        
+        # Crea i dettagli del reso
+        for item in order_details:            
+            # Usa l'id_tax fornito o quello dell'ordine originale
+            id_tax = item.get('id_tax')
+            unit_price = item.get('unit_price')
+            
+            # Calcola il totale senza IVA per il dettaglio
+            total_without_tax = item['quantity'] * unit_price
+
+            detail = FiscalDocumentDetail(
+                id_fiscal_document=return_doc.id_fiscal_document,
+                id_order_detail=item['id_order_detail'],
+                quantity=item['quantity'],
+                unit_price=unit_price,
+                total_amount=total_without_tax,  # Totale dettaglio senza IVA
+                id_tax=id_tax
+            )
+            self._session.add(detail)
+        
+        self._session.commit()
+        self._session.refresh(return_doc)
+        
+        return return_doc
+    
+    def update_fiscal_document_detail(self, id_detail: int, quantity: Optional[int] = None, unit_price: Optional[float] = None, id_tax: Optional[int] = None) -> FiscalDocumentDetail:
+        """Aggiorna un dettaglio di documento fiscale e ricalcola il totale"""
+        detail = self._session.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document_detail == id_detail
+        ).first()
+        
+        if not detail:
+            raise ValueError(f"Dettaglio {id_detail} non trovato")
+        
+        # Aggiorna i campi se forniti
+        if quantity is not None:
+            detail.quantity = quantity
+        if unit_price is not None:
+            detail.unit_price = unit_price
+        if id_tax is not None:
+            detail.id_tax = id_tax
+        
+        # Ricalcola il total_amount senza IVA
+        detail.total_amount = detail.quantity * detail.unit_price
+        
+        # Ricalcola il totale del documento fiscale
+        self.recalculate_fiscal_document_total(detail.id_fiscal_document)
+        
+        self._session.commit()
+        self._session.refresh(detail)
+        
+        return detail
+    
+    def delete_fiscal_document_detail(self, id_detail: int) -> bool:
+        """Elimina un dettaglio di documento fiscale e ricalcola il totale"""
+        detail = self._session.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document_detail == id_detail
+        ).first()
+        
+        if not detail:
+            return False
+        
+        fiscal_document_id = detail.id_fiscal_document
+        
+        self._session.delete(detail)
+        self._session.commit()
+        
+        # Ricalcola il totale del documento fiscale
+        self.recalculate_fiscal_document_total(fiscal_document_id)
+        
+        return True
+    
+    def recalculate_fiscal_document_total(self, id_fiscal_document: int) -> None:
+        """Ricalcola il totale di un documento fiscale basato sui suoi dettagli"""
+        fiscal_doc = self._session.query(FiscalDocument).filter(
+            FiscalDocument.id_fiscal_document == id_fiscal_document
+        ).first()
+        
+        if not fiscal_doc:
+            return
+        
+        # Calcola il totale dai dettagli
+        details = self._session.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
+        ).all()
+
+        total_products = 0.0
+        for detail in details:
+            tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).first()[0]
+            total_products += detail.total_amount * (1 + tax_percentage / 100)
+
+        
+        # Aggiungi spese di spedizione se incluse
+        if fiscal_doc.includes_shipping:
+            order_id_shipping = self._session.query(Order.id_shipping).filter(Order.id_order == fiscal_doc.id_order).first()[0]
+            if order_id_shipping:
+                shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order_id_shipping).first()
+                if shipping and shipping.price_tax_incl:
+                    total_products += shipping.price_tax_incl
+        
+        fiscal_doc.total_amount = total_products
+        self._session.commit()
+    
+    # ==================== METODI INTERFACCIA ====================
+    
+    def get_next_document_number(self, document_type: str) -> int:
+        """Ottiene il prossimo numero sequenziale per un tipo di documento (solo intero, si resetta ogni anno)"""
+        current_year = datetime.now().year
+        
+        # Recupera l'ultimo numero per questo tipo nell'anno corrente
+        last_doc = self._session.query(FiscalDocument).filter(
+            and_(
+                FiscalDocument.document_type == document_type,
+                func.extract('year', FiscalDocument.date_add) == current_year,
+                FiscalDocument.document_number.isnot(None)
+            )
+        ).order_by(desc(FiscalDocument.id_fiscal_document)).first()
+        
+        if last_doc and last_doc.document_number:
+            try:
+                last_number = int(last_doc.document_number)
+                return last_number + 1
+            except ValueError:
+                return 1
+        else:
+            return 1
+    
+    def get_by_order_id(self, id_order: int, document_type: Optional[str] = None) -> List[FiscalDocument]:
+        """Ottiene tutti i documenti fiscali per un ordine"""
+        query = self._session.query(FiscalDocument).filter(FiscalDocument.id_order == id_order)
+        
+        if document_type:
+            query = query.filter(FiscalDocument.document_type == document_type)
+        
+        return query.order_by(desc(FiscalDocument.date_add)).all()
+    
+    def get_by_document_type(self, document_type: str, page: int = 1, limit: int = 10) -> List[FiscalDocument]:
+        """Ottiene documenti per tipo"""
+        offset = (page - 1) * limit
+        return self._session.query(FiscalDocument).filter(
+            FiscalDocument.document_type == document_type
+        ).order_by(desc(FiscalDocument.date_add)).offset(offset).limit(limit).all()
+    
+    def get_document_count_by_type(self, document_type: str) -> int:
+        """Conta i documenti per tipo"""
+        return self._session.query(FiscalDocument).filter(
+            FiscalDocument.document_type == document_type
+        ).count()
+    
+    def validate_return_items(self, id_order: int, return_items: List[dict]) -> None:
+        """Valida gli articoli per un reso"""
+        if not return_items:
+            raise ValueError("Nessun articolo specificato per il reso")
+        
+        # Ottieni le quantità già restituite
+        returned_quantities = self.get_returned_quantities(id_order)
+        
+        # Verifica ogni articolo
+        for item in return_items:
+            id_order_detail = item['id_order_detail']
+            quantity_to_return = item['quantity']
+            
+            # Verifica che l'order_detail esista e appartenga all'ordine
+            order_detail = self._session.query(OrderDetail).filter(
+                and_(
+                    OrderDetail.id_order_detail == id_order_detail,
+                    OrderDetail.id_order == id_order
+                )
+            ).first()
+            
+            if not order_detail:
+                raise ValueError(f"OrderDetail {id_order_detail} non trovato per l'ordine {id_order}")
+            
+            # Verifica che la quantità da restituire non superi quella disponibile
+            original_quantity = order_detail.product_qty
+            already_returned = returned_quantities.get(id_order_detail, 0)
+            available_quantity = original_quantity - already_returned
+            
+            if quantity_to_return > available_quantity:
+                raise ValueError(
+                    f"Quantità da restituire ({quantity_to_return}) superiore alla quantità disponibile "
+                    f"({available_quantity}) per l'articolo {id_order_detail}"
+                )
+    
+    def get_returned_quantities(self, id_order: int) -> dict:
+        """Ottiene le quantità già restituite per ogni order_detail"""
+        # Recupera tutti i resi per questo ordine
+        returns = self._session.query(FiscalDocument).filter(
+            and_(
+                FiscalDocument.id_order == id_order,
+                FiscalDocument.document_type == 'return'
+            )
+        ).all()
+        
+        returned_quantities = {}
+        
+        for return_doc in returns:
+            details = self._session.query(FiscalDocumentDetail).filter(
+                FiscalDocumentDetail.id_fiscal_document == return_doc.id_fiscal_document
+            ).all()
+            
+            for detail in details:
+                id_order_detail = detail.id_order_detail
+                if id_order_detail in returned_quantities:
+                    returned_quantities[id_order_detail] += detail.quantity
+                else:
+                    returned_quantities[id_order_detail] = detail.quantity
+        
+        return returned_quantities
+    
+    def calculate_return_totals(self, order_details: List[dict], includes_shipping: bool, id_order: int) -> float:
+        """Calcola il totale di un reso"""
+        total_amount = 0.0
+        
+        # Calcola il totale dei prodotti
+        for item in order_details:
+            quantity = item['quantity']
+            unit_price = item.get('unit_price', 0.0)
+            id_tax = item.get('id_tax')
+            
+            # Se unit_price non è specificato, recupera dall'order_detail
+            if unit_price == 0.0:
+                order_detail = self._session.query(OrderDetail).filter(
+                    OrderDetail.id_order_detail == item['id_order_detail']
+                ).first()
+                if order_detail:
+                    unit_price = order_detail.product_price or 0.0
+            
+            # Calcola il totale della riga
+            line_total = quantity * unit_price
+            
+            # Applica l'IVA se presente (per il totale del documento fiscale)
+            if id_tax:
+                tax = self._session.query(Tax.percentage).filter(Tax.id_tax == id_tax).first()[0]
+                vat_amount = line_total * (tax / 100)
+                line_total += vat_amount
+            
+            total_amount += line_total
+        
+        # Aggiungi spese di spedizione se richieste
+        if includes_shipping:
+            order = self._session.query(Order).filter(Order.id_order == id_order).first()
+            if order and order.id_shipping:
+                shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+                if shipping and shipping.price_tax_incl:
+                    total_amount += shipping.price_tax_incl
+        return total_amount

@@ -1,35 +1,125 @@
-from typing import Optional
-from fastapi import APIRouter, Path, HTTPException, Query, Depends
-from starlette import status
-from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
-from .. import CustomerSchema, AllCustomerResponseSchema, CustomerResponseSchema
+"""
+Customer Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.customer_service_interface import ICustomerService
+from src.repository.interfaces.customer_repository_interface import ICustomerRepository
+from src.schemas.customer_schema import CustomerSchema, CustomerResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..repository.customer_repository import CustomerRepository
-from ..services.auth import authorize
-from src.core.cached import cached
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
+from src.schemas.customer_schema import AllCustomerResponseSchema
 
 router = APIRouter(
-    prefix='/api/v1/customers',
-    tags=['Customer'],
+    prefix="/api/v1/customers",
+    tags=["Customer"],
 )
 
+def get_customer_service(db: db_dependency) -> ICustomerService:
+    """Dependency injection per Customer Service"""
+    # Configura il container se necessario
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    # Crea il repository con la sessione DB usando il metodo specifico
+    customer_repo = configured_container.resolve_with_session(ICustomerRepository, db)
+    
+    # Crea il service con il repository
+    customer_service = configured_container.resolve(ICustomerService)
+    # Inietta il repository nel service (se il service lo richiede nel costruttore)
+    # Questo è un workaround se il service non accetta la sessione direttamente
+    if hasattr(customer_service, '_customer_repository'):
+        customer_service._customer_repository = customer_repo
+    
+    return customer_service
 
-def get_repository(db: db_dependency) -> CustomerRepository:
-    return CustomerRepository(db)
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Cliente creato correttamente")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
+async def create_customer(
+    customer: CustomerSchema,
+    user: dict = Depends(get_current_user),
+    customer_service: ICustomerService = Depends(get_customer_service)
+):
+    """
+    Crea un nuovo cliente con i dati forniti.
+    """
+    try:
+        return await customer_service.create_customer(customer)
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+@router.put("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Customer modificato")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
+async def update_customer(
+    cs: CustomerSchema,
+    customer_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    customer_service: ICustomerService = Depends(get_customer_service)
+):
+    """
+    Aggiorna i dati di un cliente esistente basato sull'ID specificato.
+
+    - **customer_id**: Identificativo del cliente da aggiornare.
+    """
+    try:
+        await customer_service.update_customer(customer_id, cs)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Cliente non trovato.")
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+async def get_customer_by_id(
+    customer_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    customer_service: ICustomerService = Depends(get_customer_service)
+):
+    """
+    Restituisce un singolo cliente basato sull'ID specificato.
+
+    - **customer_id**: Identificativo del cliente da ricercare.
+    """
+    try:
+        customer = await customer_service.get_customer(customer_id)
+        return customer
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Cliente non trovato.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCustomerResponseSchema)
-@cached(ttl=30, key="customers:all")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_customers(
-        user: user_dependency,
-        cr: CustomerRepository = Depends(get_repository),
         param: Optional[str] = None,
         with_address: Optional[bool] = False,
         lang_ids: Optional[str] = None,
         page: int = Query(1, gt=0),
-        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+        user: dict = Depends(get_current_user),
+        customer_service: ICustomerService = Depends(get_customer_service)
 ):
     """
     Restituisce tutti i clienti con supporto alla paginazione. Se specificato, filtra i clienti per lingua.
@@ -38,86 +128,44 @@ async def get_all_customers(
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
+    try:
+        # Costruisci i filtri
+        filters = {}
+        if lang_ids:
+            filters['lang_ids'] = lang_ids
+        if param:
+            filters['param'] = param
+        if with_address:
+            filters['with_address'] = with_address
+            
+        customers = await customer_service.get_customers(page=page, limit=limit, **filters)
+        if not customers:
+            raise HTTPException(status_code=404, detail="Nessun cliente trovato")
 
-    customers = cr.get_all(page=page, limit=limit, with_address=with_address, lang_ids=lang_ids, param=param)
-    if not customers:
-        raise HTTPException(status_code=404, detail="Nessun cliente trovato")
+        total_count = await customer_service.get_customers_count(**filters)
 
-    total_count = cr.get_count(lang_ids=lang_ids, param=param)
-
-    return {"customers": customers, "total": total_count, "page": page, "limit": limit}
-
-
-@router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)
-@cached(ttl=30, key="customers:id:{customer_id}")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_customer_by_id(user: user_dependency,
-                             cr: CustomerRepository = Depends(get_repository),
-                             customer_id: int = Path(gt=0)):
-    """
-    Restituisce un singolo cliente basato sull'ID specificato.
-
-    - **customer_id**: Identificativo del cliente da ricercare.
-    """
-
-    customer = cr.get_by_id(_id=customer_id)
-
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Cliente non trovato.")
-
-    return customer
-
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Cliente creato correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_customer(user: user_dependency,
-                          customer: CustomerSchema,
-                          cr: CustomerRepository = Depends(get_repository)):
-    """
-    Crea un nuovo cliente con i dati forniti.
-    """
-
-    return cr.create(data=customer)
-
+        return {"customers": customers, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Cliente eliminato.")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_customer(user: user_dependency,
-                          cr: CustomerRepository = Depends(get_repository),
-                          customer_id: int = Path(gt=0)):
+async def delete_customer(
+    customer_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    customer_service: ICustomerService = Depends(get_customer_service)
+):
     """
     Elimina un cliente basato sull'ID specificato.
 
     - **customer_id**: Identificativo del cliente da eliminare.
     """
-
-    customer = cr.get_by_id(_id=customer_id)
-
-    if customer is None:
+    try:
+        await customer_service.delete_customer(customer_id)
+    except NotFoundException as e:
         raise HTTPException(status_code=404, detail="Cliente non trovato.")
-
-    cr.delete(customer=customer)
-
-
-@router.put("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Customer modificato")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_customer(user: user_dependency,
-                          cs: CustomerSchema,
-                          cr: CustomerRepository = Depends(get_repository),
-                          customer_id: int = Path(gt=0)):
-    """
-    Aggiorna i dati di un cliente esistente basato sull'ID specificato.
-
-    - **customer_id**: Identificativo del cliente da aggiornare.
-    """
-
-    customer = cr.get_by_id(_id=customer_id)
-
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Cliente non trovato.")
-
-    cr.update(edited_customer=customer, data=cs)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

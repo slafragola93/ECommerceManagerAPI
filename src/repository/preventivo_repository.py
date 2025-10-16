@@ -256,8 +256,8 @@ class PreventivoRepository:
         order_data = OrderSchema(
             id_origin=0,  # Ordine creato dall'app
             customer=preventivo.id_customer,
-            address_delivery=preventivo.id_address_delivery,
-            address_invoice=preventivo.id_address_invoice,
+            address_delivery=preventivo.id_address_delivery or 0,  # Default 0 se None
+            address_invoice=preventivo.id_address_invoice or 0,  # Default 0 se None
             reference=generate_preventivo_reference(preventivo.document_number),
             id_platform=1,  # Default 1
             shipping=preventivo.id_shipping or 0,  # Usa spedizione del preventivo, altrimenti 0
@@ -268,6 +268,7 @@ class PreventivoRepository:
             payment_date=None,
             total_weight=preventivo.total_weight or 0.0,
             total_price_tax_excl=total_price_tax_excl,  # Include prodotti + spedizione senza IVA
+            total_paid=preventivo.total_price_with_tax,  # total_paid = total_price_with_tax del preventivo
             total_discounts=0.0,
             cash_on_delivery=0.0
         )
@@ -297,7 +298,7 @@ class PreventivoRepository:
                 reduction_percent=articolo.reduction_percent or 0.0,
                 reduction_amount=articolo.reduction_amount or 0.0
             )
-            self.order_repository.order_detail_repository.create(detail_data)
+            self.order_repository.order_detail_repository.create(detail_data.model_dump())
         
         # Imposta il total_price_tax_excl corretto dopo aver creato tutti gli articoli
         order.total_price_tax_excl = total_price_tax_excl
@@ -622,20 +623,15 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
-        # Se il preventivo ha già un id_order, è stato convertito
-        if preventivo.id_order:
+        # Se il preventivo ha un id_order > 0, è stato convertito
+        if preventivo.id_order and preventivo.id_order > 0:
             existing_order = self.db.query(Order).filter(
                 Order.id_order == preventivo.id_order
             ).first()
             return existing_order
         
-        # Fallback: cerca per reference (per compatibilità con conversioni precedenti)
-        expected_reference = generate_preventivo_reference(preventivo.document_number)
-        existing_order = self.db.query(Order).filter(
-            Order.reference == expected_reference
-        ).first()
-        
-        return existing_order
+        # Non è stato convertito
+        return None
     
     def delete_preventivo(self, id_order_document: int) -> bool:
         """
@@ -711,9 +707,6 @@ class PreventivoRepository:
         Returns:
             OrderDocument: Il nuovo preventivo duplicato, None se il preventivo originale non esiste
         """
-        # Verifica che il preventivo non sia stato convertito in ordine
-        self._check_preventivo_not_converted(id_order_document)
-        
         # Recupera il preventivo originale
         original_preventivo = self.get_preventivo_by_id(id_order_document)
         if not original_preventivo:

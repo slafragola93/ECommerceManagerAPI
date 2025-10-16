@@ -36,5 +36,5 @@ class Customer(Base):
     email = Column(String(150), index=True)
     date_add = Column(Date, default=func.now())
 
-    addresses = relationship("Address", back_populates="customers")
+    addresses = relationship("Address", back_populates="customer")
     orders_document = relationship("OrderDocument", back_populates="customer")

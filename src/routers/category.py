@@ -1,159 +1,156 @@
-from fastapi import APIRouter, Path, HTTPException, Depends, Query
-from starlette import status
-from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
-from .. import CategorySchema, CategoryResponseSchema, AllCategoryResponseSchema
+"""
+Category Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.category_service_interface import ICategoryService
+from src.repository.interfaces.category_repository_interface import ICategoryRepository
+from src.schemas.category_schema import CategorySchema, CategoryResponseSchema, AllCategoryResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..repository.category_repository import CategoryRepository
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/categories',
-    tags=['Category'],
+    prefix="/api/v1/categories",
+    tags=["Category"]
 )
 
-
-def get_repository(db: db_dependency) -> CategoryRepository:
-    return CategoryRepository(db)
-
+def get_category_service(db: db_dependency) -> ICategoryService:
+    """Dependency injection per Category Service"""
+    # Configura il container se necessario
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    # Crea il repository con la sessione DB usando il metodo specifico
+    category_repo = configured_container.resolve_with_session(ICategoryRepository, db)
+    
+    # Crea il service con il repository
+    category_service = configured_container.resolve(ICategoryService)
+    # Inietta il repository nel service
+    if hasattr(category_service, '_category_repository'):
+        category_service._category_repository = category_repo
+    
+    return category_service
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCategoryResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_all_categories(user: user_dependency,
-                             cr: CategoryRepository = Depends(get_repository),
-                             page: int = Query(1, gt=0),
-                             limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_all_categories(
+    user: dict = Depends(get_current_user),
+    category_service: ICategoryService = Depends(get_category_service),
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+):
     """
-    Ottiene l'elenco di tutte le categorie disponibili.
-
-    Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-    solleva un'eccezione HTTP con stato 401. Altrimenti, restituisce l'elenco completo
-    delle categorie presenti nel database.
-
-    Parameters:
-    - user: Dipendenza dell'utente, per la verifica dell'autenticazione.
-    - db: Dipendenza del database, per eseguire la query sulle categorie.
-
-    Returns:
-    - list: Un elenco di tutte le categorie presenti nel database.
+    Restituisce tutti i category con supporto alla paginazione.
+    
+    - **page**: La pagina da restituire, per la paginazione dei risultati.
+    - **limit**: Il numero massimo di risultati per pagina.
     """
-    categories = cr.get_all(page=page, limit=limit)
+    try:
+        categories = await category_service.get_categories(page=page, limit=limit)
+        if not categories:
+            raise HTTPException(status_code=404, detail="Nessun category trovato")
 
-    if categories is None:
-        raise HTTPException(status_code=404, detail="Nessuna categoria trovata")
+        total_count = await category_service.get_categories_count()
 
-    total_count = cr.get_count()
-
-    return {"categories": categories, "total": total_count, "page": page, "limit": limit}
-
+        return {"categories": categories, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/{category_id}", status_code=status.HTTP_200_OK, response_model=CategoryResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_category_by_id(user: user_dependency,
-                             cr: CategoryRepository = Depends(get_repository),
-                             category_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_category_by_id(
+    user: dict = Depends(get_current_user),
+    category_service: ICategoryService = Depends(get_category_service),
+    category_id: int = Path(gt=0)
+):
     """
-    Ottiene i dettagli di una singola categoria basata sull'ID fornito.
+    Restituisce un singolo category basato sull'ID specificato.
 
-    Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-    solleva un'eccezione HTTP con stato 401. Se la categoria richiesta non esiste,
-    solleva un'eccezione HTTP con stato 404. Altrimenti, restituisce i dettagli della
-    categoria richiesta.
-
-    Parameters:
-    - user: Dipendenza dell'utente, per la verifica dell'autenticazione.
-    - db: Dipendenza del database, per eseguire la query sulle categorie.
-    - category_id: L'ID della categoria da cercare.
-
-    Returns:
-    - Category: I dettagli della categoria richiesta.
+    - **category_id**: Identificativo del category da ricercare.
     """
+    try:
+        category = await category_service.get_category(category_id)
+        return category
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Category non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    category = cr.get_by_id(_id=category_id)
-
-    if category is None:
-        raise HTTPException(status_code=404, detail="Categoria non trovata")
-
-    return category
-
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Categoria creata correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Category creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_category(user: user_dependency,
-                          cs: CategorySchema,
-                          cr: CategoryRepository = Depends(get_repository)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def create_category(
+    category_data: CategorySchema,
+    user: dict = Depends(get_current_user),
+    category_service: ICategoryService = Depends(get_category_service)
+):
     """
-    Crea una nuova categoria nel database.
-
-    Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-    solleva un'eccezione HTTP con stato 401. Dopo la verifica, procede con la creazione
-    della nuova categoria basandosi sui dati forniti.
-
-    Parameters:
-    - user: Dipendenza dell'utente, per la verifica dell'autenticazione.
-    - db: Dipendenza del database, per l'inserimento dei dati della nuova categoria.
-    - cs: I dati della nuova categoria da creare.
+    Crea un nuovo category con i dati forniti.
     """
+    try:
+        return await category_service.create_category(category_data)
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    cr.create(data=cs)
-
-
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT,
-               response_description="Categoria eliminata correttamente")
+@router.put("/{category_id}", status_code=status.HTTP_200_OK, response_description="Category aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_category(user: user_dependency,
-                          cr: CategoryRepository = Depends(get_repository),
-                          category_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def update_category(
+    category_data: CategorySchema,
+    user: dict = Depends(get_current_user),
+    category_service: ICategoryService = Depends(get_category_service),
+    category_id: int = Path(gt=0)
+):
     """
-    Elimina una categoria dal database basandosi sull'ID fornito.
+    Aggiorna i dati di un category esistente basato sull'ID specificato.
 
-    Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-    solleva un'eccezione HTTP con stato 401. Se la categoria non esiste, solleva
-    un'eccezione HTTP con stato 404. Dopo la verifica, procede con l'eliminazione
-    della categoria.
-
-    Parameters:
-    - user: Dipendenza dell'utente, per la verifica dell'autenticazione.
-    - db: Dipendenza del database, per l'eliminazione dei dati della categoria.
-    - category_id: L'ID della categoria da eliminare.
+    - **category_id**: Identificativo del category da aggiornare.
     """
+    try:
+        return await category_service.update_category(category_id, category_data)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Category non trovato")
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    category = cr.get_by_id(_id=category_id)
-
-    if category is None:
-        raise HTTPException(status_code=404, detail="Categoria non trovata.")
-
-    cr.delete(category=category)
-
-
-@router.put("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{category_id}", status_code=status.HTTP_200_OK, response_description="Category eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_category(user: user_dependency,
-                          cs: CategorySchema,
-                          cr: CategoryRepository = Depends(get_repository),
-                          category_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
+async def delete_category(
+    user: dict = Depends(get_current_user),
+    category_service: ICategoryService = Depends(get_category_service),
+    category_id: int = Path(gt=0)
+):
     """
-    Aggiorna i dettagli di una categoria esistente nel database.
+    Elimina un category basato sull'ID specificato.
 
-    Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-    solleva un'eccezione HTTP con stato 401. Se la categoria non esiste, solleva
-    un'eccezione HTTP con stato 404. Dopo la verifica, procede con l'aggiornamento
-    dei dati della categoria basandosi sui dati forniti.
-
-    Parameters:
-    - user: Dipendenza dell'utente, per la verifica dell'autenticazione.
-    - db: Dipendenza del database, per l'aggiornamento dei dati della categoria.
-    - cs: I dati aggiornati della categoria.
-    - category_id: L'ID della categoria da aggiornare.
+    - **category_id**: Identificativo del category da eliminare.
     """
-
-    category = cr.get_by_id(_id=category_id)
-
-    if category is None:
-        raise HTTPException(status_code=404, detail="Categoria non trovato.")
-
-    cr.update(edited_category=category, data=cs)
+    try:
+        await category_service.delete_category(category_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Category non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

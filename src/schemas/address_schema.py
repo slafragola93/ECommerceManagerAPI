@@ -35,7 +35,7 @@ class CountryResponseSchema(BaseModel):
 class AddressResponseSchema(BaseModel):
     id_address: int | None
     id_origin: int | None
-    customer: CustomerResponseWithoutAddressSchema | None
+    customer: Optional[CustomerResponseWithoutAddressSchema] = None
     country: CountryResponseSchema | None
     company: str | None
     firstname: str | None

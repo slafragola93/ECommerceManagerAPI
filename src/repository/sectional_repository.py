@@ -1,67 +1,48 @@
-from fastapi import HTTPException
-from sqlalchemy import func
-from sqlalchemy.orm import Session
-
-from .. import SectionalResponseSchema, SectionalSchema
-from ..models import Sectional
-from src.schemas.sectional_schema import *
+"""
+Sectional Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
+from sqlalchemy.orm import Session, noload
+from sqlalchemy import func, desc
+from src.models.sectional import Sectional
+from src.repository.interfaces.sectional_repository_interface import ISectionalRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
 
-
-class SectionalRepository:
-    """
-    Repository sezionale
-    """
-
+class SectionalRepository(BaseRepository[Sectional, int], ISectionalRepository):
+    """Sectional Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_by_id(self, _id: int) -> SectionalResponseSchema:
-        return self.session.query(Sectional).filter(Sectional.id_sectional == _id).first()
-
-    def get_by_name(self, name: str) -> SectionalResponseSchema:
-        return self.session.query(Sectional).filter(Sectional.name == name).first()
-
-    def create(self, data: SectionalSchema):
-        sectional = Sectional(**data.model_dump())
-
-        if self.get_by_name(sectional.name) is not None:
-            return
-
-        self.session.add(sectional)
-        self.session.commit()
-
-    def create_and_get_id(self, data: SectionalSchema):
-        sectional = Sectional(**data.model_dump())
-
-        if self.get_by_name(sectional.name) is not None:
-            return self.get_by_name(sectional.name).id_sectional
-
-        self.session.add(sectional)
-        self.session.commit()
-        self.session.refresh(sectional)
-
-        return sectional.id_sectional
-
-    def update(self, edited_sectional: Sectional, data: SectionalSchema):
-
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
-        for key, value in entity_updated.items():
-            if hasattr(edited_sectional, key) and value is not None:
-                setattr(edited_sectional, key, value)
-
-        self.session.add(edited_sectional)
-        self.session.commit()
-
-    def delete(self, sectional: Sectional) -> bool:
-        self.session.delete(sectional)
-        self.session.commit()
-
-        return True
+        super().__init__(session, Sectional)
+    
+    def get_all(self, **filters) -> List[Sectional]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(Sectional.id_sectional))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[Sectional]:
+        """Ottiene un sectional per nome (case insensitive)"""
+        try:
+            return self._session.query(Sectional).filter(
+                func.lower(Sectional.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving sectional by name: {str(e)}")

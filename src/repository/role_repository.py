@@ -1,64 +1,48 @@
-from fastapi import HTTPException
+"""
+Role Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
+from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc
-from sqlalchemy.orm import Session
-from ..models import Role
-from src.schemas.role_schema import *
+from src.models.role import Role
+from src.repository.interfaces.role_repository_interface import IRoleRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
 
-
-class RoleRepository:
-    """
-    Repository ruoli
-    """
-
+class RoleRepository(BaseRepository[Role, int], IRoleRepository):
+    """Role Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_all(self,
-                page: int = 1, limit: int = 10
-                ) -> AllRolesResponseSchema:
-        """
-        Recupera tutti i ruoli
-
-        Returns:
-            AllRoleResponseSchema: Tutti i ruoli
-        """
-
-        return self.session.query(Role).order_by(desc(Role.id_role)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-    def get_count(self) -> AllRolesResponseSchema:
-
-        return self.session.query(func.count(Role.id_role)).scalar()
-
-    def get_by_id(self, _id: int) -> RoleResponseSchema:
-        return self.session.query(Role).filter(Role.id_role == _id).first()
-
-    def create(self, data: RoleSchema):
-        role = Role(**data.model_dump())
-
-        self.session.add(role)
-        self.session.commit()
-        self.session.refresh(role)
-
-    def update(self, edited_role: Role, data: RoleSchema):
-
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
-
-        for key, value in entity_updated.items():
-            if hasattr(edited_role, key) and value is not None:
-                setattr(edited_role, key, value)
-
-        self.session.add(edited_role)
-        self.session.commit()
-
-    def delete(self, role: Role) -> bool:
-        self.session.delete(role)
-        self.session.commit()
-
-        return True
+        super().__init__(session, Role)
+    
+    def get_all(self, **filters) -> List[Role]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(Role.id_role))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
+    
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[Role]:
+        """Ottiene un ruolo per nome (case insensitive)"""
+        try:
+            return self._session.query(Role).filter(
+                func.lower(Role.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving role by name: {str(e)}")

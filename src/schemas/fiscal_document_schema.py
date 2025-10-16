@@ -9,6 +9,7 @@ class FiscalDocumentDetailSchema(BaseModel):
     """Schema per dettaglio nota di credito parziale"""
     id_order_detail: int = Field(..., gt=0, description="ID dell'order detail da stornare")
     quantity: float = Field(..., gt=0, description="Quantità da stornare")
+    id_tax: Optional[int] = Field(None, gt=0, description="ID della tassa applicata")
     
     class Config:
         from_attributes = True
@@ -22,6 +23,7 @@ class FiscalDocumentDetailResponseSchema(BaseModel):
     quantity: float
     unit_price: float
     total_amount: float
+    id_tax: Optional[int] = None
     
     class Config:
         from_attributes = True
@@ -35,6 +37,7 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
     quantity: float
     unit_price: float
     total_amount: float
+    id_tax: Optional[int] = None
     
     # Info prodotto
     product_name: Optional[str] = None
@@ -73,8 +76,8 @@ class InvoiceResponseSchema(BaseModel):
     is_electronic: bool
     includes_shipping: bool
     total_amount: Optional[float]
-    date_add: datetime
-    date_upd: datetime
+    date_add: Optional[datetime] = None
+    date_upd: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -153,8 +156,8 @@ class CreditNoteResponseSchema(BaseModel):
     is_partial: bool
     includes_shipping: bool
     total_amount: Optional[float]
-    date_add: datetime
-    date_upd: datetime
+    date_add: Optional[datetime] = None
+    date_upd: Optional[datetime] = None
     details: List[FiscalDocumentDetailResponseSchema] = []
     
     class Config:
@@ -180,8 +183,8 @@ class FiscalDocumentResponseSchema(BaseModel):
     credit_note_reason: Optional[str]
     is_partial: bool
     total_amount: Optional[float]
-    date_add: datetime
-    date_upd: datetime
+    date_add: Optional[datetime] = None
+    date_upd: Optional[datetime] = None
     
     class Config:
         from_attributes = True

@@ -89,7 +89,7 @@ class OrderSimpleResponseSchema(BaseModel):
     privacy_note: Optional[str]
     general_note: Optional[str]
     delivery_date: Optional[datetime]
-    date_add: datetime
+    date_add: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -120,7 +120,7 @@ class OrderResponseSchema(BaseModel):
     privacy_note: Optional[str]
     general_note: Optional[str]
     delivery_date: Optional[datetime]
-    date_add: datetime
+    date_add: Optional[datetime] = None
     
     # Relazioni popolate
     address_delivery: Optional[AddressResponseSchema] = None
@@ -153,7 +153,7 @@ class OrderIdSchema(BaseModel):
     privacy_note: Optional[str]
     general_note: Optional[str]
     delivery_date: Optional[datetime]
-    date_add: datetime
+    date_add: Optional[datetime] = None
     
     # Relazioni popolate
     address_delivery: Optional[dict] = None

@@ -22,7 +22,7 @@ from src.schemas.fiscal_document_schema import (
     FiscalDocumentDetailWithProductSchema
 )
 
-router = APIRouter(prefix="/api/v1/fiscal-documents", tags=["Fiscal Documents"])
+router = APIRouter(prefix="/api/v1/fiscal_documents", tags=["Fiscal Documents"])
 
 # Dependencies
 def get_fiscal_repository(db: Session = Depends(get_db)) -> FiscalDocumentRepository:

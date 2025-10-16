@@ -1,104 +1,156 @@
-from typing import Optional
-from fastapi import APIRouter, Query, HTTPException, Path, Depends
-from sqlalchemy.exc import IntegrityError
-from starlette import status
-from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
-from .. import CarrierSchema, AllCarriersResponseSchema, CarrierResponseSchema
+"""
+Carrier Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.carrier_service_interface import ICarrierService
+from src.repository.interfaces.carrier_repository_interface import ICarrierRepository
+from src.schemas.carrier_schema import CarrierSchema, CarrierResponseSchema, AllCarriersResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..repository.carrier_repository import CarrierRepository
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/carriers',
-    tags=['Carrier']
+    prefix="/api/v1/carriers",
+    tags=["Carrier"]
 )
 
-
-def get_repository(db: db_dependency):
-    return CarrierRepository(db)
-
+def get_carrier_service(db: db_dependency) -> ICarrierService:
+    """Dependency injection per Carrier Service"""
+    # Configura il container se necessario
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    # Crea il repository con la sessione DB usando il metodo specifico
+    carrier_repo = configured_container.resolve_with_session(ICarrierRepository, db)
+    
+    # Crea il service con il repository
+    carrier_service = configured_container.resolve(ICarrierService)
+    # Inietta il repository nel service
+    if hasattr(carrier_service, '_carrier_repository'):
+        carrier_service._carrier_repository = carrier_repo
+    
+    return carrier_service
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCarriersResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_carriers(
-        user: user_dependency,
-        cr: CarrierRepository = Depends(get_repository),
-        carriers_ids: Optional[str] = None,
-        origin_ids: Optional[str] = None,
-        carrier_name: Optional[str] = None,
-        page: int = Query(1, gt=0),
-        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    user: dict = Depends(get_current_user),
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
 ):
-    carriers = cr.get_all(carriers_ids=carriers_ids,
-                          origin_ids=origin_ids,
-                          carrier_name=carrier_name,
-                          page=page,
-                          limit=limit)
+    """
+    Restituisce tutti i carrier con supporto alla paginazione.
+    
+    - **page**: La pagina da restituire, per la paginazione dei risultati.
+    - **limit**: Il numero massimo di risultati per pagina.
+    """
+    try:
+        carriers = await carrier_service.get_carriers(page=page, limit=limit)
+        if not carriers:
+            raise HTTPException(status_code=404, detail="Nessun carrier trovato")
 
-    if not carriers:
-        raise HTTPException(status_code=404, detail="Nessun corriere trovato")
+        total_count = await carrier_service.get_carriers_count()
 
-    total_count = cr.get_count(carriers_ids=carriers_ids,
-                               origin_ids=origin_ids,
-                               carrier_name=carrier_name)
-
-    return {"carriers": carriers, "total": total_count, "page": page, "limit": limit}
-
+        return {"carriers": carriers, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/{carrier_id}", status_code=status.HTTP_200_OK, response_model=CarrierResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_carrier_by_id(user: user_dependency,
-                            cr: CarrierRepository = Depends(get_repository),
-                            carrier_id: int = Path(gt=0)):
-    carrier = cr.get_by_id(_id=carrier_id)
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_carrier_by_id(
+    user: dict = Depends(get_current_user),
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    carrier_id: int = Path(gt=0)
+):
+    """
+    Restituisce un singolo carrier basato sull'ID specificato.
 
-    if carrier is None:
-        raise HTTPException(status_code=404, detail="Corriere non trovata")
-
-    return carrier
-
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Corriere creato correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_carrier(user: user_dependency,
-                         cs: CarrierSchema,
-                         cr: CarrierRepository = Depends(get_repository)):
-    cr.create(data=cs)
-
-
-@router.put("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Corriere aggiornato correttamente")
-@check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_carrier(user: user_dependency,
-                         cs: CarrierSchema,
-                         cr: CarrierRepository = Depends(get_repository),
-                         carrier_id: int = Path(gt=0)):
+    - **carrier_id**: Identificativo del carrier da ricercare.
+    """
     try:
-        carrier = cr.get_by_id(_id=carrier_id)
+        carrier = await carrier_service.get_carrier(carrier_id)
+        return carrier
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Carrier non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-        if carrier is None:
-            raise HTTPException(status_code=404, detail="Corriere non trovato")
-
-        cr.update(edited_carrier=carrier,
-                  data=cs)
-
-    except IntegrityError:
-        raise HTTPException(status_code=400,
-                            detail="Errore di integrità dei dati. Verifica i valori unici e i vincoli.")
-
-
-@router.delete("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Corriere eliminato correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Carrier creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_carrier(user: user_dependency,
-                         cr: CarrierRepository = Depends(get_repository),
-                         carrier_id: int = Path(gt=0)):
-    carrier = cr.get_by_id(_id=carrier_id)
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def create_carrier(
+    carrier_data: CarrierSchema,
+    user: dict = Depends(get_current_user),
+    carrier_service: ICarrierService = Depends(get_carrier_service)
+):
+    """
+    Crea un nuovo carrier con i dati forniti.
+    """
+    try:
+        return await carrier_service.create_carrier(carrier_data)
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    if carrier is None:
-        raise HTTPException(status_code=404, detail="Corriere non trovato")
+@router.put("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Carrier aggiornato correttamente")
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def update_carrier(
+    carrier_data: CarrierSchema,
+    user: dict = Depends(get_current_user),
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    carrier_id: int = Path(gt=0)
+):
+    """
+    Aggiorna i dati di un carrier esistente basato sull'ID specificato.
 
-    cr.delete(carrier)
+    - **carrier_id**: Identificativo del carrier da aggiornare.
+    """
+    try:
+        return await carrier_service.update_carrier(carrier_id, carrier_data)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Carrier non trovato")
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.delete("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Carrier eliminato correttamente")
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
+async def delete_carrier(
+    user: dict = Depends(get_current_user),
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    carrier_id: int = Path(gt=0)
+):
+    """
+    Elimina un carrier basato sull'ID specificato.
+
+    - **carrier_id**: Identificativo del carrier da eliminare.
+    """
+    try:
+        await carrier_service.delete_carrier(carrier_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Carrier non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

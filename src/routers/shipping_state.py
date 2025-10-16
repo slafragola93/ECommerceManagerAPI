@@ -1,104 +1,156 @@
-from fastapi import APIRouter, Path, HTTPException
-from starlette import status
-from src.models.shipping_state import ShippingState
-from .dependencies import db_dependency, user_dependency
-from .. import ShippingStateSchema
+"""
+ShippingState Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.shipping_state_service_interface import IShippingStateService
+from src.repository.interfaces.shipping_state_repository_interface import IShippingStateRepository
+from src.schemas.shipping_state_schema import ShippingStateSchema, ShippingStateResponseSchema, AllShippingStatesResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from src.services.tool import edit_entity
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/shipping_state',
-    tags=['Shipping State'],
+    prefix="/api/v1/shipping_states",
+    tags=["ShippingState"]
 )
 
+def get_shipping_state_service(db: db_dependency) -> IShippingStateService:
+    """Dependency injection per ShippingState Service"""
+    # Configura il container se necessario
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    # Crea il repository con la sessione DB usando il metodo specifico
+    shipping_state_repo = configured_container.resolve_with_session(IShippingStateRepository, db)
+    
+    # Crea il service con il repository
+    shipping_state_service = configured_container.resolve(IShippingStateService)
+    # Inietta il repository nel service
+    if hasattr(shipping_state_service, '_shipping_state_repository'):
+        shipping_state_service._shipping_state_repository = shipping_state_repo
+    
+    return shipping_state_service
 
-@router.get("/", status_code=status.HTTP_200_OK)
+@router.get("/", status_code=status.HTTP_200_OK, response_model=AllShippingStatesResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI'], permissions_required=['R'])
-async def get_all_shipping_state(user: user_dependency,
-                                 db: db_dependency):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_all_shipping_states(
+    user: dict = Depends(get_current_user),
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+):
     """
-        Restituisce un elenco di tutti gli stati di spedizione disponibili.
-
-        Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-        solleva un'eccezione HTTP con stato 401. Altrimenti, restituisce l'elenco completo
-        degli stati di spedizione presenti nel database.
+    Restituisce tutti i shipping_state con supporto alla paginazione.
+    
+    - **page**: La pagina da restituire, per la paginazione dei risultati.
+    - **limit**: Il numero massimo di risultati per pagina.
     """
+    try:
+        shipping_states = await shipping_state_service.get_shipping_states(page=page, limit=limit)
+        if not shipping_states:
+            raise HTTPException(status_code=404, detail="Nessun shipping_state trovato")
 
-    return db.query(ShippingState).all()
+        total_count = await shipping_state_service.get_shipping_states_count()
 
+        return {"shipping_states": shipping_states, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@router.get("/{shipping_state_id}", status_code=status.HTTP_200_OK)
+@router.get("/{shipping_state_id}", status_code=status.HTTP_200_OK, response_model=ShippingStateResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI'], permissions_required=['R'])
-async def get_shipping_state_by_id(user: user_dependency,
-                                   db: db_dependency,
-                                   shipping_state_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_shipping_state_by_id(
+    user: dict = Depends(get_current_user),
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    shipping_state_id: int = Path(gt=0)
+):
     """
-        Restituisce i dettagli di uno specifico stato di spedizione basato sull'ID fornito.
+    Restituisce un singolo shipping_state basato sull'ID specificato.
 
-        Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-        solleva un'eccezione HTTP con stato 401. Se lo stato di spedizione richiesto non esiste,
-        solleva un'eccezione HTTP con stato 404. Altrimenti, restituisce i dettagli dello stato
-        di spedizione richiesto.
-
-        Parameters:
-        - shipping_state_id: L'ID dello stato di spedizione da cercare.
+    - **shipping_state_id**: Identificativo del shipping_state da ricercare.
     """
+    try:
+        shipping_state = await shipping_state_service.get_shipping_state(shipping_state_id)
+        return shipping_state
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="ShippingState non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    shipping_state = db.query(ShippingState).filter(ShippingState.id_shipping_state == shipping_state_id).first()
-
-    if shipping_state is None:
-        raise HTTPException(status_code=404, detail="Stato Spedizione non trovato")
-
-    return shipping_state
-
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Stato spedizione creato correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="ShippingState creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI'], permissions_required=['C'])
-async def create_shipping_state(user: user_dependency,
-                                db: db_dependency,
-                                ss: ShippingStateSchema):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def create_shipping_state(
+    shipping_state_data: ShippingStateSchema,
+    user: dict = Depends(get_current_user),
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service)
+):
     """
-        Crea un nuovo stato di spedizione nel database.
-
-        Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-        solleva un'eccezione HTTP con stato 401. Dopo la verifica, procede con la creazione
-        del nuovo stato di spedizione basandosi sui dati forniti.
+    Crea un nuovo shipping_state con i dati forniti.
     """
+    try:
+        return await shipping_state_service.create_shipping_state(shipping_state_data)
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    shipping_state = ShippingState(**ss.model_dump())
-    db.add(shipping_state)
-    db.commit()
-
-
-@router.put("/{shipping_state_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/{shipping_state_id}", status_code=status.HTTP_200_OK, response_description="ShippingState aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI'], permissions_required=['U'])
-async def update_shipping_state(user: user_dependency,
-                                db: db_dependency,
-                                ss: ShippingStateSchema,
-                                shipping_state_id: int = Path(gt=0)):
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def update_shipping_state(
+    shipping_state_data: ShippingStateSchema,
+    user: dict = Depends(get_current_user),
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    shipping_state_id: int = Path(gt=0)
+):
     """
-        Aggiorna i dettagli di uno stato di spedizione esistente nel database.
+    Aggiorna i dati di un shipping_state esistente basato sull'ID specificato.
 
-        Verifica prima l'autenticazione dell'utente. Se l'utente non è autenticato,
-        solleva un'eccezione HTTP con stato 401. Se lo stato di spedizione non esiste,
-        solleva un'eccezione HTTP con stato 404. Dopo la verifica, procede con l'aggiornamento
-        dei dati dello stato di spedizione basandosi sui dati forniti.
-
-        Parameters:
-        - shipping_state_id: L'ID dello stato di spedizione da aggiornare.
+    - **shipping_state_id**: Identificativo del shipping_state da aggiornare.
     """
+    try:
+        return await shipping_state_service.update_shipping_state(shipping_state_id, shipping_state_data)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="ShippingState non trovato")
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=e.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    shipping_state = db.query(ShippingState).filter(ShippingState.id_shipping_state == shipping_state_id).first()
+@router.delete("/{shipping_state_id}", status_code=status.HTTP_200_OK, response_description="ShippingState eliminato correttamente")
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
+async def delete_shipping_state(
+    user: dict = Depends(get_current_user),
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    shipping_state_id: int = Path(gt=0)
+):
+    """
+    Elimina un shipping_state basato sull'ID specificato.
 
-    if shipping_state is None:
-        raise HTTPException(status_code=404, detail="Categoria non trovato.")
-
-    edit_entity(shipping_state, ss)
-
-    db.add(shipping_state)
-    db.commit()
+    - **shipping_state_id**: Identificativo del shipping_state da eliminare.
+    """
+    try:
+        await shipping_state_service.delete_shipping_state(shipping_state_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="ShippingState non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

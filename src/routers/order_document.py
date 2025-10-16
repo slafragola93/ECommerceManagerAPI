@@ -7,7 +7,7 @@ from ..repository.order_document_repository import OrderDocumentRepository
 from ..services.auth import authorize
 
 router = APIRouter(
-    prefix='/api/v1/order_document',
+    prefix='/api/v1/order_documents',
     tags=['Order Document']
 )
 

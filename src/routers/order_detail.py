@@ -1,127 +1,187 @@
-from typing import Optional
-from fastapi import APIRouter, Query, HTTPException, Path, Depends
-from sqlalchemy.exc import IntegrityError
-from starlette import status
-from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
-from .. import OrderDetailSchema, AllOrderDetailsResponseSchema, OrderDetailResponseSchema
+"""
+Order Detail Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.order_detail_service_interface import IOrderDetailService
+from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
+from src.schemas.order_detail_schema import OrderDetailSchema, OrderDetailResponseSchema, AllOrderDetailsResponseSchema
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..repository.order_detail_repository import OrderDetailRepository
-from ..repository.order_repository import OrderRepository
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/order_details',
-    tags=['Order Detail']
+    prefix="/api/v1/order_details",
+    tags=["OrderDetail"],
 )
 
-
-def get_repository(db: db_dependency):
-    return OrderDetailRepository(db)
-
-
-def get_order_repository(db: db_dependency):
-    return OrderRepository(db)
+def get_order_detail_service(db: db_dependency) -> IOrderDetailService:
+    """Dependency injection per Order Detail Service"""
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    order_detail_repo = configured_container.resolve_with_session(IOrderDetailRepository, db)
+    order_detail_service = configured_container.resolve(IOrderDetailService)
+    if hasattr(order_detail_service, '_order_detail_repository'):
+        order_detail_service._order_detail_repository = order_detail_repo
+    
+    return order_detail_service
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllOrderDetailsResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_order_details(
-        user: user_dependency,
-        odr: OrderDetailRepository = Depends(get_repository),
-        order_details_ids: Optional[str] = None,
-        order_ids: Optional[str] = None,
-        invoice_ids: Optional[str] = None,
-        document_ids: Optional[str] = None,
-        origin_ids: Optional[str] = None,
-        product_ids: Optional[str] = None,
-        search_value: Optional[str] = None,
-        rda: Optional[str] = None,
-        page: int = Query(1, gt=0),
-        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    user: dict = Depends(get_current_user),
+    order_detail_service: IOrderDetailService = Depends(get_order_detail_service),
+    order_ids: Optional[str] = None,
+    order_document_ids: Optional[str] = None,
+    product_ids: Optional[str] = None,
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
 ):
-    order_details = odr.get_all(order_details_ids=order_details_ids,
-                                order_ids=order_ids,
-                                invoice_ids=invoice_ids,
-                                document_ids=document_ids,
-                                origin_ids=origin_ids,
-                                product_ids=product_ids,
-                                search_value=search_value,
-                                rda=rda,
-                                page=page,
-                                limit=limit)
+    """
+    Recupera una lista di dettagli ordine filtrata in base a vari criteri.
 
-    if not order_details:
-        raise HTTPException(status_code=404, detail="Nessun corriere trovato")
+    Parametri:
+    - `user`: Dipendenza dell'utente autenticato.
+    - `order_ids`: ID degli ordini, separati da virgole.
+    - `order_document_ids`: ID dei documenti ordine, separati da virgole.
+    - `product_ids`: ID dei prodotti, separati da virgole.
+    - `page`: Pagina corrente per la paginazione.
+    - `limit`: Numero di record per pagina.
+    """
+    try:
+        filters = {
+            'order_ids': order_ids,
+            'order_document_ids': order_document_ids,
+            'product_ids': product_ids
+        }
+        
+        order_details = await order_detail_service.get_order_details(
+            page=page, limit=limit, **filters
+        )
+        
+        if not order_details:
+            raise HTTPException(status_code=404, detail="Nessun dettaglio ordine trovato")
 
-    total_count = odr.get_count(order_details_ids=order_details_ids,
-                                order_ids=order_ids,
-                                invoice_ids=invoice_ids,
-                                document_ids=document_ids,
-                                origin_ids=origin_ids,
-                                product_ids=product_ids,
-                                search_value=search_value,
-                                rda=rda)
-    return {"order_details": order_details, "total": total_count, "page": page, "limit": limit}
+        total_count = await order_detail_service.get_order_details_count(**filters)
+
+        return {"order_details": order_details, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.get("/{order_detail_id}", status_code=status.HTTP_200_OK, response_model=OrderDetailResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
-async def get_order_detail_by_id(user: user_dependency,
-                                 odr: OrderDetailRepository = Depends(get_repository),
-                                 order_detail_id: int = Path(gt=0)):
-    order_detail = odr.get_by_id(_id=order_detail_id)
+async def get_order_detail_by_id(
+    user: dict = Depends(get_current_user),
+    order_detail_service: IOrderDetailService = Depends(get_order_detail_service),
+    order_detail_id: int = Path(gt=0)
+):
+    """
+    Recupera un dettaglio ordine per ID.
 
-    if order_detail is None:
-        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato.")
+    Parametri:
+    - `user`: Dipendenza dell'utente autenticato.
+    - `order_detail_id`: ID del dettaglio ordine da recuperare.
+    """
+    try:
+        order_detail = await order_detail_service.get_order_detail(order_detail_id)
+        return order_detail
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    return order_detail
 
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Corriere creato correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=OrderDetailResponseSchema, response_description="Dettaglio ordine creato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_order_detail(user: user_dependency,
-                              ods: OrderDetailSchema,
-                              odr: OrderDetailRepository = Depends(get_repository)):
-    odr.create(data=ods)
+async def create_order_detail(
+    order_detail_data: OrderDetailSchema,
+    user: dict = Depends(get_current_user),
+    order_detail_service: IOrderDetailService = Depends(get_order_detail_service)
+):
+    """
+    Crea un nuovo dettaglio ordine con i dati forniti.
+
+    Parametri:
+    - `user`: Dipendenza dell'utente autenticato.
+    - `order_detail_data`: Schema del dettaglio ordine da creare.
+    """
+    try:
+        order_detail = await order_detail_service.create_order_detail(order_detail_data)
+        return order_detail
+    except (ValidationException, BusinessRuleException) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 
 
-@router.put("/{order_detail_id}", status_code=status.HTTP_200_OK,
-            response_description="Dettaglio ordine aggiornato correttamente")
+@router.put("/{order_detail_id}", status_code=status.HTTP_200_OK, response_model=OrderDetailResponseSchema, response_description="Dettaglio ordine aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_order_detail(user: user_dependency,
-                              ods: OrderDetailSchema,
-                              odr: OrderDetailRepository = Depends(get_repository),
-                              order_detail_id: int = Path(gt=0)):
+async def update_order_detail(
+    order_detail_data: OrderDetailSchema,
+    user: dict = Depends(get_current_user),
+    order_detail_service: IOrderDetailService = Depends(get_order_detail_service),
+    order_detail_id: int = Path(gt=0)
+):
+    """
+    Aggiorna un dettaglio ordine esistente con i nuovi dati forniti.
+
+    Parametri:
+    - `user`: Dipendenza dell'utente autenticato.
+    - `order_detail_data`: Schema del dettaglio ordine con i dati aggiornati.
+    - `order_detail_id`: ID del dettaglio ordine da aggiornare.
+    """
     try:
-        order_detail = odr.get_by_id(_id=order_detail_id)
-
-        if order_detail is None:
-            raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato.")
-
-        odr.update(edited_order_detail=order_detail,
-                   data=ods)
-
-    except IntegrityError:
-        raise HTTPException(status_code=400,
-                            detail="Errore di integrità dei dati. Verifica i valori unici e i vincoli.")
+        order_detail = await order_detail_service.update_order_detail(order_detail_id, order_detail_data)
+        return order_detail
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato")
+    except (ValidationException, BusinessRuleException) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.delete("/{order_detail_id}", status_code=status.HTTP_200_OK,
-               response_description="Dettaglio ordine eliminato correttamente")
+@router.delete("/{order_detail_id}", status_code=status.HTTP_200_OK, response_description="Dettaglio ordine eliminato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-async def delete_order_detail(user: user_dependency,
-                              odr: OrderDetailRepository = Depends(get_repository),
-                              order_detail_id: int = Path(gt=0)):
-    order_detail = odr.get_by_id(_id=order_detail_id)
+async def delete_order_detail(
+    user: dict = Depends(get_current_user),
+    order_detail_service: IOrderDetailService = Depends(get_order_detail_service),
+    order_detail_id: int = Path(gt=0)
+):
+    """
+    Elimina un dettaglio ordine dal sistema.
 
-    if order_detail is None:
-        raise HTTPException(status_code=404, detail="Corriere non trovato")
-
-    odr.delete(order_detail)
+    Parametri:
+    - `user`: Dipendenza dell'utente autenticato.
+    - `order_detail_id`: ID del dettaglio ordine da eliminare.
+    """
+    try:
+        success = await order_detail_service.delete_order_detail(order_detail_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del dettaglio ordine.")
+        return {"message": "Dettaglio ordine eliminato correttamente"}
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

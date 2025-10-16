@@ -1,66 +1,48 @@
-from sqlalchemy import asc
-from sqlalchemy.orm import Session
-from ..models import Lang
-from src.schemas.lang_schema import *
+"""
+Lang Repository rifattorizzato seguendo SOLID
+"""
+from typing import Optional, List
+from sqlalchemy.orm import Session, noload
+from sqlalchemy import func, desc
+from src.models.lang import Lang
+from src.repository.interfaces.lang_repository_interface import ILangRepository
+from src.core.base_repository import BaseRepository
+from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
 
-
-class LangRepository:
-    """
-    Repository lingue
-    """
-
+class LangRepository(BaseRepository[Lang, int], ILangRepository):
+    """Lang Repository rifattorizzato seguendo SOLID"""
+    
     def __init__(self, session: Session):
-        """
-        Inizializza la repository con la sessione del DB
-
-        Args:
-            session (Session): Sessione del DB
-        """
-        self.session = session
-
-    def get_all(self,
-                page: int = 1, limit: int = 10
-                ) -> AllLangsResponseSchema:
-        """
-        Recupera tutti le lingue disponibili
-
-        Returns:
-            AllLangsResponseSchema: Tutte le lingue
-        """
-        return self.session.query(Lang).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
-
-    def get_by_id(self, _id: int) -> LangResponseSchema:
-        return self.session.query(Lang).filter(Lang.id_lang == _id).first()
+        super().__init__(session, Lang)
     
-    def get_by_iso_code(self, iso_code: str) -> LangResponseSchema:
-        """Get language by ISO code"""
-        return self.session.query(Lang).filter(Lang.iso_code == iso_code).first()
+    def get_all(self, **filters) -> List[Lang]:
+        """Ottiene tutte le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class).order_by(desc(Lang.id_lang))
+            
+            # Paginazione
+            page = filters.get('page', 1)
+            limit = filters.get('limit', 100)
+            offset = self.get_offset(limit, page)
+            
+            return query.offset(offset).limit(limit).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
     
-    def get_by_name(self, name: str) -> LangResponseSchema:
-        """Get language by name"""
-        return self.session.query(Lang).filter(Lang.name == name).first()
-
-    def create(self, data: LangSchema):
-        lang = Lang(**data.model_dump())
-
-        self.session.add(lang)
-        self.session.commit()
-        self.session.refresh(lang)
-
-    def update(self, edited_lang: Lang, data: LangSchema):
-
-        entity_updated = data.dict(exclude_unset=True)
-
-        for key, value in entity_updated.items():
-            if hasattr(edited_lang, key) and value is not None:
-                setattr(edited_lang, key, value)
-
-        self.session.add(edited_lang)
-        self.session.commit()
-
-    def delete(self, lang: Lang) -> bool:
-        self.session.delete(lang)
-        self.session.commit()
-
-        return True
+    def get_count(self, **filters) -> int:
+        """Conta le entità con filtri opzionali"""
+        try:
+            query = self._session.query(self._model_class)
+            return query.count()
+        except Exception as e:
+            raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
+    
+    def get_by_name(self, name: str) -> Optional[Lang]:
+        """Ottiene un lang per nome (case insensitive)"""
+        try:
+            return self._session.query(Lang).filter(
+                func.lower(Lang.name) == func.lower(name)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving lang by name: {str(e)}")

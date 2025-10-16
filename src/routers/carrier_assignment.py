@@ -1,31 +1,63 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from starlette import status
-from .dependencies import db_dependency, user_dependency, MAX_LIMIT, LIMIT_DEFAULT
-from ..repository.carrier_assignment_repository import CarrierAssignmentRepository
-from src.schemas.carrier_assignment_schema import *
+"""
+Carrier Assignment Router rifattorizzato seguendo i principi SOLID
+"""
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from src.services.interfaces.carrier_assignment_service_interface import ICarrierAssignmentService
+from src.repository.interfaces.carrier_assignment_repository_interface import ICarrierAssignmentRepository
+from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
+from src.schemas.carrier_assignment_schema import (
+    CarrierAssignmentSchema, 
+    CarrierAssignmentUpdateSchema, 
+    CarrierAssignmentResponseSchema, 
+    AllCarrierAssignmentsResponseSchema
+)
+from src.core.container import container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException
+)
+from src.core.dependencies import db_dependency
+from src.services.auth import authorize
 from src.services.wrap import check_authentication
-from ..services.auth import authorize
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+from src.services.auth import get_current_user
 
 router = APIRouter(
-    prefix='/api/v1/carrier_assignments',
-    tags=['CarrierAssignment'],
+    prefix="/api/v1/carrier_assignments",
+    tags=["CarrierAssignment"],
 )
 
-
-def get_repository(db: db_dependency) -> CarrierAssignmentRepository:
-    return CarrierAssignmentRepository(db)
+def get_carrier_assignment_service(db: db_dependency) -> ICarrierAssignmentService:
+    """Dependency injection per Carrier Assignment Service"""
+    from src.core.container_config import get_configured_container
+    configured_container = get_configured_container()
+    
+    carrier_assignment_repo = configured_container.resolve_with_session(ICarrierAssignmentRepository, db)
+    api_carrier_repo = configured_container.resolve_with_session(IApiCarrierRepository, db)
+    carrier_assignment_service = configured_container.resolve(ICarrierAssignmentService)
+    
+    if hasattr(carrier_assignment_service, '_carrier_assignment_repository'):
+        carrier_assignment_service._carrier_assignment_repository = carrier_assignment_repo
+    if hasattr(carrier_assignment_service, '_api_carrier_repository'):
+        carrier_assignment_service._api_carrier_repository = api_carrier_repo
+    
+    return carrier_assignment_service
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCarrierAssignmentsResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
-async def get_all_carrier_assignments(user: user_dependency,
-                                    car_repo: CarrierAssignmentRepository = Depends(get_repository),
-                                    carrier_assignments_ids: Optional[str] = None,
-                                    carrier_apis_ids: Optional[str] = None,
-                                    page: int = Query(1, gt=0),
-                                    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)):
+async def get_all_carrier_assignments(
+    user: dict = Depends(get_current_user),
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    carrier_assignments_ids: Optional[str] = None,
+    carrier_apis_ids: Optional[str] = None,
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+):
     """
     Recupera una lista di assegnazioni di corrieri filtrata in base a vari criteri.
 
@@ -36,30 +68,36 @@ async def get_all_carrier_assignments(user: user_dependency,
     - `page`: Pagina corrente per la paginazione.
     - `limit`: Numero di record per pagina.
     """
-    assignments = car_repo.get_all(carrier_assignments_ids=carrier_assignments_ids,
-                                 carrier_apis_ids=carrier_apis_ids,
-                                 page=page,
-                                 limit=limit)
+    try:
+        filters = {
+            'carrier_assignments_ids': carrier_assignments_ids,
+            'carrier_apis_ids': carrier_apis_ids
+        }
+        
+        assignments = await carrier_assignment_service.get_carrier_assignments(
+            page=page, limit=limit, **filters
+        )
+        
+        if not assignments:
+            raise HTTPException(status_code=404, detail="Nessuna assegnazione di corriere trovata")
 
-    if not assignments:
-        raise HTTPException(status_code=404, detail="Nessuna assegnazione di corriere trovata")
+        total_count = await carrier_assignment_service.get_carrier_assignments_count(**filters)
 
-    total_count = car_repo.get_count(carrier_assignments_ids=carrier_assignments_ids,
-                                   carrier_apis_ids=carrier_apis_ids)
-
-    results = []
-    for assignment in assignments:
-        results.append(car_repo.formatted_output(assignment))
-
-    return {"carrier_assignments": results, "total": total_count, "page": page, "limit": limit}
+        return {"carrier_assignments": assignments, "total": total_count, "page": page, "limit": limit}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.get("/{assignment_id}", status_code=status.HTTP_200_OK, response_model=CarrierAssignmentIdSchema)
+@router.get("/{assignment_id}", status_code=status.HTTP_200_OK, response_model=CarrierAssignmentResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
-async def get_carrier_assignment_by_id(user: user_dependency,
-                                     car_repo: CarrierAssignmentRepository = Depends(get_repository),
-                                     assignment_id: int = Path(gt=0)):
+async def get_carrier_assignment_by_id(
+    user: dict = Depends(get_current_user),
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    assignment_id: int = Path(gt=0)
+):
     """
     Recupera un'assegnazione di corriere per ID.
 
@@ -67,60 +105,75 @@ async def get_carrier_assignment_by_id(user: user_dependency,
     - `user`: Dipendenza dell'utente autenticato.
     - `assignment_id`: ID dell'assegnazione da recuperare.
     """
-    assignment = car_repo.get_by_id(_id=assignment_id)
-
-    if assignment is None:
+    try:
+        assignment = await carrier_assignment_service.get_carrier_assignment(assignment_id)
+        return assignment
+    except NotFoundException as e:
         raise HTTPException(status_code=404, detail="Assegnazione di corriere non trovata")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    return car_repo.formatted_output(assignment)
 
-
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Assegnazione di corriere creata correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=CarrierAssignmentResponseSchema, response_description="Assegnazione di corriere creata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
-async def create_carrier_assignment(user: user_dependency,
-                                  assignment: CarrierAssignmentSchema,
-                                  car_repo: CarrierAssignmentRepository = Depends(get_repository)):
+async def create_carrier_assignment(
+    assignment_data: CarrierAssignmentSchema,
+    user: dict = Depends(get_current_user),
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service)
+):
     """
     Crea una nuova assegnazione di corriere con i dati forniti.
 
     Parametri:
     - `user`: Dipendenza dell'utente autenticato.
-    - `assignment`: Schema dell'assegnazione da creare.
+    - `assignment_data`: Schema dell'assegnazione da creare.
     """
-    assignment_id = car_repo.create(data=assignment)
-    return {"id_carrier_assignment": assignment_id, "message": "Assegnazione di corriere creata con successo"}
+    try:
+        assignment = await carrier_assignment_service.create_carrier_assignment(assignment_data)
+        return assignment
+    except (ValidationException, BusinessRuleException) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.put("/{assignment_id}", status_code=status.HTTP_200_OK, response_description="Assegnazione di corriere aggiornata correttamente")
+@router.put("/{assignment_id}", status_code=status.HTTP_200_OK, response_model=CarrierAssignmentResponseSchema, response_description="Assegnazione di corriere aggiornata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
-async def update_carrier_assignment(user: user_dependency,
-                                  assignment_schema: CarrierAssignmentUpdateSchema,
-                                  car_repo: CarrierAssignmentRepository = Depends(get_repository),
-                                  assignment_id: int = Path(gt=0)):
+async def update_carrier_assignment(
+    assignment_data: CarrierAssignmentUpdateSchema,
+    user: dict = Depends(get_current_user),
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    assignment_id: int = Path(gt=0)
+):
     """
     Aggiorna un'assegnazione di corriere esistente con aggiornamenti parziali.
 
     Parametri:
     - `user`: Dipendenza dell'utente autenticato.
-    - `assignment_schema`: Schema dell'assegnazione con i campi da aggiornare (tutti opzionali).
+    - `assignment_data`: Schema dell'assegnazione con i campi da aggiornare (tutti opzionali).
     - `assignment_id`: ID dell'assegnazione da aggiornare.
     """
-    assignment = car_repo.get_by_id(_id=assignment_id)
-
-    if assignment is None:
+    try:
+        assignment = await carrier_assignment_service.update_carrier_assignment(assignment_id, assignment_data)
+        return assignment
+    except NotFoundException as e:
         raise HTTPException(status_code=404, detail="Assegnazione di corriere non trovata")
+    except (ValidationException, BusinessRuleException) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    car_repo.update(edited_assignment=assignment, data=assignment_schema)
 
-
-@router.delete("/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Assegnazione di corriere eliminata correttamente")
+@router.delete("/{assignment_id}", status_code=status.HTTP_200_OK, response_description="Assegnazione di corriere eliminata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
-async def delete_carrier_assignment(user: user_dependency,
-                                  car_repo: CarrierAssignmentRepository = Depends(get_repository),
-                                  assignment_id: int = Path(gt=0)):
+async def delete_carrier_assignment(
+    user: dict = Depends(get_current_user),
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    assignment_id: int = Path(gt=0)
+):
     """
     Elimina un'assegnazione di corriere dal sistema per l'ID specificato.
 
@@ -128,12 +181,15 @@ async def delete_carrier_assignment(user: user_dependency,
     - `user`: Dipendenza dell'utente autenticato.
     - `assignment_id`: ID dell'assegnazione da eliminare.
     """
-    assignment = car_repo.get_by_id(_id=assignment_id)
-
-    if assignment is None:
+    try:
+        success = await carrier_assignment_service.delete_carrier_assignment(assignment_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Errore durante l'eliminazione dell'assegnazione carrier.")
+        return {"message": "Assegnazione di corriere eliminata correttamente"}
+    except NotFoundException as e:
         raise HTTPException(status_code=404, detail="Assegnazione di corriere non trovata")
-
-    car_repo.delete(assignment=assignment)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 # Endpoint aggiuntivi per la gestione delle assegnazioni
@@ -141,12 +197,14 @@ async def delete_carrier_assignment(user: user_dependency,
 @router.post("/find-match", status_code=status.HTTP_200_OK)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
-async def find_matching_assignment(user: user_dependency,
-                                 car_repo: CarrierAssignmentRepository = Depends(get_repository),
-                                 postal_code: Optional[str] = Query(None),
-                                 country_id: Optional[int] = Query(None),
-                                 origin_carrier_id: Optional[int] = Query(None),
-                                 weight: Optional[float] = Query(None)):
+async def find_matching_assignment(
+    user: dict = Depends(get_current_user),
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    postal_code: Optional[str] = Query(None),
+    country_id: Optional[int] = Query(None),
+    origin_carrier_id: Optional[int] = Query(None),
+    weight: Optional[float] = Query(None)
+):
     """
     Trova l'assegnazione di corriere che corrisponde ai criteri specificati.
 
@@ -157,17 +215,23 @@ async def find_matching_assignment(user: user_dependency,
     - `origin_carrier_id`: ID del corriere di origine per la ricerca.
     - `weight`: Peso del pacco per la ricerca.
     """
-    assignment = car_repo.find_matching_assignment(
-        postal_code=postal_code,
-        country_id=country_id,
-        origin_carrier_id=origin_carrier_id,
-        weight=weight
-    )
-
-    if assignment is None:
-        return {"message": "Nessuna assegnazione trovata per i criteri specificati", "assignment": None}
-
-    return {
-        "message": "Assegnazione trovata",
-        "assignment": car_repo.formatted_output(assignment)
-    }
+    try:
+        assignment = await carrier_assignment_service.find_matching_assignment(
+            postal_code=postal_code,
+            country_id=country_id,
+            origin_carrier_id=origin_carrier_id,
+            weight=weight
+        )
+        
+        if assignment is None:
+            return {
+                "message": "Nessuna assegnazione trovata per i criteri specificati",
+                "assignment": None
+            }
+        
+        return {
+            "message": "Assegnazione trovata",
+            "assignment": assignment
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
