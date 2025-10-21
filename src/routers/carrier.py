@@ -14,10 +14,10 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.auth import authorize
-from src.services.wrap import check_authentication
+from src.services.routers.auth_service import authorize
+from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/carriers",

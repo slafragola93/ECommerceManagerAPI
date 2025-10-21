@@ -59,7 +59,7 @@ class ShippingField(BaseModel):
 
 class ArticoloPreventivoSchema(BaseModel):
     """Schema per articolo in preventivo (OrderDetail)"""
-    id_order_detail: Optional[int] 
+    id_order_detail: Optional[int]  = None
     id_product: Optional[int] = None  # Se articolo esistente
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)

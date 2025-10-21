@@ -46,3 +46,12 @@ class PlatformRepository(BaseRepository[Platform, int], IPlatformRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving platform by name: {str(e)}")
+    
+    def get_default(self) -> Optional[Platform]:
+        """Ottiene la piattaforma di default (is_default = True)"""
+        try:
+            return self._session.query(Platform).filter(
+                Platform.is_default == True
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving default platform: {str(e)}")

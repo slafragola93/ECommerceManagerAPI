@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 import logging
 
 from src.models.purchase_invoice_sync import PurchaseInvoiceSync
-from src.services.query_utils import QueryUtils
+from src.services.core.query_utils import QueryUtils
 
 logger = logging.getLogger(__name__)
 

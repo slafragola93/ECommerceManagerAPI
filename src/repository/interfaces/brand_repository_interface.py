@@ -13,3 +13,8 @@ class IBrandRepository(IRepository[Brand, int]):
     def get_by_name(self, name: str) -> Optional[Brand]:
         """Ottiene un brand per nome"""
         pass
+    
+    @abstractmethod
+    def get_by_origin_id(self, origin_id: str) -> Optional[Brand]:
+        """Ottiene un brand per origin ID"""
+        pass

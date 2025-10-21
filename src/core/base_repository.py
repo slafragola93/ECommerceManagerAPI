@@ -73,12 +73,23 @@ class BaseRepository(Generic[T, K], IRepository[T, K]):
                 self._session.commit()
                 self._session.refresh(model_instance)
                 return model_instance
-            else:
-                # Se è già un'istanza del modello
+            elif isinstance(entity, self._model_class):
+                # Se è già un'istanza del modello corretto
                 self._session.add(entity)
                 self._session.commit()
                 self._session.refresh(entity)
                 return entity
+            else:
+                # Se è un altro tipo (es. Pydantic model), convertilo in dict
+                if hasattr(entity, 'dict'):
+                    entity_dict = entity.dict()
+                    model_instance = self._model_class(**entity_dict)
+                    self._session.add(model_instance)
+                    self._session.commit()
+                    self._session.refresh(model_instance)
+                    return model_instance
+                else:
+                    raise ValueError(f"Cannot create {self._model_class.__name__} from {type(entity).__name__}")
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Database error creating {self._model_class.__name__}: {str(e)}")
@@ -114,6 +125,53 @@ class BaseRepository(Generic[T, K], IRepository[T, K]):
             return True
         except Exception as e:
             raise InfrastructureException(f"Database error deleting {self._model_class.__name__}: {str(e)}")
+    
+    def bulk_create(self, entities: List[Union[T, dict]], batch_size: int = 1000) -> int:
+        """Crea multiple entità in batch per migliori prestazioni"""
+        if not entities:
+            return 0
+            
+        total_inserted = 0
+        try:
+            # Processa in batch
+            for i in range(0, len(entities), batch_size):
+                batch = entities[i:i + batch_size]
+                batch_instances = []
+                
+                for entity in batch:
+                    if isinstance(entity, dict):
+                        # Se è un dizionario, crea un'istanza del modello
+                        model_instance = self._model_class(**entity)
+                        batch_instances.append(model_instance)
+                    elif isinstance(entity, self._model_class):
+                        # Se è già un'istanza del modello corretto
+                        batch_instances.append(entity)
+                    else:
+                        # Se è un altro tipo (es. Pydantic model), convertilo in dict
+                        if hasattr(entity, 'model_dump'):
+                            entity_dict = entity.model_dump()
+                        elif hasattr(entity, 'dict'):
+                            entity_dict = entity.dict()
+                        else:
+                            raise ValueError(f"Cannot create {self._model_class.__name__} from {type(entity).__name__}")
+                        
+                        model_instance = self._model_class(**entity_dict)
+                        batch_instances.append(model_instance)
+                
+                # Aggiungi il batch alla sessione
+                self._session.add_all(batch_instances)
+                
+                # Commit del batch
+                self._session.commit()
+                total_inserted += len(batch_instances)
+                
+                print(f"DEBUG: Inserted batch of {len(batch_instances)} {self._model_class.__name__} entities")
+                
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error bulk creating {self._model_class.__name__}: {str(e)}")
+        
+        return total_inserted
     
     def _apply_filters(self, query, filters: Dict[str, Any]):
         """Applica filtri alla query"""

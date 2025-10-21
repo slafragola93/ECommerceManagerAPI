@@ -13,3 +13,8 @@ class ITaxRepository(IRepository[Tax, int]):
     def get_by_name(self, name: str) -> Optional[Tax]:
         """Ottiene un tax per nome"""
         pass
+    
+    @abstractmethod
+    def define_tax(self, country_id: int) -> int:
+        """Definisce la tassa da applicare basata sul paese"""
+        pass

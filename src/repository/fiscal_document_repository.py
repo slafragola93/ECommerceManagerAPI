@@ -13,7 +13,7 @@ from src.models.address import Address
 from src.models.country import Country
 from src.models.shipping import Shipping
 from src.models.tax import Tax
-from src.services.tool import calculate_amount_with_percentage
+from src.services.core.tool import calculate_amount_with_percentage
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException

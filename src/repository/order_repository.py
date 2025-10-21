@@ -251,7 +251,7 @@ class OrderRepository:
         self.session.commit()
 
     def set_price(self, id_order: int, order_details: list[OrderDetail]):
-        from src.services.tool import calculate_order_totals
+        from src.services.core.tool import calculate_order_totals
         from src.models.tax import Tax
         
         order = self.get_by_id(_id=id_order)

@@ -46,3 +46,12 @@ class BrandRepository(BaseRepository[Brand, int], IBrandRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving brand by name: {str(e)}")
+    
+    def get_by_origin_id(self, origin_id: str) -> Optional[Brand]:
+        """Ottiene un brand per origin ID"""
+        try:
+            return self._session.query(Brand).filter(
+                Brand.id_origin == origin_id
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving brand by origin ID: {str(e)}")

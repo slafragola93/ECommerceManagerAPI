@@ -13,3 +13,8 @@ class ICategoryRepository(IRepository[Category, int]):
     def get_by_name(self, name: str) -> Optional[Category]:
         """Ottiene un category per nome"""
         pass
+    
+    @abstractmethod
+    def get_by_origin_id(self, origin_id: str) -> Optional[Category]:
+        """Ottiene una categoria per origin ID"""
+        pass

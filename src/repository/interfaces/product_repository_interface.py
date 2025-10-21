@@ -13,3 +13,13 @@ class IProductRepository(IRepository[Product, int]):
     def get_by_name(self, name: str) -> Optional[Product]:
         """Ottiene un product per nome"""
         pass
+    
+    @abstractmethod
+    def get_by_origin_id(self, origin_id: str) -> Optional[Product]:
+        """Ottiene un prodotto per origin ID"""
+        pass
+    
+    @abstractmethod
+    def bulk_create(self, data_list: list, batch_size: int = 1000) -> int:
+        """Bulk insert products for better performance"""
+        pass

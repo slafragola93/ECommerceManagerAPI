@@ -35,6 +35,11 @@ class IRepository(Generic[T, K], ABC):
     def delete(self, id: K) -> bool:
         """Elimina un'entità per ID"""
         pass
+    
+    @abstractmethod
+    def bulk_create(self, entities: List[T], batch_size: int = 1000) -> int:
+        """Crea multiple entità in batch per migliori prestazioni"""
+        pass
 
 class IUnitOfWork(ABC):
     """Interface per Unit of Work pattern"""

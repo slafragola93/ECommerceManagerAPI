@@ -11,7 +11,7 @@ from src.models.shipping import Shipping
 from src.models.sectional import Sectional
 from src.models.tax import Tax
 from src.models.order_package import OrderPackage
-from src.services.order_document_service import OrderDocumentService
+from src.services.routers.order_document_service import OrderDocumentService
 
 
 class DDTRepository:

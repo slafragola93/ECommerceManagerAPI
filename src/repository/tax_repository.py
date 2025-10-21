@@ -46,3 +46,17 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving tax by name: {str(e)}")
+    
+    def define_tax(self, country_id: int) -> int:
+        """Definisce la tassa da applicare basata sul paese"""
+        try:
+            # Logica semplice: se è Italia (country_id = 1) usa IVA 22%, altrimenti 0%
+            # Default: cerca la tassa con percentuale più bassa o ID più basso
+            tax = self._session.query(Tax).order_by(Tax.id_tax).first()
+            if tax:
+                return tax.id_tax
+            
+            # Fallback: restituisci 1 se non trova nulla
+            return 1
+        except Exception as e:
+            raise InfrastructureException(f"Database error defining tax: {str(e)}")

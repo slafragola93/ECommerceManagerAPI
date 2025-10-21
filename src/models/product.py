@@ -25,7 +25,7 @@ class Product(Base):
     id_origin = Column(Integer, default=0, index=True)
     id_category = Column(Integer, ForeignKey('categories.id_category'), index=True, default=None)
     id_brand = Column(Integer, ForeignKey('brands.id_brand'), index=True, default=None)
-    id_image = Column(Integer, default=None)
+    img_url = Column(String(500), default=None)
     name = Column(String(128))
     sku = Column(String(32))
     reference = Column(String(64), default='ND')

@@ -1,7 +1,7 @@
 """
 Shipping Repository rifattorizzato seguendo SOLID
 """
-from typing import Optional, List
+from typing import Optional, List, Union
 from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc
 from src.models.shipping import Shipping
@@ -9,6 +9,7 @@ from src.repository.interfaces.shipping_repository_interface import IShippingRep
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
+from src.schemas.shipping_schema import ShippingSchema
 
 class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
     """Shipping Repository rifattorizzato seguendo SOLID"""
@@ -46,3 +47,25 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving shipping by name: {str(e)}")
+    
+    def create_and_get_id(self, data: Union[ShippingSchema, dict]) -> int:
+        """Crea un shipping e restituisce l'ID"""
+        try:
+            # Converti ShippingSchema in dict se necessario
+            if isinstance(data, ShippingSchema):
+                shipping_data = data.model_dump()
+            else:
+                shipping_data = data
+            
+            # Crea l'istanza del modello
+            shipping = Shipping(**shipping_data)
+            
+            # Salva nel database
+            self._session.add(shipping)
+            self._session.commit()
+            self._session.refresh(shipping)
+            
+            return shipping.id_shipping
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error creating shipping: {str(e)}")

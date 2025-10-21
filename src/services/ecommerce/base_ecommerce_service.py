@@ -175,6 +175,7 @@ class BaseEcommerceService(ABC):
                 # Add timeout to prevent hanging requests
                 timeout = aiohttp.ClientTimeout(total=30, connect=10)
                 
+                # Use a more conservative approach to prevent file descriptor issues
                 async with self.session.get(url, headers=headers, params=params, timeout=timeout) as response:
                     # Check if response is successful
                     if response.status >= 400:
@@ -220,8 +221,19 @@ class BaseEcommerceService(ABC):
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 error_msg = str(e).lower()
                 
+                # Check if it's a file descriptor error
+                if "too many file descriptors" in error_msg:
+                    if attempt < max_retries:
+                        # Wait longer for file descriptor issues
+                        wait_time = 5 + (2 ** attempt)  # 6s, 7s, 9s, etc.
+                        print(f"File descriptor limit reached for {url}, waiting {wait_time}s before retry (attempt {attempt + 1}/{max_retries + 1})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"Max retries exceeded for file descriptor error on {url}: {str(e)}")
+                        raise
                 # Check if it's a server disconnection or timeout
-                if any(keyword in error_msg for keyword in ['server disconnected', 'timeout', 'connection reset', 'connection aborted']):
+                elif any(keyword in error_msg for keyword in ['server disconnected', 'timeout', 'connection reset', 'connection aborted']):
                     if attempt < max_retries:
                         # Exponential backoff: wait 1s, 2s, 4s, etc.
                         wait_time = 2 ** attempt

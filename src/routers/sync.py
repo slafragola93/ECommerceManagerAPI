@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any
 
 from src.database import get_db
-from src.services.auth import db_dependency, get_current_user
-from src.services.wrap import check_authentication
-from src.services.auth import authorize
+from src.services.routers.auth_service import db_dependency, get_current_user
+from src.services.core.wrap import check_authentication
+from src.services.routers.auth_service import authorize
 from src.services.ecommerce import PrestaShopService
 from src.repository.platform_repository import PlatformRepository
 

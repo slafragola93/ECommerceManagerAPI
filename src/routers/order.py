@@ -4,17 +4,17 @@ from starlette import status
 from sqlalchemy.orm import Session
 from .dependencies import MAX_LIMIT, LIMIT_DEFAULT
 from src.database import get_db
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 from .. import OrderSchema
 from ..schemas.order_schema import OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
 from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
 from ..schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema, ReturnResponseSchema, AllReturnsResponseSchema
-from src.services.wrap import check_authentication
+from src.services.core.wrap import check_authentication
 from ..repository.order_repository import OrderRepository
-from ..services.auth import authorize
+from ..services.routers.auth_service import authorize
 from ..models.relations.relations import orders_history
 from src.database import get_db
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 from src.models.user import User
 from src.routers.dependencies import get_fiscal_document_service
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
@@ -336,7 +336,7 @@ async def generate_ddt_from_order(
     """
     try:
         # Importa il DDTService
-        from src.services.ddt_service import DDTService
+        from src.services.routers.ddt_service import DDTService
         ddt_service = DDTService(or_repo.session)
         
         # Genera il DDT
@@ -390,7 +390,7 @@ async def generate_ddt_pdf(
     """
     try:
         # Importa il DDTService
-        from src.services.ddt_service import DDTService
+        from src.services.routers.ddt_service import DDTService
         ddt_service = DDTService(or_repo.session)
         
         # Verifica che il DDT esista
@@ -501,7 +501,7 @@ async def update_ddt_articolo(
     - Il timestamp updated_at del DDT viene aggiornato automaticamente
     """
     try:
-        from src.services.order_document_service import OrderDocumentService
+        from src.services.routers.order_document_service import OrderDocumentService
         order_doc_service = OrderDocumentService(db)
         
         # Verifica che l'articolo esista e sia collegato a un DDT

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from src.database import get_db
 from src.core.container import container
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 
 # Costanti per paginazione
 LIMIT_DEFAULT = 10

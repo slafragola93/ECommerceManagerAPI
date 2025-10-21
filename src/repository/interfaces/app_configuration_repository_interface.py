@@ -18,3 +18,8 @@ class IAppConfigurationRepository(IRepository[AppConfiguration, int]):
     def get_by_name_and_category(self, name: str, category: str) -> Optional[AppConfiguration]:
         """Ottiene un app_configuration per nome e categoria"""
         pass
+    
+    @abstractmethod
+    def get_by_category(self, category: str) -> List[AppConfiguration]:
+        """Ottiene tutte le configurazioni per categoria"""
+        pass

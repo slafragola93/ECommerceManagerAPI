@@ -1,6 +1,7 @@
 from typing import Optional
+import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from .category_schema import CategoryResponseSchema
 from .brand_schema import BrandResponseSchema
@@ -20,7 +21,6 @@ class ProductSchema(BaseModel):
                            nel modello di database.
         id_brand (int): L'ID del marchio del prodotto. Anche questo è una chiave esterna che fa riferimento
                         alla tabella dei marchi.
-        id_image (int): L'ID dell'immagine associata al prodotto.
         name (str): Il nome del prodotto, un campo obbligatorio.
         sku (str): Stock Keeping Unit, un identificatore unico per il prodotto.
         reference (str): Riferimento del prodotto.
@@ -30,11 +30,12 @@ class ProductSchema(BaseModel):
         depth (float): Profondità del prodotto.
         height (float): Altezza del prodotto.
         width (float): Larghezza del prodotto.
+        img_url (str): URL dell'immagine del prodotto.
     """
     id_origin: Optional[int] = 0
     id_category: int = Field(..., ge=0)
     id_brand: int = Field(..., ge=0)
-    id_image: Optional[int] = Field(default=0, ge=0)
+    img_url: Optional[str] = Field(default=None, max_length=500)
     name: str = Field(..., max_length=128)
     sku: str = Field(..., max_length=32)
     reference: str = Field(default='ND', max_length=64)
@@ -43,17 +44,46 @@ class ProductSchema(BaseModel):
     depth: float = Field(default=0.0, ge=0)
     height: float = Field(default=0.0, ge=0)
     width: float = Field(default=0.0, ge=0)
-
+    
+    @computed_field
+    @property
+    def img_api_url(self) -> Optional[str]:
+        """Genera automaticamente l'API URL per l'immagine se img_url è presente"""
+        if not self.img_url:
+            return None
+        
+        # Estrai platform_id e filename da img_url
+        match = re.match(r'/media/product_images/(\d+)/(.+)', self.img_url)
+        if match:
+            platform_id, filename = match.groups()
+            return f"/api/v1/images/product/{platform_id}/{filename}"
+        
+        return None
 
 class ProductResponseSchema(BaseModel):
     id_product: int
     id_origin: int
-    id_image: int | None
+    img_url: str | None
     name: str
     sku: str
     reference: str
     type: str
     weight: float
+    
+    @computed_field
+    @property
+    def img_api_url(self) -> Optional[str]:
+        """Genera automaticamente l'API URL per l'immagine se img_url è presente"""
+        if not self.img_url:
+            return None
+        
+        # Estrai platform_id e filename da img_url
+        match = re.match(r'/media/product_images/(\d+)/(.+)', self.img_url)
+        if match:
+            platform_id, filename = match.groups()
+            return f"/api/v1/images/product/{platform_id}/{filename}"
+        
+        return None
     depth: float
     height: float
     width: float
@@ -70,7 +100,7 @@ class ProductUpdateSchema(BaseModel):
     id_origin: Optional[int] = None
     id_category: Optional[int] = Field(None, ge=0)
     id_brand: Optional[int] = Field(None, ge=0)
-    id_image: Optional[int] = None
+    img_url: Optional[str] = Field(None, max_length=500)
     name: Optional[str] = Field(None, max_length=128)
     sku: Optional[str] = Field(None, max_length=32)
     reference: Optional[str] = Field(None, max_length=64)

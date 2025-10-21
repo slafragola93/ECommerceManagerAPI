@@ -2,7 +2,7 @@
 Product Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.schemas.product_schema import ProductSchema, ProductResponseSchema, AllProductsResponseSchema
@@ -14,10 +14,11 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.auth import authorize
-from src.services.wrap import check_authentication
+from src.services.routers.auth_service import authorize
+from src.services.core.wrap import check_authentication
+from src.services.media.image_service import ImageService
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -152,5 +153,109 @@ async def delete_product(
         await product_service.delete_product(product_id)
     except NotFoundException as e:
         raise HTTPException(status_code=404, detail="Product non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/{product_id}/upload-image", status_code=status.HTTP_200_OK, response_description="Immagine caricata correttamente")
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def upload_product_image(
+    product_id: int = Path(gt=0),
+    file: UploadFile = File(...),
+    platform_id: int = Form(1),
+    user: dict = Depends(get_current_user),
+    product_service: IProductService = Depends(get_product_service)
+):
+    """
+    Carica un'immagine per un prodotto specifico.
+    
+    - **product_id**: ID del prodotto
+    - **file**: File immagine da caricare
+    - **platform_id**: ID della piattaforma (default: 1)
+    """
+    try:
+        # Verifica che il prodotto esista
+        product = await product_service.get_product(product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product non trovato")
+        
+        # Verifica il tipo di file
+        if not file.content_type or not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="Il file deve essere un'immagine")
+        
+        # Verifica la dimensione del file (max 10MB)
+        file_content = await file.read()
+        if len(file_content) > 10 * 1024 * 1024:  # 10MB
+            raise HTTPException(status_code=400, detail="Il file è troppo grande (max 10MB)")
+        
+        # Salva l'immagine
+        image_service = ImageService()
+        img_url = await image_service.save_uploaded_image(
+            file_content, 
+            product_id, 
+            platform_id, 
+            file.filename
+        )
+        
+        # Aggiorna il prodotto con l'URL dell'immagine
+        from src.schemas.product_schema import ProductUpdateSchema
+        update_data = ProductUpdateSchema(img_url=img_url)
+        await product_service.update_product(product_id, update_data)
+        
+        return {
+            "message": "Immagine caricata con successo",
+            "product_id": product_id,
+            "img_url": img_url,
+            "filename": file.filename
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.delete("/{product_id}/image", status_code=status.HTTP_200_OK, response_description="Immagine eliminata correttamente")
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def delete_product_image(
+    product_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    product_service: IProductService = Depends(get_product_service)
+):
+    """
+    Elimina l'immagine di un prodotto.
+    
+    - **product_id**: ID del prodotto
+    """
+    try:
+        # Recupera il prodotto
+        product = await product_service.get_product(product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product non trovato")
+        
+        if not product.img_url:
+            raise HTTPException(status_code=404, detail="Il prodotto non ha un'immagine")
+        
+        # Elimina il file dal filesystem
+        image_service = ImageService()
+        deleted = image_service.delete_image(product.img_url)
+        
+        if deleted:
+            # Aggiorna il prodotto rimuovendo l'URL dell'immagine
+            from src.schemas.product_schema import ProductUpdateSchema
+            update_data = ProductUpdateSchema(img_url=None)
+            await product_service.update_product(product_id, update_data)
+            
+            return {
+                "message": "Immagine eliminata con successo",
+                "product_id": product_id
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del file")
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

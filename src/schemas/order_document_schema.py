@@ -2,13 +2,11 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .tax_schema import TaxResponseSchema
 from .address_schema import AddressResponseSchema
 from .customer_schema import CustomerResponseSchema
 
 class OrderDocumentSchema(BaseModel):
     id_order: Optional[int] = 0
-    id_tax: Optional[int] = 0
     id_address_delivery: Optional[int] = 0
     id_address_invoice: Optional[int] = 0
     id_customer: Optional[int] = 0
@@ -24,7 +22,6 @@ class OrderDocumentSchema(BaseModel):
 
 class OrderDocumentResponseSchema(BaseModel):
     id_order_document: int
-    tax: TaxResponseSchema | None
     address_delivery: AddressResponseSchema | None
     address_invoice: AddressResponseSchema | None
     customer: CustomerResponseSchema | None

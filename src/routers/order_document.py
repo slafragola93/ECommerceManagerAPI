@@ -2,9 +2,9 @@ from fastapi import APIRouter, Query, HTTPException, Path, Depends
 from starlette import status
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from .. import OrderDocumentSchema, AllOrderDocumentResponseSchema, OrderDocumentResponseSchema
-from src.services.wrap import check_authentication
+from src.services.core.wrap import check_authentication
 from ..repository.order_document_repository import OrderDocumentRepository
-from ..services.auth import authorize
+from ..services.routers.auth_service import authorize
 
 router = APIRouter(
     prefix='/api/v1/order_documents',

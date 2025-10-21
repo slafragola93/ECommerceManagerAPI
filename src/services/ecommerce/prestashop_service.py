@@ -11,8 +11,10 @@ import asyncio
 from datetime import datetime
 
 from src.schemas.order_schema import OrderUpdateSchema
-from src.services.tool import safe_int, safe_float, sql_value
-from src.services.province_service import province_service
+from src.services.core.tool import safe_int, safe_float, sql_value
+from src.services.external.province_service import province_service
+from src.services.media.image_service import ImageService
+from src.services.media.image_cache_service import get_image_cache_service
 
 from .base_ecommerce_service import BaseEcommerceService
 
@@ -27,7 +29,7 @@ class PrestaShopService(BaseEcommerceService):
         db: Session, 
         platform_id: int = 1, 
         batch_size: int = 5000, 
-        max_concurrent_requests: int = 10, 
+        max_concurrent_requests: int = 10,  # Original value
         default_language_id: int = 1,
         new_elements: bool = True
         ):
@@ -36,7 +38,162 @@ class PrestaShopService(BaseEcommerceService):
         self._semaphore = None  # Will be initialized in async context
         self.default_language_id = default_language_id
         self.new_elements = new_elements
+        self.image_service = ImageService()
+        self.image_cache_service = None  # Inizializzato lazy
+        self._product_data_for_images = []  # Store product data for image synchronization
+        self._original_products_data = []  # Store original PrestaShop data for images
+        self.max_concurrent_images = 50  # Massima concorrenza per download immagini
+        
+    async def _get_image_cache_service(self):
+        """Inizializza lazy il servizio di cache delle immagini"""
+        if self.image_cache_service is None:
+            self.image_cache_service = await get_image_cache_service()
+        return self.image_cache_service
     
+    async def _warm_up_image_cache(self):
+        """Warm-up della cache per le immagini appena sincronizzate"""
+        try:
+            cache_service = await self._get_image_cache_service()
+            
+            # Ottieni i prodotti con immagini per questa piattaforma
+            from sqlalchemy import text
+            query_sql = f"""
+                SELECT id_origin FROM products 
+                WHERE img_url IS NOT NULL 
+                AND img_url LIKE '/media/product_images/{self.platform_id}/%'
+                ORDER BY id_product DESC
+                LIMIT 100
+            """
+            products_query = self.db.execute(text(query_sql)).fetchall()
+            
+            if products_query:
+                product_ids = [p.id_origin for p in products_query]
+                print(f"🔥 Warm-up cache per {len(product_ids)} immagini")
+                
+                # Pre-carica i metadati in batch
+                await cache_service.warm_cache_for_products(
+                    self.platform_id, 
+                    product_ids, 
+                    batch_size=50
+                )
+                
+                print(f"✅ Cache warm-up completato per {len(product_ids)} immagini")
+            
+        except Exception as e:
+            print(f"⚠️ Errore durante warm-up cache: {e}")
+            # Non bloccare la sincronizzazione per errori di cache
+    
+    def configure_image_performance(self, max_concurrent: int = 50, quality: int = 15, max_size: tuple = (400, 300)):
+        """
+        Configura i parametri di performance per il download delle immagini.
+        
+        Args:
+            max_concurrent: Numero massimo di download concorrenti
+            quality: Qualità JPEG (1-100, più basso = più veloce)
+            max_size: Dimensioni massime (width, height)
+        """
+        self.max_concurrent_images = max_concurrent
+        self.image_service.configure_performance(quality, max_size)
+    
+    def _update_product_img_urls(self, product_data_list: list, original_products_data: list):
+        """
+        Aggiorna img_url per i prodotti inseriti che hanno immagini.
+        Aggiorna solo i prodotti che hanno immagini e che non hanno già img_url impostato.
+        
+        Args:
+            product_data_list: Lista di ProductSchema inseriti
+            original_products_data: Lista di dati originali da PrestaShop
+        """
+        try:
+            from src.repository.product_repository import ProductRepository
+            from src.models.product import Product
+            from sqlalchemy import text
+            
+            product_repo = ProductRepository(self.db)
+            
+            # Crea mapping tra id_origin e dati originali
+            origin_to_original = {}
+            for i, product_data in enumerate(product_data_list):
+                if i < len(original_products_data):
+                    origin_to_original[product_data.id_origin] = original_products_data[i]
+            
+            # Trova i prodotti che hanno immagini e aggiorna img_url
+            # Prima devo ottenere gli ID locali dei prodotti inseriti
+            origin_ids = [str(product_data.id_origin) for product_data in product_data_list]
+            
+            products_query = product_repo._session.query(Product.id_product, Product.id_origin, Product.img_url).filter(Product.id_origin.in_(origin_ids)).all()
+            origin_to_local_id = {str(product.id_origin): (product.id_product, product.img_url) for product in products_query}
+            
+            products_to_update = []
+            for product_data in product_data_list:
+                original_data = origin_to_original.get(product_data.id_origin)
+                if str(product_data.id_origin) == '31463':
+                    print(f"DEBUG: Original data: {original_data}")
+                if original_data:
+                    id_image_default = original_data.get('id_default_image', 0)
+                    if id_image_default and int(id_image_default) > 0:
+                        # Usa l'ID locale del database per il percorso dell'immagine
+                        local_info = origin_to_local_id.get(str(product_data.id_origin))
+                        if local_info:
+                            local_id, current_img_url = local_info
+                            # Aggiorna solo se non ha già img_url o se è diverso
+                            expected_img_url = f"/media/product_images/{self.platform_id}/product_{local_id}.jpg"
+                            if not current_img_url or current_img_url != expected_img_url:
+                                products_to_update.append({
+                                    'id_product': local_id,
+                                    'img_url': expected_img_url
+                                })
+                                print(f"DEBUG: Will update img_url for product {local_id} (origin: {product_data.id_origin})")
+            
+            # Aggiorna img_url per i prodotti che hanno immagini
+            if products_to_update:
+                print(f"DEBUG: Updating img_url for {len(products_to_update)} products")
+                for update_data in products_to_update:
+                    product_repo._session.execute(
+                        text("UPDATE products SET img_url = :img_url WHERE id_product = :id_product"),
+                        update_data
+                    )
+                product_repo._session.commit()
+                print(f"DEBUG: Updated img_url for {len(products_to_update)} products")
+            else:
+                print("DEBUG: No products need img_url update")
+            
+        except Exception as e:
+            print(f"DEBUG: Error updating product img_urls: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def force_update_product_img_url(self, product_id: int):
+        """
+        Forza l'aggiornamento di img_url per un prodotto specifico.
+        Utile per recuperare immagini mancanti.
+        
+        Args:
+            product_id: ID locale del prodotto da aggiornare
+        """
+        try:
+            from src.repository.product_repository import ProductRepository
+            from sqlalchemy import text
+            
+            product_repo = ProductRepository(self.db)
+            
+            # Genera il nuovo img_url
+            img_url = f"/media/product_images/{self.platform_id}/product_{product_id}.jpg"
+            
+            # Aggiorna il prodotto
+            product_repo._session.execute(
+                text("UPDATE products SET img_url = :img_url WHERE id_product = :id_product"),
+                {'id_product': product_id, 'img_url': img_url}
+            )
+            product_repo._session.commit()
+            
+            print(f"DEBUG: Force updated img_url for product {product_id}: {img_url}")
+            return True
+            
+        except Exception as e:
+            print(f"DEBUG: Error force updating product {product_id} img_url: {str(e)}")
+            return False
+
     def _get_six_months_ago_date(self) -> str:
         """Get date string for six months ago in YYYY-MM-DD format"""
         from datetime import timedelta
@@ -105,7 +262,16 @@ class PrestaShopService(BaseEcommerceService):
         async with self._semaphore:
             # Add small delay to be gentle with the server
             await asyncio.sleep(0.1)
-            return await self._make_request(endpoint, params)
+            try:
+                return await self._make_request(endpoint, params)
+            except Exception as e:
+                # If we get a file descriptor error, wait a bit longer before retrying
+                if "too many file descriptors" in str(e).lower():
+                    print(f"DEBUG: File descriptor limit reached, waiting 2 seconds before retry...")
+                    await asyncio.sleep(2)
+                    return await self._make_request(endpoint, params)
+                else:
+                    raise
     
     async def sync_all_data(self) -> Dict[str, Any]:
         """
@@ -160,6 +326,7 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 3: Complex tables (only after all dependencies are complete)
             phase3_functions = [
+                ("Product Images", self.sync_product_images),
                 ("Orders", self.sync_orders)
             ]
             
@@ -604,7 +771,7 @@ class PrestaShopService(BaseEcommerceService):
         try:
             # Try with pagination to avoid server disconnection
             all_products = []
-            limit = 1000  # Smaller batch size
+            limit = 1000  # Batch size
             offset = 0
             params = {
                 'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image]',  # Only necessary fields
@@ -614,6 +781,7 @@ class PrestaShopService(BaseEcommerceService):
                 last_id = self.db.execute(text("SELECT MAX(id_origin) FROM products WHERE id_origin IS NOT NULL")).scalar()
                 last_id = last_id if last_id else 0
 
+            
             while True:
                 try:
                     print(f"DEBUG: Starting products loop - offset: {offset}, limit: {limit}")
@@ -668,8 +836,7 @@ class PrestaShopService(BaseEcommerceService):
                 unique_products[product_id] = product
             
             products = list(unique_products.values())
-            print(f"DEBUG: Found {len(products)} unique products to process")
-            print(f"DEBUG: First product: {products[0] if products else 'None'}")
+
             # Prepare all product data with async lookups
             from src.schemas.product_schema import ProductSchema
             
@@ -686,19 +853,31 @@ class PrestaShopService(BaseEcommerceService):
                         self._get_category_id_by_origin(product.get('id_category_default', '')),
                         self._get_brand_id_by_origin(product.get('id_manufacturer', ''))
                     )
-                
-                    # Handle id_image - convert empty string to 0
-                    id_image = product.get('id_default_image', 0)
-                    if id_image == '' or id_image is None:
-                        id_image = 0
-                    else:
-                        id_image = int(id_image)
                     
+                    # Verifica che brand e category esistano
+                    if not brand_id:
+                        print(f"DEBUG: Brand not found for product {product.get('id', 'unknown')}, manufacturer: {product.get('id_manufacturer', '')}")
+
+                    if not category_id:
+                        print(f"DEBUG: Category not found for product {product.get('id', 'unknown')}, category: {product.get('id_category_default', '')}")
+
+                
+                    # Genera img_url se il prodotto ha un'immagine
+                    id_image_default = product.get('id_default_image', 0)
+                    product_id = product.get('id', '')
+                    
+                    if id_image_default and int(id_image_default) > 0:
+                        # Genera il percorso dell'immagine basato sull'ID del prodotto che verrà creato
+                        # Useremo un placeholder temporaneo che verrà aggiornato dopo l'inserimento
+                        img_url = f"/media/product_images/{self.platform_id}/product_{product.get('id', 0)}.jpg"
+                        
+                    else:
+                        img_url = None
                     return ProductSchema(
                         id_origin=int(product.get('id', 0)),
                         id_category=int(category_id) if category_id else 0,
                         id_brand=int(brand_id) if brand_id else 0,
-                        id_image=id_image,
+                        img_url=img_url,
                         name=product['name'],
                         sku=product.get('ean13', ''),
                         reference=product.get('reference', 'ND'),
@@ -715,7 +894,7 @@ class PrestaShopService(BaseEcommerceService):
                 
             # Prepare all product data concurrently
             product_data_list = await asyncio.gather(*[prepare_product_data(product) for product in products], return_exceptions=True)
-            
+            print(f"DEBUG: Product data list count: {len(product_data_list)}")
             # Filter out None values and exceptions
             valid_product_data = []
             errors = []
@@ -742,6 +921,16 @@ class PrestaShopService(BaseEcommerceService):
                 print(f"DEBUG: Attempting to insert {len(valid_product_data)} products")
                 total_inserted = product_repo.bulk_create(valid_product_data, batch_size=10000)
                 print(f"DEBUG: Successfully inserted {total_inserted} products")
+                
+                # Aggiorna img_url per i prodotti inseriti che hanno immagini
+                self._update_product_img_urls(valid_product_data, products)
+                
+                # Store product data for image synchronization in phase3
+                if valid_product_data:
+                    # Store the product data and original data for later image synchronization
+                    self._product_data_for_images = valid_product_data
+                    self._original_products_data = products  # Store original PrestaShop data
+                
                 successful_results = [{"status": "success", "count": total_inserted}]
                 upsert_errors = []
                 
@@ -757,9 +946,217 @@ class PrestaShopService(BaseEcommerceService):
                 print("DEBUG: No products to process")
                 self._log_sync_result("Products (Italian)", 0, errors)
                 return []
-            
+                
         except Exception as e:
             self._log_sync_result("Products (Italian)", 0, [str(e)])
+            raise
+    
+    async def _download_single_product_image(self, product_data, product_info, id_image_default):
+        """
+        Download a single product image asynchronously.
+        
+        Args:
+            product_data: ProductSchema with product data
+            product_info: Tuple of (id_product, current_img_url) from database
+            
+        Returns:
+            Dict with update data if successful, None if failed or skipped
+        """
+        # Usa semaforo per limitare la concorrenza
+        if not hasattr(self, '_image_semaphore'):
+            self._image_semaphore = asyncio.Semaphore(self.max_concurrent_images)
+        
+        async with self._image_semaphore:
+            try:
+                id_product, current_img_url = product_info
+                
+                # Genera il percorso locale dell'immagine usando l'ID locale
+                local_image_path = self.image_service.generate_local_image_path(
+                    self.platform_id,
+                    id_product
+                )
+                
+                # Genera il percorso relativo dell'immagine
+                image_relative_path = self.image_service.generate_local_image_path(
+                    self.platform_id,
+                    id_product
+                )
+                
+                # Controlla se l'immagine esiste già
+                import os
+                full_path = os.path.join(os.getcwd(), local_image_path)
+                if os.path.exists(full_path):
+                    print(f"DEBUG: Image already exists for product {id_product}, skipping download")
+                    # Aggiungi alla lista per batch update se necessario
+                    if current_img_url != image_relative_path:
+                        return {"img_url": image_relative_path, "id_product": id_product}
+                    return {"img_url": image_relative_path, "id_product": id_product, "skipped": True}
+                
+                # Ricostruisci l'URL remoto per il download
+                name = product_data.name
+                link_rewrite = self.image_service._generate_link_rewrite(name)
+                remote_image_url = self.image_service.generate_prestashop_image_url(
+                    self.base_url, 
+                    id_image_default, 
+                    link_rewrite
+                )
+                
+                # Scarica l'immagine usando l'ID locale
+                saved_path = self.image_service.download_and_save_image(
+                    remote_image_url,
+                    id_product,
+                    self.platform_id
+                )
+                
+                if saved_path:
+                    return {"img_url": image_relative_path, "id_product": id_product, "downloaded": True}
+                else:
+                    print(f"DEBUG: Failed to download image for product {id_product}, using fallback image")
+                    # Usa l'immagine di fallback quando il download fallisce
+                    fallback_img_url = "/media/product_images/fallback/product_not_found.jpg"
+                    return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
+                    
+            except Exception as e:
+                print(f"DEBUG: Error downloading image for product {product_data.id_origin}: {str(e)}, using fallback image")
+                # Usa l'immagine di fallback quando c'è un errore
+                fallback_img_url = "/media/product_images/fallback/product_not_found.jpg"
+                return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
+
+    async def _download_product_images(self, product_data_list: list, original_products_data: list):
+        """
+        Scarica le immagini dei prodotti dopo il salvataggio nel database e aggiorna il campo img_url.
+        Utilizza asyncio.gather per il download parallelo delle immagini.
+        
+        Args:
+            product_data_list: Lista di ProductSchema con i prodotti salvati
+        """
+        try:
+            print(f"DEBUG: Downloading images for {len(product_data_list)} products")
+            
+            # Import repository e model per la query
+            from src.repository.product_repository import ProductRepository
+            from src.models.product import Product
+            from sqlalchemy import text
+            
+            product_repo = ProductRepository(self.db)
+            
+            # Estrai tutti gli id_origin dai prodotti da processare che hanno immagini
+            origin_ids = []
+            products_with_images = []
+            for i, product_data in enumerate(product_data_list):
+                original_product = original_products_data[i]
+                id_image_default = original_product.get('id_default_image', 0)
+                if id_image_default and int(id_image_default) > 0:
+                    origin_ids.append(str(product_data.id_origin))
+                    products_with_images.append((product_data, id_image_default))
+            
+            if not origin_ids:
+                print("DEBUG: No products with images to process")
+                return
+            
+            # Query unica per ottenere tutti i prodotti necessari
+            products_query = product_repo._session.query(
+                Product.id_product,
+                Product.id_origin,
+                Product.img_url
+            ).filter(Product.id_origin.in_(origin_ids)).all()
+            
+            # Crea dizionario per matching veloce: id_origin -> (id_product, img_url)
+            products_dict = {str(product.id_origin): (product.id_product, product.img_url) 
+                           for product in products_query}
+            
+            print(f"DEBUG: Found {len(products_dict)} products in database")
+            
+            # Prepara le task per il download parallelo
+            download_tasks = []
+            for product_data, id_image_default in products_with_images:
+                product_info = products_dict.get(str(product_data.id_origin))
+                if product_info:
+                    download_tasks.append(
+                        self._download_single_product_image(product_data, product_info, id_image_default)
+                    )
+                else:
+                    print(f"DEBUG: Product {product_data.id_origin} not found in database")
+            
+            # Esegui tutti i download in parallelo
+            print(f"DEBUG: Starting parallel download of {len(download_tasks)} images")
+            results = await asyncio.gather(*download_tasks, return_exceptions=True)
+            
+            # Processa i risultati
+            updates_to_process = []
+            downloaded_count = 0
+            failed_count = 0
+            skipped_count = 0
+            fallback_count = 0
+            
+            for result in results:
+                if isinstance(result, Exception):
+                    failed_count += 1
+                    print(f"DEBUG: Exception in image download: {str(result)}")
+                elif result is not None:
+                    if result.get("skipped"):
+                        skipped_count += 1
+                    elif result.get("downloaded"):
+                        downloaded_count += 1
+                    elif result.get("fallback"):
+                        fallback_count += 1
+                    updates_to_process.append({
+                        "img_url": result["img_url"], 
+                        "id_product": result["id_product"]
+                    })
+                else:
+                    failed_count += 1
+            
+            # Esegui batch update di tutti i prodotti
+            if updates_to_process:
+                print(f"DEBUG: Performing batch update for {len(updates_to_process)} products")
+                for update_data in updates_to_process:
+                    product_repo._session.execute(
+                        text("UPDATE products SET img_url = :img_url WHERE id_product = :id_product"),
+                        update_data
+                    )
+                product_repo._session.commit()
+                print(f"DEBUG: Batch update completed")
+            
+            print(f"DEBUG: Image download completed - Downloaded: {downloaded_count}, Skipped: {skipped_count}, Fallback: {fallback_count}, Failed: {failed_count}")
+            
+        except Exception as e:
+            print(f"DEBUG: Error in batch image download: {str(e)}")
+    
+    async def sync_product_images(self) -> List[Dict[str, Any]]:
+        """
+        Synchronize product images using stored product data from sync_products.
+        This method is called in phase3 to avoid duplicate API calls.
+        """
+        print("🚀 STARTING SYNC_PRODUCT_IMAGES")
+        try:
+            if not hasattr(self, '_product_data_for_images') or not self._product_data_for_images:
+                print("DEBUG: No product data available for image synchronization")
+                self._log_sync_result("Product Images", 0, ["No product data available"])
+                return []
+            
+            if not hasattr(self, '_original_products_data') or not self._original_products_data:
+                print("DEBUG: No original product data available for image synchronization")
+                self._log_sync_result("Product Images", 0, ["No original product data available"])
+                return []
+            
+            product_count = len(self._product_data_for_images)
+            print(f"DEBUG: Starting image downloads for {product_count} products")
+            await self._download_product_images(self._product_data_for_images, self._original_products_data)
+            
+            # Clear the stored data after processing
+            self._product_data_for_images = []
+            self._original_products_data = []
+            
+            # Warm-up cache per le immagini appena sincronizzate
+            if product_count > 0:
+                await self._warm_up_image_cache()
+            
+            self._log_sync_result("Product Images", product_count)
+            return [{"status": "success", "count": product_count}]
+            
+        except Exception as e:
+            self._log_sync_result("Product Images", 0, [str(e)])
             raise
     
     async def sync_customers(self) -> List[Dict[str, Any]]:
@@ -1506,8 +1903,8 @@ class PrestaShopService(BaseEcommerceService):
                 name=carrier_name
             )
             
-            # Create carrier in database
-            carrier_repo.create(carrier_schema)
+            # Create carrier in database - convert schema to dict
+            carrier_repo.create(carrier_schema.dict())
             
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:

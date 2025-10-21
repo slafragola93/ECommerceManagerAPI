@@ -117,7 +117,12 @@ class CacheManager:
                     value = self._memory_cache.get(key)
                     if value is not None:
                         logger.debug(f"Memory cache hit: {key}")
-                        return self._deserialize(value)
+                        # Try to deserialize, fallback to raw value if it fails
+                        try:
+                            return self._deserialize(value)
+                        except Exception:
+                            # If deserialization fails, return raw value (for backward compatibility)
+                            return value
                 
                 if layer in ["auto", "redis"] and self._redis_client:
                     # Try Redis cache
@@ -159,7 +164,12 @@ class CacheManager:
                 
                 # Set in memory cache
                 if layer in ["auto", "memory"] and self._memory_cache:
-                    self._memory_cache[key] = serialized
+                    try:
+                        self._memory_cache[key] = serialized
+                        logger.debug(f"Memory cache set: {key} -> {len(serialized)} bytes")
+                    except Exception as e:
+                        logger.error(f"Memory cache set error for {key}: {e}")
+                        success = False
                 
                 # Set in Redis cache
                 if layer in ["auto", "redis"] and self._redis_client:

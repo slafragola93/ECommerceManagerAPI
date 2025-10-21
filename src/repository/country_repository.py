@@ -46,3 +46,12 @@ class CountryRepository(BaseRepository[Country, int], ICountryRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving country by name: {str(e)}")
+    
+    def get_by_origin_id(self, origin_id: str) -> Optional[Country]:
+        """Ottiene un paese per origin ID"""
+        try:
+            return self._session.query(Country).filter(
+                Country.id_origin == origin_id
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving country by origin ID: {str(e)}")

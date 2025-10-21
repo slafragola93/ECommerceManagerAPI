@@ -46,3 +46,12 @@ class CategoryRepository(BaseRepository[Category, int], ICategoryRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving category by name: {str(e)}")
+    
+    def get_by_origin_id(self, origin_id: str) -> Optional[Category]:
+        """Ottiene una categoria per origin ID"""
+        try:
+            return self._session.query(Category).filter(
+                Category.id_origin == origin_id
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving category by origin ID: {str(e)}")

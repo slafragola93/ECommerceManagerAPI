@@ -56,3 +56,12 @@ class AppConfigurationRepository(BaseRepository[AppConfiguration, int], IAppConf
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving app_configuration by name and category: {str(e)}")
+    
+    def get_by_category(self, category: str) -> List[AppConfiguration]:
+        """Ottiene tutte le configurazioni per categoria"""
+        try:
+            return self._session.query(AppConfiguration).filter(
+                func.lower(AppConfiguration.category) == func.lower(category)
+            ).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving app_configurations by category: {str(e)}")

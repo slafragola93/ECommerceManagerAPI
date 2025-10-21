@@ -2,9 +2,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy.orm import Session
 from src.database import get_db
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 from src.models.user import User
-from src.services.preventivo_service import PreventivoService
+from src.services.routers.preventivo_service import PreventivoService
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema,
     PreventivoUpdateSchema,

@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 from io import BytesIO
 
 from src.database import get_db
-from src.services.auth import get_current_user
+from src.services.routers.auth_service import get_current_user
 from src.repository.fiscal_document_repository import FiscalDocumentRepository
 from src.repository.app_configuration_repository import AppConfigurationRepository
-from src.services.fatturapa_service import FatturaPAService
+from src.services.external.fatturapa_service import FatturaPAService
 from src.schemas.fiscal_document_schema import (
     InvoiceCreateSchema,
     InvoiceResponseSchema,

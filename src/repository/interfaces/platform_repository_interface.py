@@ -13,3 +13,8 @@ class IPlatformRepository(IRepository[Platform, int]):
     def get_by_name(self, name: str) -> Optional[Platform]:
         """Ottiene un platform per nome"""
         pass
+    
+    @abstractmethod
+    def get_default(self) -> Optional[Platform]:
+        """Ottiene la piattaforma di default (is_default = True)"""
+        pass

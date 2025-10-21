@@ -9,16 +9,16 @@ from src.models.address import Address
 from src.models.tax import Tax
 from src.models.shipping import Shipping
 from src.models.sectional import Sectional
-from src.services.tool import calculate_amount_with_percentage
+from src.services.core.tool import calculate_amount_with_percentage
 from src.models.product import Product
-from src.services.order_document_service import OrderDocumentService
+from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema, 
     PreventivoUpdateSchema,
     ArticoloPreventivoSchema
 )
 from src.schemas.address_schema import AddressSchema
-from src.services.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
+from src.services.core.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
 from .order_repository import OrderRepository
 from src.schemas.order_schema import OrderSchema
 from datetime import datetime

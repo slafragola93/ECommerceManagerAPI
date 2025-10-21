@@ -1,11 +1,19 @@
+import sys
+import asyncio
 from fastapi import FastAPI, HTTPException
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from starlette.middleware.cors import CORSMiddleware
 
+# Fix for Windows file descriptor limit issue
+if sys.platform == 'win32':
+    loop = asyncio.ProactorEventLoop()
+    asyncio.set_event_loop(loop)
+    print("DEBUG: Using ProactorEventLoop for Windows to handle more file descriptors")
+
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents
+    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, images, init
 from src.database import Base, engine
 
 # Import new cache system
@@ -118,6 +126,8 @@ app.include_router(order_detail.router)
 app.include_router(sync.router)
 app.include_router(preventivi.router)
 app.include_router(fiscal_documents.router)
+app.include_router(images.router)
+app.include_router(init.router)
 
 
 @app.on_event("startup")

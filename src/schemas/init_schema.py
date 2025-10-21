@@ -1,0 +1,49 @@
+"""
+Schema per i dati di inizializzazione del frontend
+"""
+
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+from .platform_schema import PlatformResponseSchema
+from .lang_schema import LangResponseSchema
+from .country_schema import CountryResponseSchema
+from .tax_schema import TaxResponseSchema
+from .sectional_schema import SectionalResponseSchema
+from .order_state_schema import OrderStateResponseSchema
+from .shipping_state_schema import ShippingStateResponseSchema
+
+
+class InitDataSchema(BaseModel):
+    """
+    Schema per i dati di inizializzazione del frontend
+    """
+    # Dati statici (cache settimanale)
+    platforms: List[PlatformResponseSchema] = Field(..., description="Lista delle piattaforme disponibili")
+    languages: List[LangResponseSchema] = Field(..., description="Lista delle lingue supportate")
+    countries: List[CountryResponseSchema] = Field(..., description="Lista dei paesi")
+    taxes: List[TaxResponseSchema] = Field(..., description="Lista delle tasse")
+    
+    # Dati dinamici (cache giornaliera)
+    sectionals: List[SectionalResponseSchema] = Field(..., description="Lista delle sezioni/aree geografiche")
+    order_states: List[OrderStateResponseSchema] = Field(..., description="Lista degli stati degli ordini")
+    shipping_states: List[ShippingStateResponseSchema] = Field(..., description="Lista degli stati di spedizione")
+    
+    # Metadati cache
+    cache_info: 'CacheInfoSchema' = Field(..., description="Informazioni sulla cache")
+
+
+class CacheInfoSchema(BaseModel):
+    """
+    Schema per le informazioni sulla cache
+    """
+    generated_at: datetime = Field(..., description="Timestamp di generazione")
+    ttl_static: int = Field(..., description="TTL per dati statici (secondi)")
+    ttl_dynamic: int = Field(..., description="TTL per dati dinamici (secondi)")
+    version: str = Field(..., description="Versione dei dati")
+    total_items: int = Field(..., description="Numero totale di elementi")
+
+
+# Aggiorna i forward references
+InitDataSchema.model_rebuild()

@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src import Role
 from src.schemas.user_schema import *
-from src.services.auth import *
+from src.services.routers.auth_service import *
 
 load_dotenv()
 
