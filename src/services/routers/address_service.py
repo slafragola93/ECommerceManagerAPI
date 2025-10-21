@@ -28,7 +28,7 @@ class AddressService(IAddressService):
             existing_address = self._address_repository.get_by_name(address_data.name)
             if existing_address:
                 raise BusinessRuleException(
-                    f"Address with name '{address_data.name}' already exists",
+                    f"Indirizzo con nome '{address_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": address_data.name}
                 )
@@ -39,7 +39,7 @@ class AddressService(IAddressService):
             address = self._address_repository.create(address)
             return address
         except Exception as e:
-            raise ValidationException(f"Error creating address: {str(e)}")
+            raise ValidationException(f"Errore nella creazione dell'indirizzo: {str(e)}")
     
     async def update_address(self, address_id: int, address_data: AddressSchema) -> Address:
         """Aggiorna un address esistente"""
@@ -52,7 +52,7 @@ class AddressService(IAddressService):
             existing = self._address_repository.get_by_name(address_data.name)
             if existing and existing.id_address != address_id:
                 raise BusinessRuleException(
-                    f"Address with name '{address_data.name}' already exists",
+                    f"Indirizzo con nome '{address_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": address_data.name}
                 )
@@ -67,7 +67,7 @@ class AddressService(IAddressService):
             updated_address = self._address_repository.update(address)
             return updated_address
         except Exception as e:
-            raise ValidationException(f"Error updating address: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento dell'indirizzo: {str(e)}")
     
     async def get_address(self, address_id: int) -> Address:
         """Ottiene un address per ID"""
@@ -92,7 +92,7 @@ class AddressService(IAddressService):
             
             return addresses
         except Exception as e:
-            raise ValidationException(f"Error retrieving addresses: {str(e)}")
+            raise ValidationException(f"Errore nel recupero degli indirizzi: {str(e)}")
     
     async def delete_address(self, address_id: int) -> bool:
         """Elimina un address"""
@@ -102,7 +102,7 @@ class AddressService(IAddressService):
         try:
             return self._address_repository.delete(address_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting address: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione dell'indirizzo: {str(e)}")
     
     async def get_addresses_count(self, **filters) -> int:
         """Ottiene il numero totale di address con filtri"""
@@ -110,7 +110,7 @@ class AddressService(IAddressService):
             # Usa il repository con i filtri
             return self._address_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting addresses: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio degli indirizzi: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Address"""

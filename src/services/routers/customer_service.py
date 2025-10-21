@@ -40,7 +40,7 @@ class CustomerService(ICustomerService):
             existing_origin = self._customer_repository.get_by_origin_id(str(customer_data.id_origin))
             if existing_origin:
                 raise BusinessRuleException(
-                    f"Customer with origin_id '{customer_data.id_origin}' already exists",
+                    f"Cliente con origin_id '{customer_data.id_origin}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"origin_id": customer_data.id_origin}
                 )
@@ -55,7 +55,7 @@ class CustomerService(ICustomerService):
             customer = self._customer_repository.create(customer)
             return customer
         except Exception as e:
-            raise ValidationException(f"Error creating customer: {str(e)}")
+            raise ValidationException(f"Errore nella creazione del cliente: {str(e)}")
     
     async def update_customer(self, customer_id: int, customer_data: CustomerSchema) -> Customer:
         """Aggiorna un cliente esistente"""
@@ -83,7 +83,7 @@ class CustomerService(ICustomerService):
             updated_customer = self._customer_repository.update(customer)
             return updated_customer
         except Exception as e:
-            raise ValidationException(f"Error updating customer: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento del cliente: {str(e)}")
     
     async def get_customer(self, customer_id: int) -> Customer:
         """Ottiene un cliente per ID"""
@@ -108,7 +108,7 @@ class CustomerService(ICustomerService):
             
             return customers
         except Exception as e:
-            raise ValidationException(f"Error retrieving customers: {str(e)}")
+            raise ValidationException(f"Errore nel recupero dei clienti: {str(e)}")
     
     async def delete_customer(self, customer_id: int) -> bool:
         """Elimina un cliente"""
@@ -121,18 +121,18 @@ class CustomerService(ICustomerService):
         try:
             return self._customer_repository.delete(customer_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting customer: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione del cliente: {str(e)}")
     
     async def search_customers(self, search_term: str) -> List[Customer]:
         """Cerca clienti per termine di ricerca"""
         if not search_term or len(search_term.strip()) < 2:
-            raise ValidationException("Search term must be at least 2 characters long")
+            raise ValidationException("Il termine di ricerca deve essere di almeno 2 caratteri")
         
         try:
             customers = self._customer_repository.search_by_name(search_term.strip())
             return customers
         except Exception as e:
-            raise ValidationException(f"Error searching customers: {str(e)}")
+            raise ValidationException(f"Errore nella ricerca dei clienti: {str(e)}")
     
     async def _validate_email(self, email: str) -> None:
         """Valida il formato dell'email"""
@@ -149,7 +149,7 @@ class CustomerService(ICustomerService):
             # Usa il repository con i filtri
             return self._customer_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting customers: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio dei clienti: {str(e)}")
     
     async def _validate_name_fields(self, firstname: str, lastname: str) -> None:
         """Valida i campi nome e cognome"""
@@ -160,7 +160,7 @@ class CustomerService(ICustomerService):
             raise ExceptionFactory.required_field_missing("lastname")
         
         if len(firstname.strip()) < 2:
-            raise ValidationException("First name must be at least 2 characters long")
+            raise ValidationException("Il nome deve essere di almeno 2 caratteri")
         
         if len(lastname.strip()) < 2:
-            raise ValidationException("Last name must be at least 2 characters long")
+            raise ValidationException("Il cognome deve essere di almeno 2 caratteri")

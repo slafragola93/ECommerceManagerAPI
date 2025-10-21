@@ -8,9 +8,7 @@ from src.schemas.category_schema import CategorySchema
 from src.models.category import Category
 from src.core.exceptions import (
     ValidationException, 
-    NotFoundException, 
     BusinessRuleException,
-    ExceptionFactory,
     ErrorCode
 )
 
@@ -28,7 +26,7 @@ class CategoryService(ICategoryService):
             existing_category = self._category_repository.get_by_name(category_data.name)
             if existing_category:
                 raise BusinessRuleException(
-                    f"Category with name '{category_data.name}' already exists",
+                    f"Categoria con nome '{category_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": category_data.name}
                 )
@@ -46,7 +44,7 @@ class CategoryService(ICategoryService):
             category = self._category_repository.create(category)
             return category
         except Exception as e:
-            raise ValidationException(f"Error creating category: {str(e)}")
+            raise ValidationException(f"Errore nella creazione della categoria: {str(e)}")
     
     async def update_category(self, category_id: int, category_data: CategorySchema) -> Category:
         """Aggiorna un category esistente"""
@@ -59,7 +57,7 @@ class CategoryService(ICategoryService):
             existing = self._category_repository.get_by_name(category_data.name)
             if existing and existing.id_category != category_id:
                 raise BusinessRuleException(
-                    f"Category with name '{category_data.name}' already exists",
+                    f"Categoria con nome '{category_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": category_data.name}
                 )
@@ -74,7 +72,7 @@ class CategoryService(ICategoryService):
             updated_category = self._category_repository.update(category)
             return updated_category
         except Exception as e:
-            raise ValidationException(f"Error updating category: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento della categoria: {str(e)}")
     
     async def get_category(self, category_id: int) -> Category:
         """Ottiene un category per ID"""
@@ -99,7 +97,7 @@ class CategoryService(ICategoryService):
             
             return categories
         except Exception as e:
-            raise ValidationException(f"Error retrieving categories: {str(e)}")
+            raise ValidationException(f"Errore nel recupero delle categorie: {str(e)}")
     
     async def delete_category(self, category_id: int) -> bool:
         """Elimina un category"""
@@ -109,7 +107,7 @@ class CategoryService(ICategoryService):
         try:
             return self._category_repository.delete(category_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting category: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione della categoria: {str(e)}")
     
     async def get_categories_count(self, **filters) -> int:
         """Ottiene il numero totale di category con filtri"""
@@ -117,7 +115,7 @@ class CategoryService(ICategoryService):
             # Usa il repository con i filtri
             return self._category_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting categories: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio delle categorie: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Category"""

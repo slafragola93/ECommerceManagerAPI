@@ -24,5 +24,11 @@ class ShippingResponseSchema(BaseModel):
     shipping_message: Optional[str] = None
 
 
-class ConfigDict:
-    from_attributes = True
+class AllShippingResponseSchema(BaseModel):
+    shippings: list[ShippingResponseSchema]
+    total: int
+    page: int
+    limit: int
+
+    class ConfigDict:
+        from_attributes = True

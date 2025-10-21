@@ -52,18 +52,11 @@ async def get_all_api_carriers(
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
-    try:
-        api_carriers = await api_carrier_service.get_api_carriers(page=page, limit=limit)
-        if not api_carriers:
-            raise HTTPException(status_code=404, detail="Nessun API carrier trovato")
+    api_carriers = await api_carrier_service.get_api_carriers(page=page, limit=limit)
 
-        total_count = await api_carrier_service.get_api_carriers_count()
+    total_count = await api_carrier_service.get_api_carriers_count()
 
-        return {"carriers": api_carriers, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return {"carriers": api_carriers, "total": total_count, "page": page, "limit": limit}
 
 
 @router.get("/{carrier_api_id}", status_code=status.HTTP_200_OK, response_model=CarrierApiResponseSchema)
@@ -78,13 +71,8 @@ async def get_api_carrier_by_id(
     Restituisce un singolo API carrier basato sull'ID specificato.
     - **carrier_api_id**: Identificativo dell'API carrier da ricercare.
     """
-    try:
-        api_carrier = await api_carrier_service.get_api_carrier(carrier_api_id)
-        return api_carrier
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="API carrier non trovato.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    api_carrier = await api_carrier_service.get_api_carrier(carrier_api_id)
+    return api_carrier
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=CarrierApiResponseSchema, response_description="API carrier creato correttamente")
@@ -99,13 +87,8 @@ async def create_carrier_api(
     Crea un nuovo API carrier con i dati forniti.
     - **api_carrier_data**: Dati del nuovo API carrier da creare.
     """
-    try:
-        api_carrier = await api_carrier_service.create_api_carrier(api_carrier_data)
-        return api_carrier
-    except (ValidationException, BusinessRuleException) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    api_carrier = await api_carrier_service.create_api_carrier(api_carrier_data)
+    return api_carrier
 
 
 @router.put("/{carrier_api_id}", status_code=status.HTTP_200_OK, response_model=CarrierApiResponseSchema, response_description="API carrier aggiornato correttamente")
@@ -122,15 +105,8 @@ async def update_carrier_api(
     - **carrier_api_id**: Identificativo dell'API carrier da aggiornare.
     - **api_carrier_data**: Nuovi dati dell'API carrier.
     """
-    try:
-        api_carrier = await api_carrier_service.update_api_carrier(carrier_api_id, api_carrier_data)
-        return api_carrier
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="API carrier non trovato.")
-    except (ValidationException, BusinessRuleException) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    api_carrier = await api_carrier_service.update_api_carrier(carrier_api_id, api_carrier_data)
+    return api_carrier
 
 
 @router.delete("/{carrier_api_id}", status_code=status.HTTP_200_OK, response_description="API carrier eliminato correttamente")
@@ -145,13 +121,7 @@ async def delete_carrier_api(
     Elimina un API carrier dal sistema.
     - **carrier_api_id**: Identificativo dell'API carrier da eliminare.
     """
-    try:
-        success = await api_carrier_service.delete_api_carrier(carrier_api_id)
-        if not success:
-            raise HTTPException(status_code=500, detail="Errore durante l'eliminazione dell'API carrier.")
-        return {"message": "API carrier eliminato correttamente"}
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="API carrier non trovato.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
+    success = await api_carrier_service.delete_api_carrier(carrier_api_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Errore durante l'eliminazione dell'API carrier.")
+    return {"message": "API carrier eliminato correttamente"}

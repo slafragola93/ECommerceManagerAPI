@@ -2,16 +2,13 @@
 Customer Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.customer_service_interface import ICustomerService
 from src.repository.interfaces.customer_repository_interface import ICustomerRepository
 from src.schemas.customer_schema import CustomerSchema, CustomerResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
-    BaseApplicationException,
-    ValidationException,
-    NotFoundException,
-    BusinessRuleException
+    NotFoundException
 )
 from src.core.dependencies import db_dependency
 from src.services.routers.auth_service import authorize
@@ -27,17 +24,12 @@ router = APIRouter(
 
 def get_customer_service(db: db_dependency) -> ICustomerService:
     """Dependency injection per Customer Service"""
-    # Configura il container se necessario
     from src.core.container_config import get_configured_container
     configured_container = get_configured_container()
     
-    # Crea il repository con la sessione DB usando il metodo specifico
     customer_repo = configured_container.resolve_with_session(ICustomerRepository, db)
-    
-    # Crea il service con il repository
     customer_service = configured_container.resolve(ICustomerService)
-    # Inietta il repository nel service (se il service lo richiede nel costruttore)
-    # Questo è un workaround se il service non accetta la sessione direttamente
+    
     if hasattr(customer_service, '_customer_repository'):
         customer_service._customer_repository = customer_repo
     
@@ -54,14 +46,7 @@ async def create_customer(
     """
     Crea un nuovo cliente con i dati forniti.
     """
-    try:
-        return await customer_service.create_customer(customer)
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await customer_service.create_customer(customer)
 
 @router.put("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Customer modificato")
 @check_authentication
@@ -77,16 +62,7 @@ async def update_customer(
 
     - **customer_id**: Identificativo del cliente da aggiornare.
     """
-    try:
-        await customer_service.update_customer(customer_id, cs)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Cliente non trovato.")
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    await customer_service.update_customer(customer_id, cs)
 
 @router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)
 @check_authentication
@@ -101,25 +77,20 @@ async def get_customer_by_id(
 
     - **customer_id**: Identificativo del cliente da ricercare.
     """
-    try:
-        customer = await customer_service.get_customer(customer_id)
-        return customer
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Cliente non trovato.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    customer = await customer_service.get_customer(customer_id)
+    return customer
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCustomerResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_customers(
-        param: Optional[str] = None,
-        with_address: Optional[bool] = False,
-        lang_ids: Optional[str] = None,
-        page: int = Query(1, gt=0),
-        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
-        user: dict = Depends(get_current_user),
-        customer_service: ICustomerService = Depends(get_customer_service)
+    user: dict = Depends(get_current_user),
+    customer_service: ICustomerService = Depends(get_customer_service),
+    page: int = Query(1, gt=0),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    lang_ids: Optional[List[int]] = Query(None),
+    param: Optional[str] = Query(None),
+    with_address: Optional[bool] = Query(False)
 ):
     """
     Restituisce tutti i clienti con supporto alla paginazione. Se specificato, filtra i clienti per lingua.
@@ -128,27 +99,22 @@ async def get_all_customers(
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
-    try:
-        # Costruisci i filtri
-        filters = {}
-        if lang_ids:
-            filters['lang_ids'] = lang_ids
-        if param:
-            filters['param'] = param
-        if with_address:
-            filters['with_address'] = with_address
-            
-        customers = await customer_service.get_customers(page=page, limit=limit, **filters)
-        if not customers:
-            raise HTTPException(status_code=404, detail="Nessun cliente trovato")
+    # Costruisci i filtri
+    filters = {}
+    if lang_ids:
+        filters['lang_ids'] = lang_ids
+    if param:
+        filters['param'] = param
+    if with_address:
+        filters['with_address'] = with_address
+        
+    customers = await customer_service.get_customers(page=page, limit=limit, **filters)
+    if not customers:
+        raise NotFoundException("Customers", None)
 
-        total_count = await customer_service.get_customers_count(**filters)
+    total_count = await customer_service.get_customers_count(**filters)
 
-        return {"customers": customers, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return {"customers": customers, "total": total_count, "page": page, "limit": limit}
 
 @router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Cliente eliminato.")
 @check_authentication
@@ -163,9 +129,4 @@ async def delete_customer(
 
     - **customer_id**: Identificativo del cliente da eliminare.
     """
-    try:
-        await customer_service.delete_customer(customer_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Cliente non trovato.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    await customer_service.delete_customer(customer_id)

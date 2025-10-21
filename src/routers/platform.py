@@ -2,16 +2,13 @@
 Platform Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.platform_service_interface import IPlatformService
 from src.repository.interfaces.platform_repository_interface import IPlatformRepository
 from src.schemas.platform_schema import PlatformSchema, PlatformResponseSchema, AllPlatformsResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
-    BaseApplicationException,
-    ValidationException,
-    NotFoundException,
-    BusinessRuleException
+    NotFoundException
 )
 from src.core.dependencies import db_dependency
 from src.services.routers.auth_service import authorize
@@ -21,21 +18,17 @@ from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/platforms",
-    tags=["Platform"]
+    tags=["Platform"],
 )
 
 def get_platform_service(db: db_dependency) -> IPlatformService:
     """Dependency injection per Platform Service"""
-    # Configura il container se necessario
     from src.core.container_config import get_configured_container
     configured_container = get_configured_container()
     
-    # Crea il repository con la sessione DB usando il metodo specifico
     platform_repo = configured_container.resolve_with_session(IPlatformRepository, db)
-    
-    # Crea il service con il repository
     platform_service = configured_container.resolve(IPlatformService)
-    # Inietta il repository nel service
+    
     if hasattr(platform_service, '_platform_repository'):
         platform_service._platform_repository = platform_repo
     
@@ -51,106 +44,75 @@ async def get_all_platforms(
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
 ):
     """
-    Restituisce tutti i platform con supporto alla paginazione.
+    Restituisce tutte le platform con supporto alla paginazione.
     
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
-    try:
-        platforms = await platform_service.get_platforms(page=page, limit=limit)
-        if not platforms:
-            raise HTTPException(status_code=404, detail="Nessun platform trovato")
+    platforms = await platform_service.get_platforms(page=page, limit=limit)
+    if not platforms:
+        raise NotFoundException("Platforms", None)
 
-        total_count = await platform_service.get_platforms_count()
+    total_count = await platform_service.get_platforms_count()
 
-        return {"platforms": platforms, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return {"platforms": platforms, "total": total_count, "page": page, "limit": limit}
 
 @router.get("/{platform_id}", status_code=status.HTTP_200_OK, response_model=PlatformResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_platform_by_id(
+    platform_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    platform_service: IPlatformService = Depends(get_platform_service),
-    platform_id: int = Path(gt=0)
+    platform_service: IPlatformService = Depends(get_platform_service)
 ):
     """
-    Restituisce un singolo platform basato sull'ID specificato.
+    Restituisce una singola platform basata sull'ID specificato.
 
-    - **platform_id**: Identificativo del platform da ricercare.
+    - **platform_id**: Identificativo della platform da ricercare.
     """
-    try:
-        platform = await platform_service.get_platform(platform_id)
-        return platform
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Platform non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    platform = await platform_service.get_platform(platform_id)
+    return platform
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Platform creato correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Platform creata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_platform(
     platform_data: PlatformSchema,
-    platform_service: IPlatformService = Depends(get_platform_service),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    platform_service: IPlatformService = Depends(get_platform_service)
 ):
     """
-    Crea un nuovo platform con i dati forniti.
+    Crea una nuova platform con i dati forniti.
     """
-    try:
-        return await platform_service.create_platform(platform_data)
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await platform_service.create_platform(platform_data)
 
-@router.put("/{platform_id}", status_code=status.HTTP_200_OK, response_description="Platform aggiornato correttamente")
+@router.put("/{platform_id}", status_code=status.HTTP_200_OK, response_description="Platform aggiornata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_platform(
     platform_data: PlatformSchema,
-    platform_service: IPlatformService = Depends(get_platform_service),
     platform_id: int = Path(gt=0),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    platform_service: IPlatformService = Depends(get_platform_service)
 ):
     """
-    Aggiorna i dati di un platform esistente basato sull'ID specificato.
+    Aggiorna i dati di una platform esistente basata sull'ID specificato.
 
-    - **platform_id**: Identificativo del platform da aggiornare.
+    - **platform_id**: Identificativo della platform da aggiornare.
     """
-    try:
-        return await platform_service.update_platform(platform_id, platform_data)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Platform non trovato")
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await platform_service.update_platform(platform_id, platform_data)
 
-@router.delete("/{platform_id}", status_code=status.HTTP_200_OK, response_description="Platform eliminato correttamente")
+@router.delete("/{platform_id}", status_code=status.HTTP_200_OK, response_description="Platform eliminata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_platform(
+    platform_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    platform_service: IPlatformService = Depends(get_platform_service),
-    platform_id: int = Path(gt=0)
+    platform_service: IPlatformService = Depends(get_platform_service)
 ):
     """
-    Elimina un platform basato sull'ID specificato.
+    Elimina una platform basata sull'ID specificato.
 
-    - **platform_id**: Identificativo del platform da eliminare.
+    - **platform_id**: Identificativo della platform da eliminare.
     """
-    try:
-        await platform_service.delete_platform(platform_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Platform non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    await platform_service.delete_platform(platform_id)

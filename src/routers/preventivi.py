@@ -389,13 +389,8 @@ async def create_preventivo(
     - `con_fattura`: Richiesta fatturazione
     - `stesso_indirizzo`: Deduplica automatica indirizzi
     """
-    try:
-        service = get_preventivo_service(db)
-        return service.create_preventivo(preventivo_data, user["id"])
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    return service.create_preventivo(preventivo_data, user["id"])
 
 
 @router.get("/", response_model=PreventivoListResponseSchema,
@@ -422,20 +417,17 @@ async def get_preventivi(
     - GET /api/v1/preventivi/?show_details=true - Lista con articoli inclusi
     - GET /api/v1/preventivi/?search=000001&show_details=true - Ricerca con articoli
     """
-    try:
-        service = get_preventivo_service(db)
-        skip = (page - 1) * limit
-        
-        preventivi = service.get_preventivi(skip, limit, search, show_details)
-        
-        return PreventivoListResponseSchema(
-            preventivi=preventivi,
-            total=len(preventivi),
-            page=page,
-            limit=limit
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    skip = (page - 1) * limit
+    
+    preventivi = service.get_preventivi(skip, limit, search, show_details)
+    
+    return PreventivoListResponseSchema(
+        preventivi=preventivi,
+        total=len(preventivi),
+        page=page,
+        limit=limit
+    )
 
 
 @router.get("/{id_order_document}", response_model=PreventivoResponseSchema,
@@ -446,18 +438,13 @@ async def get_preventivo(
     db: Session = db_dependency
 ):
     """Recupera preventivo per ID"""
-    try:
-        service = get_preventivo_service(db)
-        preventivo = service.get_preventivo(id_order_document)
-        
-        if not preventivo:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return preventivo
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    preventivo = service.get_preventivo(id_order_document)
+    
+    if not preventivo:
+        raise HTTPException(status_code=404, detail="Preventivo non trovato")
+    
+    return preventivo
 
 
 @router.put("/{id_order_document}", response_model=PreventivoResponseSchema,
@@ -517,20 +504,13 @@ async def update_preventivo(
     }
     ```
     """
-    try:
-        service = get_preventivo_service(db)
-        preventivo = service.update_preventivo(id_order_document, preventivo_data, user["id"])
-        
-        if not preventivo:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return preventivo
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    preventivo = service.update_preventivo(id_order_document, preventivo_data, user["id"])
+    
+    if not preventivo:
+        raise HTTPException(status_code=404, detail="Preventivo non trovato")
+    
+    return preventivo
 
 
 @router.post("/{id_order_document}/articoli", response_model=ArticoloPreventivoSchema,
@@ -542,20 +522,13 @@ async def add_articolo(
     db: Session = db_dependency
 ):
     """Aggiunge articolo a preventivo"""
-    try:
-        service = get_preventivo_service(db)
-        result = service.add_articolo(id_order_document, articolo)
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    result = service.add_articolo(id_order_document, articolo)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Preventivo non trovato")
+    
+    return result
 
 
 @router.put("/articoli/{id_order_detail}", response_model=ArticoloPreventivoSchema,
@@ -567,20 +540,13 @@ async def update_articolo(
     db: Session = db_dependency
 ):
     """Aggiorna articolo in preventivo"""
-    try:
-        service = get_preventivo_service(db)
-        result = service.update_articolo(id_order_detail, articolo_data)
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Articolo non trovato")
-        
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    result = service.update_articolo(id_order_detail, articolo_data)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Articolo non trovato")
+    
+    return result
 
 
 @router.delete("/articoli/{id_order_detail}", status_code=status.HTTP_204_NO_CONTENT,
@@ -591,18 +557,13 @@ async def remove_articolo(
     db: Session = db_dependency
 ):
     """Rimuove articolo da preventivo"""
-    try:
-        service = get_preventivo_service(db)
-        success = service.remove_articolo(id_order_detail)
-        
-        if not success:
-            raise HTTPException(status_code=404, detail="Articolo non trovato")
-        
-        return None
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    success = service.remove_articolo(id_order_detail)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Articolo non trovato")
+    
+    return None
 
 
 @router.delete("/{id_order_document}", status_code=status.HTTP_204_NO_CONTENT,
@@ -624,19 +585,13 @@ async def delete_preventivo(
     - Se il preventivo è già stato convertito in ordine, l'**ordine NON verrà eliminato**
     - Il customer e gli indirizzi NON vengono eliminati (possono essere usati da altri preventivi/ordini)
     """
-    try:
-        service = get_preventivo_service(db)
-        success = service.delete_preventivo(id_order_document)
-        
-        if not success:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return None
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
+    service = get_preventivo_service(db)
+    success = service.delete_preventivo(id_order_document)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Preventivo non trovato")
+    
+    return None
 
 @router.post("/{id_order_document}/duplicate", response_model=PreventivoResponseSchema,
              status_code=status.HTTP_201_CREATED, response_description="Preventivo duplicato con successo")
@@ -694,20 +649,13 @@ async def duplicate_preventivo(
     - Tutti gli articoli vengono **copiati** come nuovi record
     - Il nuovo preventivo è completamente indipendente dall'originale
     """
-    try:
-        service = get_preventivo_service(db)
-        result = service.duplicate_preventivo(id_order_document, user["id"])
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    result = service.duplicate_preventivo(id_order_document, user["id"])
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Preventivo non trovato")
+    
+    return result
 
 
 @router.post("/{id_order_document}/convert-to-order", status_code=status.HTTP_200_OK,
@@ -767,17 +715,10 @@ async def convert_to_order(
     - Il preventivo rimane nel database e viene collegato all'ordine tramite `id_order`
     - Non puoi convertire lo stesso preventivo due volte
     """
-    try:
-        service = get_preventivo_service(db)
-        result = service.convert_to_order(id_order_document, user["id"])
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Preventivo non trovato")
-        
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    service = get_preventivo_service(db)
+    result = service.convert_to_order(id_order_document, user["id"])
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Preventivo non trovato")
+    
+    return result

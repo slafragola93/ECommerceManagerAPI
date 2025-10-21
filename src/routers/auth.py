@@ -1,11 +1,19 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, status, HTTPException
 from dotenv import load_dotenv
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import IntegrityError
+from typing import Annotated
+from datetime import datetime, timedelta
+import os
 
 from src import Role
 from src.schemas.user_schema import *
 from src.services.routers.auth_service import *
+from src.core.dependencies import db_dependency
+from src.core.exceptions import (
+    ValidationException,
+    AuthenticationException
+)
 
 load_dotenv()
 
@@ -37,39 +45,28 @@ async def create_user(db: db_dependency, us: UserSchema):
         Raises:
         - HTTPException: Con status code 400 se l'utente esiste già, con status code 500 per altri errori interni.
     """
-    try:
-        user = User(
-            username=us.username,
-            email=us.email,
-            firstname=us.firstname,
-            lastname=us.lastname,
-            password=bcrypt_context.hash(us.password)
-        )
+    user = User(
+        username=us.username,
+        email=us.email,
+        firstname=us.firstname,
+        lastname=us.lastname,
+        password=bcrypt_context.hash(us.password)
+    )
 
-        if us.roles:
-            role_ids = [role.id_role for role in us.roles]
-            roles = db.query(Role).filter(Role.id_role.in_(role_ids)).all()
-            user.roles = roles
-        else:
-            # Assegna il ruolo predefinito "user"
-            default_role = db.query(Role).filter(Role.name == "USER").first()
-            if not default_role:
-                raise HTTPException(status_code=500, detail="Default role 'user' not found")
-            user.roles.append(default_role)
+    if us.roles:
+        role_ids = [role.id_role for role in us.roles]
+        roles = db.query(Role).filter(Role.id_role.in_(role_ids)).all()
+        user.roles = roles
+    else:
+        # Assegna il ruolo predefinito "user"
+        default_role = db.query(Role).filter(Role.name == "USER").first()
+        if not default_role:
+            raise ValidationException("Default role 'user' not found")
+        user.roles.append(default_role)
 
-
-        db.add(user)
-        db.commit()
-        return user
-    except IntegrityError:
-        # Log errore generico
-        db.rollback()
-        raise HTTPException(status_code=400, detail="Esiste già un utente con questi dati.")
-    except Exception as e:
-        # Log dell'errore generico
-        print(f"Errore durante la creazione dell'utente: {e}")
-        # Solleva un'altra eccezione HTTP
-        raise HTTPException(status_code=500, detail=f"Errore interno del server: {e}")
+    db.add(user)
+    db.commit()
+    return user
 
 
 @router.post("/login", response_model=Token, status_code=status.HTTP_200_OK)
@@ -94,7 +91,7 @@ async def get_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     """
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
-        raise HTTPException(status_code=401, detail="Credenziali non valide")
+        raise AuthenticationException("Credenziali non valide")
 
     expires_delta = timedelta(days=30)
     expires_at = datetime.utcnow() + expires_delta

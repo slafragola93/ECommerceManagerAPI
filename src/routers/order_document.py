@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, HTTPException, Path, Depends
+from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
 from starlette import status
 from .dependencies import db_dependency, user_dependency, LIMIT_DEFAULT, MAX_LIMIT
 from .. import OrderDocumentSchema, AllOrderDocumentResponseSchema, OrderDocumentResponseSchema
@@ -11,11 +11,8 @@ router = APIRouter(
     tags=['Order Document']
 )
 
-
 def get_repository(db: db_dependency):
     return OrderDocumentRepository(db)
-
-
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllOrderDocumentResponseSchema)
 @check_authentication
@@ -39,7 +36,7 @@ async def get_all_order_documents(
 #     order_detail = odr.get_by_id(_id=order_detail_id)
 # 
 #     if order_detail is None:
-#         raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato.")
+#         raise NotFoundException("Entity", entity_id)
 # 
 #     return order_detail
 # 
@@ -71,30 +68,4 @@ async def get_all_order_documents(
 #                               ods: OrderDocumentchema,
 #                               odr: OrderDocumentRepository = Depends(get_repository),
 #                               order_detail_id: int = Path(gt=0)):
-#     try:
-#         order_detail = odr.get_by_id(_id=order_detail_id)
-# 
-#         if order_detail is None:
-#             raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato.")
-# 
-#         odr.update(edited_order_detail=order_detail,
-#                    data=ods)
-# 
-#     except IntegrityError:
-#         raise HTTPException(status_code=400,
-#                             detail="Errore di integrità dei dati. Verifica i valori unici e i vincoli.")
-# 
-# 
-# @router.delete("/{order_detail_id}", status_code=status.HTTP_200_OK,
-#                response_description="Dettaglio ordine eliminato correttamente")
-# @check_authentication
-# @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
-# async def delete_order_detail(user: user_dependency,
-#                               odr: OrderDocumentRepository = Depends(get_repository),
-#                               order_detail_id: int = Path(gt=0)):
-#     order_detail = odr.get_by_id(_id=order_detail_id)
-# 
-#     if order_detail is None:
-#         raise HTTPException(status_code=404, detail="Corriere non trovato")
-# 
-#     odr.delete(order_detail)
+#     

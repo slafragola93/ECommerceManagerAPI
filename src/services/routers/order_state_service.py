@@ -28,7 +28,7 @@ class OrderStateService(IOrderStateService):
             existing_order_state = self._order_state_repository.get_by_name(order_state_data.name)
             if existing_order_state:
                 raise BusinessRuleException(
-                    f"OrderState with name '{order_state_data.name}' already exists",
+                    f"Stato ordine con nome '{order_state_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": order_state_data.name}
                 )
@@ -39,7 +39,7 @@ class OrderStateService(IOrderStateService):
             order_state = self._order_state_repository.create(order_state)
             return order_state
         except Exception as e:
-            raise ValidationException(f"Error creating order_state: {str(e)}")
+            raise ValidationException(f"Errore nella creazione dello stato ordine: {str(e)}")
     
     async def update_order_state(self, order_state_id: int, order_state_data: OrderStateSchema) -> OrderState:
         """Aggiorna un order_state esistente"""
@@ -52,7 +52,7 @@ class OrderStateService(IOrderStateService):
             existing = self._order_state_repository.get_by_name(order_state_data.name)
             if existing and existing.id_order_state != order_state_id:
                 raise BusinessRuleException(
-                    f"OrderState with name '{order_state_data.name}' already exists",
+                    f"Stato ordine con nome '{order_state_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": order_state_data.name}
                 )
@@ -67,7 +67,7 @@ class OrderStateService(IOrderStateService):
             updated_order_state = self._order_state_repository.update(order_state)
             return updated_order_state
         except Exception as e:
-            raise ValidationException(f"Error updating order_state: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento dello stato ordine: {str(e)}")
     
     async def get_order_state(self, order_state_id: int) -> OrderState:
         """Ottiene un order_state per ID"""
@@ -92,7 +92,7 @@ class OrderStateService(IOrderStateService):
             
             return order_states
         except Exception as e:
-            raise ValidationException(f"Error retrieving order_states: {str(e)}")
+            raise ValidationException(f"Errore nel recupero degli stati ordine: {str(e)}")
     
     async def delete_order_state(self, order_state_id: int) -> bool:
         """Elimina un order_state"""
@@ -102,7 +102,7 @@ class OrderStateService(IOrderStateService):
         try:
             return self._order_state_repository.delete(order_state_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting order_state: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione dello stato ordine: {str(e)}")
     
     async def get_order_states_count(self, **filters) -> int:
         """Ottiene il numero totale di order_state con filtri"""
@@ -110,7 +110,7 @@ class OrderStateService(IOrderStateService):
             # Usa il repository con i filtri
             return self._order_state_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting order_states: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio degli stati ordine: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per OrderState"""

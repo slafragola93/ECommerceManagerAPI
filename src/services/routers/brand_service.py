@@ -28,7 +28,7 @@ class BrandService(IBrandService):
             existing_brand = self._brand_repository.get_by_name(brand_data.name)
             if existing_brand:
                 raise BusinessRuleException(
-                    f"Brand with name '{brand_data.name}' already exists",
+                    f"Brand con nome '{brand_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": brand_data.name}
                 )
@@ -47,7 +47,7 @@ class BrandService(IBrandService):
             brand = self._brand_repository.create(brand)
             return brand
         except Exception as e:
-            raise ValidationException(f"Error creating brand: {str(e)}")
+            raise ValidationException(f"Errore nella creazione del brand: {str(e)}")
     
     async def update_brand(self, brand_id: int, brand_data: BrandSchema) -> Brand:
         """Aggiorna un brand esistente"""
@@ -60,7 +60,7 @@ class BrandService(IBrandService):
             existing = self._brand_repository.get_by_name(brand_data.name)
             if existing and existing.id_brand != brand_id:
                 raise BusinessRuleException(
-                    f"Brand with name '{brand_data.name}' already exists",
+                    f"Brand con nome '{brand_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": brand_data.name}
                 )
@@ -75,7 +75,7 @@ class BrandService(IBrandService):
             updated_brand = self._brand_repository.update(brand)
             return updated_brand
         except Exception as e:
-            raise ValidationException(f"Error updating brand: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento del brand: {str(e)}")
     
     async def get_brand(self, brand_id: int) -> Brand:
         """Ottiene un brand per ID"""
@@ -100,7 +100,7 @@ class BrandService(IBrandService):
             
             return brands
         except Exception as e:
-            raise ValidationException(f"Error retrieving brands: {str(e)}")
+            raise ValidationException(f"Errore nel recupero dei brand: {str(e)}")
     
     async def delete_brand(self, brand_id: int) -> bool:
         """Elimina un brand"""
@@ -110,7 +110,7 @@ class BrandService(IBrandService):
         try:
             return self._brand_repository.delete(brand_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting brand: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione del brand: {str(e)}")
     
     async def get_brands_count(self, **filters) -> int:
         """Ottiene il numero totale di brand con filtri"""
@@ -118,7 +118,7 @@ class BrandService(IBrandService):
             # Usa il repository con i filtri
             return self._brand_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting brands: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio dei brand: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Brand"""

@@ -28,7 +28,7 @@ class CountryService(ICountryService):
             existing_country = self._country_repository.get_by_name(country_data.name)
             if existing_country:
                 raise BusinessRuleException(
-                    f"Country with name '{country_data.name}' already exists",
+                    f"Paese con nome '{country_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": country_data.name}
                 )
@@ -39,7 +39,7 @@ class CountryService(ICountryService):
             country = self._country_repository.create(country)
             return country
         except Exception as e:
-            raise ValidationException(f"Error creating country: {str(e)}")
+            raise ValidationException(f"Errore nella creazione del paese: {str(e)}")
     
     async def update_country(self, country_id: int, country_data: CountrySchema) -> Country:
         """Aggiorna un country esistente"""
@@ -52,7 +52,7 @@ class CountryService(ICountryService):
             existing = self._country_repository.get_by_name(country_data.name)
             if existing and existing.id_country != country_id:
                 raise BusinessRuleException(
-                    f"Country with name '{country_data.name}' already exists",
+                    f"Paese con nome '{country_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": country_data.name}
                 )
@@ -67,7 +67,7 @@ class CountryService(ICountryService):
             updated_country = self._country_repository.update(country)
             return updated_country
         except Exception as e:
-            raise ValidationException(f"Error updating country: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento del paese: {str(e)}")
     
     async def get_country(self, country_id: int) -> Country:
         """Ottiene un country per ID"""
@@ -92,7 +92,7 @@ class CountryService(ICountryService):
             
             return countries
         except Exception as e:
-            raise ValidationException(f"Error retrieving countries: {str(e)}")
+            raise ValidationException(f"Errore nel recupero dei paesi: {str(e)}")
     
     async def delete_country(self, country_id: int) -> bool:
         """Elimina un country"""
@@ -102,7 +102,7 @@ class CountryService(ICountryService):
         try:
             return self._country_repository.delete(country_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting country: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione del paese: {str(e)}")
     
     async def get_countries_count(self, **filters) -> int:
         """Ottiene il numero totale di country con filtri"""
@@ -110,7 +110,7 @@ class CountryService(ICountryService):
             # Usa il repository con i filtri
             return self._country_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting countries: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio dei paesi: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Country"""

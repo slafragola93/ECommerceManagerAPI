@@ -334,32 +334,24 @@ async def generate_ddt_from_order(
     Raises:
         HTTPException: Se l'ordine non esiste o non può essere convertito in DDT
     """
-    try:
-        # Importa il DDTService
-        from src.services.routers.ddt_service import DDTService
-        ddt_service = DDTService(or_repo.session)
-        
-        # Genera il DDT
-        result = ddt_service.generate_ddt_from_order(id_order, user["id"])
-        
-        if not result.success:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=result.message
-            )
-        
-        return {
-            "message": result.message,
-            "ddt": result.ddt.dict() if result.ddt else None
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
+    # Importa il DDTService
+    from src.services.routers.ddt_service import DDTService
+    ddt_service = DDTService(or_repo.session)
+    
+    # Genera il DDT
+    result = ddt_service.generate_ddt_from_order(id_order, user["id"])
+    
+    if not result.success:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Errore interno: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message
         )
+    
+    return {
+        "message": result.message,
+        "ddt": result.ddt.dict() if result.ddt else None
+    }
+
 
 
 @router.get("/generate-ddt-pdf/{id_order_document}",
@@ -388,50 +380,43 @@ async def generate_ddt_pdf(
     Raises:
         HTTPException: Se il DDT non esiste
     """
-    try:
-        # Importa il DDTService
-        from src.services.routers.ddt_service import DDTService
-        ddt_service = DDTService(or_repo.session)
-        
-        # Verifica che il DDT esista
-        ddt = ddt_service.get_ddt_complete(id_order_document)
-        if not ddt:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="DDT non trovato"
-            )
-        
-        # Genera il PDF
-        pdf_content = ddt_service.generate_ddt_pdf(id_order_document)
-        
-        # Restituisce il PDF come risposta
-        from fastapi.responses import StreamingResponse
-        from io import BytesIO
-        
-        # Crea un buffer per il PDF
-        pdf_buffer = BytesIO(pdf_content)
-        
-        # Determina nome file
-        filename = f"DDT-{ddt.document_number}.pdf"
-        
-        # Ritorna PDF con headers per forzare download
-        return StreamingResponse(
-            pdf_buffer,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Cache-Control": "no-cache",
-                "Content-Type": "application/pdf"
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
+
+    # Importa il DDTService
+    from src.services.routers.ddt_service import DDTService
+    ddt_service = DDTService(or_repo.session)
+    
+    # Verifica che il DDT esista
+    ddt = ddt_service.get_ddt_complete(id_order_document)
+    if not ddt:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Errore interno: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="DDT non trovato"
         )
+    
+    # Genera il PDF
+    pdf_content = ddt_service.generate_ddt_pdf(id_order_document)
+    
+    # Restituisce il PDF come risposta
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    
+    # Crea un buffer per il PDF
+    pdf_buffer = BytesIO(pdf_content)
+    
+    # Determina nome file
+    filename = f"DDT-{ddt.document_number}.pdf"
+    
+    # Ritorna PDF con headers per forzare download
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/pdf"
+        }
+    )
+        
 
 
 @router.put("/ddt/articoli/{id_order_detail}",
@@ -500,71 +485,63 @@ async def update_ddt_articolo(
     - La modifica è permessa solo se l'ordine collegato non è stato fatturato o spedito
     - Il timestamp updated_at del DDT viene aggiornato automaticamente
     """
-    try:
-        from src.services.routers.order_document_service import OrderDocumentService
-        order_doc_service = OrderDocumentService(db)
-        
-        # Verifica che l'articolo esista e sia collegato a un DDT
-        from src.models.order_detail import OrderDetail
-        from src.models.order_document import OrderDocument
-        
-        order_detail = db.query(OrderDetail).filter(
-            OrderDetail.id_order_detail == id_order_detail
-        ).first()
-        
-        if not order_detail:
-            raise HTTPException(status_code=404, detail="Articolo non trovato")
-        
-        # Verifica che sia collegato a un DDT
-        order_document = db.query(OrderDocument).filter(
-            OrderDocument.id_order_document == order_detail.id_order_document
-        ).first()
-        
-        if not order_document or order_document.type_document != "DDT":
-            raise HTTPException(status_code=400, detail="L'articolo non è collegato a un DDT")
-        
-        # Verifica che il DDT sia modificabile
-        if order_document.id_order:
-            is_modifiable = order_doc_service.is_ddt_modifiable(order_document.id_order)
-            if not is_modifiable:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="Il DDT non può essere modificato: l'ordine è già stato fatturato o spedito"
-                )
-        
-        # Aggiorna l'articolo
-        updated_articolo = order_doc_service.update_articolo(
-            id_order_detail, 
-            articolo_data, 
-            "DDT"
-        )
-        
-        if not updated_articolo:
-            raise HTTPException(status_code=404, detail="Errore durante l'aggiornamento dell'articolo")
-        
-        # Restituisci l'articolo aggiornato
-        return {
-            "id_order_detail": updated_articolo.id_order_detail,
-            "product_name": updated_articolo.product_name,
-            "product_reference": updated_articolo.product_reference,
-            "product_price": updated_articolo.product_price,
-            "product_qty": updated_articolo.product_qty,
-            "product_weight": updated_articolo.product_weight,
-            "id_tax": updated_articolo.id_tax,
-            "reduction_percent": updated_articolo.reduction_percent,
-            "reduction_amount": updated_articolo.reduction_amount,
-            "rda": updated_articolo.rda,
-            "message": "Articolo DDT aggiornato con successo"
-        }
-        
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
-
+    from src.services.routers.order_document_service import OrderDocumentService
+    order_doc_service = OrderDocumentService(db)
+    
+    # Verifica che l'articolo esista e sia collegato a un DDT
+    from src.models.order_detail import OrderDetail
+    from src.models.order_document import OrderDocument
+    
+    order_detail = db.query(OrderDetail).filter(
+        OrderDetail.id_order_detail == id_order_detail
+    ).first()
+    
+    if not order_detail:
+        raise HTTPException(status_code=404, detail="Articolo non trovato")
+    
+    # Verifica che sia collegato a un DDT
+    order_document = db.query(OrderDocument).filter(
+        OrderDocument.id_order_document == order_detail.id_order_document
+    ).first()
+    
+    if not order_document or order_document.type_document != "DDT":
+        raise HTTPException(status_code=400, detail="L'articolo non è collegato a un DDT")
+    
+    # Verifica che il DDT sia modificabile
+    if order_document.id_order:
+        is_modifiable = order_doc_service.is_ddt_modifiable(order_document.id_order)
+        if not is_modifiable:
+            raise HTTPException(
+                status_code=400, 
+                detail="Il DDT non può essere modificato: l'ordine è già stato fatturato o spedito"
+            )
+    
+    # Aggiorna l'articolo
+    updated_articolo = order_doc_service.update_articolo(
+        id_order_detail, 
+        articolo_data, 
+        "DDT"
+    )
+    
+    if not updated_articolo:
+        raise HTTPException(status_code=404, detail="Errore durante l'aggiornamento dell'articolo")
+    
+    # Restituisci l'articolo aggiornato
+    return {
+        "id_order_detail": updated_articolo.id_order_detail,
+        "product_name": updated_articolo.product_name,
+        "product_reference": updated_articolo.product_reference,
+        "product_price": updated_articolo.product_price,
+        "product_qty": updated_articolo.product_qty,
+        "product_weight": updated_articolo.product_weight,
+        "id_tax": updated_articolo.id_tax,
+        "reduction_percent": updated_articolo.reduction_percent,
+        "reduction_amount": updated_articolo.reduction_amount,
+        "rda": updated_articolo.rda,
+        "message": "Articolo DDT aggiornato con successo"
+    }
+    
 # ==================== ENDPOINT PER I RESI ====================
 
 @router.post("/{id_order}/returns", 
@@ -593,28 +570,25 @@ async def create_return(
     - Il totale con IVA inclusa
     - Se il reso è parziale o totale
     """
-    try:
-        # Verifica che l'ordine esista
-        from src.models.order import Order
-        from src.database import get_db
-        db = next(get_db())
-        order = db.query(Order).filter(Order.id_order == id_order).first()
-        if not order:
-            raise HTTPException(status_code=404, detail=f"Ordine {id_order} non trovato")
+
+    # Verifica che l'ordine esista
+    from src.models.order import Order
+    from src.database import get_db
+    db = next(get_db())
+    order = db.query(Order).filter(Order.id_order == id_order).first()
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Ordine {id_order} non trovato")
+    
+    # Crea il reso
+    return_doc = await fiscal_document_service.create_return(id_order, return_data)
+    
+    return {
+        "message": "Reso creato con successo",
+        "return_document": ReturnResponseSchema.from_orm(return_doc),
+        "return_id": return_doc.id_fiscal_document
+    }
         
-        # Crea il reso
-        return_doc = await fiscal_document_service.create_return(id_order, return_data)
-        
-        return {
-            "message": "Reso creato con successo",
-            "return_document": ReturnResponseSchema.from_orm(return_doc),
-            "return_id": return_doc.id_fiscal_document
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
 
 
 @router.get("/{id_order}/returns", 
@@ -632,19 +606,14 @@ async def get_order_returns(
     """
     Recupera tutti i documenti di reso per un ordine specifico.
     """
-    try:
-        returns = await fiscal_document_service.get_fiscal_documents_by_order(id_order, 'return')
-        
-        return {
-            "returns": [ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
-            "total": len(returns),
-            "order_id": id_order
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    returns = await fiscal_document_service.get_fiscal_documents_by_order(id_order, 'return')
+    
+    return {
+        "returns": [ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
+        "total": len(returns),
+        "order_id": id_order
+    }
+
 
 
 @router.put("/returns/{id_fiscal_document}", 
@@ -668,18 +637,13 @@ async def update_return(
     - Le note del reso
     - Se includere le spese di spedizione (con ricalcolo automatico del totale)
     """
-    try:
-        updated_return = await fiscal_document_service.update_fiscal_document(id_fiscal_document, update_data)
-        
-        return {
-            "message": "Reso aggiornato con successo",
-            "return_document": ReturnResponseSchema.from_orm(updated_return)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    updated_return = await fiscal_document_service.update_fiscal_document(id_fiscal_document, update_data)
+    
+    return {
+        "message": "Reso aggiornato con successo",
+        "return_document": ReturnResponseSchema.from_orm(updated_return)
+    }
+    
 
 
 @router.delete("/returns/{id_fiscal_document}", 
@@ -699,18 +663,8 @@ async def delete_return(
     
     Nota: Solo i resi in stato 'pending' possono essere eliminati.
     """
-    try:
-        deleted = await fiscal_document_service.delete_fiscal_document(id_fiscal_document)
-        
-        if deleted:
-            return {"message": "Reso eliminato con successo"}
-        else:
-            raise HTTPException(status_code=404, detail="Reso non trovato o non eliminabile")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    return await fiscal_document_service.delete_fiscal_document(id_fiscal_document)
+
 
 
 @router.put("/returns/details/{id_fiscal_document_detail}", 
@@ -735,18 +689,13 @@ async def update_return_detail(
     
     Il totale del reso viene ricalcolato automaticamente.
     """
-    try:
-        updated_detail = await fiscal_document_service.update_fiscal_document_detail(id_fiscal_document_detail, update_data)
+    updated_detail = await fiscal_document_service.update_fiscal_document_detail(id_fiscal_document_detail, update_data)
+    
+    return {
+        "message": "Dettaglio reso aggiornato con successo",
+        "detail": updated_detail
+    }
         
-        return {
-            "message": "Dettaglio reso aggiornato con successo",
-            "detail": updated_detail
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
 @router.delete("/returns/details/{id_fiscal_document_detail}", 
@@ -766,18 +715,7 @@ async def delete_return_detail(
     
     Il totale del reso viene ricalcolato automaticamente.
     """
-    try:
-        deleted = await fiscal_document_service.delete_fiscal_document_detail(id_fiscal_document_detail)
-        
-        if deleted:
-            return {"message": "Dettaglio reso eliminato con successo"}
-        else:
-            raise HTTPException(status_code=404, detail="Dettaglio reso non trovato")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    return await fiscal_document_service.delete_fiscal_document_detail(id_fiscal_document_detail)
 
 
 @router.get("/returns/", 
@@ -796,20 +734,13 @@ async def get_all_returns(
     """
     Recupera tutti i documenti di reso con paginazione.
     """
-    try:
-        returns = await fiscal_document_service.get_fiscal_documents_by_type('return', page, limit)
-        total_count = await fiscal_document_service.get_fiscal_document_count_by_type('return')
-        
-        return AllReturnsResponseSchema(
-            returns=[ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
-            total=total_count,
-            page=page,
-            limit=limit
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
+    returns = await fiscal_document_service.get_fiscal_documents_by_type('return', page, limit)
+    total_count = await fiscal_document_service.get_fiscal_document_count_by_type('return')
+    
+    return AllReturnsResponseSchema(
+        returns=[ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
+        total=total_count,
+        page=page,
+        limit=limit
+    )
 

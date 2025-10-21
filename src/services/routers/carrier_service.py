@@ -28,7 +28,7 @@ class CarrierService(ICarrierService):
             existing_carrier = self._carrier_repository.get_by_name(carrier_data.name)
             if existing_carrier:
                 raise BusinessRuleException(
-                    f"Carrier with name '{carrier_data.name}' already exists",
+                    f"Corriere con nome '{carrier_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": carrier_data.name}
                 )
@@ -39,7 +39,7 @@ class CarrierService(ICarrierService):
             carrier = self._carrier_repository.create(carrier)
             return carrier
         except Exception as e:
-            raise ValidationException(f"Error creating carrier: {str(e)}")
+            raise ValidationException(f"Errore nella creazione del corriere: {str(e)}")
     
     async def update_carrier(self, carrier_id: int, carrier_data: CarrierSchema) -> Carrier:
         """Aggiorna un carrier esistente"""
@@ -52,7 +52,7 @@ class CarrierService(ICarrierService):
             existing = self._carrier_repository.get_by_name(carrier_data.name)
             if existing and existing.id_carrier != carrier_id:
                 raise BusinessRuleException(
-                    f"Carrier with name '{carrier_data.name}' already exists",
+                    f"Corriere con nome '{carrier_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": carrier_data.name}
                 )
@@ -67,7 +67,7 @@ class CarrierService(ICarrierService):
             updated_carrier = self._carrier_repository.update(carrier)
             return updated_carrier
         except Exception as e:
-            raise ValidationException(f"Error updating carrier: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento del corriere: {str(e)}")
     
     async def get_carrier(self, carrier_id: int) -> Carrier:
         """Ottiene un carrier per ID"""
@@ -92,7 +92,7 @@ class CarrierService(ICarrierService):
             
             return carriers
         except Exception as e:
-            raise ValidationException(f"Error retrieving carriers: {str(e)}")
+            raise ValidationException(f"Errore nel recupero dei corrieri: {str(e)}")
     
     async def delete_carrier(self, carrier_id: int) -> bool:
         """Elimina un carrier"""
@@ -102,7 +102,7 @@ class CarrierService(ICarrierService):
         try:
             return self._carrier_repository.delete(carrier_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting carrier: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione del corriere: {str(e)}")
     
     async def get_carriers_count(self, **filters) -> int:
         """Ottiene il numero totale di carrier con filtri"""
@@ -110,7 +110,7 @@ class CarrierService(ICarrierService):
             # Usa il repository con i filtri
             return self._carrier_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting carriers: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio dei corrieri: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Carrier"""

@@ -28,7 +28,7 @@ class ProductService(IProductService):
             existing_product = self._product_repository.get_by_name(product_data.name)
             if existing_product:
                 raise BusinessRuleException(
-                    f"Product with name '{product_data.name}' already exists",
+                    f"Prodotto con nome '{product_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": product_data.name}
                 )
@@ -39,7 +39,7 @@ class ProductService(IProductService):
             product = self._product_repository.create(product)
             return product
         except Exception as e:
-            raise ValidationException(f"Error creating product: {str(e)}")
+            raise ValidationException(f"Errore nella creazione del prodotto: {str(e)}")
     
     async def update_product(self, product_id: int, product_data: ProductSchema) -> Product:
         """Aggiorna un product esistente"""
@@ -52,7 +52,7 @@ class ProductService(IProductService):
             existing = self._product_repository.get_by_name(product_data.name)
             if existing and existing.id_product != product_id:
                 raise BusinessRuleException(
-                    f"Product with name '{product_data.name}' already exists",
+                    f"Prodotto con nome '{product_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": product_data.name}
                 )
@@ -67,7 +67,7 @@ class ProductService(IProductService):
             updated_product = self._product_repository.update(product)
             return updated_product
         except Exception as e:
-            raise ValidationException(f"Error updating product: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento del prodotto: {str(e)}")
     
     async def get_product(self, product_id: int) -> Product:
         """Ottiene un product per ID"""
@@ -92,7 +92,7 @@ class ProductService(IProductService):
             
             return products
         except Exception as e:
-            raise ValidationException(f"Error retrieving products: {str(e)}")
+            raise ValidationException(f"Errore nel recupero dei prodotti: {str(e)}")
     
     async def delete_product(self, product_id: int) -> bool:
         """Elimina un product"""
@@ -102,7 +102,7 @@ class ProductService(IProductService):
         try:
             return self._product_repository.delete(product_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting product: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione del prodotto: {str(e)}")
     
     async def get_products_count(self, **filters) -> int:
         """Ottiene il numero totale di product con filtri"""
@@ -110,7 +110,7 @@ class ProductService(IProductService):
             # Usa il repository con i filtri
             return self._product_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting products: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio dei prodotti: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Product"""

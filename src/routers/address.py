@@ -2,7 +2,7 @@
 Address Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.address_service_interface import IAddressService
 from src.repository.interfaces.address_repository_interface import IAddressRepository
 from src.schemas.address_schema import AddressSchema, AddressResponseSchema, AllAddressResponseSchema
@@ -56,18 +56,11 @@ async def get_all_addresses(
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
-    try:
-        addresses = await address_service.get_addresses(page=page, limit=limit)
-        if not addresses:
-            raise HTTPException(status_code=404, detail="Nessun address trovato")
+    addresses = await address_service.get_addresses(page=page, limit=limit)
+    total_count = await address_service.get_addresses_count()
 
-        total_count = await address_service.get_addresses_count()
-
-        return {"addresses": addresses, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return {"addresses": addresses, "total": total_count, "page": page, "limit": limit}
+    
 
 @router.get("/{address_id}", status_code=status.HTTP_200_OK, response_model=AddressResponseSchema)
 @check_authentication
@@ -82,13 +75,8 @@ async def get_address_by_id(
 
     - **address_id**: Identificativo del address da ricercare.
     """
-    try:
-        address = await address_service.get_address(address_id)
-        return address
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Address non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    address = await address_service.get_address(address_id)
+    return address
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Address creato correttamente")
 @check_authentication
@@ -101,14 +89,7 @@ async def create_address(
     """
     Crea un nuovo address con i dati forniti.
     """
-    try:
-        return await address_service.create_address(address_data)
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await address_service.create_address(address_data)
 
 @router.put("/{address_id}", status_code=status.HTTP_200_OK, response_description="Address aggiornato correttamente")
 @check_authentication
@@ -124,16 +105,7 @@ async def update_address(
 
     - **address_id**: Identificativo del address da aggiornare.
     """
-    try:
-        return await address_service.update_address(address_id, address_data)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Address non trovato")
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await address_service.update_address(address_id, address_data)
 
 @router.delete("/{address_id}", status_code=status.HTTP_200_OK, response_description="Address eliminato correttamente")
 @check_authentication
@@ -148,9 +120,4 @@ async def delete_address(
 
     - **address_id**: Identificativo del address da eliminare.
     """
-    try:
-        await address_service.delete_address(address_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Address non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    await address_service.delete_address(address_id)

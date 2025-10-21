@@ -28,7 +28,7 @@ class LangService(ILangService):
             existing_lang = self._lang_repository.get_by_name(lang_data.name)
             if existing_lang:
                 raise BusinessRuleException(
-                    f"Lang with name '{lang_data.name}' already exists",
+                    f"Lingua '{lang_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": lang_data.name}
                 )
@@ -39,7 +39,7 @@ class LangService(ILangService):
             lang = self._lang_repository.create(lang)
             return lang
         except Exception as e:
-            raise ValidationException(f"Error creating lang: {str(e)}")
+            raise ValidationException(f"Errore nella creazione della lingua: {str(e)}")
     
     async def update_lang(self, lang_id: int, lang_data: LangSchema) -> Lang:
         """Aggiorna un lang esistente"""
@@ -52,7 +52,7 @@ class LangService(ILangService):
             existing = self._lang_repository.get_by_name(lang_data.name)
             if existing and existing.id_lang != lang_id:
                 raise BusinessRuleException(
-                    f"Lang with name '{lang_data.name}' already exists",
+                    f"Lingua '{lang_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": lang_data.name}
                 )
@@ -67,7 +67,7 @@ class LangService(ILangService):
             updated_lang = self._lang_repository.update(lang)
             return updated_lang
         except Exception as e:
-            raise ValidationException(f"Error updating lang: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento della lingua: {str(e)}")
     
     async def get_lang(self, lang_id: int) -> Lang:
         """Ottiene un lang per ID"""
@@ -92,7 +92,7 @@ class LangService(ILangService):
             
             return langs
         except Exception as e:
-            raise ValidationException(f"Error retrieving langs: {str(e)}")
+            raise ValidationException(f"Errore nella ricerca delle lingue: {str(e)}")
     
     async def delete_lang(self, lang_id: int) -> bool:
         """Elimina un lang"""
@@ -102,7 +102,7 @@ class LangService(ILangService):
         try:
             return self._lang_repository.delete(lang_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting lang: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione della lingua: {str(e)}")
     
     async def get_langs_count(self, **filters) -> int:
         """Ottiene il numero totale di lang con filtri"""
@@ -110,7 +110,7 @@ class LangService(ILangService):
             # Usa il repository con i filtri
             return self._lang_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting langs: {str(e)}")
+            raise ValidationException(f"Errore nella ricerca del numero di lingue: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Lang"""

@@ -37,7 +37,7 @@ class UserService(IUserService):
             existing_username = self._user_repository.get_by_username(user_data.username)
             if existing_username:
                 raise BusinessRuleException(
-                    f"User with username '{user_data.username}' already exists",
+                    f"Utente con username '{user_data.username}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"username": user_data.username}
                 )
@@ -48,7 +48,7 @@ class UserService(IUserService):
             user = self._user_repository.create(user)
             return user
         except Exception as e:
-            raise ValidationException(f"Error creating user: {str(e)}")
+            raise ValidationException(f"Errore nella creazione dell'utente: {str(e)}")
     
     async def update_user(self, user_id: int, user_data: UserSchema) -> User:
         """Aggiorna un utente esistente"""
@@ -73,7 +73,7 @@ class UserService(IUserService):
             updated_user = self._user_repository.update(user)
             return updated_user
         except Exception as e:
-            raise ValidationException(f"Error updating user: {str(e)}")
+            raise ValidationException(f"Errore nell'aggiornamento dell'utente: {str(e)}")
     
     async def get_user(self, user_id: int) -> User:
         """Ottiene un utente per ID"""
@@ -98,7 +98,7 @@ class UserService(IUserService):
             
             return users
         except Exception as e:
-            raise ValidationException(f"Error retrieving users: {str(e)}")
+            raise ValidationException(f"Errore nel recupero degli utenti: {str(e)}")
     
     async def delete_user(self, user_id: int) -> bool:
         """Elimina un utente"""
@@ -108,7 +108,7 @@ class UserService(IUserService):
         try:
             return self._user_repository.delete(user_id)
         except Exception as e:
-            raise ValidationException(f"Error deleting user: {str(e)}")
+            raise ValidationException(f"Errore nell'eliminazione dell'utente: {str(e)}")
     
     async def get_users_count(self, **filters) -> int:
         """Ottiene il numero totale di utenti con filtri"""
@@ -116,7 +116,7 @@ class UserService(IUserService):
             # Usa il repository con i filtri
             return self._user_repository.get_count(**filters)
         except Exception as e:
-            raise ValidationException(f"Error counting users: {str(e)}")
+            raise ValidationException(f"Errore nel conteggio degli utenti: {str(e)}")
     
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per User"""

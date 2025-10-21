@@ -56,18 +56,14 @@ async def get_all_order_packages(
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
-    try:
-        order_packages = await order_package_service.get_order_packages(page=page, limit=limit)
-        if not order_packages:
-            raise HTTPException(status_code=404, detail="Nessun order_package trovato")
 
-        total_count = await order_package_service.get_order_packages_count()
+    order_packages = await order_package_service.get_order_packages(page=page, limit=limit)
+    if not order_packages:
+        raise HTTPException(status_code=404, detail="Nessun order_package trovato")
 
-        return {"order_packages": order_packages, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    total_count = await order_package_service.get_order_packages_count()
+
+    return {"order_packages": order_packages, "total": total_count, "page": page, "limit": limit}
 
 @router.get("/{order_package_id}", status_code=status.HTTP_200_OK, response_model=OrderPackageResponseSchema)
 @check_authentication
@@ -82,13 +78,7 @@ async def get_order_package_by_id(
 
     - **order_package_id**: Identificativo del order_package da ricercare.
     """
-    try:
-        order_package = await order_package_service.get_order_package(order_package_id)
-        return order_package
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="OrderPackage non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await order_package_service.get_order_package(order_package_id)
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="OrderPackage creato correttamente")
 @check_authentication
@@ -101,14 +91,7 @@ async def create_order_package(
     """
     Crea un nuovo order_package con i dati forniti.
     """
-    try:
-        return await order_package_service.create_order_package(order_package_data)
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await order_package_service.create_order_package(order_package_data)
 
 @router.put("/{order_package_id}", status_code=status.HTTP_200_OK, response_description="OrderPackage aggiornato correttamente")
 @check_authentication
@@ -124,16 +107,7 @@ async def update_order_package(
 
     - **order_package_id**: Identificativo del order_package da aggiornare.
     """
-    try:
-        return await order_package_service.update_order_package(order_package_id, order_package_data)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="OrderPackage non trovato")
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await order_package_service.update_order_package(order_package_id, order_package_data)
 
 @router.delete("/{order_package_id}", status_code=status.HTTP_200_OK, response_description="OrderPackage eliminato correttamente")
 @check_authentication
@@ -148,9 +122,4 @@ async def delete_order_package(
 
     - **order_package_id**: Identificativo del order_package da eliminare.
     """
-    try:
-        await order_package_service.delete_order_package(order_package_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="OrderPackage non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    await order_package_service.delete_order_package(order_package_id)

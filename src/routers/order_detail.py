@@ -60,27 +60,22 @@ async def get_all_order_details(
     - `page`: Pagina corrente per la paginazione.
     - `limit`: Numero di record per pagina.
     """
-    try:
-        filters = {
+    filters = {
             'order_ids': order_ids,
             'order_document_ids': order_document_ids,
             'product_ids': product_ids
         }
         
-        order_details = await order_detail_service.get_order_details(
-            page=page, limit=limit, **filters
-        )
-        
-        if not order_details:
-            raise HTTPException(status_code=404, detail="Nessun dettaglio ordine trovato")
+    order_details = await order_detail_service.get_order_details(
+        page=page, limit=limit, **filters
+    )
+    
+    if not order_details:
+        raise HTTPException(status_code=404, detail="Nessun dettaglio ordine trovato")
 
-        total_count = await order_detail_service.get_order_details_count(**filters)
+    total_count = await order_detail_service.get_order_details_count(**filters)
 
-        return {"order_details": order_details, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return {"order_details": order_details, "total": total_count, "page": page, "limit": limit}
 
 
 @router.get("/{order_detail_id}", status_code=status.HTTP_200_OK, response_model=OrderDetailResponseSchema)
@@ -98,13 +93,7 @@ async def get_order_detail_by_id(
     - `user`: Dipendenza dell'utente autenticato.
     - `order_detail_id`: ID del dettaglio ordine da recuperare.
     """
-    try:
-        order_detail = await order_detail_service.get_order_detail(order_detail_id)
-        return order_detail
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await order_detail_service.get_order_detail(order_detail_id)
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=OrderDetailResponseSchema, response_description="Dettaglio ordine creato correttamente")
@@ -122,13 +111,7 @@ async def create_order_detail(
     - `user`: Dipendenza dell'utente autenticato.
     - `order_detail_data`: Schema del dettaglio ordine da creare.
     """
-    try:
-        order_detail = await order_detail_service.create_order_detail(order_detail_data)
-        return order_detail
-    except (ValidationException, BusinessRuleException) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await order_detail_service.create_order_detail(order_detail_data)
 
 
 
@@ -150,15 +133,7 @@ async def update_order_detail(
     - `order_detail_data`: Schema del dettaglio ordine con i dati aggiornati.
     - `order_detail_id`: ID del dettaglio ordine da aggiornare.
     """
-    try:
-        order_detail = await order_detail_service.update_order_detail(order_detail_id, order_detail_data)
-        return order_detail
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato")
-    except (ValidationException, BusinessRuleException) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await order_detail_service.update_order_detail(order_detail_id, order_detail_data)
 
 
 @router.delete("/{order_detail_id}", status_code=status.HTTP_200_OK, response_description="Dettaglio ordine eliminato correttamente")
@@ -176,12 +151,7 @@ async def delete_order_detail(
     - `user`: Dipendenza dell'utente autenticato.
     - `order_detail_id`: ID del dettaglio ordine da eliminare.
     """
-    try:
-        success = await order_detail_service.delete_order_detail(order_detail_id)
-        if not success:
-            raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del dettaglio ordine.")
-        return {"message": "Dettaglio ordine eliminato correttamente"}
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Dettaglio ordine non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    success = await order_detail_service.delete_order_detail(order_detail_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del dettaglio ordine.")
+    return {"message": "Dettaglio ordine eliminato correttamente"}

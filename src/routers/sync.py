@@ -69,32 +69,24 @@ async def sync_prestashop(
         400 Bad Request: Missing configuration or invalid platform
         500 Internal Server Error: Failed to start synchronization
     """
-    try:
-        # Start background synchronization
-        background_tasks.add_task(
-            _run_prestashop_sync,
-            db=db,
-            platform_id=platform.id_platform,
-            new_elements=True,
-            limit=limit
-        )
+    # Start background synchronization
+    background_tasks.add_task(
+        _run_prestashop_sync,
+        db=db,
+        platform_id=platform.id_platform,
+        new_elements=True,
+        limit=limit
+    )
+    
+    return {
+        "message": "PrestaShop incremental synchronization started",
+        "status": "accepted",
+        "sync_type": "incremental",
+        "platform_id": platform.id_platform,
+        "platform_name": platform.name,
+        "sync_id": f"prestashop_incremental_{user['id']}_{int(__import__('time').time())}"
+    }
         
-        return {
-            "message": "PrestaShop incremental synchronization started",
-            "status": "accepted",
-            "sync_type": "incremental",
-            "platform_id": platform.id_platform,
-            "platform_name": platform.name,
-            "sync_id": f"prestashop_incremental_{user['id']}_{int(__import__('time').time())}"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to start PrestaShop synchronization: {str(e)}"
-        )
 
 @router.post("/prestashop/full", status_code=status.HTTP_202_ACCEPTED)
 @check_authentication
@@ -119,31 +111,22 @@ async def sync_prestashop_full(
         400 Bad Request: Missing configuration or invalid platform
         500 Internal Server Error: Failed to start synchronization
     """
-    try:
-        # Start background synchronization
-        background_tasks.add_task(
-            _run_prestashop_sync,
-            db=db,
-            platform_id=platform.id_platform,
-            new_elements=False
-        )
-        
-        return {
-            "message": "PrestaShop full synchronization started",
-            "status": "accepted",
-            "sync_type": "full",
-            "platform_id": platform.id_platform,
-            "platform_name": platform.name,
-            "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to start PrestaShop synchronization: {str(e)}"
-        )
+    # Start background synchronization
+    background_tasks.add_task(
+        _run_prestashop_sync,
+        db=db,
+        platform_id=platform.id_platform,
+        new_elements=False
+    )
+    
+    return {
+        "message": "PrestaShop full synchronization started",
+        "status": "accepted",
+        "sync_type": "full",
+        "platform_id": platform.id_platform,
+        "platform_name": platform.name,
+        "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
+    }
 
 
 @router.get("/prestashop/status", status_code=status.HTTP_200_OK)
@@ -190,26 +173,16 @@ async def get_prestashop_last_imported_ids(
     Returns:
         Dict with table names and their last imported ID origins
     """
-    try:
-        # Create a temporary service instance to get last IDs
-        async with PrestaShopService(db, platform_id=platform.id_platform) as ps_service:
-            last_ids = await ps_service._get_last_imported_ids()
-            
-            return {
-                "last_imported_ids": last_ids,
-                "platform_id": platform.id_platform,
-                "platform_name": platform.name,
-                "message": "Last imported IDs retrieved successfully",
-                "note": "These IDs represent the highest ID origin imported for each table"
-            }
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get last imported IDs: {str(e)}"
-        )
+    async with PrestaShopService(db, platform_id=platform.id_platform) as ps_service:
+        last_ids = await ps_service._get_last_imported_ids()
+        
+        return {
+            "last_imported_ids": last_ids,
+            "platform_id": platform.id_platform,
+            "platform_name": platform.name,
+            "message": "Last imported IDs retrieved successfully",
+            "note": "These IDs represent the highest ID origin imported for each table"
+        }
 
 
 async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: bool = True, incremental: bool = None, limit: int = None):
@@ -223,52 +196,46 @@ async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: 
         incremental: Whether to run incremental sync (only new data) - deprecated, use new_elements
         limit: Maximum number of records to process per batch
     """
-    try:
-        # Handle both new_elements and incremental parameters
-        if incremental is not None:
-            new_elements = incremental
+    # Handle both new_elements and incremental parameters
+    if incremental is not None:
+        new_elements = incremental
+    
+    sync_type = "incremental" if new_elements else "full"
+    print(f"Starting PrestaShop {sync_type} synchronization...")
+    print(f"Platform ID: {platform_id}")
+    
+    # Create PrestaShop service instance
+    # Note: limit parameter is not currently supported by PrestaShopService
+    # but we log it for future implementation
+    if limit:
+        print(f"Limit parameter set to {limit} (not yet implemented in PrestaShopService)")
+    
+    async with PrestaShopService(db, platform_id, new_elements=new_elements) as ps_service:
+        print(f"Base URL: {ps_service.base_url}")
+        print(f"API Key: {ps_service.api_key[:10]}...")
+        # Run synchronization based on type
+        results = await ps_service.sync_all_data()
         
-        sync_type = "incremental" if new_elements else "full"
-        print(f"Starting PrestaShop {sync_type} synchronization...")
-        print(f"Platform ID: {platform_id}")
+        print(f"{sync_type.capitalize()} synchronization completed:")
+        print(f"  Total processed: {results['total_processed']}")
+        print(f"  Total errors: {results['total_errors']}")
+        print(f"  Status: {results['status']}")
         
-        # Create PrestaShop service instance
-        # Note: limit parameter is not currently supported by PrestaShopService
-        # but we log it for future implementation
-        if limit:
-            print(f"Limit parameter set to {limit} (not yet implemented in PrestaShopService)")
+        if new_elements and 'last_ids' in results:
+            print(f"  Last imported IDs: {results['last_ids']}")
         
-        async with PrestaShopService(db, platform_id, new_elements=new_elements) as ps_service:
-            print(f"Base URL: {ps_service.base_url}")
-            print(f"API Key: {ps_service.api_key[:10]}...")
-            # Run synchronization based on type
-            results = await ps_service.sync_all_data()
+        # Log detailed results
+        for phase in results['phases']:
+            print(f"  Phase: {phase['phase']}")
+            print(f"    Processed: {phase['total_processed']}")
+            print(f"    Errors: {phase['total_errors']}")
             
-            print(f"{sync_type.capitalize()} synchronization completed:")
-            print(f"  Total processed: {results['total_processed']}")
-            print(f"  Total errors: {results['total_errors']}")
-            print(f"  Status: {results['status']}")
-            
-            if new_elements and 'last_ids' in results:
-                print(f"  Last imported IDs: {results['last_ids']}")
-            
-            # Log detailed results
-            for phase in results['phases']:
-                print(f"  Phase: {phase['phase']}")
-                print(f"    Processed: {phase['total_processed']}")
-                print(f"    Errors: {phase['total_errors']}")
-                
-                for func_result in phase['functions']:
-                    status_icon = "✅" if func_result['status'] == 'SUCCESS' else "❌"
-                    print(f"    {status_icon} {func_result['function']}: {func_result['processed']} records")
-                    if func_result['status'] == 'ERROR':
-                        print(f"      Error: {func_result['error']}")
+            for func_result in phase['functions']:
+                status_icon = "✅" if func_result['status'] == 'SUCCESS' else "❌"
+                print(f"    {status_icon} {func_result['function']}: {func_result['processed']} records")
+                if func_result['status'] == 'ERROR':
+                    print(f"      Error: {func_result['error']}")
         
-    except Exception as e:
-        print(f"PrestaShop {sync_type} synchronization failed: {str(e)}")
-        # TODO: Log error to database or external logging system
-        raise
-
 
 @router.post("/test-connection", status_code=status.HTTP_200_OK)
 @check_authentication
@@ -290,38 +257,20 @@ async def test_prestashop_connection(
         401 Unauthorized: Invalid credentials
         500 Internal Server Error: Connection failed
     """
-    try:
         # Test connection
-        async with PrestaShopService(db, platform_id=platform.id_platform) as ps_service:
-            # Try to get a simple endpoint (languages)
-            try:
-                response = await ps_service._make_request('/api/languages')
-                
-                return {
-                    "status": "success",
-                    "message": "PrestaShop connection successful",
-                    "platform_id": platform.id_platform,
-                    "platform_name": platform.name,
-                    "base_url": ps_service.base_url,
-                    "api_key_preview": f"{ps_service.api_key[:10]}..." if len(ps_service.api_key) > 10 else "***",
-                    "test_endpoint": "/api/languages",
-                    "response_keys": list(response.keys()) if response else [],
-                    "response_sample": str(response)[:500] if response else "No response"
-                }
-            except Exception as e:
-                return {
-                    "status": "error",
-                    "message": f"PrestaShop connection failed: {str(e)}",
-                    "platform_id": platform.id_platform,
-                    "platform_name": platform.name,
-                    "test_endpoint": "/api/languages",
-                    "error_details": str(e)
-                }
+    async with PrestaShopService(db, platform_id=platform.id_platform) as ps_service:
+        # Try to get a simple endpoint (languages)
+        response = await ps_service._make_request('/api/languages')
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"PrestaShop connection test failed: {str(e)}"
-        )
+        return {
+            "status": "success",
+            "message": "PrestaShop connection successful",
+            "platform_id": platform.id_platform,
+            "platform_name": platform.name,
+            "base_url": ps_service.base_url,
+            "api_key_preview": f"{ps_service.api_key[:10]}..." if len(ps_service.api_key) > 10 else "***",
+            "test_endpoint": "/api/languages",
+            "response_keys": list(response.keys()) if response else [],
+            "response_sample": str(response)[:500] if response else "No response"
+        }
+        

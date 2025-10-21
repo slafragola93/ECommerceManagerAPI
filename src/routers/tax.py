@@ -2,7 +2,7 @@
 Tax Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.tax_service_interface import ITaxService
 from src.repository.interfaces.tax_repository_interface import ITaxRepository
 from src.schemas.tax_schema import TaxSchema, TaxResponseSchema, AllTaxesResponseSchema
@@ -21,21 +21,17 @@ from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/taxes",
-    tags=["Tax"]
+    tags=["Tax"],
 )
 
 def get_tax_service(db: db_dependency) -> ITaxService:
     """Dependency injection per Tax Service"""
-    # Configura il container se necessario
     from src.core.container_config import get_configured_container
     configured_container = get_configured_container()
     
-    # Crea il repository con la sessione DB usando il metodo specifico
     tax_repo = configured_container.resolve_with_session(ITaxRepository, db)
-    
-    # Crea il service con il repository
     tax_service = configured_container.resolve(ITaxService)
-    # Inietta il repository nel service
+    
     if hasattr(tax_service, '_tax_repository'):
         tax_service._tax_repository = tax_repo
     
@@ -51,106 +47,75 @@ async def get_all_taxes(
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
 ):
     """
-    Restituisce tutti i tax con supporto alla paginazione.
+    Restituisce tutte le tax con supporto alla paginazione.
     
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
-    try:
-        taxes = await tax_service.get_taxes(page=page, limit=limit)
-        if not taxes:
-            raise HTTPException(status_code=404, detail="Nessun tax trovato")
+    taxes = await tax_service.get_taxes(page=page, limit=limit)
+    if not taxes:
+        raise NotFoundException("Taxes", None)
 
-        total_count = await tax_service.get_taxes_count()
+    total_count = await tax_service.get_taxes_count()
 
-        return {"taxes": taxes, "total": total_count, "page": page, "limit": limit}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return {"taxes": taxes, "total": total_count, "page": page, "limit": limit}
 
 @router.get("/{tax_id}", status_code=status.HTTP_200_OK, response_model=TaxResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_tax_by_id(
+    tax_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    tax_service: ITaxService = Depends(get_tax_service),
-    tax_id: int = Path(gt=0)
+    tax_service: ITaxService = Depends(get_tax_service)
 ):
     """
-    Restituisce un singolo tax basato sull'ID specificato.
+    Restituisce una singola tax basata sull'ID specificato.
 
-    - **tax_id**: Identificativo del tax da ricercare.
+    - **tax_id**: Identificativo della tax da ricercare.
     """
-    try:
-        tax = await tax_service.get_tax(tax_id)
-        return tax
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Tax non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    tax = await tax_service.get_tax(tax_id)
+    return tax
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Tax creato correttamente")
+@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Tax creata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_tax(
     tax_data: TaxSchema,
-    tax_service: ITaxService = Depends(get_tax_service),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tax_service: ITaxService = Depends(get_tax_service)
 ):
     """
-    Crea un nuovo tax con i dati forniti.
+    Crea una nuova tax con i dati forniti.
     """
-    try:
-        return await tax_service.create_tax(tax_data)
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await tax_service.create_tax(tax_data)
 
-@router.put("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax aggiornato correttamente")
+@router.put("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax aggiornata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_tax(
     tax_data: TaxSchema,
-    tax_service: ITaxService = Depends(get_tax_service),
     tax_id: int = Path(gt=0),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tax_service: ITaxService = Depends(get_tax_service)
 ):
     """
-    Aggiorna i dati di un tax esistente basato sull'ID specificato.
+    Aggiorna i dati di una tax esistente basata sull'ID specificato.
 
-    - **tax_id**: Identificativo del tax da aggiornare.
+    - **tax_id**: Identificativo della tax da aggiornare.
     """
-    try:
-        return await tax_service.update_tax(tax_id, tax_data)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Tax non trovato")
-    except ValidationException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except BusinessRuleException as e:
-        raise HTTPException(status_code=400, detail=e.to_dict())
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await tax_service.update_tax(tax_id, tax_data)
 
-@router.delete("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax eliminato correttamente")
+@router.delete("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax eliminata correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_tax(
+    tax_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    tax_service: ITaxService = Depends(get_tax_service),
-    tax_id: int = Path(gt=0)
+    tax_service: ITaxService = Depends(get_tax_service)
 ):
     """
-    Elimina un tax basato sull'ID specificato.
+    Elimina una tax basata sull'ID specificato.
 
-    - **tax_id**: Identificativo del tax da eliminare.
+    - **tax_id**: Identificativo della tax da eliminare.
     """
-    try:
-        await tax_service.delete_tax(tax_id)
-    except NotFoundException as e:
-        raise HTTPException(status_code=404, detail="Tax non trovato")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    await tax_service.delete_tax(tax_id)

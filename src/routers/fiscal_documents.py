@@ -96,18 +96,13 @@ async def get_invoices_by_order(
     
     Un ordine può avere multiple fatture (es. fattura iniziale + integrazioni)
     """
-    try:
-        repo = get_fiscal_repository(db)
-        invoices = repo.get_invoices_by_order(id_order)
-        
-        if not invoices:
-            raise HTTPException(status_code=404, detail=f"Nessuna fattura trovata per ordine {id_order}")
-        
-        return invoices
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    repo = get_fiscal_repository(db)
+    invoices = repo.get_invoices_by_order(id_order)
+    
+    if not invoices:
+        raise HTTPException(status_code=404, detail=f"Nessuna fattura trovata per ordine {id_order}")
+    
+    return invoices
 
 
 
@@ -331,34 +326,29 @@ async def create_credit_note(
     }
     ```
     """
-    try:
-        repo = get_fiscal_repository(db)
-        
-        # Prepara items se parziale
-        items = None
-        if credit_note_data.is_partial and credit_note_data.items:
-            items = [
-                {
-                    'id_order_detail': item.id_order_detail,
-                    'quantity': item.quantity
-                }
-                for item in credit_note_data.items
-            ]
-        
-        credit_note = repo.create_credit_note(
-            id_invoice=credit_note_data.id_invoice,
-            reason=credit_note_data.reason,
-            is_partial=credit_note_data.is_partial,
-            items=items,
-            is_electronic=credit_note_data.is_electronic,
-            include_shipping=credit_note_data.include_shipping
-        )
-        
-        return credit_note
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    repo = get_fiscal_repository(db)
+    
+    # Prepara items se parziale
+    items = None
+    if credit_note_data.is_partial and credit_note_data.items:
+        items = [
+            {
+                'id_order_detail': item.id_order_detail,
+                'quantity': item.quantity
+            }
+            for item in credit_note_data.items
+        ]
+    
+    credit_note = repo.create_credit_note(
+        id_invoice=credit_note_data.id_invoice,
+        reason=credit_note_data.reason,
+        is_partial=credit_note_data.is_partial,
+        items=items,
+        is_electronic=credit_note_data.is_electronic,
+        include_shipping=credit_note_data.include_shipping
+    )
+    
+    return credit_note
 
 
 @router.get("/credit-notes/invoice/{id_invoice}", response_model=List[CreditNoteResponseSchema])
@@ -368,12 +358,9 @@ async def get_credit_notes_by_invoice(
     db: Session = db_dependency
 ):
     """Recupera tutte le note di credito di una fattura"""
-    try:
-        repo = get_fiscal_repository(db)
-        credit_notes = repo.get_credit_notes_by_invoice(id_invoice)
-        return credit_notes
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    repo = get_fiscal_repository(db)
+    credit_notes = repo.get_credit_notes_by_invoice(id_invoice)
+    return credit_notes
 
 
 # ==================== OPERAZIONI GENERICHE ====================
@@ -385,18 +372,13 @@ async def get_fiscal_document(
     db: Session = db_dependency
 ):
     """Recupera documento fiscale per ID (fattura o nota di credito)"""
-    try:
-        repo = get_fiscal_repository(db)
-        doc = repo.get_fiscal_document_by_id(id_fiscal_document)
-        
-        if not doc:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        return doc
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    repo = get_fiscal_repository(db)
+    doc = repo.get_fiscal_document_by_id(id_fiscal_document)
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    
+    return doc
 
 
 @router.get("/", response_model=FiscalDocumentListResponseSchema)
@@ -417,26 +399,23 @@ async def get_fiscal_documents(
     - `is_electronic`: true/false
     - `status`: pending, generated, uploaded, sent, error
     """
-    try:
-        repo = get_fiscal_repository(db)
-        skip = (page - 1) * limit
-        
-        documents = repo.get_fiscal_documents(
-            skip=skip,
-            limit=limit,
-            document_type=document_type,
-            is_electronic=is_electronic,
-            status=status
-        )
-        
-        return FiscalDocumentListResponseSchema(
-            documents=documents,
-            total=len(documents),
-            page=page,
-            limit=limit
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    repo = get_fiscal_repository(db)
+    skip = (page - 1) * limit
+    
+    documents = repo.get_fiscal_documents(
+        skip=skip,
+        limit=limit,
+        document_type=document_type,
+        is_electronic=is_electronic,
+        status=status
+    )
+    
+    return FiscalDocumentListResponseSchema(
+        documents=documents,
+        total=len(documents),
+        page=page,
+        limit=limit
+    )
 
 
 @router.delete("/{id_fiscal_document}", status_code=status.HTTP_204_NO_CONTENT)
@@ -452,20 +431,13 @@ async def delete_fiscal_document(
     - Solo documenti con status='pending' possono essere eliminati
     - Non è possibile eliminare fatture con note di credito collegate
     """
-    try:
-        repo = get_fiscal_repository(db)
-        success = repo.delete_fiscal_document(id_fiscal_document)
-        
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        return None
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    repo = get_fiscal_repository(db)
+    success = repo.delete_fiscal_document(id_fiscal_document)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    
+    return None
 
 
 # ==================== GENERA XML ====================
@@ -486,31 +458,26 @@ async def generate_xml(
     4. Salva XML nel database
     5. Aggiorna status a 'generated'
     """
-    try:
-        fatturapa_service = get_fatturapa_service(db)
-        repo = get_fiscal_repository(db)
-        
-        # Genera XML
-        result = fatturapa_service.generate_xml_from_fiscal_document(id_fiscal_document)
-        
-        if result['status'] == 'error':
-            raise HTTPException(status_code=400, detail=result.get('message', 'Errore generazione XML'))
-        
-        # Aggiorna documento con XML
-        doc = repo.update_fiscal_document_xml(
-            id_fiscal_document=id_fiscal_document,
-            filename=result['filename'],
-            xml_content=result['xml_content']
-        )
-        
-        if not doc:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        return doc
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+    fatturapa_service = get_fatturapa_service(db)
+    repo = get_fiscal_repository(db)
+    
+    # Genera XML
+    result = fatturapa_service.generate_xml_from_fiscal_document(id_fiscal_document)
+    
+    if result['status'] == 'error':
+        raise HTTPException(status_code=400, detail=result.get('message', 'Errore generazione XML'))
+    
+    # Aggiorna documento con XML
+    doc = repo.update_fiscal_document_xml(
+        id_fiscal_document=id_fiscal_document,
+        filename=result['filename'],
+        xml_content=result['xml_content']
+    )
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    
+    return doc
 
 
 @router.patch("/{id_fiscal_document}/status", response_model=FiscalDocumentResponseSchema)
@@ -521,23 +488,17 @@ async def update_status(
     db: Session = db_dependency
 ):
     """Aggiorna status di un documento fiscale"""
-    try:
-        repo = get_fiscal_repository(db)
-        doc = repo.update_fiscal_document_status(
-            id_fiscal_document=id_fiscal_document,
-            status=status_data.status,
-            upload_result=status_data.upload_result
-        )
-        
-        if not doc:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        return doc
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
+    repo = get_fiscal_repository(db)
+    doc = repo.update_fiscal_document_status(
+        id_fiscal_document=id_fiscal_document,
+        status=status_data.status,
+        upload_result=status_data.upload_result
+    )
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    
+    return doc
 
 @router.post("/{id_fiscal_document}/send-to-sdi", response_model=FiscalDocumentResponseSchema)
 async def send_to_sdi(
@@ -565,66 +526,60 @@ async def send_to_sdi(
     - Richiede XML già generato (chiamare prima /generate-xml)
     - Solo per documenti elettronici (is_electronic=True)
     """
-    try:
-        import json
-        
-        repo = get_fiscal_repository(db)
-        fatturapa_service = get_fatturapa_service(db)
-        
-        # Recupera documento
-        doc = repo.get_fiscal_document_by_id(id_fiscal_document)
-        if not doc:
-            raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-        
-        # Verifica che sia elettronico
-        if not doc.is_electronic:
-            raise HTTPException(status_code=400, detail="Il documento non è elettronico, non può essere inviato a FatturaPA")
-        
-        # Verifica che XML sia stato generato
-        if not doc.xml_content or not doc.filename:
-            raise HTTPException(status_code=400, detail="XML non ancora generato. Chiamare prima /generate-xml")
-        
-        # 1. Upload Start
-        name, complete_url = await fatturapa_service.upload_start(doc.filename)
-        if not name or not complete_url:
-            raise HTTPException(status_code=500, detail="UploadStart fallito")
-        
-        # 2. Upload XML
-        upload_success = await fatturapa_service.upload_xml(complete_url, doc.xml_content)
-        if not upload_success:
-            raise HTTPException(status_code=500, detail="Upload XML fallito")
-        
-        # 3. Upload Stop
-        stop_result = await fatturapa_service.upload_stop(name, send_to_sdi=send_to_sdi)
-        
-        # 4. Verifica risultato e aggiorna status
-        if stop_result.get("status") == "error":
-            # Aggiorna con status error
-            repo.update_fiscal_document_status(
-                id_fiscal_document=id_fiscal_document,
-                status="error",
-                upload_result=json.dumps(stop_result) if stop_result else None
-            )
-            # Lancia eccezione con dettagli errore
-            error_message = stop_result.get("message", "Upload Stop fallito")
-            raise HTTPException(status_code=500, detail=f"Errore upload a FatturaPA: {error_message}")
-        
-        # Success - aggiorna status
-        final_status = "sent" if send_to_sdi else "uploaded"
-        
-        doc = repo.update_fiscal_document_status(
+    import json
+    
+    repo = get_fiscal_repository(db)
+    fatturapa_service = get_fatturapa_service(db)
+    
+    # Recupera documento
+    doc = repo.get_fiscal_document_by_id(id_fiscal_document)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    
+    # Verifica che sia elettronico
+    if not doc.is_electronic:
+        raise HTTPException(status_code=400, detail="Il documento non è elettronico, non può essere inviato a FatturaPA")
+    
+    # Verifica che XML sia stato generato
+    if not doc.xml_content or not doc.filename:
+        raise HTTPException(status_code=400, detail="XML non ancora generato. Chiamare prima /generate-xml")
+    
+    # 1. Upload Start
+    name, complete_url = await fatturapa_service.upload_start(doc.filename)
+    if not name or not complete_url:
+        raise HTTPException(status_code=500, detail="UploadStart fallito")
+    
+    # 2. Upload XML
+    upload_success = await fatturapa_service.upload_xml(complete_url, doc.xml_content)
+    if not upload_success:
+        raise HTTPException(status_code=500, detail="Upload XML fallito")
+    
+    # 3. Upload Stop
+    stop_result = await fatturapa_service.upload_stop(name, send_to_sdi=send_to_sdi)
+    
+    # 4. Verifica risultato e aggiorna status
+    if stop_result.get("status") == "error":
+        # Aggiorna con status error
+        repo.update_fiscal_document_status(
             id_fiscal_document=id_fiscal_document,
-            status=final_status,
+            status="error",
             upload_result=json.dumps(stop_result) if stop_result else None
         )
+        # Lancia eccezione con dettagli errore
+        error_message = stop_result.get("message", "Upload Stop fallito")
+        raise HTTPException(status_code=500, detail=f"Errore upload a FatturaPA: {error_message}")
+    
+    # Success - aggiorna status
+    final_status = "sent" if send_to_sdi else "uploaded"
+    
+    doc = repo.update_fiscal_document_status(
+        id_fiscal_document=id_fiscal_document,
+        status=final_status,
+        upload_result=json.dumps(stop_result) if stop_result else None
+    )
+    
+    return doc
         
-        return doc
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
-
 
 # ==================== GENERAZIONE PDF ====================
 
@@ -1095,137 +1050,132 @@ async def generate_fiscal_document_pdf(
     - Se nota di credito senza riferimento fattura → 400
     - Se non ci sono dettagli → 404
     """
-    try:
-        from src.models.fiscal_document import FiscalDocument
-        from src.models.fiscal_document_detail import FiscalDocumentDetail
-        from src.models.order import Order
-        from src.models.order_detail import OrderDetail
-        from src.models.address import Address
-        from src.models.payment import Payment
-        from src.models.tax import Tax
-        
-        # Recupera documento fiscale
-        fiscal_repo = get_fiscal_repository(db)
-        fiscal_document = fiscal_repo.get_fiscal_document_by_id(id_fiscal_document)
-        
-        if not fiscal_document:
-            raise HTTPException(status_code=404, detail=f"Documento fiscale {id_fiscal_document} non trovato")
-        
-        # Validazione: nota di credito deve avere riferimento
-        if fiscal_document.document_type == 'credit_note' and not fiscal_document.id_fiscal_document_ref:
-            raise HTTPException(
-                status_code=400, 
-                detail="Nota di credito senza riferimento a fattura. Impossibile generare PDF."
-            )
-        
-        # Recupera ordine
-        order = db.query(Order).filter(Order.id_order == fiscal_document.id_order).first()
-        if not order:
-            raise HTTPException(status_code=404, detail=f"Ordine {fiscal_document.id_order} non trovato")
-        
-        # Recupera indirizzi
-        invoice_address = db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
-        delivery_address = db.query(Address).filter(Address.id_address == order.id_address_delivery).first()
-        
-        # Recupera dettagli documento
-        details = db.query(FiscalDocumentDetail).filter(
-            FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
-        ).all()
-        
-        if not details:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Nessun articolo trovato nel documento {id_fiscal_document}. Impossibile generare PDF."
-            )
-        
-        # Arricchisci dettagli con info prodotto e IVA
-        details_with_products = []
-        for detail in details:
-            order_detail = db.query(OrderDetail).filter(
-                OrderDetail.id_order_detail == detail.id_order_detail
-            ).first()
-            
-            # Recupera IVA
-            vat_rate = 0
-            if order_detail and order_detail.id_tax:
-                tax = db.query(Tax).filter(Tax.id_tax == order_detail.id_tax).first()
-                if tax:
-                    vat_rate = tax.percentage
-            
-            details_with_products.append({
-                'id_fiscal_document_detail': detail.id_fiscal_document_detail,
-                'id_order_detail': detail.id_order_detail,
-                'quantity': detail.quantity,
-                'unit_price': detail.unit_price,
-                'total_amount': detail.total_amount,
-                'product_name': order_detail.product_name if order_detail else 'N/A',
-                'product_reference': order_detail.product_reference if order_detail else 'N/A',
-                'reduction_percent': order_detail.reduction_percent if order_detail else 0.0,
-                'vat_rate': vat_rate
-            })
-        
-        # Recupera metodo pagamento
-        payment_name = None
-        if order.id_payment:
-            payment = db.query(Payment).filter(Payment.id_payment == order.id_payment).first()
-            if payment:
-                payment_name = payment.name
-        
-        # Recupera configurazioni azienda
-        app_config_repo = AppConfigurationRepository(db)
-        company_config = {}
-        
-        # Prova a recuperare configurazioni dalla categoria 'company_info'
-        company_configs = app_config_repo.get_by_category('company_info')
-        for config in company_configs:
-            company_config[config.name] = config.value or ''
-        
-        # Fallback se non ci sono configurazioni
-        if not company_config:
-            company_config = {
-                'company_name': 'Azienda',
-                'company_vat': 'P.IVA',
-                'company_address': 'Indirizzo',
-                'company_city': 'Città',
-                'company_pec': 'PEC',
-                'company_sdi': 'SDI'
-            }
-        
-        # Recupera fattura di riferimento per note di credito
-        referenced_invoice = None
-        if fiscal_document.document_type == 'credit_note' and fiscal_document.id_fiscal_document_ref:
-            referenced_invoice = fiscal_repo.get_fiscal_document_by_id(fiscal_document.id_fiscal_document_ref)
-        
-        # Genera PDF
-        pdf_buffer = _generate_pdf_with_fpdf(
-            fiscal_document=fiscal_document,
-            order=order,
-            invoice_address=invoice_address,
-            delivery_address=delivery_address,
-            details_with_products=details_with_products,
-            payment_name=payment_name,
-            company_config=company_config,
-            db=db,
-            referenced_invoice=referenced_invoice
+    from src.models.fiscal_document import FiscalDocument
+    from src.models.fiscal_document_detail import FiscalDocumentDetail
+    from src.models.order import Order
+    from src.models.order_detail import OrderDetail
+    from src.models.address import Address
+    from src.models.payment import Payment
+    from src.models.tax import Tax
+    
+    # Recupera documento fiscale
+    fiscal_repo = get_fiscal_repository(db)
+    fiscal_document = fiscal_repo.get_fiscal_document_by_id(id_fiscal_document)
+    
+    if not fiscal_document:
+        raise HTTPException(status_code=404, detail=f"Documento fiscale {id_fiscal_document} non trovato")
+    
+    # Validazione: nota di credito deve avere riferimento
+    if fiscal_document.document_type == 'credit_note' and not fiscal_document.id_fiscal_document_ref:
+        raise HTTPException(
+            status_code=400, 
+            detail="Nota di credito senza riferimento a fattura. Impossibile generare PDF."
         )
-        
-        # Determina nome file
-        doc_type = "nota-credito" if fiscal_document.document_type == 'credit_note' else "fattura"
-        doc_number = fiscal_document.document_number or fiscal_document.internal_number or str(id_fiscal_document)
-        filename = f"{doc_type}-{doc_number}.pdf"
-        
-        # Ritorna PDF con headers per forzare download
-        return StreamingResponse(
-            pdf_buffer,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Cache-Control": "no-cache",
-                "Content-Type": "application/pdf"
-            }
+    
+    # Recupera ordine
+    order = db.query(Order).filter(Order.id_order == fiscal_document.id_order).first()
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Ordine {fiscal_document.id_order} non trovato")
+    
+    # Recupera indirizzi
+    invoice_address = db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
+    delivery_address = db.query(Address).filter(Address.id_address == order.id_address_delivery).first()
+    
+    # Recupera dettagli documento
+    details = db.query(FiscalDocumentDetail).filter(
+        FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
+    ).all()
+    
+    if not details:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Nessun articolo trovato nel documento {id_fiscal_document}. Impossibile generare PDF."
         )
+    
+    # Arricchisci dettagli con info prodotto e IVA
+    details_with_products = []
+    for detail in details:
+        order_detail = db.query(OrderDetail).filter(
+            OrderDetail.id_order_detail == detail.id_order_detail
+        ).first()
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Errore generazione PDF: {str(e)}")
+        # Recupera IVA
+        vat_rate = 0
+        if order_detail and order_detail.id_tax:
+            tax = db.query(Tax).filter(Tax.id_tax == order_detail.id_tax).first()
+            if tax:
+                vat_rate = tax.percentage
+        
+        details_with_products.append({
+            'id_fiscal_document_detail': detail.id_fiscal_document_detail,
+            'id_order_detail': detail.id_order_detail,
+            'quantity': detail.quantity,
+            'unit_price': detail.unit_price,
+            'total_amount': detail.total_amount,
+            'product_name': order_detail.product_name if order_detail else 'N/A',
+            'product_reference': order_detail.product_reference if order_detail else 'N/A',
+            'reduction_percent': order_detail.reduction_percent if order_detail else 0.0,
+            'vat_rate': vat_rate
+        })
+    
+    # Recupera metodo pagamento
+    payment_name = None
+    if order.id_payment:
+        payment = db.query(Payment).filter(Payment.id_payment == order.id_payment).first()
+        if payment:
+            payment_name = payment.name
+    
+    # Recupera configurazioni azienda
+    app_config_repo = AppConfigurationRepository(db)
+    company_config = {}
+    
+    # Prova a recuperare configurazioni dalla categoria 'company_info'
+    company_configs = app_config_repo.get_by_category('company_info')
+    for config in company_configs:
+        company_config[config.name] = config.value or ''
+    
+    # Fallback se non ci sono configurazioni
+    if not company_config:
+        company_config = {
+            'company_name': 'Azienda',
+            'company_vat': 'P.IVA',
+            'company_address': 'Indirizzo',
+            'company_city': 'Città',
+            'company_pec': 'PEC',
+            'company_sdi': 'SDI'
+        }
+    
+    # Recupera fattura di riferimento per note di credito
+    referenced_invoice = None
+    if fiscal_document.document_type == 'credit_note' and fiscal_document.id_fiscal_document_ref:
+        referenced_invoice = fiscal_repo.get_fiscal_document_by_id(fiscal_document.id_fiscal_document_ref)
+    
+    # Genera PDF
+    pdf_buffer = _generate_pdf_with_fpdf(
+        fiscal_document=fiscal_document,
+        order=order,
+        invoice_address=invoice_address,
+        delivery_address=delivery_address,
+        details_with_products=details_with_products,
+        payment_name=payment_name,
+        company_config=company_config,
+        db=db,
+        referenced_invoice=referenced_invoice
+    )
+    
+    # Determina nome file
+    doc_type = "nota-credito" if fiscal_document.document_type == 'credit_note' else "fattura"
+    doc_number = fiscal_document.document_number or fiscal_document.internal_number or str(id_fiscal_document)
+    filename = f"{doc_type}-{doc_number}.pdf"
+    
+    # Ritorna PDF con headers per forzare download
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/pdf"
+        }
+    )
+        

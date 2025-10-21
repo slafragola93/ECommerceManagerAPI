@@ -1,6 +1,12 @@
 import sys
 import asyncio
-from fastapi import FastAPI, HTTPException
+import logging
+import traceback
+from datetime import datetime
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from starlette.middleware.cors import CORSMiddleware
@@ -19,8 +25,19 @@ from src.database import Base, engine
 # Import new cache system
 from src.core.cache import get_cache_manager, close_cache_manager
 from src.middleware.conditional import setup_conditional_middleware
+from src.middleware.error_logging import ErrorLoggingMiddleware, PerformanceLoggingMiddleware, SecurityLoggingMiddleware
 from src.core.settings import get_cache_settings
 from src.core.container_config import get_configured_container
+from src.core.exceptions import (
+    BaseApplicationException,
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException,
+    InfrastructureException,
+    AuthenticationException,
+    AuthorizationException
+)
+from src.core.monitoring import get_performance_monitor
 
 # Legacy cache (keep for compatibility)
 try:
@@ -66,6 +83,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # Inizializza il container DI
 get_configured_container()
 
@@ -90,12 +114,175 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add error logging middleware
+app.add_middleware(ErrorLoggingMiddleware, log_requests=True, log_responses=False)
+app.add_middleware(PerformanceLoggingMiddleware, slow_request_threshold=1.0)
+app.add_middleware(SecurityLoggingMiddleware)
+
 # Setup cache middleware
 try:
     setup_conditional_middleware(app, cache_control_ttl=300)
     print("Conditional GET middleware configured")
 except Exception as e:
     print(f"WARNING: Cache middleware setup failed: {e}")
+
+# ============================================================================
+# GLOBAL EXCEPTION HANDLERS
+# ============================================================================
+
+@app.exception_handler(BaseApplicationException)
+async def custom_application_exception_handler(request: Request, exc: BaseApplicationException):
+    """Handler per eccezioni custom dell'applicazione"""
+    logger.error(f"Application exception: {exc.error_code} - {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url),
+        "method": request.method
+    })
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(ValidationException)
+async def validation_exception_handler(request: Request, exc: ValidationException):
+    """Handler specifico per errori di validazione"""
+    logger.warning(f"Validation error: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=400,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(NotFoundException)
+async def not_found_exception_handler(request: Request, exc: NotFoundException):
+    """Handler specifico per entità non trovate"""
+    logger.info(f"Entity not found: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=404,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(BusinessRuleException)
+async def business_rule_exception_handler(request: Request, exc: BusinessRuleException):
+    """Handler specifico per violazioni regole business"""
+    logger.warning(f"Business rule violation: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=400,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(AuthenticationException)
+async def authentication_exception_handler(request: Request, exc: AuthenticationException):
+    """Handler specifico per errori di autenticazione"""
+    logger.warning(f"Authentication error: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=401,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(AuthorizationException)
+async def authorization_exception_handler(request: Request, exc: AuthorizationException):
+    """Handler specifico per errori di autorizzazione"""
+    logger.warning(f"Authorization error: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=403,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(InfrastructureException)
+async def infrastructure_exception_handler(request: Request, exc: InfrastructureException):
+    """Handler specifico per errori di infrastruttura"""
+    logger.error(f"Infrastructure error: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=500,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """Handler per errori di validazione FastAPI"""
+    logger.warning(f"Request validation error: {exc.errors()}", extra={
+        "path": str(request.url),
+        "method": request.method
+    })
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error_code": "VALIDATION_ERROR",
+            "message": "Request validation failed",
+            "details": exc.errors(),
+            "status_code": 422
+        }
+    )
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handler per HTTPException di Starlette"""
+    logger.info(f"HTTP exception: {exc.status_code} - {exc.detail}", extra={
+        "status_code": exc.status_code,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error_code": "HTTP_ERROR",
+            "message": str(exc.detail),
+            "details": {},
+            "status_code": exc.status_code
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handler generico per errori non gestiti"""
+    logger.error(f"Unhandled exception: {str(exc)}", extra={
+        "path": str(request.url),
+        "method": request.method,
+        "traceback": traceback.format_exc()
+    })
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_code": "INTERNAL_SERVER_ERROR",
+            "message": "Internal server error",
+            "details": {},
+            "status_code": 500
+        }
+    )
 
 app.include_router(auth.router)
 app.include_router(user.router)
@@ -216,4 +403,60 @@ async def cache_stats():
         return metrics.get_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Stats error: {str(e)}")
+
+# ============================================================================
+# PERFORMANCE MONITORING ENDPOINTS
+# ============================================================================
+
+@app.get("/api/v1/monitoring/performance")
+async def get_performance_metrics():
+    """Ottiene le metriche di performance dell'applicazione"""
+    try:
+        monitor = get_performance_monitor()
+        return monitor.get_performance_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Performance metrics error: {str(e)}")
+
+@app.get("/api/v1/monitoring/errors")
+async def get_error_metrics():
+    """Ottiene le metriche degli errori"""
+    try:
+        monitor = get_performance_monitor()
+        return monitor.error_tracker.get_error_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error metrics error: {str(e)}")
+
+@app.get("/api/v1/monitoring/health")
+async def get_health_status():
+    """Health check completo dell'applicazione"""
+    try:
+        monitor = get_performance_monitor()
+        performance = monitor.get_performance_summary()
+        
+        # Calcola lo stato di salute
+        error_rate = performance.get("error_rate", 0)
+        avg_response_time = performance.get("average_response_time", 0)
+        
+        health_status = "healthy"
+        if error_rate > 0.1:  # Più del 10% di errori
+            health_status = "degraded"
+        elif avg_response_time > 2.0:  # Più di 2 secondi di risposta media
+            health_status = "slow"
+        
+        return {
+            "status": health_status,
+            "timestamp": datetime.now().isoformat(),
+            "performance": performance,
+            "checks": {
+                "error_rate": error_rate,
+                "average_response_time": avg_response_time,
+                "active_requests": performance.get("active_requests", 0)
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
 
