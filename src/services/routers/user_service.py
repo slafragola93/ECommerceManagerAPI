@@ -44,7 +44,7 @@ class UserService(IUserService):
         
         # Crea l'utente
         try:
-            user = User(**user_data.dict())
+            user = User(**user_data.model_dump())
             user = self._user_repository.create(user)
             return user
         except Exception as e:
@@ -66,7 +66,7 @@ class UserService(IUserService):
         # Aggiorna l'utente
         try:
             # Aggiorna i campi
-            for field_name, value in user_data.dict(exclude_unset=True).items():
+            for field_name, value in user_data.model_dump(exclude_unset=True).items():
                 if hasattr(user, field_name) and value is not None:
                     setattr(user, field_name, value)
             

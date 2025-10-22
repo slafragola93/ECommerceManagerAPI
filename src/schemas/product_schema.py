@@ -33,8 +33,8 @@ class ProductSchema(BaseModel):
         img_url (str): URL dell'immagine del prodotto.
     """
     id_origin: Optional[int] = 0
-    id_category: int = Field(..., ge=0)
-    id_brand: int = Field(..., ge=0)
+    id_category: Optional[int] = Field(0, ge=0)
+    id_brand: Optional[int] = Field(0, ge=0)
     img_url: Optional[str] = Field(default=None, max_length=500)
     name: str = Field(..., max_length=128)
     sku: str = Field(..., max_length=32)
@@ -45,20 +45,8 @@ class ProductSchema(BaseModel):
     height: float = Field(default=0.0, ge=0)
     width: float = Field(default=0.0, ge=0)
     
-    @computed_field
-    @property
-    def img_api_url(self) -> Optional[str]:
-        """Genera automaticamente l'API URL per l'immagine se img_url è presente"""
-        if not self.img_url:
-            return None
-        
-        # Estrai platform_id e filename da img_url
-        match = re.match(r'/media/product_images/(\d+)/(.+)', self.img_url)
-        if match:
-            platform_id, filename = match.groups()
-            return f"/api/v1/images/product/{platform_id}/{filename}"
-        
-        return None
+    model_config = {"from_attributes": True}
+    
 
 class ProductResponseSchema(BaseModel):
     id_product: int
@@ -69,6 +57,11 @@ class ProductResponseSchema(BaseModel):
     reference: str
     type: str
     weight: float
+    depth: float
+    height: float
+    width: float
+    category: CategoryResponseSchema | None
+    brand: BrandResponseSchema | None
     
     @computed_field
     @property
@@ -84,11 +77,8 @@ class ProductResponseSchema(BaseModel):
             return f"/api/v1/images/product/{platform_id}/{filename}"
         
         return None
-    depth: float
-    height: float
-    width: float
-    category: CategoryResponseSchema | None
-    brand: BrandResponseSchema | None
+    
+    model_config = {"from_attributes": True}
 
 
 class ProductUpdateSchema(BaseModel):
@@ -109,6 +99,8 @@ class ProductUpdateSchema(BaseModel):
     depth: Optional[float] = Field(None, ge=0)
     height: Optional[float] = Field(None, ge=0)
     width: Optional[float] = Field(None, ge=0)
+    
+    model_config = {"from_attributes": True}
 
 
 
@@ -118,7 +110,5 @@ class AllProductsResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
-
-
-class ConfigDict:
-    from_attributes = True
+    
+    model_config = {"from_attributes": True}

@@ -349,7 +349,7 @@ async def generate_ddt_from_order(
     
     return {
         "message": result.message,
-        "ddt": result.ddt.dict() if result.ddt else None
+        "ddt": result.ddt.model_dump() if result.ddt else None
     }
 
 

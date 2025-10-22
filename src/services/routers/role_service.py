@@ -35,7 +35,7 @@ class RoleService(IRoleService):
         
         # Crea il ruolo
         try:
-            role = Role(**role_data.dict())
+            role = Role(**role_data.model_dump())
             role = self._role_repository.create(role)
             return role
         except Exception as e:
@@ -60,7 +60,7 @@ class RoleService(IRoleService):
         # Aggiorna il ruolo
         try:
             # Aggiorna i campi
-            for field_name, value in role_data.dict(exclude_unset=True).items():
+            for field_name, value in role_data.model_dump(exclude_unset=True).items():
                 if hasattr(role, field_name) and value is not None:
                     setattr(role, field_name, value)
             

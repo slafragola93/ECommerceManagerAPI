@@ -34,7 +34,7 @@ class CategoryService(ICategoryService):
         # Crea il category
         try:
             # Prepara i dati per la creazione, gestendo i valori None
-            category_dict = category_data.dict()
+            category_dict = category_data.model_dump()
             
             # Se id_origin è None, lo imposta a 0 (default del modello)
             if category_dict.get('id_origin') is None:
@@ -65,7 +65,7 @@ class CategoryService(ICategoryService):
         # Aggiorna il category
         try:
             # Aggiorna i campi
-            for field_name, value in category_data.dict(exclude_unset=True).items():
+            for field_name, value in category_data.model_dump(exclude_unset=True).items():
                 if hasattr(category, field_name) and value is not None:
                     setattr(category, field_name, value)
             

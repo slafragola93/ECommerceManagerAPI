@@ -35,7 +35,7 @@ class CarrierService(ICarrierService):
         
         # Crea il carrier
         try:
-            carrier = Carrier(**carrier_data.dict())
+            carrier = Carrier(**carrier_data.model_dump())
             carrier = self._carrier_repository.create(carrier)
             return carrier
         except Exception as e:
@@ -60,7 +60,7 @@ class CarrierService(ICarrierService):
         # Aggiorna il carrier
         try:
             # Aggiorna i campi
-            for field_name, value in carrier_data.dict(exclude_unset=True).items():
+            for field_name, value in carrier_data.model_dump(exclude_unset=True).items():
                 if hasattr(carrier, field_name) and value is not None:
                     setattr(carrier, field_name, value)
             

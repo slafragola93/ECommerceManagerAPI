@@ -68,13 +68,6 @@ class PreventivoRepository:
         if invoice_address_id is None:
             invoice_address_id = delivery_address_id
         
-        
-        # Determina id_tax (usa la tassa più comune tra gli articoli)
-        id_tax = None
-        if preventivo_data.articoli:
-            # Usa la tassa del primo articolo come default
-            id_tax = preventivo_data.articoli[0].id_tax
-        
         # Crea OrderDocument per preventivo
         order_document = OrderDocument(
             type_document="preventivo",
@@ -83,7 +76,6 @@ class PreventivoRepository:
             id_address_delivery=delivery_address_id,
             id_address_invoice=invoice_address_id,
             id_sectional=sectional_id,
-            id_tax=id_tax,
             is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
             note=preventivo_data.note
         )
@@ -746,7 +738,6 @@ class PreventivoRepository:
             id_address_delivery=original_preventivo.id_address_delivery,
             id_address_invoice=original_preventivo.id_address_invoice,
             id_sectional=original_preventivo.id_sectional,
-            id_tax=original_preventivo.id_tax,
             id_shipping=new_shipping_id,  # Usa la nuova spedizione creata
             is_invoice_requested=original_preventivo.is_invoice_requested,
             note=f"Copia di {original_preventivo.document_number}" + (f" - {original_preventivo.note}" if original_preventivo.note else ""),
@@ -758,7 +749,11 @@ class PreventivoRepository:
         self.db.flush()  # Per ottenere l'ID
         
         # Copia tutti gli articoli del preventivo originale senza ricalcolare i totali
-        original_articoli = self.get_articoli_preventivo(id_order_document)
+        original_articoli = self.db.query(OrderDetail).filter(
+            OrderDetail.id_order_document == id_order_document,
+            OrderDetail.id_order == 0  # Solo articoli del preventivo, non dell'ordinem
+        ).all()
+        
         for articolo in original_articoli:
             # Crea direttamente l'OrderDetail senza utilizzare OrderDetailRepository
             # per evitare il ricalcolo automatico dei totali

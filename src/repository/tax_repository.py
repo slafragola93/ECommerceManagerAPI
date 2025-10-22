@@ -60,3 +60,15 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
             return 1
         except Exception as e:
             raise InfrastructureException(f"Database error defining tax: {str(e)}")
+    
+    def get_percentage_by_id(self, id_tax: int) -> float:
+        """Ottiene la percentuale di una tassa per ID"""
+        try:
+            tax = self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
+            if tax:
+                return tax.percentage
+            else:
+                # Fallback alla percentuale di default (22%)
+                return 22.0
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving tax percentage: {str(e)}")

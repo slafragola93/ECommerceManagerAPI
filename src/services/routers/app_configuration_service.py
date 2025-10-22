@@ -35,7 +35,7 @@ class AppConfigurationService(IAppConfigurationService):
         
         # Crea il app_configuration
         try:
-            app_configuration = AppConfiguration(**app_configuration_data.dict())
+            app_configuration = AppConfiguration(**app_configuration_data.model_dump())
             app_configuration = self._app_configuration_repository.create(app_configuration)
             return app_configuration
         except Exception as e:
@@ -60,7 +60,7 @@ class AppConfigurationService(IAppConfigurationService):
         # Aggiorna il app_configuration
         try:
             # Aggiorna i campi
-            for field_name, value in app_configuration_data.dict(exclude_unset=True).items():
+            for field_name, value in app_configuration_data.model_dump(exclude_unset=True).items():
                 if hasattr(app_configuration, field_name) and value is not None:
                     setattr(app_configuration, field_name, value)
             

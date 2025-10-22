@@ -45,15 +45,21 @@ class DDTRepository:
         new_document_number = self.order_doc_service.get_next_document_number("DDT")
         
         # Crea nuovo OrderDocument (DDT) copiando i dati dell'ordine
+        # Converti 0 a None per le foreign key
+        id_customer = original_order.id_customer if original_order.id_customer and original_order.id_customer > 0 else None
+        id_address_delivery = original_order.id_address_delivery if original_order.id_address_delivery and original_order.id_address_delivery > 0 else None
+        id_address_invoice = original_order.id_address_invoice if original_order.id_address_invoice and original_order.id_address_invoice > 0 else None
+        id_sectional = original_order.id_sectional if original_order.id_sectional and original_order.id_sectional > 0 else None
+        id_shipping = original_order.id_shipping if original_order.id_shipping and original_order.id_shipping > 0 else None
+        
         new_ddt = OrderDocument(
             type_document="DDT",
             document_number=new_document_number,
-            id_customer=original_order.id_customer,
-            id_address_delivery=original_order.id_address_delivery,
-            id_address_invoice=original_order.id_address_invoice,
-            id_sectional=original_order.id_sectional,
-            id_tax=None,
-            id_shipping=original_order.id_shipping,
+            id_customer=id_customer,
+            id_address_delivery=id_address_delivery,
+            id_address_invoice=id_address_invoice,
+            id_sectional=id_sectional,
+            id_shipping=id_shipping,
             is_invoice_requested=original_order.is_invoice_requested,
             note=f"DDT generato da ordine {original_order.reference}",
             total_weight=original_order.total_weight,

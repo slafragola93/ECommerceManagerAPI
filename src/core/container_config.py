@@ -172,6 +172,33 @@ def configure_container():
     container.register_transient(IOrderDetailService, OrderDetailService)
     container.register_transient(IFiscalDocumentService, FiscalDocumentService)
     
+    # BRT Configuration
+    from src.repository.interfaces.brt_configuration_repository_interface import IBrtConfigurationRepository
+    from src.repository.brt_configuration_repository import BrtConfigurationRepository
+    from src.services.interfaces.brt_configuration_service_interface import IBrtConfigurationService
+    from src.services.routers.brt_configuration_service import BrtConfigurationService
+    
+    container.register_transient(IBrtConfigurationRepository, BrtConfigurationRepository)
+    container.register_transient(IBrtConfigurationService, BrtConfigurationService)
+    
+    # Fedex Configuration
+    from src.repository.interfaces.fedex_configuration_repository_interface import IFedexConfigurationRepository
+    from src.repository.fedex_configuration_repository import FedexConfigurationRepository
+    from src.services.interfaces.fedex_configuration_service_interface import IFedexConfigurationService
+    from src.services.routers.fedex_configuration_service import FedexConfigurationService
+    
+    container.register_transient(IFedexConfigurationRepository, FedexConfigurationRepository)
+    container.register_transient(IFedexConfigurationService, FedexConfigurationService)
+    
+    # DHL Configuration
+    from src.repository.interfaces.dhl_configuration_repository_interface import IDhlConfigurationRepository
+    from src.repository.dhl_configuration_repository import DhlConfigurationRepository
+    from src.services.interfaces.dhl_configuration_service_interface import IDhlConfigurationService
+    from src.services.routers.dhl_configuration_service import DhlConfigurationService
+    
+    container.register_transient(IDhlConfigurationRepository, DhlConfigurationRepository)
+    container.register_transient(IDhlConfigurationService, DhlConfigurationService)
+    
 
 def get_configured_container():
     """Ottiene il container configurato"""

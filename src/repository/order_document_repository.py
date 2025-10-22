@@ -46,7 +46,7 @@ class OrderDocumentRepository:
     #            edited_country: Country,
     #            data: OrderDocumentSchema):
     #
-    #     entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
+    #     entity_updated = data.model_dump(exclude_unset=True)  # Esclude i campi non impostati
     #
     #     # Set su ogni proprietà
     #     for key, value in entity_updated.items():

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 def edit_entity(entity, entity_schema):
     """ Recupero dei dati e modifica dell'entità """
     # Recupera i campi modificati
-    entity_updated = entity_schema.dict(exclude_unset=True)  # Esclude i campi non impostati
+    entity_updated = entity_schema.model_dump(exclude_unset=True)  # Esclude i campi non impostati
 
     # Set su ogni proprietà
     for key, value in entity_updated.items():

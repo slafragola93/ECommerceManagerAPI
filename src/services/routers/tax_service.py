@@ -35,7 +35,7 @@ class TaxService(ITaxService):
         
         # Crea il tax
         try:
-            tax = Tax(**tax_data.dict())
+            tax = Tax(**tax_data.model_dump())
             tax = self._tax_repository.create(tax)
             return tax
         except Exception as e:
@@ -60,7 +60,7 @@ class TaxService(ITaxService):
         # Aggiorna il tax
         try:
             # Aggiorna i campi
-            for field_name, value in tax_data.dict(exclude_unset=True).items():
+            for field_name, value in tax_data.model_dump(exclude_unset=True).items():
                 if hasattr(tax, field_name) and value is not None:
                     setattr(tax, field_name, value)
             

@@ -18,3 +18,8 @@ class ITaxRepository(IRepository[Tax, int]):
     def define_tax(self, country_id: int) -> int:
         """Definisce la tassa da applicare basata sul paese"""
         pass
+    
+    @abstractmethod
+    def get_percentage_by_id(self, id_tax: int) -> float:
+        """Ottiene la percentuale di una tassa per ID"""
+        pass

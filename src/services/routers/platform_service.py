@@ -35,7 +35,7 @@ class PlatformService(IPlatformService):
         
         # Crea il platform
         try:
-            platform = Platform(**platform_data.dict())
+            platform = Platform(**platform_data.model_dump())
             platform = self._platform_repository.create(platform)
             return platform
         except Exception as e:
@@ -60,7 +60,7 @@ class PlatformService(IPlatformService):
         # Aggiorna il platform
         try:
             # Aggiorna i campi
-            for field_name, value in platform_data.dict(exclude_unset=True).items():
+            for field_name, value in platform_data.model_dump(exclude_unset=True).items():
                 if hasattr(platform, field_name) and value is not None:
                     setattr(platform, field_name, value)
             

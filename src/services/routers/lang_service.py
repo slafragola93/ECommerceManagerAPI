@@ -35,7 +35,7 @@ class LangService(ILangService):
         
         # Crea il lang
         try:
-            lang = Lang(**lang_data.dict())
+            lang = Lang(**lang_data.model_dump())
             lang = self._lang_repository.create(lang)
             return lang
         except Exception as e:
@@ -60,7 +60,7 @@ class LangService(ILangService):
         # Aggiorna il lang
         try:
             # Aggiorna i campi
-            for field_name, value in lang_data.dict(exclude_unset=True).items():
+            for field_name, value in lang_data.model_dump(exclude_unset=True).items():
                 if hasattr(lang, field_name) and value is not None:
                     setattr(lang, field_name, value)
             

@@ -46,7 +46,7 @@ class ApiCarrierService(IApiCarrierService):
         
         # Crea l'API carrier
         try:
-            api_carrier = CarrierApi(**api_carrier_data.dict())
+            api_carrier = CarrierApi(**api_carrier_data.model_dump())
             api_carrier = self._api_carrier_repository.create(api_carrier)
             return api_carrier
         except Exception as e:
@@ -82,7 +82,7 @@ class ApiCarrierService(IApiCarrierService):
         # Aggiorna l'API carrier
         try:
             # Aggiorna i campi
-            for field_name, value in api_carrier_data.dict(exclude_unset=True).items():
+            for field_name, value in api_carrier_data.model_dump(exclude_unset=True).items():
                 if hasattr(api_carrier, field_name) and value is not None:
                     setattr(api_carrier, field_name, value)
             

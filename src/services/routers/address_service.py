@@ -35,7 +35,7 @@ class AddressService(IAddressService):
         
         # Crea il address
         try:
-            address = Address(**address_data.dict())
+            address = Address(**address_data.model_dump())
             address = self._address_repository.create(address)
             return address
         except Exception as e:
@@ -60,7 +60,7 @@ class AddressService(IAddressService):
         # Aggiorna il address
         try:
             # Aggiorna i campi
-            for field_name, value in address_data.dict(exclude_unset=True).items():
+            for field_name, value in address_data.model_dump(exclude_unset=True).items():
                 if hasattr(address, field_name) and value is not None:
                     setattr(address, field_name, value)
             

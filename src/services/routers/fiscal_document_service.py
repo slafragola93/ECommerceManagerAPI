@@ -80,7 +80,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             if update_data.includes_shipping is not None:
                 self._fiscal_document_repository.recalculate_fiscal_document_total(id_fiscal_document)
             
-            return self._fiscal_document_repository.update(id_fiscal_document, fiscal_doc)
+            return self._fiscal_document_repository.update(fiscal_doc)
         except Exception as e:
             raise ValidationException(f"Errore nell'aggiornamento del documento fiscale: {str(e)}")
     

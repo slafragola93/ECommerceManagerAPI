@@ -47,7 +47,7 @@ class CarrierAssignmentService(ICarrierAssignmentService):
         
         # Crea l'assegnazione
         try:
-            assignment = CarrierAssignment(**assignment_data.dict())
+            assignment = CarrierAssignment(**assignment_data.model_dump())
             assignment = self._carrier_assignment_repository.create(assignment)
             return assignment
         except Exception as e:
@@ -84,7 +84,7 @@ class CarrierAssignmentService(ICarrierAssignmentService):
         # Aggiorna l'assegnazione
         try:
             # Aggiorna i campi
-            for field_name, value in assignment_data.dict(exclude_unset=True).items():
+            for field_name, value in assignment_data.model_dump(exclude_unset=True).items():
                 if hasattr(assignment, field_name) and value is not None:
                     setattr(assignment, field_name, value)
             

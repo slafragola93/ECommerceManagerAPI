@@ -35,7 +35,7 @@ class OrderPackageService(IOrderPackageService):
         
         # Crea il order_package
         try:
-            order_package = OrderPackage(**order_package_data.dict())
+            order_package = OrderPackage(**order_package_data.model_dump())
             order_package = self._order_package_repository.create(order_package)
             return order_package
         except Exception as e:
@@ -60,7 +60,7 @@ class OrderPackageService(IOrderPackageService):
         # Aggiorna il order_package
         try:
             # Aggiorna i campi
-            for field_name, value in order_package_data.dict(exclude_unset=True).items():
+            for field_name, value in order_package_data.model_dump(exclude_unset=True).items():
                 if hasattr(order_package, field_name) and value is not None:
                     setattr(order_package, field_name, value)
             

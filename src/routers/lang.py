@@ -58,7 +58,7 @@ async def get_all_langs(
 
     total_count = await lang_service.get_langs_count()
 
-    return {"langs": langs, "total": total_count, "page": page, "limit": limit}
+    return {"languages": langs, "total": total_count, "page": page, "limit": limit}
 
 @router.get("/{lang_id}", status_code=status.HTTP_200_OK, response_model=LangResponseSchema)
 @check_authentication

@@ -35,7 +35,7 @@ class PaymentService(IPaymentService):
         
         # Crea il payment
         try:
-            payment = Payment(**payment_data.dict())
+            payment = Payment(**payment_data.model_dump())
             payment = self._payment_repository.create(payment)
             return payment
         except Exception as e:
@@ -60,7 +60,7 @@ class PaymentService(IPaymentService):
         # Aggiorna il payment
         try:
             # Aggiorna i campi
-            for field_name, value in payment_data.dict(exclude_unset=True).items():
+            for field_name, value in payment_data.model_dump(exclude_unset=True).items():
                 if hasattr(payment, field_name) and value is not None:
                     setattr(payment, field_name, value)
             

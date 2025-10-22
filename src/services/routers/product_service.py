@@ -35,7 +35,7 @@ class ProductService(IProductService):
         
         # Crea il product
         try:
-            product = Product(**product_data.dict())
+            product = Product(**product_data.model_dump())
             product = self._product_repository.create(product)
             return product
         except Exception as e:
@@ -59,12 +59,7 @@ class ProductService(IProductService):
         
         # Aggiorna il product
         try:
-            # Aggiorna i campi
-            for field_name, value in product_data.dict(exclude_unset=True).items():
-                if hasattr(product, field_name) and value is not None:
-                    setattr(product, field_name, value)
-            
-            updated_product = self._product_repository.update(product)
+            updated_product = self._product_repository.update(product, product_data)
             return updated_product
         except Exception as e:
             raise ValidationException(f"Errore nell'aggiornamento del prodotto: {str(e)}")
@@ -96,11 +91,11 @@ class ProductService(IProductService):
     
     async def delete_product(self, product_id: int) -> bool:
         """Elimina un product"""
-        # Verifica esistenza
-        self._product_repository.get_by_id_or_raise(product_id)
+        # Verifica esistenza e ottieni il prodotto
+        product = self._product_repository.get_by_id_or_raise(product_id)
         
         try:
-            return self._product_repository.delete(product_id)
+            return self._product_repository.delete(product)
         except Exception as e:
             raise ValidationException(f"Errore nell'eliminazione del prodotto: {str(e)}")
     

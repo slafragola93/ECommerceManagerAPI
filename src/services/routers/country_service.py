@@ -35,7 +35,7 @@ class CountryService(ICountryService):
         
         # Crea il country
         try:
-            country = Country(**country_data.dict())
+            country = Country(**country_data.model_dump())
             country = self._country_repository.create(country)
             return country
         except Exception as e:
@@ -60,7 +60,7 @@ class CountryService(ICountryService):
         # Aggiorna il country
         try:
             # Aggiorna i campi
-            for field_name, value in country_data.dict(exclude_unset=True).items():
+            for field_name, value in country_data.model_dump(exclude_unset=True).items():
                 if hasattr(country, field_name) and value is not None:
                     setattr(country, field_name, value)
             

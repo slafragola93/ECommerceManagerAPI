@@ -1904,7 +1904,7 @@ class PrestaShopService(BaseEcommerceService):
             )
             
             # Create carrier in database - convert schema to dict
-            carrier_repo.create(carrier_schema.dict())
+            carrier_repo.create(carrier_schema.model_dump())
             
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:

@@ -77,7 +77,24 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             products = []
             
             for data in batch:
-                product = Product(**data.model_dump())
+                # Converti 0 a None per le foreign key se necessario
+                id_category = data.id_category if data.id_category and data.id_category > 0 else None
+                id_brand = data.id_brand if data.id_brand and data.id_brand > 0 else None
+                
+                product = Product(
+                    id_origin=data.id_origin if data.id_origin and data.id_origin > 0 else 0,
+                    id_category=id_category,
+                    id_brand=id_brand,
+                    img_url=data.img_url,
+                    name=data.name,
+                    sku=data.sku,
+                    reference=data.reference,
+                    type=data.type,
+                    weight=data.weight,
+                    depth=data.depth,
+                    height=data.height,
+                    width=data.width
+                )
                 products.append(product)
             
             self._session.bulk_save_objects(products)
@@ -89,22 +106,50 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         return total_inserted
 
     def create(self, data: ProductSchema):
-        product = Product(**data.model_dump())
+        # Crea il prodotto usando i campi specifici
+        # Converti 0 a None per le foreign key se necessario
+        id_category = data.id_category if data.id_category and data.id_category > 0 else None
+        id_brand = data.id_brand if data.id_brand and data.id_brand > 0 else None
+        
+        product = Product(
+            id_origin=data.id_origin if data.id_origin and data.id_origin > 0 else 0,
+            id_category=id_category,
+            id_brand=id_brand,
+            img_url=data.img_url,
+            name=data.name,
+            sku=data.sku,
+            reference=data.reference,
+            type=data.type,
+            weight=data.weight,
+            depth=data.depth,
+            height=data.height,
+            width=data.width
+        )
 
         self._session.add(product)
         self._session.commit()
         self._session.refresh(product)
+        return product
 
     def update(self, edited_product: Product, data: ProductSchema):
 
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
+        entity_updated = data.model_dump(exclude_unset=True)  # Esclude i campi non impostati
 
         for key, value in entity_updated.items():
             if hasattr(edited_product, key) and value is not None:
-                setattr(edited_product, key, value)
+                # Gestione speciale per le foreign key
+                if key in ['id_category', 'id_brand']:
+                    # Converti 0 a None per le foreign key
+                    if value == 0:
+                        setattr(edited_product, key, None)
+                    else:
+                        setattr(edited_product, key, value)
+                else:
+                    setattr(edited_product, key, value)
 
         self._session.add(edited_product)
         self._session.commit()
+        return edited_product
 
     def delete(self, product: Product) -> bool:
         self._session.delete(product)

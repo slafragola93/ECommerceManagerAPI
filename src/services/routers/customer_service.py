@@ -50,7 +50,7 @@ class CustomerService(ICustomerService):
             # Converti CustomerSchema in Customer model
             from src.models.customer import Customer
             from datetime import date
-            customer = Customer(**customer_data.dict())
+            customer = Customer(**customer_data.model_dump())
             customer.date_add = date.today()  # Aggiungi data di creazione
             customer = self._customer_repository.create(customer)
             return customer
@@ -76,7 +76,7 @@ class CustomerService(ICustomerService):
         # Aggiorna il cliente
         try:
             # Aggiorna i campi
-            for field_name, value in customer_data.dict(exclude_unset=True).items():
+            for field_name, value in customer_data.model_dump(exclude_unset=True).items():
                 if hasattr(customer, field_name) and value is not None:
                     setattr(customer, field_name, value)
             

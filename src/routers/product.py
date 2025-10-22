@@ -2,16 +2,13 @@
 Product Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.schemas.product_schema import ProductSchema, ProductResponseSchema, AllProductsResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
-    BaseApplicationException,
-    ValidationException,
-    NotFoundException,
-    BusinessRuleException
+    NotFoundException
 )
 from src.core.dependencies import db_dependency
 from src.services.routers.auth_service import authorize

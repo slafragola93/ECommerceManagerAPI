@@ -182,25 +182,32 @@ class OrderDocumentService:
         Returns:
             Dict[str, float]: Dizionario con i totali calcolati
         """
+        from src.services.core.tool import calculate_order_totals
+        
         articoli = self.get_articoli_order_document(id_order_document, document_type)
         
-        total_imponibile = 0.0
-        total_iva = 0.0
+        if not articoli:
+            return {
+                "total_imponibile": 0.0,
+                "total_iva": 0.0,
+                "total_articoli": 0.0,
+                "shipping_cost": 0.0,
+                "total_finale": 0.0
+            }
         
+        # Recupera le percentuali delle tasse
+        tax_ids = set()
         for articolo in articoli:
-            # Recupera tassa
-            tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
-            tax_rate = tax.percentage if tax else 0.0
-            
-            # Calcola prezzi
-            prezzo_netto = articolo.product_price * articolo.product_qty
-            prezzo_iva = calculate_amount_with_percentage(prezzo_netto, tax_rate)
-            
-            total_imponibile += prezzo_netto
-            total_iva += prezzo_iva
+            if hasattr(articolo, 'id_tax') and articolo.id_tax:
+                tax_ids.add(articolo.id_tax)
         
-        # Calcola totale articoli
-        total_articoli = total_imponibile + total_iva
+        tax_percentages = {}
+        if tax_ids:
+            taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+            tax_percentages = {tax.id_tax: tax.percentage for tax in taxes}
+        
+        # Usa la funzione standard per calcolare i totali (include sconti)
+        totals = calculate_order_totals(articoli, tax_percentages)
         
         # Aggiungi spese di spedizione se presente
         shipping_cost = 0.0
@@ -215,12 +222,12 @@ class OrderDocumentService:
             if shipping and shipping.price_tax_incl:
                 shipping_cost = shipping.price_tax_incl
         
-        total_finale = total_articoli + shipping_cost
+        total_finale = totals['total_price_with_tax'] + shipping_cost
         
         return {
-            "total_imponibile": round(total_imponibile, 2),
-            "total_iva": round(total_iva, 2),
-            "total_articoli": round(total_articoli, 2),
+            "total_imponibile": round(totals['total_price'], 2),
+            "total_iva": round(totals['total_price_with_tax'] - totals['total_price'], 2),
+            "total_articoli": round(totals['total_price_with_tax'], 2),
             "shipping_cost": round(shipping_cost, 2),
             "total_finale": round(total_finale, 2)
         }

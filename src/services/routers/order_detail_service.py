@@ -37,7 +37,7 @@ class OrderDetailService(IOrderDetailService):
         
         # Crea l'order detail
         try:
-            order_detail = OrderDetail(**order_detail_data.dict())
+            order_detail = OrderDetail(**order_detail_data.model_dump())
             order_detail = self._order_detail_repository.create(order_detail)
             return order_detail
         except Exception as e:
@@ -71,7 +71,7 @@ class OrderDetailService(IOrderDetailService):
         # Aggiorna l'order detail
         try:
             # Aggiorna i campi
-            for field_name, value in order_detail_data.dict(exclude_unset=True).items():
+            for field_name, value in order_detail_data.model_dump(exclude_unset=True).items():
                 if hasattr(order_detail, field_name) and value is not None:
                     setattr(order_detail, field_name, value)
             

@@ -35,7 +35,7 @@ class ConfigurationService(IConfigurationService):
         
         # Crea il configuration
         try:
-            configuration = Configuration(**configuration_data.dict())
+            configuration = Configuration(**configuration_data.model_dump())
             configuration = self._configuration_repository.create(configuration)
             return configuration
         except Exception as e:
@@ -60,7 +60,7 @@ class ConfigurationService(IConfigurationService):
         # Aggiorna il configuration
         try:
             # Aggiorna i campi
-            for field_name, value in configuration_data.dict(exclude_unset=True).items():
+            for field_name, value in configuration_data.model_dump(exclude_unset=True).items():
                 if hasattr(configuration, field_name) and value is not None:
                     setattr(configuration, field_name, value)
             

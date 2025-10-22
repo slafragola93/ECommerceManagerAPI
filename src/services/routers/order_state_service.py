@@ -35,7 +35,7 @@ class OrderStateService(IOrderStateService):
         
         # Crea il order_state
         try:
-            order_state = OrderState(**order_state_data.dict())
+            order_state = OrderState(**order_state_data.model_dump())
             order_state = self._order_state_repository.create(order_state)
             return order_state
         except Exception as e:
@@ -60,7 +60,7 @@ class OrderStateService(IOrderStateService):
         # Aggiorna il order_state
         try:
             # Aggiorna i campi
-            for field_name, value in order_state_data.dict(exclude_unset=True).items():
+            for field_name, value in order_state_data.model_dump(exclude_unset=True).items():
                 if hasattr(order_state, field_name) and value is not None:
                     setattr(order_state, field_name, value)
             

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
 
+from src.models.tax import Tax
 from src.services.core.tool import calculate_amount_with_percentage
 from src.models import Order, Address, FiscalDocument, FiscalDocumentDetail, OrderDetail, Country
 from src.repository.app_configuration_repository import AppConfigurationRepository
@@ -118,7 +119,6 @@ class FatturaPAService:
             LEFT JOIN countries c_del ON a_del.id_country = c_del.id_country
             LEFT JOIN taxes t_del ON a_del.id_country = t_del.id_country
             LEFT JOIN orders_document od ON o.id_order = od.id_order
-            LEFT JOIN taxes t ON od.id_tax = t.id_tax
             LEFT JOIN shipments s ON o.id_shipping = s.id_shipping
             LEFT JOIN taxes t_ship ON s.id_tax = t_ship.id_tax
             LEFT JOIN payments p ON o.id_payment = p.id_payment
@@ -832,8 +832,8 @@ class FatturaPAService:
                    s.price_tax_excl as shipping_price_tax_excl,
                    s.id_tax as shipping_id_tax,
                    t_ship.percentage as shipping_tax_percentage,
-                   od.id_tax,
-                   t.percentage as tax_percentage,
+                   t_del.id_tax as id_tax,
+                   t_del.percentage as tax_percentage,
                    a_del.id_country as delivery_country_id,
                    t_del.percentage as tax_percentage_customer
             FROM customers c
@@ -843,7 +843,6 @@ class FatturaPAService:
             LEFT JOIN shipments s ON o.id_shipping = s.id_shipping
             LEFT JOIN taxes t_ship ON s.id_tax = t_ship.id_tax
             LEFT JOIN orders_document od ON o.id_order = od.id_order
-            LEFT JOIN taxes t ON od.id_tax = t.id_tax
             WHERE c.id_customer = :id_customer AND o.id_order = :id_order
         """)
         customer_result = self.db.execute(customer_query, {
@@ -960,13 +959,31 @@ class FatturaPAService:
                 else:
                     reduction_amount = sconto
             
+            # Se id_tax non è specificato, usa quello del paese di consegna
+            tax_id = od.id_tax
+            if not tax_id or tax_id == 0:
+                # Recupera l'id_tax basandosi sul paese dell'indirizzo di consegna
+                delivery_address = self.db.query(Address).join(Order).filter(
+                    Order.id_order == fiscal_doc.id_order,
+                    Order.id_address_delivery == Address.id_address
+                ).first()
+                
+                if delivery_address and delivery_address.id_country:
+                    tax = self.db.query(Tax).filter(
+                        Tax.id_country == delivery_address.id_country
+                    ).first()
+                    tax_id = tax.id_tax
+                else:
+                    # Fallback alla tassa di default
+                    tax_id = 1
+            
             details.append({
                 'product_name': od.product_name,
                 'product_qty': fdd.quantity,  
                 'product_price': fdd.unit_price,
                 'reduction_percent': reduction_percent,
                 'reduction_amount': reduction_amount,
-                'id_tax': od.id_tax
+                'id_tax': tax_id
             })
         
         return details

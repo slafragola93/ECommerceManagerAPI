@@ -35,7 +35,7 @@ class ShippingStateService(IShippingStateService):
         
         # Crea il shipping_state
         try:
-            shipping_state = ShippingState(**shipping_state_data.dict())
+            shipping_state = ShippingState(**shipping_state_data.model_dump())
             shipping_state = self._shipping_state_repository.create(shipping_state)
             return shipping_state
         except Exception as e:
@@ -60,7 +60,7 @@ class ShippingStateService(IShippingStateService):
         # Aggiorna il shipping_state
         try:
             # Aggiorna i campi
-            for field_name, value in shipping_state_data.dict(exclude_unset=True).items():
+            for field_name, value in shipping_state_data.model_dump(exclude_unset=True).items():
                 if hasattr(shipping_state, field_name) and value is not None:
                     setattr(shipping_state, field_name, value)
             

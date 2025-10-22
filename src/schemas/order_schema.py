@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from src.schemas import AddressSchema, CustomerSchema, ShippingSchema, SectionalSchema
 from src.schemas.address_schema import AddressResponseSchema
 from src.schemas.customer_schema import CustomerResponseSchema
+from src.schemas.order_detail_schema import OrderDetailSchema
 from src.schemas.shipping_schema import ShippingResponseSchema
 from src.schemas.sectional_schema import SectionalResponseSchema
 from src.schemas.order_state_schema import OrderStateResponseSchema
@@ -30,9 +31,9 @@ class OrderSchema(BaseModel):
     total_paid: Optional[float] = None
     total_discounts: Optional[float] = 0.0
     cash_on_delivery: Optional[float] = None
+    order_details: Optional[list[OrderDetailSchema]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 class OrderUpdateSchema(BaseModel):
@@ -60,8 +61,7 @@ class OrderUpdateSchema(BaseModel):
     general_note: Optional[str] = None
     delivery_date: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 class OrderSimpleResponseSchema(BaseModel):
@@ -91,8 +91,7 @@ class OrderSimpleResponseSchema(BaseModel):
     delivery_date: Optional[datetime]
     date_add: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 class OrderResponseSchema(BaseModel):
@@ -131,8 +130,7 @@ class OrderResponseSchema(BaseModel):
     order_states: Optional[list[OrderStateResponseSchema]] = None
     order_details: Optional[list] = None 
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 class OrderIdSchema(BaseModel):
@@ -168,8 +166,7 @@ class OrderIdSchema(BaseModel):
     order_details: Optional[list] = None 
     order_packages: Optional[list] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 class AllOrderResponseSchema(BaseModel):
@@ -178,5 +175,4 @@ class AllOrderResponseSchema(BaseModel):
     page: int
     limit: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, extra='forbid')

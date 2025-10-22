@@ -82,7 +82,7 @@ class BaseRepository(Generic[T, K], IRepository[T, K]):
             else:
                 # Se è un altro tipo (es. Pydantic model), convertilo in dict
                 if hasattr(entity, 'dict'):
-                    entity_dict = entity.dict()
+                    entity_dict = entity.model_dump()
                     model_instance = self._model_class(**entity_dict)
                     self._session.add(model_instance)
                     self._session.commit()
@@ -151,7 +151,7 @@ class BaseRepository(Generic[T, K], IRepository[T, K]):
                         if hasattr(entity, 'model_dump'):
                             entity_dict = entity.model_dump()
                         elif hasattr(entity, 'dict'):
-                            entity_dict = entity.dict()
+                            entity_dict = entity.model_dump()
                         else:
                             raise ValueError(f"Cannot create {self._model_class.__name__} from {type(entity).__name__}")
                         

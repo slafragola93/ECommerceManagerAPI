@@ -35,7 +35,7 @@ class SectionalService(ISectionalService):
         
         # Crea il sectional
         try:
-            sectional = Sectional(**sectional_data.dict())
+            sectional = Sectional(**sectional_data.model_dump())
             sectional = self._sectional_repository.create(sectional)
             return sectional
         except Exception as e:
@@ -60,7 +60,7 @@ class SectionalService(ISectionalService):
         # Aggiorna il sectional
         try:
             # Aggiorna i campi
-            for field_name, value in sectional_data.dict(exclude_unset=True).items():
+            for field_name, value in sectional_data.model_dump(exclude_unset=True).items():
                 if hasattr(sectional, field_name) and value is not None:
                     setattr(sectional, field_name, value)
             

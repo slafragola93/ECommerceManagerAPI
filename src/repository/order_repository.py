@@ -169,7 +169,7 @@ class OrderRepository:
     def create(self, data: OrderSchema):
         
         order = Order(
-            **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional']))
+            **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional', 'order_details']))
 
         if isinstance(data.customer, CustomerSchema):
             # Se cliente non esiste in DB viene creato altrimenti se esiste si setta l'ID
@@ -179,7 +179,8 @@ class OrderRepository:
                                                              field_name="customer") if customer is None else customer.id_customer
         else:
             # E' stato passato l'ID per intero, no oggetto
-            order.id_customer = data.customer
+            # Converti 0 a None per foreign key
+            order.id_customer = data.customer if data.customer and data.customer > 0 else 0
 
         if isinstance(data.address_delivery, AddressSchema):
             order.id_address_delivery = self.address_repository.get_or_create_address(
@@ -187,14 +188,16 @@ class OrderRepository:
                 customer_id=order.id_customer)
         # Altrimenti è ID
         else:
-            order.id_address_delivery = data.address_delivery
+            # Converti 0 a None per foreign key
+            order.id_address_delivery = data.address_delivery if data.address_delivery and data.address_delivery > 0 else 0
 
         # Setta l'ID dell'indirizzo, se non e' stato passato l'oggetto è stato passato l'ID
         if isinstance(data.address_invoice, AddressSchema):
             order.id_address_invoice = self.address_repository.get_or_create_address(address_data=data.address_invoice,
                                                                                      customer_id=order.id_customer)
         else:
-            order.id_address_invoice = data.address_invoice
+            # Converti 0 a None per foreign key
+            order.id_address_invoice = data.address_invoice if data.address_invoice and data.address_invoice > 0 else 0
 
         if data.shipping:
             if isinstance(data.shipping, ShippingSchema):
@@ -212,7 +215,9 @@ class OrderRepository:
                                                               field_name="sectional")
         elif isinstance(data.sectional, int):
             # Se è un ID, usa direttamente l'ID
-            order.id_sectional = data.sectional
+            # Converti 0 a None per foreign key
+            order.id_sectional = data.sectional if data.sectional and data.sectional > 0 else 0
+
 
         # Set stato di default per l'ordine
         order.order_states = [self.order_state_repository.get_by_id(1)]
@@ -220,6 +225,62 @@ class OrderRepository:
         self.session.add(order)
         self.session.commit()
         self.session.refresh(order)
+        
+        # Creazione di Order Details se presenti
+        created_order_details = []
+        if data.order_details:
+            for detail in data.order_details:
+                # Aggiungi l'id_order a ogni detail
+                detail_data = detail.model_dump()
+                detail_data['id_order'] = order.id_order
+                created_detail = self.order_detail_repository.create(detail_data)
+                created_order_details.append(created_detail)
+        
+        # Calcola i totali se non sono stati passati e ci sono order_details
+        if created_order_details:
+            from src.services.core.tool import calculate_order_totals
+            from src.models.tax import Tax
+            
+            # Raccogli gli ID delle tasse dagli order details
+            tax_ids = set()
+            for detail in created_order_details:
+                if hasattr(detail, 'id_tax') and detail.id_tax:
+                    tax_ids.add(detail.id_tax)
+            
+            # Recupera le percentuali delle tasse
+            tax_percentages = {}
+            if tax_ids:
+                taxes = self.session.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+                tax_percentages = {tax.id_tax: tax.percentage for tax in taxes}
+            
+            # Calcola i totali
+            totals = calculate_order_totals(created_order_details, tax_percentages)
+            
+            # Se i valori non sono stati passati (sono None o 0), usa i valori calcolati
+            if not order.total_weight or order.total_weight == 0:
+                order.total_weight = totals['total_weight']
+            
+            if not order.total_price_tax_excl or order.total_price_tax_excl == 0:
+                # Somma solo dei prodotti, senza spedizione
+                order.total_price_tax_excl = totals['total_price']
+            
+            if not order.total_paid or order.total_paid == 0:
+                # Aggiungi il costo della spedizione con tasse
+                shipping_cost_with_tax = 0.0
+                if order.id_shipping:
+                    shipping = self.shipping_repository.get_by_id(order.id_shipping)
+                    if shipping and shipping.price_tax_incl:
+                        shipping_cost_with_tax = shipping.price_tax_incl
+                
+                total_with_shipping = totals['total_price_with_tax'] + shipping_cost_with_tax
+                
+                # Sottrai gli sconti se presenti
+                discount = order.total_discounts if order.total_discounts else 0.0
+                order.total_paid = total_with_shipping - discount
+            
+            # Salva i totali calcolati
+            self.session.add(order)
+            self.session.commit()
         
         # Creazione di Order Package
         order_package_data = OrderPackageSchema(id_order=order.id_order,
@@ -241,14 +302,24 @@ class OrderRepository:
 
     def update(self, edited_order: Order, data: OrderSchema | OrderUpdateSchema):
 
-        entity_updated = data.dict(exclude_unset=True)  # Esclude i campi non impostati
+        entity_updated = data.model_dump(exclude_unset=True)  # Esclude i campi non impostati
 
         for key, value in entity_updated.items():
             if hasattr(edited_order, key) and value is not None:
-                setattr(edited_order, key, value)
+                # Gestione speciale per le foreign key
+                if key in ['id_customer', 'id_address_delivery', 'id_address_invoice', 
+                           'id_platform', 'id_payment', 'id_shipping', 'id_sectional']:
+                    # Converti 0 a None per le foreign key
+                    if value == 0:
+                        setattr(edited_order, key, 0)
+                    else:
+                        setattr(edited_order, key, value)
+                else:
+                    setattr(edited_order, key, value)
 
         self.session.add(edited_order)
         self.session.commit()
+        return edited_order
 
     def set_price(self, id_order: int, order_details: list[OrderDetail]):
         from src.services.core.tool import calculate_order_totals

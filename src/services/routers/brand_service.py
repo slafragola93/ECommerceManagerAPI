@@ -36,7 +36,7 @@ class BrandService(IBrandService):
         # Crea il brand
         try:
             # Prepara i dati per la creazione, gestendo i valori None
-            brand_dict = brand_data.dict()
+            brand_dict = brand_data.model_dump()
             
             # Se id_origin è None, lo imposta a None (default del modello)
             # Il modello Brand ha default=None, quindi None è accettabile
@@ -68,7 +68,7 @@ class BrandService(IBrandService):
         # Aggiorna il brand
         try:
             # Aggiorna i campi
-            for field_name, value in brand_data.dict(exclude_unset=True).items():
+            for field_name, value in brand_data.model_dump(exclude_unset=True).items():
                 if hasattr(brand, field_name) and value is not None:
                     setattr(brand, field_name, value)
             

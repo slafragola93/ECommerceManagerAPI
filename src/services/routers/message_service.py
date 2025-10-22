@@ -35,7 +35,7 @@ class MessageService(IMessageService):
         
         # Crea il message
         try:
-            message = Message(**message_data.dict())
+            message = Message(**message_data.model_dump())
             message = self._message_repository.create(message)
             return message
         except Exception as e:
@@ -60,7 +60,7 @@ class MessageService(IMessageService):
         # Aggiorna il message
         try:
             # Aggiorna i campi
-            for field_name, value in message_data.dict(exclude_unset=True).items():
+            for field_name, value in message_data.model_dump(exclude_unset=True).items():
                 if hasattr(message, field_name) and value is not None:
                     setattr(message, field_name, value)
             
