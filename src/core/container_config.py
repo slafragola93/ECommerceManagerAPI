@@ -199,6 +199,28 @@ def configure_container():
     container.register_transient(IDhlConfigurationRepository, DhlConfigurationRepository)
     container.register_transient(IDhlConfigurationService, DhlConfigurationService)
     
+    # DHL Shipment Services
+    from src.repository.interfaces.shipment_request_repository_interface import IShipmentRequestRepository
+    from src.repository.shipment_request_repository import ShipmentRequestRepository
+    from src.repository.interfaces.shipment_document_repository_interface import IShipmentDocumentRepository
+    from src.repository.shipment_document_repository import ShipmentDocumentRepository
+    from src.services.interfaces.dhl_shipment_service_interface import IDhlShipmentService
+    from src.services.routers.dhl_shipment_service import DhlShipmentService
+    from src.services.interfaces.dhl_tracking_service_interface import IDhlTrackingService
+    from src.services.routers.dhl_tracking_service import DhlTrackingService
+    from src.services.ecommerce.shipments.dhl_client import DhlClient
+    from src.services.ecommerce.shipments.dhl_mapper import DhlMapper
+    
+    # Register DHL repositories
+    container.register_transient(IShipmentRequestRepository, ShipmentRequestRepository)
+    container.register_transient(IShipmentDocumentRepository, ShipmentDocumentRepository)
+    
+    # Register DHL services (singleton for client, transient for others)
+    container.register_singleton(DhlClient, DhlClient)
+    container.register_transient(DhlMapper, DhlMapper)
+    container.register_transient(IDhlShipmentService, DhlShipmentService)
+    container.register_transient(IDhlTrackingService, DhlTrackingService)
+    
 
 def get_configured_container():
     """Ottiene il container configurato"""

@@ -1,7 +1,8 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, select
 from typing import Optional
+from sqlalchemy.engine import Row
 from .address_repository import AddressRepository
 from .api_carrier_repository import ApiCarrierRepository
 from .customer_repository import CustomerRepository
@@ -642,3 +643,21 @@ class OrderRepository:
             return self.session.query(Order.id_order).filter(Order.id_origin == id_origin).first()
         except Exception as e:
             return None
+    
+    def get_shipment_data(self, order_id: int) -> Row:
+        """Retrieve only fields needed for shipment creation"""
+        stmt = select(
+            Order.id_order,
+            Order.id_address_delivery,
+            Order.id_shipping,
+            Order.total_weight,
+            Order.total_price_tax_excl,
+            Order.cash_on_delivery,
+            Order.insured_value
+        ).where(Order.id_order == order_id)
+        
+        result = self.session.execute(stmt).first()
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+        
+        return result

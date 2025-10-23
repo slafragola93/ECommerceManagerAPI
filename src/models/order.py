@@ -47,3 +47,4 @@ class Order(Base):
     orders_document = relationship("OrderDocument", back_populates="order")
     fiscal_documents = relationship("FiscalDocument", back_populates="order")
     order_packages = relationship("OrderPackage", back_populates="order")
+    shipment_requests = relationship("ShipmentRequest", back_populates="order")

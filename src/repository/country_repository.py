@@ -55,3 +55,15 @@ class CountryRepository(BaseRepository[Country, int], ICountryRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving country by origin ID: {str(e)}")
+    
+    def get_iso_code(self, id_country: int) -> str:
+        """Get only iso_code field"""
+        try:
+            result = self._session.query(Country.iso_code).filter(
+                Country.id_country == id_country
+            ).first()
+            if not result:
+                raise InfrastructureException(f"Country {id_country} not found")
+            return result[0]
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving country ISO code: {str(e)}")

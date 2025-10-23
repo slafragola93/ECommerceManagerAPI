@@ -3,7 +3,8 @@ Address Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List
 from sqlalchemy.orm import Session, noload
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, select
+from sqlalchemy.engine import Row
 from src.models.address import Address
 from src.repository.interfaces.address_repository_interface import IAddressRepository
 from src.core.base_repository import BaseRepository
@@ -69,3 +70,26 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving address by name: {str(e)}")
+    
+    def get_delivery_data(self, id_address: int) -> Row:
+        """Get address fields for delivery details"""
+        try:
+            stmt = select(
+                Address.id_address,
+                Address.address_line1,
+                Address.postal_code,
+                Address.city,
+                Address.first_name,
+                Address.last_name,
+                Address.company_name,
+                Address.phone,
+                Address.email,
+                Address.id_country
+            ).where(Address.id_address == id_address)
+            
+            result = self._session.execute(stmt).first()
+            if not result:
+                raise InfrastructureException(f"Address {id_address} not found")
+            return result
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving address delivery data: {str(e)}")

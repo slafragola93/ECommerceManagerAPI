@@ -3,6 +3,7 @@ Interfaccia per API Carrier Repository seguendo ISP
 """
 from abc import abstractmethod
 from typing import Optional, List
+from sqlalchemy.engine import Row
 from src.core.interfaces import IRepository
 from src.models.carrier_api import CarrierApi
 
@@ -17,4 +18,9 @@ class IApiCarrierRepository(IRepository[CarrierApi, int]):
     @abstractmethod
     def get_by_account_number(self, account_number: int) -> Optional[CarrierApi]:
         """Ottiene un API carrier per numero account"""
+        pass
+    
+    @abstractmethod
+    def get_auth_credentials(self, id_carrier_api: int) -> Row:
+        """Get username, password, use_sandbox for auth"""
         pass

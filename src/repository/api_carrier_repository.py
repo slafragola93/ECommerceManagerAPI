@@ -3,7 +3,8 @@ API Carrier Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, select
+from sqlalchemy.engine import Row
 from src.models.carrier_api import CarrierApi
 from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
 from src.core.base_repository import BaseRepository
@@ -54,3 +55,22 @@ class ApiCarrierRepository(BaseRepository[CarrierApi, int], IApiCarrierRepositor
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving API carrier by account number: {str(e)}")
+    
+    def get_auth_credentials(self, id_carrier_api: int) -> Row:
+        """Get username, password, use_sandbox for auth"""
+        try:
+            stmt = select(
+                CarrierApi.id_carrier_api,
+                CarrierApi.api_username,
+                CarrierApi.api_password,
+                CarrierApi.sandbox_api_username,
+                CarrierApi.sandbox_api_password,
+                CarrierApi.use_sandbox
+            ).where(CarrierApi.id_carrier_api == id_carrier_api)
+            
+            result = self._session.execute(stmt).first()
+            if not result:
+                raise InfrastructureException(f"CarrierApi {id_carrier_api} not found")
+            return result
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving carrier auth credentials: {str(e)}")

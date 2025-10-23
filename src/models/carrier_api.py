@@ -18,6 +18,13 @@ class CarrierApi(Base):
     carrier_type = Column(Enum(CarrierTypeEnum), nullable=False, index=True)
     is_active = Column(Boolean, default=True)
     api_key = Column(String(200), default="")
+    
+    # DHL authentication fields
+    use_sandbox = Column(Boolean, default=False, nullable=False)
+    api_username = Column(String(255), nullable=True)
+    api_password = Column(String(255), nullable=True)
+    sandbox_api_username = Column(String(255), nullable=True)
+    sandbox_api_password = Column(String(255), nullable=True)
 
     # Relationships
     carrier_assignments = relationship("CarrierAssignment", back_populates="carrier_api")

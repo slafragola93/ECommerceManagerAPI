@@ -3,7 +3,8 @@ OrderPackage Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List
 from sqlalchemy.orm import Session, noload
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, select
+from sqlalchemy.engine import Row
 from src.models.order_package import OrderPackage
 from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
 from src.core.base_repository import BaseRepository
@@ -46,3 +47,19 @@ class OrderPackageRepository(BaseRepository[OrderPackage, int], IOrderPackageRep
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving order_package by name: {str(e)}")
+    
+    def get_dimensions_by_order(self, id_order: int) -> list[Row]:
+        """Get package dimensions/weight for order"""
+        try:
+            stmt = select(
+                OrderPackage.id_order_package,
+                OrderPackage.weight,
+                OrderPackage.length,
+                OrderPackage.width,
+                OrderPackage.height
+            ).where(OrderPackage.id_order == id_order)
+            
+            result = self._session.execute(stmt).all()
+            return list(result)
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving package dimensions: {str(e)}")

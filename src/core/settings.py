@@ -47,6 +47,13 @@ class CacheSettings(BaseSettings):
     cache_customers_enabled: bool = Field(default=True, env="CACHE_CUSTOMERS_ENABLED")
     cache_external_apis_enabled: bool = Field(default=True, env="CACHE_EXTERNAL_APIS_ENABLED")
     
+    # DHL Integration settings
+    shipment_audit_enabled: bool = Field(default=False, env="SHIPMENT_AUDIT_ENABLED")
+    shipment_audit_ttl_days: int = Field(default=90, env="SHIPMENT_AUDIT_TTL_DAYS")
+    shipment_audit_max_json_size_kb: int = Field(default=500, env="SHIPMENT_AUDIT_MAX_JSON_SIZE_KB")
+    dhl_base_url_prod: str = Field(default="https://express.api.dhl.com/mydhlapi", env="DHL_BASE_URL_PROD")
+    dhl_base_url_sandbox: str = Field(default="https://express.api.dhl.com/mydhlapi/test", env="DHL_BASE_URL_SANDBOX")
+    
     # Circuit breaker
     cache_error_threshold: float = Field(default=0.5, env="CACHE_ERROR_THRESHOLD")
     cache_recovery_timeout: int = Field(default=300, env="CACHE_RECOVERY_TIMEOUT")  # 5 minutes

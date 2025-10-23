@@ -3,7 +3,8 @@ Shipping Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List, Union
 from sqlalchemy.orm import Session, noload
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, select, update
+from sqlalchemy.engine import Row
 from src.models.shipping import Shipping
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.core.base_repository import BaseRepository
@@ -69,3 +70,32 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Database error creating shipping: {str(e)}")
+    
+    def get_carrier_info(self, id_shipping: int) -> Row:
+        """Get id_carrier_api from shipping"""
+        try:
+            stmt = select(
+                Shipping.id_shipping,
+                Shipping.id_carrier_api,
+                Shipping.tracking_number
+            ).where(Shipping.id_shipping == id_shipping)
+            
+            result = self._session.execute(stmt).first()
+            if not result:
+                raise InfrastructureException(f"Shipping {id_shipping} not found")
+            return result
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving carrier info: {str(e)}")
+    
+    def update_tracking(self, id_shipping: int, tracking_number: str) -> None:
+        """Update tracking_number field"""
+        try:
+            stmt = update(Shipping).where(
+                Shipping.id_shipping == id_shipping
+            ).values(tracking_number=tracking_number)
+            
+            self._session.execute(stmt)
+            self._session.commit()
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error updating tracking number: {str(e)}")

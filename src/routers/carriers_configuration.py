@@ -168,13 +168,65 @@ async def create_dhl_configuration(
     dhl_service: IDhlConfigurationService = Depends(get_dhl_service),
     carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo)
 ):
-    """Crea configurazione DHL per un carrier_api"""
+    """
+    Crea configurazione DHL MyDHL API per un carrier_api
+    
+    **CAMPI OBBLIGATORI**
+    
+    **📋 Identificazione e Conti**
+    - `shipper_account_number`: Numero conto DHL mittente (obbligatorio per fatturazione trasporto)
+    - `payer_account_number`: Numero conto terzo pagatore (opzionale, se diverso dal mittente)
+    - `duties_account_number`: Numero conto per dazi doganali (opzionale, per DDP/DDU)
+    
+    **Dati Mittente (Shipper)**
+    - `company_name`: Ragione sociale mittente
+    - `reference_person`: Nome e cognome referente
+    - `email`: Email di contatto
+    - `phone`: Telefono (formato internazionale consigliato, es. +393331234567)
+    - `address`: Indirizzo completo (via, numero civico)
+    - `postal_code`: CAP
+    - `city`: Città
+    - `country_code`: Codice ISO paese (2 lettere, es. "IT", "DE", "FR")
+    - `province_code`: Provincia/stato (opzionale, es. "MI" per Milano)
+    - `tax_id`: Partita IVA/EORI (opzionale, necessario per spedizioni internazionali)
+    
+    **Dimensioni Pacco Predefinite**
+    - `default_weight`: Peso predefinito in kg (o lbs se unit_of_measure = IMPERIAL)
+    - `package_height`: Altezza pacco in cm (o inch)
+    - `package_width`: Larghezza pacco in cm (o inch)
+    - `package_depth`: Profondità pacco in cm (o inch)
+    - `unit_of_measure`: Sistema di misura ("Metric" = kg/cm, "Imperial" = lbs/inch)
+    
+    **Servizi e Documenti**
+    - `default_product_code_domestic`: Codice servizio nazionale (es. "N" = DHL Express Domestic)
+    - `default_product_code_international`: Codice servizio internazionale (es. "P" = DHL Worldwide Express)
+    - `label_format`: Formato etichetta ("PDF" per stampanti laser, "ZPL" per stampanti termiche)
+    - `goods_description`: Descrizione merce predefinita (es. "General Merchandise", "Electronics")
+    
+    **Dogana (per spedizioni internazionali)**
+    - `default_is_customs_declarable`: Se true, genera dichiarazione doganale per spedizioni internazionali
+    - `default_incoterm`: Termini di resa (es. "DAP" = consegna senza dazi, "DDP" = consegna con dazi pagati)
+    
+    **Ritiro (Pickup)**
+    - `pickup_is_requested`: Se true, DHL ritira il pacco presso il mittente
+    - `pickup_close_time`: Orario chiusura per ritiro (formato "HH:mm", es. "18:00")
+    - `pickup_location`: Luogo ritiro specifico (es. "Reception", "Warehouse")
+    
+    **Contrassegno (COD)**
+    - `cod_enabled`: Abilita contrassegno (Cash On Delivery)
+    - `cod_currency`: Valuta contrassegno (es. "EUR", "USD")
+    
+    **Altri Campi**
+    - `description`: Descrizione configurazione (uso interno)
+    
+     **NOTA**: Tutti i campi opzionali possono essere lasciati vuoti/null se non necessari.
+    """
     try:
         carrier = await carrier_repo.get_by_id(carrier_api_id)
         if not carrier:
-            raise HTTPException(status_code=404, detail="Carrier API not found")
+            raise HTTPException(status_code=404, detail="API Corriere non trovato")
         if carrier.carrier_type != CarrierTypeEnum.DHL:
-            raise HTTPException(status_code=400, detail="Carrier is not DHL type")
+            raise HTTPException(status_code=400, detail="Corriere non è DHL")
         
         return await dhl_service.create_configuration(carrier_api_id, config_data)
     except BusinessRuleException as e:
@@ -187,7 +239,12 @@ async def get_dhl_configuration(
     carrier_api_id: int = Path(..., gt=0),
     dhl_service: IDhlConfigurationService = Depends(get_dhl_service)
 ):
-    """Recupera configurazione DHL per carrier_api_id"""
+    """
+    Recupera la configurazione DHL MyDHL API associata a un carrier_api
+    
+    Restituisce tutti i parametri di configurazione necessari per creare spedizioni DHL,
+    inclusi dati mittente, dimensioni predefinite, servizi, e impostazioni dogana/pickup.
+    """
     try:
         config = await dhl_service.get_configuration_by_carrier(carrier_api_id)
         if not config:
@@ -202,7 +259,19 @@ async def update_dhl_configuration(
     config_data: DhlConfigurationUpdateSchema = ...,
     dhl_service: IDhlConfigurationService = Depends(get_dhl_service)
 ):
-    """Aggiorna configurazione DHL"""
+    """
+    Aggiorna la configurazione DHL MyDHL API esistente
+    
+    Permette di modificare parzialmente i parametri di configurazione.
+    Tutti i campi sono opzionali: solo i campi forniti verranno aggiornati.
+    
+    **Casi d'uso comuni:**
+    - Cambio numero conto DHL
+    - Modifica dimensioni pacco predefinite
+    - Aggiornamento indirizzo mittente
+    - Cambio servizi domestic/international
+    - Abilitazione/disabilitazione pickup
+    """
     try:
         return await dhl_service.update_configuration(carrier_api_id, config_data)
     except BusinessRuleException as e:
@@ -215,7 +284,15 @@ async def delete_dhl_configuration(
     carrier_api_id: int = Path(..., gt=0),
     dhl_service: IDhlConfigurationService = Depends(get_dhl_service)
 ):
-    """Elimina configurazione DHL"""
+    """
+    Elimina la configurazione DHL MyDHL API
+    
+    ⚠️ **ATTENZIONE**: L'eliminazione è permanente e impedirà la creazione
+    di nuove spedizioni DHL con questo carrier_api finché non viene
+    ricreata una nuova configurazione.
+    
+    Le spedizioni già create rimarranno salvate e tracciabili.
+    """
     try:
         await dhl_service.delete_configuration(carrier_api_id)
     except BusinessRuleException as e:

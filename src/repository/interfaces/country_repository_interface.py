@@ -18,3 +18,8 @@ class ICountryRepository(IRepository[Country, int]):
     def get_by_origin_id(self, origin_id: str) -> Optional[Country]:
         """Ottiene un paese per origin ID"""
         pass
+    
+    @abstractmethod
+    def get_iso_code(self, id_country: int) -> str:
+        """Get only iso_code field"""
+        pass
