@@ -13,6 +13,16 @@ class IShipmentDocumentRepository(ABC):
         pass
     
     @abstractmethod
+    def get_by_order_id(self, order_id: int) -> List[ShipmentDocument]:
+        """Get all shipment documents for a specific order"""
+        pass
+    
+    @abstractmethod
+    def get_by_awb(self, awb: str) -> List[ShipmentDocument]:
+        """Get all shipment documents for a specific AWB"""
+        pass
+    
+    @abstractmethod
     def delete_by_id(self, document_id: int) -> bool:
         """Delete a shipment document by ID"""
         pass

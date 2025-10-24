@@ -2,6 +2,7 @@ import httpx
 import base64
 import uuid
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from sqlalchemy.engine import Row
@@ -23,7 +24,8 @@ class DhlClient:
     async def create_shipment(
         self, 
         payload: Dict[str, Any], 
-        credentials: Row, 
+        credentials: Row,
+        dhl_config: Row,
         message_ref: str
     ) -> Dict[str, Any]:
         """
@@ -32,77 +34,106 @@ class DhlClient:
         Args:
             payload: DHL shipment request payload
             credentials: CarrierApi row with auth details
+            dhl_config: DhlConfiguration row with client_id and client_secret
             message_ref: Message reference for idempotency
             
         Returns:
             DHL API response as dict
         """
         url = f"{self._get_base_url(credentials.use_sandbox)}/shipments"
-        headers = self._get_headers(credentials, message_ref)
-        
-        logger.info(f"Creating DHL shipment for AWB: {payload.get('customerReferences', [{}])[0].get('value', 'N/A')}")
+        headers = self._get_headers(credentials, dhl_config, message_ref)
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await self._make_request_with_retry(
                 client, "POST", url, headers=headers, json=payload
             )
             
-        return response.json()
+        # Debug: Log response
+        response_data = response.json()
+        logger.info(f"📥 DHL Response Status: {response.status_code}")
+        logger.info(f"📥 DHL Response JSON: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+        
+        # Check for HTTP errors and handle them appropriately
+        error_message = response_data.get('detail', response_data.get('message', 'Unknown error'))
+        title = response_data.get('title', 'DHL API Error')
+            # Handle specific error codes
+        if response.status_code == 400:
+            raise ValueError(f"DHL Bad Request (400): {title} - {error_message}")
+        if response.status_code == 422:
+            raise ValueError(f"DHL Validation Error (422): {title} - {error_message}")
+        if response.status_code == 500:
+            raise RuntimeError(f"DHL Server Error (500): {title} - {error_message}")
+
+        
+        return response_data
     
     async def get_tracking_multi(
         self, 
-        tracking_numbers: list[str], 
-        credentials: Row
+        tracking: list[str], 
+        credentials: Row,
+        dhl_config: Row
     ) -> Dict[str, Any]:
         """
         Get tracking information for multiple shipments
         
         Args:
-            tracking_numbers: List of tracking numbers to track
+            tracking: List of tracking numbers to track
             credentials: CarrierApi row with auth details
+            dhl_config: DhlConfiguration row with client_id and client_secret
             
         Returns:
             DHL API response as dict
         """
         url = f"{self._get_base_url(credentials.use_sandbox)}/tracking"
-        headers = self._get_headers(credentials)
+        headers = self._get_headers(credentials, dhl_config)
         
         # Build query parameters
         params = {
-            "trackingNumber": ",".join(tracking_numbers),
+            "trackingNumber": ",".join(tracking),
             "trackingView": "shipment-details",
             "levelOfDetail": "shipment"
         }
         
-        logger.info(f"Getting DHL tracking for {len(tracking_numbers)} shipments")
+        # Debug: Log URL and parameters
+        logger.info(f"🔍 DHL Tracking URL: {url}")
+        logger.info(f"📋 DHL Tracking Params: {json.dumps(params, indent=2)}")
+        logger.info(f"🔑 DHL Tracking Headers: {json.dumps({k: v for k, v in headers.items() if k != 'Authorization'}, indent=2)}")
+        logger.info(f"🔐 DHL Tracking Auth: Basic {headers.get('Authorization', '').split(' ')[1] if 'Authorization' in headers else 'N/A'}")
+        logger.info(f"Getting DHL tracking for {len(tracking)} shipments")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await self._make_request_with_retry(
                 client, "GET", url, headers=headers, params=params
             )
             
-        return response.json()
+        # Debug: Log response
+        response_data = response.json()
+        logger.info(f"📥 DHL Tracking Response Status: {response.status_code}")
+        logger.info(f"📥 DHL Tracking Response JSON: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+        
+        return response_data
     
-    def _get_headers(self, credentials: Row, message_ref: Optional[str] = None) -> Dict[str, str]:
+    def _get_headers(self, credentials: Row, dhl_config: Row, message_ref: Optional[str] = None) -> Dict[str, str]:
         """
         Generate HTTP headers for DHL API requests
         
         Args:
             credentials: CarrierApi row with auth details
+            dhl_config: DhlConfiguration row with client_id and client_secret
             message_ref: Message reference for idempotency (optional)
             
         Returns:
             Headers dict
         """
-        # Select credentials based on sandbox flag
-        username = credentials.sandbox_api_username if credentials.use_sandbox else credentials.api_username
-        password = credentials.sandbox_api_password if credentials.use_sandbox else credentials.api_password
+        # Get DHL credentials from DhlConfiguration
+        client_id = dhl_config.client_id
+        client_secret = dhl_config.client_secret
         
-        if not username or not password:
-            raise ValueError(f"Missing credentials for {'sandbox' if credentials.use_sandbox else 'production'} environment")
+        if not client_id or not client_secret:
+            raise ValueError(f"Missing DHL credentials in DhlConfiguration")
         
-        # Generate Basic Auth header
-        auth_string = f"{username}:{password}"
+        # Generate Basic Auth header with client_id:client_secret (DHL MyDHL API format)
+        auth_string = f"{client_id}:{client_secret}"
         auth_bytes = auth_string.encode('ascii')
         auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
         
@@ -216,8 +247,19 @@ def format_planned_shipping_date(delta_hours: int = 1) -> str:
         delta_hours: Hours to add to current time (default 1)
         
     Returns:
-        Formatted date string for DHL API
+        Formatted date string for DHL API in format: '2010-02-11T17:10:09 GMT+01:00'
     """
+    from datetime import timedelta
+    
+    # Get current time in UTC
     now = datetime.now(timezone.utc)
-    shipping_time = now.replace(hour=now.hour + delta_hours, minute=0, second=0, microsecond=0)
-    return shipping_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    
+    # Add delta hours
+    shipping_time = now + timedelta(hours=delta_hours)
+    
+    # Round to next hour and set minutes/seconds to 0
+    shipping_time = shipping_time.replace(minute=0, second=0, microsecond=0)
+    
+    # Format as required by DHL: '2010-02-11T17:10:09 GMT+01:00'
+    # DHL expects GMT+01:00 format, so we use +01:00 for Italian timezone
+    return shipping_time.strftime("%Y-%m-%dT%H:%M:%S GMT+01:00")

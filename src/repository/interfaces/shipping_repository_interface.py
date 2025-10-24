@@ -27,6 +27,7 @@ class IShippingRepository(IRepository[Shipping, int]):
         pass
     
     @abstractmethod  
-    def update_tracking(self, id_shipping: int, tracking_number: str) -> None:
-        """Update tracking_number field"""
+    def update_tracking(self, id_shipping: int, tracking: str) -> None:
+        """Update tracking field"""
         pass
+    

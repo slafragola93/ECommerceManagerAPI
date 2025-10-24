@@ -19,7 +19,7 @@ class CarrierApi(Base):
     is_active = Column(Boolean, default=True)
     api_key = Column(String(200), default="")
     
-    # DHL authentication fields
+    # Generic authentication fields
     use_sandbox = Column(Boolean, default=False, nullable=False)
     api_username = Column(String(255), nullable=True)
     api_password = Column(String(255), nullable=True)

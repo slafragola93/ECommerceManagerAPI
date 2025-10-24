@@ -51,7 +51,7 @@ class CacheSettings(BaseSettings):
     shipment_audit_enabled: bool = Field(default=False, env="SHIPMENT_AUDIT_ENABLED")
     shipment_audit_ttl_days: int = Field(default=90, env="SHIPMENT_AUDIT_TTL_DAYS")
     shipment_audit_max_json_size_kb: int = Field(default=500, env="SHIPMENT_AUDIT_MAX_JSON_SIZE_KB")
-    dhl_base_url_prod: str = Field(default="https://express.api.dhl.com/mydhlapi", env="DHL_BASE_URL_PROD")
+    dhl_base_url_prod: str = Field(default="https://express.api.dhl.com/mydhlapi/test", env="DHL_BASE_URL_PROD")
     dhl_base_url_sandbox: str = Field(default="https://express.api.dhl.com/mydhlapi/test", env="DHL_BASE_URL_SANDBOX")
     
     # Circuit breaker

@@ -16,6 +16,7 @@ from .sectional_repository import SectionalRepository
 from .shipping_repository import ShippingRepository
 from .shipping_state_repository import ShippingStateRepository
 from .tax_repository import TaxRepository
+from .app_configuration_repository import AppConfigurationRepository
 from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
 from ..models import Order, OrderState
 from ..models.relations.relations import orders_history
@@ -47,6 +48,7 @@ class OrderRepository:
         self.order_detail_repository = OrderDetailRepository(session)
         self.platform_repository = PlatformRepository(session)
         self.payment_repository = PaymentRepository(session)
+        self.app_configuration_repository = AppConfigurationRepository(session)
 
     def get_all(self,
                 orders_ids: Optional[str] = None,
@@ -226,6 +228,35 @@ class OrderRepository:
         self.session.add(order)
         self.session.commit()
         self.session.refresh(order)
+        
+        # Genera internal_reference se non esiste
+        if not order.internal_reference and order.id_address_delivery:
+            try:
+                from src.services.core.tool import generate_internal_reference
+                from src.repository.country_repository import CountryRepository
+                
+                # Recupera country ISO code dall'indirizzo di consegna
+                address = self.address_repository.get_by_id(order.id_address_delivery)
+                if address and address.id_country:
+                    country_repo = CountryRepository(self.session)
+                    country = country_repo.get_by_id(address.id_country)
+                    if country and hasattr(country, 'iso_code'):
+                        country_iso = country.iso_code
+                    else:
+                        country_iso = "IT"  # Default
+                else:
+                    country_iso = "IT"  # Default
+                
+                # Genera internal_reference
+                internal_ref = generate_internal_reference(country_iso, self.app_configuration_repository)
+                order.internal_reference = internal_ref
+                
+                # Salva l'aggiornamento
+                self.session.commit()
+                
+            except Exception as e:
+                # Se fallisce, continua senza internal_reference
+                print(f"Warning: Could not generate internal_reference for order {order.id_order}: {str(e)}")
         
         # Creazione di Order Details se presenti
         created_order_details = []
@@ -648,6 +679,7 @@ class OrderRepository:
         """Retrieve only fields needed for shipment creation"""
         stmt = select(
             Order.id_order,
+            Order.internal_reference,
             Order.id_address_delivery,
             Order.id_shipping,
             Order.total_weight,

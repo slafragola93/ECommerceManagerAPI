@@ -18,6 +18,7 @@ class Order(Base):
 
     id_order = Column(Integer, primary_key=True, index=True)
     reference = Column(String(255), nullable=True)
+    internal_reference = Column(String(12), nullable=True, index=True)  # Max 12 caratteri (potrebbe cambiare in futuro)
     id_origin = Column(Integer, index=True, nullable=True)
     id_address_delivery = Column(Integer, index=True, nullable=True, default=None)
     id_address_invoice = Column(Integer, index=True, nullable=True, default=None)

@@ -77,7 +77,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             stmt = select(
                 Shipping.id_shipping,
                 Shipping.id_carrier_api,
-                Shipping.tracking_number
+                Shipping.tracking
             ).where(Shipping.id_shipping == id_shipping)
             
             result = self._session.execute(stmt).first()
@@ -87,15 +87,16 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving carrier info: {str(e)}")
     
-    def update_tracking(self, id_shipping: int, tracking_number: str) -> None:
-        """Update tracking_number field"""
+    def update_tracking(self, id_shipping: int, tracking: str) -> None:
+        """Update tracking field"""
         try:
             stmt = update(Shipping).where(
                 Shipping.id_shipping == id_shipping
-            ).values(tracking_number=tracking_number)
+            ).values(tracking=tracking)
             
             self._session.execute(stmt)
             self._session.commit()
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Database error updating tracking number: {str(e)}")
+    

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from pathlib import Path
 import logging
+from fastapi import HTTPException
 
 from src.core.settings import get_cache_settings
 from src.services.interfaces.dhl_shipment_service_interface import IDhlShipmentService
@@ -17,6 +18,7 @@ from src.repository.interfaces.country_repository_interface import ICountryRepos
 from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
 from src.repository.interfaces.shipment_request_repository_interface import IShipmentRequestRepository
 from src.services.ecommerce.shipments.dhl_client import DhlClient, generate_message_reference
+# generate_shipment_reference rimosso - ora si usa order.internal_reference
 from src.services.ecommerce.shipments.dhl_mapper import DhlMapper
 from src.models.shipment_request import ShipmentRequest, EnvironmentEnum
 from src.models.shipment_document import ShipmentDocument
@@ -88,50 +90,78 @@ class DhlShipmentService(IDhlShipmentService):
             # 7. Genero reference per idempotenza
             message_ref = generate_message_reference()
             
-            # 8. Controllo idempotenza se audit abilitato
+            # 8. Recupero internal_reference dell'ordine
+            internal_reference = order_data.internal_reference
+            
+            # 10. Controllo idempotenza se audit abilitato
             if self.settings.shipment_audit_enabled:
                 existing_request = self.shipment_request_repository.get_by_message_reference(message_ref)
                 if existing_request:
                     logger.info(f"Found existing shipment request for message_ref {message_ref}")
                     return {
-                        "awb": existing_request.awb,
-                        "label_path": None,  # Would need to retrieve from documents
-                        "estimated_delivery": None,
-                        "pickup_details": None,
-                        "tracking_url": None
+                        "awb": existing_request.awb
                     }
             
-            # 9. Costruzione DHL payload
+            # 11. Costruzione DHL payload con internal_reference dell'ordine
             dhl_payload = self.dhl_mapper.build_shipment_request(
                 order_data=order_data,
                 dhl_config=dhl_config,
                 receiver_address=receiver_address,
                 receiver_country_iso=receiver_country_iso,
-                packages=packages
+                packages=packages,
+                reference=internal_reference
             )
             
-            # 10. Chiama a API DHL
+            # 12. Chiama a API DHL
             logger.info(f"Creating DHL shipment for order {order_id}")
-            dhl_response = await self.dhl_client.create_shipment(
-                payload=dhl_payload,
-                credentials=credentials,
-                message_ref=message_ref
-            )
+            try:
+                dhl_response = await self.dhl_client.create_shipment(
+                    payload=dhl_payload,
+                    credentials=credentials,
+                    dhl_config=dhl_config,
+                    message_ref=message_ref
+                )
+            except ValueError as e:
+                # Handle DHL validation errors (400, 422)
+                logger.error(f"❌ DHL Validation Error for order {order_id}: {str(e)}")
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"DHL Validation Error: {str(e)}"
+                )
+            except RuntimeError as e:
+                # Handle DHL server errors (500)
+                logger.error(f"❌ DHL Server Error for order {order_id}: {str(e)}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"DHL Server Error: {str(e)}"
+                )
+            except Exception as e:
+                # Handle other DHL API errors
+                logger.error(f"❌ DHL API Error for order {order_id}: {str(e)}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"DHL API Error: {str(e)}"
+                )
             
-            # 11. Estrazione AWB e documenti
+            # 13. Estrazione AWB e documenti
             awb = dhl_response.get("shipmentTrackingNumber")
             documents = dhl_response.get("documents", [])
             
-            # 12. Salva PDF
+            # 14. Salva PDF
             saved_documents = []
             if documents:
-                saved_documents = await self._save_documents(awb, documents, order_id, carrier_api_id)
+                saved_documents = await self._save_documents(
+                    awb=awb, 
+                    documents=documents, 
+                    order_id=order_id, 
+                    carrier_api_id=carrier_api_id
+                )
             
-            # 13. Aggiornamento tracking
+            # 15. Aggiornamento tracking
             if awb:
                 self.shipping_repository.update_tracking(order_data.id_shipping, awb)
             
-            # 14. Salva audit se abilitato
+            # 16. Salva audit se abilitato
             if self.settings.shipment_audit_enabled:
                 self._save_audit(
                     order_id=order_id,
@@ -143,23 +173,42 @@ class DhlShipmentService(IDhlShipmentService):
                     message_ref=message_ref
                 )
             
-            # 15. Estrazione dati risposta
-            estimated_delivery = None
-            pickup_details = None
-            tracking_url = dhl_response.get("trackingUrl")
-            
-            if "estimatedDeliveryDate" in dhl_response:
-                estimated_delivery = dhl_response["estimatedDeliveryDate"].get("estimatedDeliveryDate")
-            
-            if "shipmentDetails" in dhl_response and dhl_response["shipmentDetails"]:
-                pickup_details = dhl_response["shipmentDetails"][0].get("pickupDetails")
+            # 14. Aggiorno stato spedizione e tracking se AWB è valido
+            if awb:
+                try:
+                    # Recupero solo id_shipping dall'ordine (query ottimizzata)
+                    from sqlalchemy import select
+                    from src.models.order import Order
+                    
+                    stmt = select(Order.id_shipping).where(Order.id_order == order_id)
+                    result = self.shipment_request_repository._session.execute(stmt)
+                    id_shipping = result.scalar_one_or_none()
+                    
+                    if id_shipping:
+                        # Recupero la spedizione tramite id_shipping
+                        shipping = self.shipping_repository.get_by_id(id_shipping)
+                        if shipping:
+                            # Aggiorno sempre il tracking con il nuovo AWB
+                            shipping.tracking = awb
+                            
+                            # Aggiorno lo stato solo se è in stato 1
+                            if shipping.id_shipping_state == 1:
+                                shipping.id_shipping_state = 2  # Cambia a "Tracking Assegnato"
+                                logger.info(f"Spedizione {shipping.id_shipping} aggiornata allo stato 2 (Tracking Assegnato)")
+                            
+                            # Salvo le modifiche
+                            self.shipping_repository.update(shipping)
+                            logger.info(f"Tracking spedizione {shipping.id_shipping} aggiornato a {awb}")
+                        else:
+                            logger.warning(f"Nessuna spedizione trovata per l'ordine {order_id}")
+                    else:
+                        logger.warning(f"Nessun id_shipping trovato per l'ordine {order_id}")
+                except Exception as e:
+                    logger.error(f"Impossibile aggiornare la spedizione per l'ordine {order_id}: {str(e)}")
+                    # Non sollevo eccezione per non bloccare la creazione spedizione
             
             return {
-                "awb": awb,
-                "label_path": saved_documents[0]["file_path"] if saved_documents else None,
-                "estimated_delivery": estimated_delivery,
-                "pickup_details": pickup_details,
-                "tracking_url": tracking_url
+                "awb": awb
             }
             
         except Exception as e:
@@ -169,9 +218,9 @@ class DhlShipmentService(IDhlShipmentService):
     async def _save_documents(
         self, 
         awb: str, 
-        documents: list, 
         order_id: int, 
-        carrier_api_id: int
+        carrier_api_id: int,
+        documents: list
     ) -> list[Dict[str, Any]]:
         """
         Salva documenti DHL (PDF) sul filesystem e nel database
@@ -185,6 +234,9 @@ class DhlShipmentService(IDhlShipmentService):
         Returns:
             Lista di metadati documenti salvati
         """
+        # 1. Cleanup documenti esistenti per questo ordine
+        self._cleanup_old_documents(order_id)
+        
         saved_documents = []
         
         for doc in documents:
@@ -201,14 +253,14 @@ class DhlShipmentService(IDhlShipmentService):
                 year = now.year
                 month = now.month
                 
-                # Creazione directory: /media/shipments/{year}/{month}/{AWB}/
-                base_dir = Path("media") / "shipments" / str(year) / str(month).zfill(2) / awb
+                # Creazione directory: /media/shipments/{year}/{month}/{id_order}/
+                base_dir = Path("media") / "shipments" / str(year) / str(month).zfill(2) / str(order_id)
                 base_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Genero nome file
+                # Genero nome file con AWB incluso
                 doc_type = doc.get("typeCode", "document")
                 timestamp = now.strftime("%Y%m%d_%H%M%S")
-                filename = f"{doc_type}_{timestamp}.pdf"
+                filename = f"{doc_type}_{awb}_{timestamp}.pdf"
                 file_path = base_dir / filename
                 
                 # Salvo file
@@ -222,6 +274,8 @@ class DhlShipmentService(IDhlShipmentService):
                 # Salvo a database
                 document = ShipmentDocument(
                     awb=awb,
+                    order_id=order_id,
+                    carrier_api_id=carrier_api_id,
                     type_code=doc_type,
                     file_path=str(file_path),
                     mime_type="application/pdf",
@@ -232,14 +286,16 @@ class DhlShipmentService(IDhlShipmentService):
                 )
                 
                 # Aggiungo a sessione e salvo
-                self.shipment_request_repository.session.add(document)
-                self.shipment_request_repository.session.commit()
+                self.shipment_request_repository._session.add(document)
+                self.shipment_request_repository._session.commit()
                 
                 saved_documents.append({
                     "type_code": doc_type,
                     "file_path": str(file_path),
                     "size_bytes": file_size,
-                    "sha256_hash": sha256_hash
+                    "sha256_hash": sha256_hash,
+                    "order_id": order_id,
+                    "carrier_api_id": carrier_api_id
                 })
                 
                 logger.info(f"Saved DHL document {doc_type} for AWB {awb}: {file_path}")
@@ -343,3 +399,90 @@ class DhlShipmentService(IDhlShipmentService):
                             contact["phone"] = "[REDACTED]"
         
         return redacted
+    
+    def _cleanup_old_documents(self, order_id: int) -> None:
+        """
+        Elimina documenti esistenti per un ordine prima di salvare nuovi documenti
+        
+        Args:
+            order_id: ID dell'ordine
+        """
+        try:
+            from src.repository.shipment_document_repository import ShipmentDocumentRepository
+            import shutil
+            from pathlib import Path
+            
+            # Recupera tutti i documenti esistenti per l'ordine
+            document_repo = ShipmentDocumentRepository(self.shipment_request_repository._session)
+            existing_documents = document_repo.get_by_order_id(order_id)
+            
+            if not existing_documents:
+                return
+            
+            # Raggruppa documenti per cartella per eliminare una volta sola
+            folders_to_delete = set()
+            
+            for doc in existing_documents:
+                if doc.file_path:
+                    try:
+                        # Estrai la cartella dell'ordine dal file_path
+                        # Es: media/shipments/2025/10/123/label_xxx.pdf -> media/shipments/2025/10/123
+                        file_path = Path(doc.file_path)
+                        order_folder = file_path.parent  # cartella {id_order}
+                        folders_to_delete.add(str(order_folder))
+                        
+                        # Elimina il record dal database
+                        document_repo.delete_by_id(doc.id)
+                        
+                    except Exception as e:
+                        logger.warning(f"Errore nel processare il documento {doc.id}: {str(e)}")
+            
+            # Elimina le cartelle fisiche
+            for folder_path in folders_to_delete:
+                try:
+                    if Path(folder_path).exists():
+                        shutil.rmtree(folder_path)
+                except Exception as e:
+                    logger.error(f"Errore nell'eliminare la cartella {folder_path}: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Errore durante la pulizia per l'ordine {order_id}: {str(e)}")
+            # Non sollevo eccezione per non bloccare la creazione spedizione
+    
+    async def get_label_file_path(self, awb: str) -> Optional[str]:
+        """
+        Recupera il percorso del file PDF della label per un AWB
+        
+        Args:
+            awb: Air Waybill number
+            
+        Returns:
+            Percorso del file PDF o None se non trovato
+        """
+        try:
+            from src.repository.shipment_document_repository import ShipmentDocumentRepository
+            
+            # Cerca il documento per AWB
+            document_repo = ShipmentDocumentRepository(self.shipment_request_repository._session)
+            documents = document_repo.get_by_awb(awb)
+            
+            if not documents:
+                logger.warning(f"Nessun documento trovato per AWB: {awb}")
+                return None
+            
+            # Cerca il documento di tipo "label" o altri tipi di documenti DHL
+            for doc in documents:
+                if doc.type_code in ["label", "LABEL", "shipping-label", "shipping_label"] and doc.file_path:
+                    return doc.file_path
+            
+            # Se non trova "label", prova con qualsiasi documento PDF
+            for doc in documents:
+                if doc.file_path and doc.file_path.endswith('.pdf'):
+                    return doc.file_path
+            
+            logger.warning(f"Nessun documento label trovato per AWB: {awb}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Errore nel recuperare il percorso del file per AWB {awb}: {str(e)}")
+            return None

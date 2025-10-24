@@ -9,6 +9,8 @@ class ShipmentDocument(Base):
     id = Column(Integer, primary_key=True, index=True)
     awb = Column(String(50), nullable=False, index=True)
     id_shipment_request = Column(Integer, ForeignKey('shipment_requests.id'), nullable=True)
+    order_id = Column(Integer, nullable=True, index=True)  # Order ID for easy retrieval
+    carrier_api_id = Column(Integer, nullable=True, index=True)  # Carrier API ID for easy retrieval
     type_code = Column(String(50), nullable=False)  # label, invoice, customsDoc, waybillDoc
     file_path = Column(String(500), nullable=False, unique=True)
     mime_type = Column(String(100), nullable=False)  # application/pdf

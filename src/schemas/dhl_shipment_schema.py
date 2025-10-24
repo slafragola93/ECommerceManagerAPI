@@ -71,7 +71,6 @@ class DhlEstimatedDeliverySchema(BaseModel):
 class DhlShipmentResponseSchema(BaseModel):
     """DHL Shipment creation response schema"""
     shipment_tracking_number: str = Field(..., description="DHL tracking number (AWB)")
-    tracking_url: Optional[str] = Field(None, description="Tracking URL")
     packages: Optional[List[Dict[str, Any]]] = Field(None, description="Package details")
     documents: Optional[List[DhlDocumentSchema]] = Field(None, description="Generated documents (labels, invoices)")
     shipment_details: Optional[List[Dict[str, Any]]] = Field(None, description="Shipment details")
@@ -89,15 +88,6 @@ class DhlErrorResponseSchema(BaseModel):
 
 
 # Request schemas for API endpoints
-class DhlCreateShipmentRequest(BaseModel):
-    """Request schema for creating DHL shipment"""
-    order_id: int = Field(..., description="Order ID to create shipment for")
-
-
 class DhlCreateShipmentResponse(BaseModel):
     """Response schema for DHL shipment creation"""
     awb: str = Field(..., description="Air Waybill number")
-    label_path: Optional[str] = Field(None, description="Path to saved label file")
-    estimated_delivery: Optional[str] = Field(None, description="Estimated delivery date")
-    pickup_details: Optional[Dict[str, Any]] = Field(None, description="Pickup details")
-    tracking_url: Optional[str] = Field(None, description="DHL tracking URL")

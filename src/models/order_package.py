@@ -11,6 +11,7 @@ class OrderPackage(Base):
     height = Column(Float)
     width = Column(Float)
     depth = Column(Float)
+    length = Column(Float)
     weight = Column(Float)
     value = Column(Float, default=0.0)
     

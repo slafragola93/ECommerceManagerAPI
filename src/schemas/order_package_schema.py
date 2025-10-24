@@ -8,6 +8,7 @@ class OrderPackageSchema(BaseModel):
     width: float
     depth: float
     weight: float
+    length: float
     value: float = Field(default=0.0)
 
 
@@ -18,6 +19,7 @@ class OrderPackageResponseSchema(BaseModel):
     width: float
     depth: float
     weight: float
+    length: float
     value: float
 
 

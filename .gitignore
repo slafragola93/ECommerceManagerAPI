@@ -101,3 +101,7 @@ logs/
 
 # Local development files
 local_settings.py
+
+# Media files and uploads
+media/
+media/*

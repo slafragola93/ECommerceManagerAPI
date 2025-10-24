@@ -1,7 +1,9 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+import json
 from sqlalchemy.engine import Row
 from src.models.dhl_configuration import DhlConfiguration
 from src.services.ecommerce.shipments.dhl_client import format_planned_shipping_date
+# generate_shipment_reference rimosso - ora si usa order.internal_reference
 import logging
 
 logger = logging.getLogger(__name__)
@@ -49,7 +51,7 @@ class DhlMapper:
     address.first_name + last_name        → customerDetails.receiverDetails.contactInformation.fullName
     address.phone                         → customerDetails.receiverDetails.contactInformation.phone
     address.email                         → customerDetails.receiverDetails.contactInformation.email
-    address.address_line1                 → customerDetails.receiverDetails.postalAddress.addressLine1
+    address.address1                 → customerDetails.receiverDetails.postalAddress.address1
     address.postal_code                   → customerDetails.receiverDetails.postalAddress.postalCode
     address.city                          → customerDetails.receiverDetails.postalAddress.cityName
     receiver_country_iso                  → customerDetails.receiverDetails.postalAddress.countryCode
@@ -131,7 +133,8 @@ class DhlMapper:
         dhl_config: DhlConfiguration,
         receiver_address: Row,
         receiver_country_iso: str,
-        packages: List[Row]
+        packages: List[Row],
+        reference: str
     ) -> Dict[str, Any]:
         """
         Build DHL shipment request payload from order and configuration data
@@ -159,18 +162,21 @@ class DhlMapper:
             else dhl_config.default_product_code_domestic
         )
         
+        # Use provided internal_reference from order 
+        internal_reference = reference 
+        
         # Build payload
         payload = {
             "productCode": product_code,
             "customerReferences": [
                 {
                     "typeCode": "CU",
-                    "value": str(order_data.id_order)
+                    "value": internal_reference
                 }
             ],
             "plannedShippingDateAndTime": format_planned_shipping_date(),
             "pickup": {
-                "isRequested": dhl_config.pickup_is_requested
+                "isRequested": dhl_config.pickup_is_requested or False
             },
             "outputImageProperties": {
                 "splitTransportAndWaybillDocLabels": True,
@@ -187,7 +193,7 @@ class DhlMapper:
                 "shipperDetails": self._build_shipper(dhl_config),
                 "receiverDetails": self._build_receiver(receiver_address, receiver_country_iso)
             },
-            "content": self._build_content(dhl_config, packages, is_international)
+            "content": self._build_content(dhl_config, packages, is_international, receiver_country_iso, internal_reference)
         }
         
         # Add pickup details if requested
@@ -205,7 +211,10 @@ class DhlMapper:
         
         payload["accounts"] = accounts
         
-        logger.info(f"Built DHL payload for order {order_data.id_order}, international: {is_international}")
+        # Debug: Log complete payload
+        logger.info(f"🏗️ Built DHL payload for order {order_data.id_order}, international: {is_international}")
+        logger.info(f"🏗️ DHL Mapper Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        
         return payload
     
     def _build_shipper(self, config: DhlConfiguration) -> Dict[str, Any]:
@@ -236,14 +245,14 @@ class DhlMapper:
         """Build receiver details from address data"""
         receiver = {
             "postalAddress": {
-                "addressLine1": address.address_line1,
-                "postalCode": address.postal_code,
+                "addressLine1": address.address1,
+                "postalCode": address.postcode,
                 "cityName": address.city,
                 "countryCode": country_iso
             },
             "contactInformation": {
-                "companyName": address.company_name or "",
-                "fullName": f"{address.first_name} {address.last_name}".strip(),
+                "companyName": address.company   or "",
+                "fullName": f"{address.firstname or ''} {address.lastname or ''}".strip(),
                 "phone": address.phone or "0000000000",
                 "email": address.email or "noreply@example.com"
             },
@@ -260,16 +269,16 @@ class DhlMapper:
         self, 
         config: DhlConfiguration, 
         packages: List[Row], 
-        is_international: bool
+        is_international: bool,
+        country_iso: str,
+        internal_reference: Optional[str] = None
     ) -> Dict[str, Any]:
         """Build content details for shipment"""
         content = {
             "unitOfMeasurement": config.unit_of_measure.value.lower(),
             "isCustomsDeclarable": is_international and config.default_is_customs_declarable,
-            "declaredValue": 10.0,  # Default declared value
-            "declaredValueCurrency": "EUR",
             "description": config.goods_description or "General merchandise",
-            "packages": self._build_packages(config, packages)
+            "packages": self._build_packages(config, packages, country_iso, internal_reference)
         }
         
         # Add incoterm for international shipments
@@ -281,17 +290,26 @@ class DhlMapper:
         
         return content
     
-    def _build_packages(self, config: DhlConfiguration, packages: List[Row]) -> List[Dict[str, Any]]:
+    def _build_packages(self, config: DhlConfiguration, packages: List[Row], country_iso: str, internal_reference: Optional[str] = None) -> List[Dict[str, Any]]:
         """Build package details from order packages or use defaults"""
         if not packages:
             # Use default package from configuration
             return [{
+                "typeCode": "2BP",
                 "weight": float(config.default_weight),
                 "dimensions": {
                     "length": config.package_height,
                     "width": config.package_width,
                     "height": config.package_depth
-                }
+                },
+                "customerReferences": [
+                    {
+                        "typeCode": "CU",
+                        "value": internal_reference
+                    }
+                ],
+                "description": config.goods_description or "General merchandise",
+                "labelDescription": config.goods_description or "General merchandise",
             }]
         
         # Build packages from order data
@@ -309,7 +327,13 @@ class DhlMapper:
                     "length": length,
                     "width": width,
                     "height": height
-                }
+                },
+                "customerReferences": [
+                    {
+                        "typeCode": "CU",
+                        "value": internal_reference
+                    }
+                ]
             }
             
             dhl_packages.append(dhl_package)

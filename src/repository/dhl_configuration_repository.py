@@ -11,9 +11,9 @@ class DhlConfigurationRepository(BaseRepository[DhlConfiguration, int], IDhlConf
     """Repository for DhlConfiguration operations"""
     
     def __init__(self, session: Session):
-        super().__init__(DhlConfiguration, session)
+        super().__init__(session, DhlConfiguration)
     
     def get_by_carrier_api_id(self, id_carrier_api: int) -> Optional[DhlConfiguration]:
         """Retrieve DHL configuration by carrier_api_id"""
         stmt = select(DhlConfiguration).where(DhlConfiguration.id_carrier_api == id_carrier_api)
-        return self.session.execute(stmt).scalar_one_or_none()
+        return self._session.execute(stmt).scalar_one_or_none()

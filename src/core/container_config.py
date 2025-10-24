@@ -86,6 +86,8 @@ from src.repository.interfaces.order_package_repository_interface import IOrderP
 from src.repository.order_package_repository import OrderPackageRepository
 from src.services.interfaces.order_package_service_interface import IOrderPackageService
 from src.services.routers.order_package_service import OrderPackageService
+from src.repository.interfaces.order_repository_interface import IOrderRepository
+from src.repository.order_repository import OrderRepository
 
 def configure_container():
     """Configura il container di dependency injection"""
@@ -112,6 +114,7 @@ def configure_container():
     container.register_transient(IOrderStateRepository, OrderStateRepository)
     container.register_transient(IShippingRepository, ShippingRepository)
     container.register_transient(IOrderPackageRepository, OrderPackageRepository)
+    container.register_transient(IOrderRepository, OrderRepository)
     
     # Registra API Carrier
     from src.services.interfaces.api_carrier_service_interface import IApiCarrierService

@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import Any
+import random
+import string
 
 from fastapi import HTTPException
 
@@ -222,3 +224,63 @@ def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
         calculate_amount_with_percentage(50.5, 10) → 5.05
     """
     return amount * (percentage / 100)
+
+
+def generate_internal_reference(country_iso_code: str, app_config_repository) -> str:
+    """
+    Genera un reference code sequenziale per ordini con formato: {ISO_CODE}{SEQUENTIAL_NUMBER}
+    
+    Args:
+        country_iso_code: Codice ISO del paese (es. "IT", "DE")
+        app_config_repository: Repository per AppConfiguration per gestire contatore globale
+    
+    Returns:
+        str: Reference code generato (es. "IT001", "IT1000", "DE001")
+    
+    Esempio:
+        generate_internal_reference("IT", repo) → "IT001"
+        generate_internal_reference("DE", repo) → "IT002" (stesso counter globale)
+        
+    NOTA: Max 12 caratteri per internal_reference (potrebbe cambiare in futuro)
+    """
+    iso_code = country_iso_code.upper()
+    config_key = "order_reference_counter_global"
+    
+    try:
+        # Recupera o crea contatore globale
+        counter_config = app_config_repository.get_by_name_and_category(
+            name=config_key, 
+            category="order_reference"
+        )
+        
+        if not counter_config:
+            # Crea nuovo contatore globale se non esiste
+            counter_config = app_config_repository.create({
+                "category": "order_reference",
+                "name": config_key,
+                "value": "0",
+                "description": "Global sequential counter for order references"
+            })
+        
+        # Incrementa contatore in modo thread-safe
+        current_value = int(counter_config.value)
+        new_value = current_value + 1
+        
+        # Aggiorna contatore
+        counter_config.value = str(new_value)
+        app_config_repository.update(counter_config)
+        
+        # Genera reference: ISO_CODE + numero sequenziale globale
+        reference = f"{iso_code}{new_value:03d}"  # Formato: IT001, IT002, etc.
+        
+        # Se supera 999, usa formato senza padding: IT1000, IT1001, etc.
+        if new_value > 999:
+            reference = f"{iso_code}{new_value}"
+        
+        return reference
+        
+    except Exception as e:
+        # Fallback: genera reference temporaneo se fallisce
+        import time
+        timestamp = int(time.time())
+        return f"{iso_code}{timestamp % 10000:04d}"

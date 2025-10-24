@@ -8,6 +8,13 @@ class CarrierApiSchema(BaseModel):
     carrier_type: CarrierTypeEnum = Field(...)
     is_active: Optional[bool] = True
     api_key: Optional[str] = Field(None, max_length=200)
+    
+    # Generic authentication fields
+    use_sandbox: Optional[bool] = False
+    api_username: Optional[str] = Field(None, max_length=255)
+    api_password: Optional[str] = Field(None, max_length=255)
+    sandbox_api_username: Optional[str] = Field(None, max_length=255)
+    sandbox_api_password: Optional[str] = Field(None, max_length=255)
 
 
 class CarrierApiResponseSchema(BaseModel):
@@ -17,6 +24,13 @@ class CarrierApiResponseSchema(BaseModel):
     is_active: bool
     api_key: Optional[str]
     
+    # Generic authentication fields
+    use_sandbox: Optional[bool]
+    api_username: Optional[str]
+    api_password: Optional[str]
+    sandbox_api_username: Optional[str]
+    sandbox_api_password: Optional[str]
+    
     model_config = {"from_attributes": True}
 
 
@@ -24,6 +38,13 @@ class CarrierApiUpdateSchema(BaseModel):
     name: Optional[str] = Field(None, max_length=200)
     is_active: Optional[bool] = None
     api_key: Optional[str] = Field(None, max_length=200)
+    
+    # Generic authentication fields
+    use_sandbox: Optional[bool] = None
+    api_username: Optional[str] = Field(None, max_length=255)
+    api_password: Optional[str] = Field(None, max_length=255)
+    sandbox_api_username: Optional[str] = Field(None, max_length=255)
+    sandbox_api_password: Optional[str] = Field(None, max_length=255)
 
 
 class AllCarriersApiResponseSchema(BaseModel):

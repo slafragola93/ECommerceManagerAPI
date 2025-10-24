@@ -12,21 +12,33 @@ class ShipmentDocumentRepository(BaseRepository[ShipmentDocument, int], IShipmen
     """Repository for ShipmentDocument operations"""
     
     def __init__(self, session: Session):
-        super().__init__(ShipmentDocument, session)
+        super().__init__(session, ShipmentDocument)
     
     def get_expired_documents(self) -> List[ShipmentDocument]:
         """Get all expired shipment documents"""
         now = datetime.utcnow()
         stmt = select(ShipmentDocument).where(ShipmentDocument.expires_at < now)
-        result = self.session.execute(stmt)
+        result = self._session.execute(stmt)
+        return result.scalars().all()
+    
+    def get_by_order_id(self, order_id: int) -> List[ShipmentDocument]:
+        """Get all shipment documents for a specific order"""
+        stmt = select(ShipmentDocument).where(ShipmentDocument.order_id == order_id)
+        result = self._session.execute(stmt)
+        return result.scalars().all()
+    
+    def get_by_awb(self, awb: str) -> List[ShipmentDocument]:
+        """Get all shipment documents for a specific AWB"""
+        stmt = select(ShipmentDocument).where(ShipmentDocument.awb == awb)
+        result = self._session.execute(stmt)
         return result.scalars().all()
     
     def delete_by_id(self, document_id: int) -> bool:
         """Delete a shipment document by ID"""
         document = self.get_by_id(document_id)
         if document:
-            self.session.delete(document)
-            self.session.commit()
+            self._session.delete(document)
+            self._session.commit()
             return True
         return False
 

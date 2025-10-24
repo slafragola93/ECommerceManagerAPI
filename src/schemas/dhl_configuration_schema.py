@@ -52,6 +52,10 @@ class DhlConfigurationSchema(BaseModel):
     # COD fields (replaced cash_on_delivery)
     cod_enabled: bool = Field(default=False)
     cod_currency: Optional[str] = Field(None, max_length=3)
+    
+    # DHL MyDHL API authentication fields
+    client_id: str = Field(..., max_length=255)
+    client_secret: str = Field(..., max_length=255)
 
 
 class DhlConfigurationResponseSchema(BaseModel):
@@ -88,6 +92,8 @@ class DhlConfigurationResponseSchema(BaseModel):
     default_product_code_international: str
     cod_enabled: bool
     cod_currency: Optional[str]
+    client_id: str
+    client_secret: str
     
     model_config = {"from_attributes": True}
 
@@ -124,3 +130,5 @@ class DhlConfigurationUpdateSchema(BaseModel):
     default_product_code_international: Optional[str] = Field(None, max_length=100)
     cod_enabled: Optional[bool] = None
     cod_currency: Optional[str] = Field(None, max_length=3)
+    client_id: Optional[str] = Field(None, max_length=255)
+    client_secret: Optional[str] = Field(None, max_length=255)

@@ -58,5 +58,9 @@ class DhlConfiguration(Base):
     cod_enabled = Column(Boolean, default=False)
     cod_currency = Column(String(3), nullable=True)
     
+    # DHL MyDHL API authentication fields
+    client_id = Column(String(255), nullable=True)
+    client_secret = Column(String(255), nullable=True)
+    
     # Relationship 1:1
     carrier_api = relationship("CarrierApi", back_populates="dhl_configuration")

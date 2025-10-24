@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc, select
 from sqlalchemy.engine import Row
 from src.models.address import Address
+from src.models.customer import Customer
 from src.repository.interfaces.address_repository_interface import IAddressRepository
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
@@ -76,16 +77,16 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
         try:
             stmt = select(
                 Address.id_address,
-                Address.address_line1,
-                Address.postal_code,
+                Address.address1,
+                Address.postcode,
                 Address.city,
-                Address.first_name,
-                Address.last_name,
-                Address.company_name,
+                Address.firstname,
+                Address.lastname,
+                Address.company,
                 Address.phone,
-                Address.email,
+                Customer.email,  # Email from Customer table
                 Address.id_country
-            ).where(Address.id_address == id_address)
+            ).join(Customer, Address.id_customer == Customer.id_customer).where(Address.id_address == id_address)
             
             result = self._session.execute(stmt).first()
             if not result:
