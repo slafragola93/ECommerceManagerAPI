@@ -1,7 +1,6 @@
 from typing import Optional
-import re
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field
 
 from .category_schema import CategoryResponseSchema
 from .brand_schema import BrandResponseSchema
@@ -62,23 +61,6 @@ class ProductResponseSchema(BaseModel):
     width: float
     category: CategoryResponseSchema | None
     brand: BrandResponseSchema | None
-    
-    @computed_field
-    @property
-    def img_api_url(self) -> Optional[str]:
-        """Genera automaticamente l'API URL per l'immagine se img_url è presente"""
-        if not self.img_url:
-            return None
-        
-        # Estrai platform_id e filename da img_url
-        match = re.match(r'/media/product_images/(\d+)/(.+)', self.img_url)
-        if match:
-            platform_id, filename = match.groups()
-            return f"/api/v1/images/product/{platform_id}/{filename}"
-        
-        return None
-    
-    model_config = {"from_attributes": True}
 
 
 class ProductUpdateSchema(BaseModel):

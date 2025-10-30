@@ -100,3 +100,40 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             self._session.rollback()
             raise InfrastructureException(f"Database error updating tracking number: {str(e)}")
     
+    def update_tracking_and_state(self, id_shipping: int, tracking: str, state_id: int) -> None:
+        """Update tracking and id_shipping_state atomically"""
+        try:
+            stmt = update(Shipping).where(
+                Shipping.id_shipping == id_shipping
+            ).values(tracking=tracking, id_shipping_state=state_id)
+            self._session.execute(stmt)
+            self._session.commit()
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error updating tracking/state: {str(e)}")
+
+    def update_state_by_tracking(self, tracking: str, state_id: int) -> int:
+        """Update id_shipping_state by tracking. Returns affected rows count."""
+        try:
+            stmt = update(Shipping).where(
+                Shipping.tracking == tracking
+            ).values(id_shipping_state=state_id)
+            result = self._session.execute(stmt)
+            self._session.commit()
+            return result.rowcount if hasattr(result, "rowcount") else 0
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Errore aggiornamento stato spedizione: {str(e)}")
+
+    def update_weight(self, id_shipping: int, weight: float) -> None:
+        """Aggiorna il peso della spedizione"""
+        try:
+            stmt = update(Shipping).where(
+                Shipping.id_shipping == id_shipping
+            ).values(weight=weight)
+            self._session.execute(stmt)
+            self._session.commit()
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error updating shipping weight: {str(e)}")
+    

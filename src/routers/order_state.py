@@ -58,7 +58,7 @@ async def get_all_order_states(
 
     total_count = await order_state_service.get_order_states_count()
 
-    return {"order_states": order_states, "total": total_count, "page": page, "limit": limit}
+    return {"states": order_states, "total": total_count, "page": page, "limit": limit}
 
 @router.get("/{order_state_id}", status_code=status.HTTP_200_OK, response_model=OrderStateResponseSchema)
 @check_authentication

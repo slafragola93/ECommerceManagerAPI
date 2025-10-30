@@ -75,8 +75,7 @@ async def get_product_by_id(
 
     - **product_id**: Identificativo del product da ricercare.
     """
-    product = await product_service.get_product(product_id)
-    return product
+    return await product_service.get_product(product_id)
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Product creato correttamente")
 @check_authentication
@@ -140,46 +139,40 @@ async def upload_product_image(
     - **file**: File immagine da caricare
     - **platform_id**: ID della piattaforma (default: 1)
     """
-    try:
-        # Verifica che il prodotto esista
-        product = await product_service.get_product(product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product non trovato")
-        
-        # Verifica il tipo di file
-        if not file.content_type or not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="Il file deve essere un'immagine")
-        
-        # Verifica la dimensione del file (max 10MB)
-        file_content = await file.read()
-        if len(file_content) > 10 * 1024 * 1024:  # 10MB
-            raise HTTPException(status_code=400, detail="Il file è troppo grande (max 10MB)")
-        
-        # Salva l'immagine
-        image_service = ImageService()
-        img_url = await image_service.save_uploaded_image(
-            file_content, 
-            product_id, 
-            platform_id, 
-            file.filename
-        )
-        
-        # Aggiorna il prodotto con l'URL dell'immagine
-        from src.schemas.product_schema import ProductUpdateSchema
-        update_data = ProductUpdateSchema(img_url=img_url)
-        await product_service.update_product(product_id, update_data)
-        
-        return {
-            "message": "Immagine caricata con successo",
-            "product_id": product_id,
-            "img_url": img_url,
-            "filename": file.filename
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    # Verifica che il prodotto esista
+    product = await product_service.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product non trovato")
+    
+    # Verifica il tipo di file
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Il file deve essere un'immagine")
+    
+    # Verifica la dimensione del file (max 10MB)
+    file_content = await file.read()
+    if len(file_content) > 10 * 1024 * 1024:  # 10MB
+        raise HTTPException(status_code=400, detail="Il file è troppo grande (max 10MB)")
+    
+    # Salva l'immagine
+    image_service = ImageService()
+    img_url = await image_service.save_uploaded_image(
+        file_content, 
+        product_id, 
+        platform_id, 
+        file.filename
+    )
+    
+    # Aggiorna il prodotto con l'URL dell'immagine
+    from src.schemas.product_schema import ProductUpdateSchema
+    update_data = ProductUpdateSchema(img_url=img_url)
+    await product_service.update_product(product_id, update_data)
+    
+    return {
+        "message": "Immagine caricata con successo",
+        "product_id": product_id,
+        "img_url": img_url,
+        "filename": file.filename
+    }
 
 
 @router.delete("/{product_id}/image", status_code=status.HTTP_200_OK, response_description="Immagine eliminata correttamente")
@@ -195,33 +188,28 @@ async def delete_product_image(
     
     - **product_id**: ID del prodotto
     """
-    try:
-        # Recupera il prodotto
-        product = await product_service.get_product(product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product non trovato")
+
+    # Recupera il prodotto
+    product = await product_service.get_product(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product non trovato")
+    
+    if not product.img_url:
+        raise HTTPException(status_code=404, detail="Il prodotto non ha un'immagine")
+    
+    # Elimina il file dal filesystem
+    image_service = ImageService()
+    deleted = image_service.delete_image(product.img_url)
+    
+    if deleted:
+        # Aggiorna il prodotto rimuovendo l'URL dell'immagine
+        from src.schemas.product_schema import ProductUpdateSchema
+        update_data = ProductUpdateSchema(img_url=None)
+        await product_service.update_product(product_id, update_data)
         
-        if not product.img_url:
-            raise HTTPException(status_code=404, detail="Il prodotto non ha un'immagine")
-        
-        # Elimina il file dal filesystem
-        image_service = ImageService()
-        deleted = image_service.delete_image(product.img_url)
-        
-        if deleted:
-            # Aggiorna il prodotto rimuovendo l'URL dell'immagine
-            from src.schemas.product_schema import ProductUpdateSchema
-            update_data = ProductUpdateSchema(img_url=None)
-            await product_service.update_product(product_id, update_data)
-            
-            return {
-                "message": "Immagine eliminata con successo",
-                "product_id": product_id
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del file")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        return {
+            "message": "Immagine eliminata con successo",
+            "product_id": product_id
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del file")

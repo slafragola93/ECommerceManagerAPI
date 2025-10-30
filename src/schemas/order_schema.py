@@ -12,6 +12,14 @@ from src.schemas.sectional_schema import SectionalResponseSchema
 from src.schemas.order_state_schema import OrderStateResponseSchema
 
 
+class OrderHistorySchema(BaseModel):
+    """Elemento di cronologia ordine: stato e data evento"""
+    state: str
+    data: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+
+
 class OrderSchema(BaseModel):
     address_delivery: int | AddressSchema = 0
     address_invoice: int | AddressSchema = 0
@@ -129,6 +137,7 @@ class OrderResponseSchema(BaseModel):
     sectional: Optional[SectionalResponseSchema] = None
     order_states: Optional[list[OrderStateResponseSchema]] = None
     order_details: Optional[list] = None 
+    order_history: Optional[list[OrderHistorySchema]] = None
 
     model_config = ConfigDict(from_attributes=True, extra='forbid')
 

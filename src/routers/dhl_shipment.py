@@ -10,6 +10,7 @@ from src.services.interfaces.dhl_tracking_service_interface import IDhlTrackingS
 from src.schemas.dhl_shipment_schema import DhlCreateShipmentResponse
 from src.schemas.dhl_tracking_schema import DhlTrackingRequest, DhlTrackingResponse, NormalizedTrackingResponseSchema
 from src.database import get_db
+from src.repository.shipping_repository import ShippingRepository
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +66,19 @@ async def create_shipment(
 async def get_tracking(
     tracking: str = Query(..., description="Comma-separated list of tracking numbers"),
     carrier_api_id: int = Query(..., description="Carrier API ID for authentication"),
-    dhl_tracking_service: IDhlTrackingService = Depends(get_dhl_tracking_service)
+    dhl_tracking_service: IDhlTrackingService = Depends(get_dhl_tracking_service),
+    db: Session = Depends(get_db)
 ):
     """
-    Get tracking information for DHL shipments
+    Recupera informazioni di tracciamento per le spedizioni DHL
     
     Args:
-        tracking: Comma-separated tracking numbers
-        carrier_api_id: Carrier API ID for authentication
-        dhl_tracking_service: DHL tracking service dependency
+        tracking: Numero di tracciamento separato da virgole
+        carrier_api_id: ID dell'API del carrier per l'autenticazione
+        dhl_tracking_service: Dipendenza del servizio di tracciamento DHL
         
     Returns:
-        List of normalized tracking responses
+        Lista di risposte di tracciamento normalizzate
     """
     try:
         # Parse tracking numbers
@@ -88,7 +90,19 @@ async def get_tracking(
         logger.info(f"Getting DHL tracking for {len(tracking_list)} shipments")
         
         result = await dhl_tracking_service.get_tracking(tracking_list, carrier_api_id)
-        
+
+        # Aggiorna lo stato shipment in base al tracking (se presente)
+        try:
+            repo = ShippingRepository(db)
+            for item in result:
+                tn = item.get("tracking_number")
+                state_id = item.get("current_internal_state_id")
+                if tn and isinstance(state_id, int):
+                    repo.update_state_by_tracking(tn, state_id)
+        except Exception as _:
+            # Non bloccare la risposta in caso di problemi di aggiornamento
+            logger.warning("Errore in aggiornamento stato spedizione", exc_info=True)
+
         return result
         
     except ValueError as e:

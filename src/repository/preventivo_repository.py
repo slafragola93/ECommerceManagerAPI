@@ -18,7 +18,7 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoSchema
 )
 from src.schemas.address_schema import AddressSchema
-from src.services.core.tool import generate_preventivo_reference, calculate_order_totals, apply_order_totals_to_order
+from src.services.core.tool import generate_preventivo_reference, calculate_order_totals
 from .order_repository import OrderRepository
 from src.schemas.order_schema import OrderSchema
 from datetime import datetime

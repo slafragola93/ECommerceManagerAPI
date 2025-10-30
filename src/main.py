@@ -19,7 +19,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, images, init, carriers_configuration, dhl_shipment
+    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment
 from src.database import Base, engine
 
 # Import new cache system
@@ -103,15 +103,25 @@ else:
 
 
 
-origins = ["http://localhost:4200","http://localhost:63297","http://localhost:8000"]
+# CORS configuration - più permissiva per sviluppo
+origins = [
+    "http://localhost:4200",
+    "http://localhost:63297", 
+    "http://localhost:8000",
+    "http://127.0.0.1:4200",
+    "http://127.0.0.1:8000",
+    "http://0.0.0.0:4200",
+    "http://0.0.0.0:8000"
+]
 
-# Add CORS middleware
+# Add CORS middleware - DEVE essere il primo middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Permettiamo tutte le origini per sviluppo
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Add error logging middleware
@@ -313,11 +323,25 @@ app.include_router(order_detail.router)
 app.include_router(sync.router)
 app.include_router(preventivi.router)
 app.include_router(fiscal_documents.router)
-app.include_router(images.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
 app.include_router(dhl_shipment.router)
 
+# CORS preflight handler per tutti gli endpoint
+@app.options("/{full_path:path}")
+async def options_handler(request: Request, full_path: str):
+    """Handle CORS preflight requests"""
+    return JSONResponse(
+        content={},
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "86400"
+        }
+    )
 
 @app.on_event("startup")
 def startup_event():

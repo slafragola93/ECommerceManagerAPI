@@ -89,10 +89,10 @@ class OrderRepository:
                 query = query.filter(Order.is_invoice_requested == is_invoice_requested)
             
             # Filtri per data (se implementati)
-            # if date_from:
-            #     query = query.filter(Order.date_add >= date_from)
-            # if date_to:
-            #     query = query.filter(Order.date_add <= date_to)
+            if date_from:
+                query = query.filter(Order.date_add >= date_from)
+            if date_to:
+                query = query.filter(Order.date_add <= date_to)
                 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
@@ -143,6 +143,26 @@ class OrderRepository:
     def get_by_id(self, _id: int) -> Order:
         """Recupera un ordine per ID"""
         return self.session.query(Order).filter(Order.id_order == _id).first()
+
+    def get_order_history_by_id_order(self, id_order: int) -> list[dict]:
+        """Restituisce la cronologia dell'ordine in formato [{state, data}]."""
+        try:
+            from src.services.core.tool import format_datetime_ddmmyy_hhmm
+            rows = (
+                self.session
+                .query(
+                    orders_history.c.id_order,
+                    orders_history.c.date_add,
+                    OrderState.name.label('state_name')
+                )
+                .outerjoin(OrderState, OrderState.id_order_state == orders_history.c.id_order_state)
+                .filter(orders_history.c.id_order == id_order)
+                .order_by(orders_history.c.date_add)
+                .all()
+            )
+            return [{"state": r.state_name, "data": format_datetime_ddmmyy_hhmm(r.date_add)} for r in rows]
+        except Exception:
+            return []
     
     def generate_shipping(self, data: OrderSchema) -> int:
         """Genera una spedizione di default basata sull'indirizzo di consegna"""
@@ -315,12 +335,15 @@ class OrderRepository:
             self.session.commit()
         
         # Creazione di Order Package
-        order_package_data = OrderPackageSchema(id_order=order.id_order,
-                                               height=0.0,
-                                               width=0.0,
-                                               depth=0.0,
-                                               weight=0.0,
-                                               value=0.0)
+        order_package_data = OrderPackageSchema(
+            id_order=order.id_order,
+            height=10.0,
+            width=10.0,
+            depth=10.0,
+            weight=10.0,
+            length=10.0,
+            value=10.0
+        )
         self.order_package_repository.create(order_package_data.model_dump())
         
         return order.id_order
@@ -390,6 +413,17 @@ class OrderRepository:
 
         self.session.add(order)
         self.session.commit()
+
+        # Allinea il peso della spedizione se presente
+        try:
+            if getattr(order, 'id_shipping', None):
+                from src.repository.shipping_repository import ShippingRepository
+                shipping_repo = ShippingRepository(self.session)
+                shipping_repo.update_weight(order.id_shipping, order.total_weight)
+
+        except Exception:
+            # Non bloccare il flusso per errori non critici di sync peso
+            pass
 
     def delete(self, order: Order) -> bool:
         """

@@ -11,8 +11,8 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoSchema,
     ArticoloPreventivoUpdateSchema
 )
-from src.models.customer import Customer
-from src.models.tax import Tax
+from src.schemas.sectional_schema import SectionalResponseSchema
+from src.schemas.preventivo_schema import PreventivoShipmentSchema
 
 
 class PreventivoService:
@@ -44,10 +44,39 @@ class PreventivoService:
         articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
         articoli_data = [self._format_articolo(articolo) for articolo in articoli]
         
+        sectional_obj = None
+        try:
+            if getattr(order_document, "sectional", None):
+                sectional_obj = SectionalResponseSchema(
+                    id_sectional=order_document.sectional.id_sectional,
+                    name=order_document.sectional.name
+                )
+        except Exception:
+            sectional_obj = None
+
+        shipment_obj = None
+        try:
+            if getattr(order_document, "shipping", None):
+                s = order_document.shipping
+                tax_rate = 0.0
+                if getattr(s, 'id_tax', None):
+                    tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
+                shipment_obj = PreventivoShipmentSchema(
+                    tax_rate=tax_rate,
+                    weight=float(s.weight or 0.0),
+                    price_tax_incl=float(s.price_tax_incl or 0.0),
+                    price_tax_excl=float(s.price_tax_excl or 0.0),
+                    shipping_message=s.shipping_message
+                )
+        except Exception:
+            shipment_obj = None
+
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
             document_number=order_document.document_number,
             id_customer=order_document.id_customer,
+            sectional=sectional_obj,
+            shipping=shipment_obj,
             customer_name=customer_name,
             reference=None,  # OrderDocument non ha campo reference
             note=order_document.note,
@@ -78,10 +107,40 @@ class PreventivoService:
         articoli = self.order_doc_service.get_articoli_order_document(id_order_document, "preventivo")
         articoli_data = [self._format_articolo(articolo) for articolo in articoli]
         
+        sectional_obj = None
+        try:
+            if getattr(order_document, "sectional", None):
+                sectional_obj = SectionalResponseSchema(
+                    id_sectional=order_document.sectional.id_sectional,
+                    name=order_document.sectional.name
+                )
+        except Exception:
+            sectional_obj = None
+
+        shipment_obj = None
+        try:
+            if getattr(order_document, "shipping", None):
+                s = order_document.shipping
+                tax_rate = 0.0
+                if getattr(s, 'id_tax', None):
+                    tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
+                shipment_obj = PreventivoShipmentSchema(
+                    id_tax=int(s.id_tax) if getattr(s, 'id_tax', None) else 0,
+                    tax_rate=tax_rate,
+                    weight=float(s.weight or 0.0),
+                    price_tax_incl=float(s.price_tax_incl or 0.0),
+                    price_tax_excl=float(s.price_tax_excl or 0.0),
+                    shipping_message=s.shipping_message
+                )
+        except Exception:
+            shipment_obj = None
+
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
             document_number=order_document.document_number,
             id_customer=order_document.id_customer,
+            sectional=sectional_obj,
+            shipping=shipment_obj,
             customer_name=customer_name,
             note=order_document.note,
             type_document=order_document.type_document,
@@ -111,10 +170,40 @@ class PreventivoService:
             if show_details:
                 articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
                 articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+            sectional_obj = None
+            try:
+                if getattr(order_document, "sectional", None):
+                    sectional_obj = SectionalResponseSchema(
+                        id_sectional=order_document.sectional.id_sectional,
+                        name=order_document.sectional.name
+                    )
+            except Exception:
+                sectional_obj = None
+
+            shipment_obj = None
+            try:
+                if getattr(order_document, "shipping", None):
+                    s = order_document.shipping
+                    tax_rate = 0.0
+                    if getattr(s, 'id_tax', None):
+                        tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
+                    shipment_obj = PreventivoShipmentSchema(
+                        id_tax=int(s.id_tax) if getattr(s, 'id_tax', None) else 0,
+                        tax_rate=tax_rate,
+                        weight=float(s.weight or 0.0),
+                        price_tax_incl=float(s.price_tax_incl or 0.0),
+                        price_tax_excl=float(s.price_tax_excl or 0.0),
+                        shipping_message=s.shipping_message
+                    )
+            except Exception:
+                shipment_obj = None
+
             result.append(PreventivoResponseSchema(
                 id_order_document=order_document.id_order_document,
                 document_number=order_document.document_number,
                 id_customer=order_document.id_customer,
+                sectional=sectional_obj,
+                shipping=shipment_obj,
                 customer_name=customer_name,
                 reference=None,  # OrderDocument non ha campo reference
                 note=order_document.note,

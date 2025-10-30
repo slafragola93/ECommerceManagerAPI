@@ -191,22 +191,6 @@ def calculate_order_totals(order_details: list, tax_percentages: dict = None) ->
     }
 
 
-def apply_order_totals_to_order(order, totals: dict, use_tax_included: bool = True) -> None:
-    """
-    Applica i totali calcolati a un oggetto Order
-    
-    Args:
-        order: Oggetto Order da aggiornare
-        totals: Dizionario con i totali calcolati
-        use_tax_included: Parametro deprecato, mantiene entrambi i valori
-    """
-    # Assegna sempre entrambi i campi
-    order.total_price_tax_excl = totals['total_price']  # Prezzo base senza tasse
-    order.total_paid = totals['total_price_with_tax']  # Prezzo con tasse incluse
-    
-    order.total_weight = totals['total_weight']
-    order.total_discounts = totals['total_discounts']
-
 
 def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
     """
@@ -224,6 +208,16 @@ def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
         calculate_amount_with_percentage(50.5, 10) → 5.05
     """
     return amount * (percentage / 100)
+
+
+def format_datetime_ddmmyy_hhmm(dt: datetime | None) -> str | None:
+    """Formatta una datetime in 'DD-MM-YYYY HH:mm'. Ritorna None se dt è None."""
+    if dt is None:
+        return None
+    try:
+        return dt.strftime('%d-%m-%Y %H:%M')
+    except Exception:
+        return None
 
 
 def generate_internal_reference(country_iso_code: str, app_config_repository) -> str:

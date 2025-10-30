@@ -64,6 +64,53 @@ class OrderDocumentService:
             sender_config[config.name] = config.value
         
         return sender_config
+
+    def recalculate_totals_for_order(self, id_order: int) -> None:
+        """Ricalcola e salva i totali dell'ordine, includendo la spedizione se presente."""
+        from src.services.core.tool import calculate_order_totals
+        from src.models.order_detail import OrderDetail
+
+        order = self.db.query(Order).filter(Order.id_order == id_order).first()
+        if not order:
+            return
+
+        # Recupera righe ordine
+        order_details: list[OrderDetail] = self.db.query(OrderDetail).filter(OrderDetail.id_order == id_order).all()
+
+        # Recupera percentuali tasse
+        tax_ids = {d.id_tax for d in order_details if getattr(d, 'id_tax', None)}
+        tax_percentages = {}
+        if tax_ids:
+            taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+            tax_percentages = {t.id_tax: t.percentage for t in taxes}
+
+        # Calcolo totali articoli
+        totals = calculate_order_totals(order_details, tax_percentages)
+
+        # Spedizione
+        shipping_cost_with_tax = 0.0
+        if order.id_shipping:
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+            if shipping and shipping.price_tax_incl:
+                shipping_cost_with_tax = shipping.price_tax_incl
+
+        # Peso totale articoli
+        total_weight = sum((d.product_weight or 0.0) * (d.product_qty or 0) for d in order_details)
+
+        # Sconti
+        discount = order.total_discounts if order.total_discounts else 0.0
+
+        # Persistenza
+        order.total_weight = totals.get('total_weight', total_weight)
+        order.total_price_tax_excl = totals.get('total_price', 0.0)
+        order.total_paid = totals.get('total_price_with_tax', 0.0) + shipping_cost_with_tax - discount
+
+        self.db.add(order)
+        self.db.commit()
+
+    def recalculate_totals_for_order_document(self, id_order_document: int, document_type: str) -> None:
+        """Ricalcola e salva i totali del documento (preventivo/DDT)."""
+        self.update_document_totals(id_order_document, document_type)
     
     def check_order_invoiced(self, id_order: int) -> bool:
         """
@@ -260,6 +307,79 @@ class OrderDocumentService:
             document.updated_at = datetime.now()
             
             self.db.commit()
+
+    # ----------------- Nuovi metodi di ricalcolo leggeri -----------------
+    def recalculate_totals_for_order_document(self, id_order_document: int, document_type: str) -> None:
+        """Ricalcola e persiste i totali di un documento (includendo spedizione)."""
+        # Log leggero
+        try:
+            import logging
+            logging.getLogger(__name__).info(f"Ricalcolo totali documento {id_order_document} ({document_type})")
+        except Exception:
+            pass
+        self.update_document_totals(id_order_document, document_type)
+
+    def recalculate_totals_for_order(self, id_order: int) -> None:
+        """Ricalcola i totali dell'ordine e allinea il peso della shipment se presente."""
+
+        from src.services.core.tool import calculate_order_totals
+        from src.models.tax import Tax
+
+        order = self.db.query(Order).filter(Order.id_order == id_order).first()
+        if not order:
+            return
+
+        # Carica righe dell'ordine
+        order_details = self.db.query(OrderDetail).filter(OrderDetail.id_order == id_order).all()
+
+        # Se non ci sono righe, azzera i totali
+        if not order_details:
+            order.total_weight = 0.0
+            order.total_paid = 0.0
+            self.db.commit()
+            return
+
+        # Percentuali tasse
+        tax_ids = set()
+        for od in order_details:
+            if getattr(od, 'id_tax', None):
+                tax_ids.add(od.id_tax)
+        tax_percentages = {}
+        if tax_ids:
+            taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+            tax_percentages = {t.id_tax: t.percentage for t in taxes}
+
+        # Calcolo totali (articoli)
+        totals = calculate_order_totals(order_details, tax_percentages)
+        order.total_weight = sum(od.product_weight * od.product_qty for od in order_details)
+
+        # Spedizione (se presente)
+        shipping_cost_incl = 0.0
+        shipping_cost_excl = 0.0
+        if order.id_shipping:
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+            if shipping:
+                if getattr(shipping, 'price_tax_incl', None):
+                    shipping_cost_incl = shipping.price_tax_incl or 0.0
+                if getattr(shipping, 'price_tax_excl', None):
+                    shipping_cost_excl = shipping.price_tax_excl or 0.0
+
+        # Sconti ordine (se presenti)
+        discount = getattr(order, 'total_discounts', 0.0) or 0.0
+
+        # Totali ordine: imponibile ed ivato
+        order.total_price_tax_excl = (totals['total_price'] + shipping_cost_excl)
+        order.total_paid = (totals['total_price_with_tax'] + shipping_cost_incl) - discount
+
+        # Persisti
+        self.db.commit()
+
+        # Allinea peso shipment se esiste
+        if order.id_shipping:
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+            if shipping:
+                shipping.weight = order.total_weight
+                self.db.commit()
     
     def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema, document_type: str) -> Optional[OrderDetail]:
         """

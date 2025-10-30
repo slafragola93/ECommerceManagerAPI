@@ -30,4 +30,24 @@ class IShippingRepository(IRepository[Shipping, int]):
     def update_tracking(self, id_shipping: int, tracking: str) -> None:
         """Update tracking field"""
         pass
+
+    @abstractmethod
+    def update_tracking_and_state(self, id_shipping: int, tracking: str, state_id: int) -> None:
+        """Update tracking and id_shipping_state in one shot"""
+        pass
+
+    @abstractmethod
+    def update_state_by_tracking(self, tracking: str, state_id: int) -> int:
+        """Update id_shipping_state by tracking. Returns affected rows count."""
+        pass
+
+    @abstractmethod
+    def update_weight(self, id_shipping: int, weight: float) -> None:
+        """Aggiorna il peso della spedizione"""
+        pass
+
+    @abstractmethod
+    def update_weight(self, id_shipping: int, weight: float) -> None:
+        """Aggiorna il peso della spedizione."""
+        pass
     

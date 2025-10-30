@@ -6,7 +6,7 @@ from .dependencies import MAX_LIMIT, LIMIT_DEFAULT
 from src.database import get_db
 from src.services.routers.auth_service import get_current_user
 from .. import OrderSchema
-from ..schemas.order_schema import OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
+from ..schemas.order_schema import OrderIdSchema, OrderUpdateSchema
 from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
 from ..schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema, ReturnResponseSchema, AllReturnsResponseSchema
 from src.services.core.wrap import check_authentication
@@ -18,11 +18,13 @@ from src.services.routers.auth_service import get_current_user
 from src.models.user import User
 from src.routers.dependencies import get_fiscal_document_service
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
+from src.models.order_state import OrderState
 
 router = APIRouter(
     prefix='/api/v1/orders',
     tags=['Order'],
 )
+
 
 
 def get_repository(db: Session = Depends(get_db)) -> OrderRepository:
@@ -164,6 +166,18 @@ async def get_order_by_id(order_id: int = Path(gt=0),
 
     # Restituisce sempre i dettagli completi
     return or_repo.formatted_output(order, show_details=True)
+
+
+@router.get("/{order_id}/history", status_code=status.HTTP_200_OK, summary="Storico stato ordine")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+async def get_order_history(
+    order_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    or_repo: OrderRepository = Depends(get_repository),
+):
+    """Restituisce la cronologia in formato [{state, data}]"""
+    return or_repo.get_order_history_by_id_order(order_id)
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Ordine creato correttamente")
@@ -743,4 +757,3 @@ async def get_all_returns(
         page=page,
         limit=limit
     )
-

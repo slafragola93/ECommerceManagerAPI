@@ -157,9 +157,13 @@ class DhlShipmentService(IDhlShipmentService):
                     carrier_api_id=carrier_api_id
                 )
             
-            # 15. Aggiornamento tracking
+            # 15. Aggiornamento tracking e stato (2 = Presa In Carico)
             if awb:
-                self.shipping_repository.update_tracking(order_data.id_shipping, awb)
+                try:
+                    self.shipping_repository.update_tracking_and_state(order_data.id_shipping, awb, 2)
+                except Exception:
+                    # fallback: almeno salva il tracking
+                    self.shipping_repository.update_tracking(order_data.id_shipping, awb)
             
             # 16. Salva audit se abilitato
             if self.settings.shipment_audit_enabled:

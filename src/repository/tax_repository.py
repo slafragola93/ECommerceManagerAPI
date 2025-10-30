@@ -64,11 +64,13 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
     def get_percentage_by_id(self, id_tax: int) -> float:
         """Ottiene la percentuale di una tassa per ID"""
         try:
-            tax = self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
-            if tax:
-                return tax.percentage
-            else:
-                # Fallback alla percentuale di default (22%)
-                return 22.0
+            row = self._session.query(Tax.percentage).filter(Tax.id_tax == id_tax).first()
+            if row is not None:
+                # row può essere un tuple/Row con singolo valore
+                value = row[0] if isinstance(row, (tuple, list)) else getattr(row, "percentage", None)
+                if value is not None:
+                    return float(value)
+            # Fallback alla percentuale di default (22%)
+            return 22.0
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving tax percentage: {str(e)}")

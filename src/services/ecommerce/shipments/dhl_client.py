@@ -89,8 +89,8 @@ class DhlClient:
         
         # Build query parameters
         params = {
-            "trackingNumber": ",".join(tracking),
-            "trackingView": "shipment-details",
+            "shipmentTrackingNumber": ",".join(tracking),
+            "trackingView": "last-checkpoint",
             "levelOfDetail": "shipment"
         }
         

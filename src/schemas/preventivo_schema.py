@@ -4,7 +4,8 @@ from datetime import datetime
 from .customer_schema import CustomerSchema
 from .address_schema import AddressSchema
 from .shipping_schema import ShippingSchema
-from .sectional_schema import SectionalSchema
+from .sectional_schema import SectionalSchema, SectionalResponseSchema
+from .shipping_schema import ShippingResponseSchema
 
 
 class CustomerField(BaseModel):
@@ -124,11 +125,21 @@ class ArticoloPreventivoUpdateSchema(BaseModel):
     rda: Optional[str] = Field(None, max_length=10)  # RDA
 
 
+class PreventivoShipmentSchema(BaseModel):
+    tax_rate: float
+    weight: float
+    price_tax_incl: float
+    price_tax_excl: float
+    shipping_message: Optional[str] = None
+
+
 class PreventivoResponseSchema(BaseModel):
     """Schema per risposta preventivo"""
     id_order_document: int
     document_number: str
     id_customer: int
+    sectional: Optional[SectionalResponseSchema] = None
+    shipping: Optional[PreventivoShipmentSchema] = None
     customer_name: Optional[str] = None
     reference: Optional[str] = None
     note: Optional[str] = None

@@ -16,11 +16,10 @@ class ProvinceService:
     def load_province_mapping(self) -> None:
         """Carica il mapping province -> abbreviazione dal file JSON"""
         try:
-            # Percorso del file comuni.json (da scaricare dal repository)
-            current_dir = Path(__file__).parent.parent.parent
-            comuni_file = current_dir / "data" / "comuni.json"
-            
-            if not comuni_file.exists():
+            # Percorsi candidati: root/data/comuni.json (preferito) e src/data/comuni.json (fallback)
+            base_root = Path(__file__).resolve().parents[3]  
+            comuni_file = base_root  / "data" / "comuni.json"
+            if not comuni_file:
                 print("File comuni.json non trovato. Inizializzazione con mapping manuale...")
                 self._init_manual_mapping()
                 return
