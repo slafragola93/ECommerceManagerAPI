@@ -1,7 +1,5 @@
 from datetime import datetime
 from typing import Any
-import random
-import string
 
 from fastapi import HTTPException
 
@@ -210,7 +208,7 @@ def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
     return amount * (percentage / 100)
 
 
-def format_datetime_ddmmyy_hhmm(dt: datetime | None) -> str | None:
+def format_datetime_ddmmyyyy_hhmm(dt: datetime | None) -> str | None:
     """Formatta una datetime in 'DD-MM-YYYY HH:mm'. Ritorna None se dt è None."""
     if dt is None:
         return None

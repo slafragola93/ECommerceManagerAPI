@@ -35,7 +35,8 @@ from src.core.exceptions import (
     BusinessRuleException,
     InfrastructureException,
     AuthenticationException,
-    AuthorizationException
+    AuthorizationException,
+    AlreadyExistsError
 )
 from src.core.monitoring import get_performance_monitor
 
@@ -132,7 +133,6 @@ app.add_middleware(SecurityLoggingMiddleware)
 # Setup cache middleware
 try:
     setup_conditional_middleware(app, cache_control_ttl=300)
-    print("Conditional GET middleware configured")
 except Exception as e:
     print(f"WARNING: Cache middleware setup failed: {e}")
 
@@ -180,6 +180,20 @@ async def not_found_exception_handler(request: Request, exc: NotFoundException):
     
     return JSONResponse(
         status_code=404,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(AlreadyExistsError)
+async def already_exists_exception_handler(request: Request, exc: AlreadyExistsError):
+    """Handler specifico per entità già esistenti"""
+    logger.warning(f"Entity already exists: {exc.message}", extra={
+        "error_code": exc.error_code,
+        "details": exc.details,
+        "path": str(request.url)
+    })
+    
+    return JSONResponse(
+        status_code=409,
         content=exc.to_dict()
     )
 

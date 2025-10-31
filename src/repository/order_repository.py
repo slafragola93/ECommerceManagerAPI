@@ -147,7 +147,7 @@ class OrderRepository:
     def get_order_history_by_id_order(self, id_order: int) -> list[dict]:
         """Restituisce la cronologia dell'ordine in formato [{state, data}]."""
         try:
-            from src.services.core.tool import format_datetime_ddmmyy_hhmm
+            from src.services.core.tool import format_datetime_ddmmyyyy_hhmm
             rows = (
                 self.session
                 .query(
@@ -160,7 +160,7 @@ class OrderRepository:
                 .order_by(orders_history.c.date_add)
                 .all()
             )
-            return [{"state": r.state_name, "data": format_datetime_ddmmyy_hhmm(r.date_add)} for r in rows]
+            return [{"state": r.state_name, "data": format_datetime_ddmmyyyy_hhmm(r.date_add)} for r in rows]
         except Exception:
             return []
     

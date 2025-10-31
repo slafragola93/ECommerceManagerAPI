@@ -61,10 +61,6 @@ class ApiCarrierRepository(BaseRepository[CarrierApi, int], IApiCarrierRepositor
         try:
             stmt = select(
                 CarrierApi.id_carrier_api,
-                CarrierApi.api_username,
-                CarrierApi.api_password,
-                CarrierApi.sandbox_api_username,
-                CarrierApi.sandbox_api_password,
                 CarrierApi.use_sandbox
             ).where(CarrierApi.id_carrier_api == id_carrier_api)
             

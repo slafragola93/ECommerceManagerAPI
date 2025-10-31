@@ -127,8 +127,6 @@ class PrestaShopService(BaseEcommerceService):
             products_to_update = []
             for product_data in product_data_list:
                 original_data = origin_to_original.get(product_data.id_origin)
-                if str(product_data.id_origin) == '31463':
-                    print(f"DEBUG: Original data: {original_data}")
                 if original_data:
                     id_image_default = original_data.get('id_default_image', 0)
                     if id_image_default and int(id_image_default) > 0:
@@ -147,16 +145,12 @@ class PrestaShopService(BaseEcommerceService):
             
             # Aggiorna img_url per i prodotti che hanno immagini
             if products_to_update:
-                print(f"DEBUG: Updating img_url for {len(products_to_update)} products")
                 for update_data in products_to_update:
                     product_repo._session.execute(
                         text("UPDATE products SET img_url = :img_url WHERE id_product = :id_product"),
                         update_data
                     )
                 product_repo._session.commit()
-                print(f"DEBUG: Updated img_url for {len(products_to_update)} products")
-            else:
-                print("DEBUG: No products need img_url update")
             
         except Exception as e:
             print(f"DEBUG: Error updating product img_urls: {str(e)}")
@@ -325,10 +319,16 @@ class PrestaShopService(BaseEcommerceService):
                 return sync_results
             
             # Phase 3: Complex tables (only after all dependencies are complete)
-            phase3_functions = [
-                ("Product Images", self.sync_product_images),
-                ("Orders", self.sync_orders)
-            ]
+            phase3_functions = []
+            
+            # Controlla se skip_images è 0 prima di aggiungere sync_product_images
+            skip_images = self._ecommerce_config.get('skip_images', 0)
+            
+            if skip_images == 0:
+                phase3_functions.append(("Product Images", self.sync_product_images))
+            
+            # Aggiungi sempre Orders
+            phase3_functions.append(("Orders", self.sync_orders))
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
             sync_results['phases'].append(phase3_results)
@@ -951,6 +951,28 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result("Products (Italian)", 0, [str(e)])
             raise
     
+    def check_image_exist(self, id_product: int) -> bool:
+        """
+        Controlla se un'immagine esiste già per un prodotto.
+        
+        Args:
+            id_product: ID del prodotto locale
+            
+        Returns:
+            True se l'immagine esiste, False altrimenti
+        """
+        import os
+        
+        # Genera il percorso locale dell'immagine
+        local_image_path = self.image_service.generate_local_image_path(
+            self.platform_id,
+            id_product
+        )
+        
+        # Controlla se il file esiste
+        full_path = os.path.join(os.getcwd(), local_image_path)
+        return os.path.exists(full_path)
+    
     async def _download_single_product_image(self, product_data, product_info, id_image_default):
         """
         Download a single product image asynchronously.
@@ -1069,18 +1091,42 @@ class PrestaShopService(BaseEcommerceService):
             
             # Prepara le task per il download parallelo
             download_tasks = []
+            skipped_existing_count = 0
             for product_data, id_image_default in products_with_images:
                 product_info = products_dict.get(str(product_data.id_origin))
                 if product_info:
+                    id_product, current_img_url = product_info
+                    
+                    # Controlla se l'immagine esiste già prima di aggiungere il task
+                    if self.check_image_exist(id_product):
+                        skipped_existing_count += 1
+                        # Aggiorna il campo img_url nel database se necessario
+                        if current_img_url != self.image_service.generate_local_image_path(self.platform_id, id_product):
+                            image_relative_path = self.image_service.generate_local_image_path(self.platform_id, id_product)
+                            product_repo._session.execute(
+                                {"img_url": image_relative_path, "id_product": id_product}
+                            )
+                        continue
+                    
+                    # Se l'immagine non esiste, aggiungi il task per il download
                     download_tasks.append(
                         self._download_single_product_image(product_data, product_info, id_image_default)
                     )
                 else:
                     print(f"DEBUG: Product {product_data.id_origin} not found in database")
             
+            # Commit eventuali aggiornamenti di prodotti con immagini già esistenti
+            if skipped_existing_count > 0:
+                product_repo._session.commit()
+                print(f"DEBUG: Skipped {skipped_existing_count} products with existing images")
+            
             # Esegui tutti i download in parallelo
-            print(f"DEBUG: Starting parallel download of {len(download_tasks)} images")
-            results = await asyncio.gather(*download_tasks, return_exceptions=True)
+            if download_tasks:
+                print(f"DEBUG: Starting parallel download of {len(download_tasks)} images")
+                results = await asyncio.gather(*download_tasks, return_exceptions=True)
+            else:
+                print(f"DEBUG: No images to download (all already exist)")
+                results = []
             
             # Processa i risultati
             updates_to_process = []

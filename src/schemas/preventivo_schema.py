@@ -2,10 +2,11 @@ from typing import Optional, List, Union
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from .customer_schema import CustomerSchema
-from .address_schema import AddressSchema
+from .address_schema import AddressResponseSchema, AddressSchema
 from .shipping_schema import ShippingSchema
 from .sectional_schema import SectionalSchema, SectionalResponseSchema
 from .shipping_schema import ShippingResponseSchema
+from .order_package_schema import OrderPackageResponseSchema
 
 
 class CustomerField(BaseModel):
@@ -58,6 +59,16 @@ class ShippingField(BaseModel):
     shipping_message: Optional[str] = Field(None, max_length=200)
 
 
+class OrderPackagePreventivoSchema(BaseModel):
+    """Schema per order_package nella creazione preventivo"""
+    height: float = Field(default=10.0, description="Altezza del pacco")
+    width: float = Field(default=10.0, description="Larghezza del pacco")
+    depth: float = Field(default=10.0, description="Profondità del pacco")
+    length: float = Field(default=10.0, description="Lunghezza del pacco")
+    weight: float = Field(default=0.0, ge=0, description="Peso del pacco")
+    value: float = Field(default=0.0, ge=0, description="Valore del pacco")
+
+
 class ArticoloPreventivoSchema(BaseModel):
     """Schema per articolo in preventivo (OrderDetail)"""
     id_order_detail: Optional[int]  = None
@@ -86,9 +97,11 @@ class PreventivoCreateSchema(BaseModel):
     address_invoice: Optional[AddressField] = Field(None, description="Address invoice (ID o oggetto completo) - se non specificato usa address_delivery")
     sectional: Optional[SectionalField] = Field(None, description="Sezionale (ID o oggetto completo) - se esiste un sectional con lo stesso nome viene riutilizzato")
     shipping: Optional[ShippingField] = Field(None, description="Dati spedizione (opzionale)")
+    id_payment: Optional[int] = Field(None, gt=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = Field(False, description="Se richiedere fattura")
     note: Optional[str] = None
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
+    order_packages: List[OrderPackagePreventivoSchema] = Field(default_factory=list, description="Lista dei package del preventivo (opzionale)")
 
 
 class PreventivoUpdateSchema(BaseModel):
@@ -101,6 +114,7 @@ class PreventivoUpdateSchema(BaseModel):
     id_customer: Optional[int] = Field(None, gt=0)
     id_sectional: Optional[int] = Field(None, gt=0)
     id_shipping: Optional[int] = Field(None, gt=0)
+    id_payment: Optional[int] = Field(None, gt=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = None
     note: Optional[str] = Field(None, max_length=200)
     
@@ -133,13 +147,24 @@ class PreventivoShipmentSchema(BaseModel):
     shipping_message: Optional[str] = None
 
 
+class PaymentPreventivoSchema(BaseModel):
+    """Schema per metodo di pagamento nei preventivi"""
+    id_payment: int = Field(..., description="ID del metodo di pagamento")
+    name: str = Field(..., description="Nome del metodo di pagamento")
+
+
 class PreventivoResponseSchema(BaseModel):
-    """Schema per risposta preventivo"""
+    """Schema per risposta preventivo (lista) - usa ID per gli indirizzi"""
     id_order_document: int
+    id_order: Optional[int] = None
     document_number: str
     id_customer: int
+    id_address_delivery: Optional[int] = None
+    id_address_invoice: Optional[int] = None
     sectional: Optional[SectionalResponseSchema] = None
     shipping: Optional[PreventivoShipmentSchema] = None
+    payment: Optional[PaymentPreventivoSchema] = None
+    is_invoice_requested: bool
     customer_name: Optional[str] = None
     reference: Optional[str] = None
     note: Optional[str] = None
@@ -150,6 +175,35 @@ class PreventivoResponseSchema(BaseModel):
     date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
+    order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo (solo se show_details=True)")
+
+    class Config:
+        from_attributes = True
+
+
+class PreventivoDetailResponseSchema(BaseModel):
+    """Schema per risposta preventivo (dettaglio) - usa oggetti Address completi"""
+    id_order_document: int
+    id_order: Optional[int] = None
+    document_number: str
+    id_customer: int
+    address_delivery: Optional[AddressResponseSchema] = None
+    address_invoice: Optional[AddressResponseSchema] = None
+    sectional: Optional[SectionalResponseSchema] = None
+    shipping: Optional[PreventivoShipmentSchema] = None
+    payment: Optional[PaymentPreventivoSchema] = None
+    is_invoice_requested: bool
+    customer_name: Optional[str] = None
+    reference: Optional[str] = None
+    note: Optional[str] = None
+    type_document: str
+    total_imponibile: float
+    total_iva: float
+    total_finale: float
+    date_add: Optional[datetime] = None
+    updated_at: datetime
+    articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
+    order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo")
 
     class Config:
         from_attributes = True

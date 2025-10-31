@@ -1,9 +1,11 @@
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
 class OrderPackageSchema(BaseModel):
 
-    id_order: int
+    id_order: Optional[int] = None
+    id_order_document: Optional[int] = None
     height: float
     width: float
     depth: float
@@ -14,7 +16,8 @@ class OrderPackageSchema(BaseModel):
 
 class OrderPackageResponseSchema(BaseModel):
     id_order_package: int
-    id_order: int
+    id_order: Optional[int] = None
+    id_order_document: Optional[int] = None
     height: float
     width: float
     depth: float

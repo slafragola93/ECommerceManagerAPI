@@ -21,11 +21,6 @@ class CarrierApi(Base):
     
     # Generic authentication fields
     use_sandbox = Column(Boolean, default=False, nullable=False)
-    api_username = Column(String(255), nullable=True)
-    api_password = Column(String(255), nullable=True)
-    sandbox_api_username = Column(String(255), nullable=True)
-    sandbox_api_password = Column(String(255), nullable=True)
-
     # Relationships
     carrier_assignments = relationship("CarrierAssignment", back_populates="carrier_api")
     

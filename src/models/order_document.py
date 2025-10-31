@@ -15,6 +15,7 @@ class OrderDocument(Base):
     id_customer = Column(Integer, ForeignKey('customers.id_customer'), index=True, default=None)
     id_sectional = Column(Integer, ForeignKey('sectionals.id_sectional'), index=True, default=None)
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'), index=True, default=None)
+    id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=None)
     document_number = Column(String(32))
     type_document = Column(String(32))
     total_weight = Column(Float)
@@ -30,3 +31,5 @@ class OrderDocument(Base):
     customer = relationship("Customer", back_populates="orders_document")
     sectional = relationship("Sectional", back_populates="orders_document")
     shipping = relationship("Shipping", foreign_keys=[id_shipping], primaryjoin="OrderDocument.id_shipping == Shipping.id_shipping")
+    payment = relationship("Payment", foreign_keys=[id_payment])
+    order_packages = relationship("OrderPackage", back_populates="order_document")

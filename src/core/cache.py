@@ -112,7 +112,7 @@ class CacheManager:
             
         try:
             with self._circuit_breaker:
-                if layer in ["auto", "memory"] and self._memory_cache:
+                if layer in ["auto", "memory", "hybrid"] and self._memory_cache:
                     # Try memory cache first
                     value = self._memory_cache.get(key)
                     if value is not None:
@@ -124,7 +124,7 @@ class CacheManager:
                             # If deserialization fails, return raw value (for backward compatibility)
                             return value
                 
-                if layer in ["auto", "redis"] and self._redis_client:
+                if layer in ["auto", "redis", "hybrid"] and self._redis_client:
                     # Try Redis cache
                     serialized = await self._redis_client.get(key)
                     if serialized:
@@ -132,7 +132,7 @@ class CacheManager:
                         logger.debug(f"Redis cache hit: {key}")
                         
                         # Populate memory cache if available
-                        if self._memory_cache and layer == "auto":
+                        if self._memory_cache and layer in ["auto", "hybrid"]:
                             self._memory_cache[key] = serialized
                         
                         return value
@@ -163,7 +163,7 @@ class CacheManager:
                 success = True
                 
                 # Set in memory cache
-                if layer in ["auto", "memory"] and self._memory_cache:
+                if layer in ["auto", "memory", "hybrid"] and self._memory_cache:
                     try:
                         self._memory_cache[key] = serialized
                         logger.debug(f"Memory cache set: {key} -> {len(serialized)} bytes")
@@ -172,7 +172,7 @@ class CacheManager:
                         success = False
                 
                 # Set in Redis cache
-                if layer in ["auto", "redis"] and self._redis_client:
+                if layer in ["auto", "redis", "hybrid"] and self._redis_client:
                     await self._redis_client.setex(key, ttl_seconds, serialized)
                 
                 logger.debug(f"Cache set: {key} (TTL: {ttl_seconds}s)")
@@ -192,11 +192,11 @@ class CacheManager:
             success = True
             
             # Delete from memory cache
-            if layer in ["auto", "memory"] and self._memory_cache:
+            if layer in ["auto", "memory", "hybrid"] and self._memory_cache:
                 self._memory_cache.pop(key, None)
             
             # Delete from Redis cache
-            if layer in ["auto", "redis"] and self._redis_client:
+            if layer in ["auto", "redis", "hybrid"] and self._redis_client:
                 await self._redis_client.delete(key)
             
             logger.debug(f"Cache delete: {key}")

@@ -9,6 +9,7 @@ from src.schemas.preventivo_schema import (
     PreventivoCreateSchema,
     PreventivoUpdateSchema,
     PreventivoResponseSchema,
+    PreventivoDetailResponseSchema,
     PreventivoListResponseSchema,
     ArticoloPreventivoSchema,
     ArticoloPreventivoUpdateSchema
@@ -430,14 +431,14 @@ async def get_preventivi(
     )
 
 
-@router.get("/{id_order_document}", response_model=PreventivoResponseSchema,
+@router.get("/{id_order_document}", response_model=PreventivoDetailResponseSchema,
             response_description="Preventivo recuperato con successo")
 async def get_preventivo(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
     user: User = user_dependency,
     db: Session = db_dependency
 ):
-    """Recupera preventivo per ID"""
+    """Recupera preventivo per ID con indirizzi completi"""
     service = get_preventivo_service(db)
     preventivo = service.get_preventivo(id_order_document)
     
@@ -447,7 +448,7 @@ async def get_preventivo(
     return preventivo
 
 
-@router.put("/{id_order_document}", response_model=PreventivoResponseSchema,
+@router.put("/{id_order_document}", response_model=PreventivoDetailResponseSchema,
             response_description="Preventivo aggiornato con successo")
 async def update_preventivo(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
@@ -722,3 +723,73 @@ async def convert_to_order(
         raise HTTPException(status_code=404, detail="Preventivo non trovato")
     
     return result
+
+
+@router.get("/{id_order_document}/download-pdf",
+            status_code=status.HTTP_200_OK,
+            summary="Genera PDF Preventivo",
+            description="Genera il PDF del preventivo specificato",
+            response_description="File PDF del preventivo")
+async def download_preventivo_pdf(
+    id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Genera il PDF del preventivo specificato
+    
+    Args:
+        id_order_document: ID del preventivo
+        user: Utente autenticato
+        db: Sessione database
+        
+    Returns:
+        Response: File PDF del preventivo
+        
+    Raises:
+        HTTPException: Se il preventivo non esiste
+    """
+    service = get_preventivo_service(db)
+    
+    # Verifica che il preventivo esista
+    preventivo = service.get_preventivo(id_order_document)
+    if not preventivo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Preventivo non trovato"
+        )
+    
+    # Genera il PDF
+    try:
+        pdf_content = service.generate_preventivo_pdf(id_order_document)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Errore durante la generazione del PDF: {str(e)}"
+        )
+    
+    # Restituisce il PDF come risposta
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    
+    # Crea un buffer per il PDF
+    pdf_buffer = BytesIO(pdf_content)
+    
+    # Determina nome file
+    filename = f"Preventivo-{preventivo.document_number}.pdf"
+    
+    # Ritorna PDF con headers per forzare download
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/pdf"
+        }
+    )

@@ -76,6 +76,7 @@ class PreventivoRepository:
             id_address_delivery=delivery_address_id,
             id_address_invoice=invoice_address_id,
             id_sectional=sectional_id,
+            id_payment=preventivo_data.id_payment if preventivo_data.id_payment else None,
             is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
             note=preventivo_data.note
         )
@@ -117,6 +118,22 @@ class PreventivoRepository:
         if preventivo_data.articoli:
             for articolo in preventivo_data.articoli:
                 self._create_order_detail(order_document.id_order_document, articolo)
+        
+        # Crea order_packages se presenti
+        if preventivo_data.order_packages:
+            from src.models.order_package import OrderPackage
+            for package_data in preventivo_data.order_packages:
+                order_package = OrderPackage(
+                    id_order_document=order_document.id_order_document,
+                    id_order=None,
+                    height=package_data.height,
+                    width=package_data.width,
+                    depth=package_data.depth,
+                    length=package_data.length,
+                    weight=package_data.weight,
+                    value=package_data.value
+                )
+                self.db.add(order_package)
         
         self.db.commit()
         
@@ -219,6 +236,8 @@ class PreventivoRepository:
             preventivo.id_sectional = preventivo_data.id_sectional
         if preventivo_data.id_shipping is not None:
             preventivo.id_shipping = preventivo_data.id_shipping
+        if preventivo_data.id_payment is not None:
+            preventivo.id_payment = preventivo_data.id_payment
         if preventivo_data.is_invoice_requested is not None:
             preventivo.is_invoice_requested = preventivo_data.is_invoice_requested
         if preventivo_data.note is not None:
@@ -291,6 +310,22 @@ class PreventivoRepository:
                 reduction_amount=articolo.reduction_amount or 0.0
             )
             self.order_repository.order_detail_repository.create(detail_data.model_dump())
+        
+        # Sposta i package dal preventivo all'ordine
+        from src.models.order_package import OrderPackage
+        packages = self.db.query(OrderPackage).filter(
+            OrderPackage.id_order_document == id_order_document,
+            OrderPackage.id_order.is_(None)
+        ).all()
+        
+        if packages:
+            # Se ci sono package associati al preventivo, spostali all'ordine
+            for package in packages:
+                package.id_order = order.id_order
+                package.id_order_document = None
+            
+            self.db.commit()
+        # Se non ci sono package, OrderRepository avrà già creato un package di default
         
         # Imposta il total_price_tax_excl corretto dopo aver creato tutti gli articoli
         order.total_price_tax_excl = total_price_tax_excl

@@ -16,6 +16,7 @@ from src.repository.tax_repository import TaxRepository
 from src.repository.sectional_repository import SectionalRepository
 from src.repository.order_state_repository import OrderStateRepository
 from src.repository.shipping_state_repository import ShippingStateRepository
+from src.repository.payment_repository import PaymentRepository
 
 
 class InitService:
@@ -32,6 +33,7 @@ class InitService:
         self.sectional_repo = SectionalRepository(db)
         self.order_state_repo = OrderStateRepository(db)
         self.shipping_state_repo = ShippingStateRepository(db)
+        self.payment_repo = PaymentRepository(db)
     
     @cached(
         ttl=TTL_PRESETS.get("init_static", 604800),  # 7 giorni per dati statici
@@ -50,12 +52,14 @@ class InitService:
         languages = self._get_languages()
         countries = self._get_countries()
         taxes = self._get_taxes()
+        payments = self._get_payments()
         
         return {
             "platforms": platforms,
             "languages": languages,
             "countries": countries,
-            "taxes": taxes
+            "taxes": taxes,
+            "payments": payments
         }
     
     @cached(
@@ -91,14 +95,10 @@ class InitService:
         Ottiene tutti i dati di inizializzazione
         Cache: 30 minuti
         """
-        print("[INIT] Caricamento dati completi di inizializzazione...")
-        
+    
         # Carica dati statici e dinamici sequenzialmente
         static_data = await self.get_static_data()
         dynamic_data = await self.get_dynamic_data()
-        
-        print(f"DEBUG: Static data: {static_data}")
-        print(f"DEBUG: Dynamic data: {dynamic_data}")
         
         # Calcola statistiche
         total_items = (
@@ -106,6 +106,7 @@ class InitService:
             len(static_data.get("languages", [])) +
             len(static_data.get("countries", [])) +
             len(static_data.get("taxes", [])) +
+            len(static_data.get("payments", [])) +
             len(dynamic_data.get("sectionals", [])) +
             len(dynamic_data.get("order_states", [])) +
             len(dynamic_data.get("shipping_states", []))
@@ -126,6 +127,7 @@ class InitService:
             languages=static_data.get("languages", []),
             countries=static_data.get("countries", []),
             taxes=static_data.get("taxes", []),
+            payments=static_data.get("payments", []),
             sectionals=dynamic_data.get("sectionals", []),
             order_states=dynamic_data.get("order_states", []),
             shipping_states=dynamic_data.get("shipping_states", []),
@@ -247,4 +249,19 @@ class InitService:
             ]
         except Exception as e:
             print(f"[ERROR] Errore caricamento shipping_states: {e}")
+            return []
+    
+    def _get_payments(self) -> List[Dict[str, Any]]:
+        """Ottiene i metodi di pagamento"""
+        try:
+            payments = self.payment_repo.get_all(limit=10000)
+            return [
+                {
+                    "id_payment": p.id_payment,
+                    "name": p.name
+                }
+                for p in payments
+            ]
+        except Exception as e:
+            print(f"[ERROR] Errore caricamento metodi di pagamento: {e}")
             return []

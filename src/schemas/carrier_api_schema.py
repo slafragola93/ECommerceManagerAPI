@@ -11,10 +11,6 @@ class CarrierApiSchema(BaseModel):
     
     # Generic authentication fields
     use_sandbox: Optional[bool] = False
-    api_username: Optional[str] = Field(None, max_length=255)
-    api_password: Optional[str] = Field(None, max_length=255)
-    sandbox_api_username: Optional[str] = Field(None, max_length=255)
-    sandbox_api_password: Optional[str] = Field(None, max_length=255)
 
 
 class CarrierApiResponseSchema(BaseModel):
@@ -26,10 +22,6 @@ class CarrierApiResponseSchema(BaseModel):
     
     # Generic authentication fields
     use_sandbox: Optional[bool]
-    api_username: Optional[str]
-    api_password: Optional[str]
-    sandbox_api_username: Optional[str]
-    sandbox_api_password: Optional[str]
     
     model_config = {"from_attributes": True}
 
@@ -41,10 +33,6 @@ class CarrierApiUpdateSchema(BaseModel):
     
     # Generic authentication fields
     use_sandbox: Optional[bool] = None
-    api_username: Optional[str] = Field(None, max_length=255)
-    api_password: Optional[str] = Field(None, max_length=255)
-    sandbox_api_username: Optional[str] = Field(None, max_length=255)
-    sandbox_api_password: Optional[str] = Field(None, max_length=255)
 
 
 class AllCarriersApiResponseSchema(BaseModel):

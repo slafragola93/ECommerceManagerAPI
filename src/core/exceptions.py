@@ -18,6 +18,7 @@ class ErrorCode(Enum):
     BUSINESS_RULE_VIOLATION = "BUSINESS_RULE_VIOLATION"
     ORDER_NOT_MODIFIABLE = "ORDER_NOT_MODIFIABLE"
     INSUFFICIENT_STOCK = "INSUFFICIENT_STOCK"
+    ALREADY_EXISTS = "ALREADY_EXISTS"
     
     # Not found errors
     ENTITY_NOT_FOUND = "ENTITY_NOT_FOUND"
@@ -152,6 +153,29 @@ class AuthorizationException(BaseApplicationException):
         details: Optional[Dict[str, Any]] = None
     ):
         super().__init__(message, error_code, details, 403)
+
+class AlreadyExistsError(BaseApplicationException):
+    """Errore quando un'entità esiste già"""
+    
+    def __init__(
+        self, 
+        message: str,
+        entity_type: str = None,
+        entity_id: Any = None,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        error_details = details or {}
+        if entity_type:
+            error_details["entity_type"] = entity_type
+        if entity_id is not None:
+            error_details["entity_id"] = entity_id
+        
+        super().__init__(
+            message,
+            ErrorCode.ALREADY_EXISTS,
+            error_details,
+            409
+        )
 
 # Factory per creare eccezioni specifiche
 class ExceptionFactory:
