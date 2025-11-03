@@ -3,12 +3,14 @@ import asyncio
 import logging
 import traceback
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from pathlib import Path
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
 # Fix for Windows file descriptor limit issue
@@ -19,7 +21,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment
+    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, events
 from src.database import Base, engine
 
 # Import new cache system
@@ -39,6 +41,18 @@ from src.core.exceptions import (
     AlreadyExistsError
 )
 from src.core.monitoring import get_performance_monitor
+from src.events.config import EventConfigLoader
+from src.events.config.config_schema import EventConfig
+from src.events.core.event_bus import EventBus
+from src.events.marketplace import MarketplaceClient
+from src.events.plugin_loader import PluginLoader
+from src.events.plugin_manager import PluginManager
+from src.events.runtime import (
+    set_config_loader,
+    set_event_bus,
+    set_marketplace_client,
+    set_plugin_manager,
+)
 
 # Legacy cache (keep for compatibility)
 try:
@@ -49,6 +63,9 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
+
+
+EVENT_CONFIG_PATH = Path("config/event_handlers.yaml")
 
 
 @asynccontextmanager
@@ -70,6 +87,36 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             print(f"WARNING: Legacy Redis connection failed: {e}")
     
+    # Initialize event system
+    try:
+        config_loader = EventConfigLoader(EVENT_CONFIG_PATH)
+        try:
+            event_config = config_loader.load()
+        except FileNotFoundError:
+            default_config = EventConfig(
+                plugin_directories=["src/events/plugins", "/opt/custom_plugins"],
+                enabled_handlers=[],
+                disabled_handlers=[],
+                routes={"order_status_changed": {}},
+            )
+            config_loader.save(default_config)
+            event_config = default_config
+
+        event_bus = EventBus()
+        plugin_loader = PluginLoader(event_config.plugin_directories)
+        plugin_manager = PluginManager(event_bus, config_loader, plugin_loader)
+        marketplace_client = MarketplaceClient(event_config.marketplace)
+
+        set_event_bus(event_bus)
+        set_plugin_manager(plugin_manager)
+        set_config_loader(config_loader)
+        set_marketplace_client(marketplace_client)
+
+        await plugin_manager.initialise()
+        print("Event system initialised")
+    except Exception as e:
+        print(f"WARNING: Event system initialisation failed: {e}")
+
     yield
     
     # Cleanup
@@ -340,6 +387,7 @@ app.include_router(fiscal_documents.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
 app.include_router(dhl_shipment.router)
+app.include_router(events.router)
 
 # CORS preflight handler per tutti gli endpoint
 @app.options("/{full_path:path}")

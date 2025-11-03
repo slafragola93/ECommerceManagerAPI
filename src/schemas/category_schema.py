@@ -13,17 +13,24 @@ class CategorySchema(BaseModel):
         Attributes:
             id_origin (Optional[int]): Un identificativo opzionale esterno per la categoria. Utile
                                        per mantenere riferimenti a sistemi esterni o a basi di dati differenti.
+            id_platform (int): Identificativo della piattaforma, default 0.
             name (str): Il nome della categoria, un campo obbligatorio che non può essere vuoto e
                         deve avere una lunghezza massima di 200 caratteri.
     """
     id_origin: Optional[int] = None
+    id_platform: int = Field(default=0, ge=0)
     name: str = Field(..., max_length=200)
+    
+    model_config = {"from_attributes": True}
 
 
 class CategoryResponseSchema(BaseModel):
     id_category: int | None
     id_origin: int | None
+    id_platform: int | None
     name: str | None
+    
+    model_config = {"from_attributes": True}
 
 
 class AllCategoryResponseSchema(BaseModel):
@@ -31,7 +38,5 @@ class AllCategoryResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
-
-
-class ConfigDict:
-    from_attributes = True
+    
+    model_config = {"from_attributes": True}

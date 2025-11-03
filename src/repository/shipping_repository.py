@@ -6,10 +6,11 @@ from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc, select, update
 from sqlalchemy.engine import Row
 from src.models.shipping import Shipping
+from src.models.order import Order
+from src.models.order_document import OrderDocument
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
-from src.services import QueryUtils
 from src.schemas.shipping_schema import ShippingSchema
 
 class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
@@ -126,14 +127,29 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             raise InfrastructureException(f"Errore aggiornamento stato spedizione: {str(e)}")
 
     def update_weight(self, id_shipping: int, weight: float) -> None:
-        """Aggiorna il peso della spedizione"""
+        """Aggiorna il peso della spedizione, degli ordini e dei preventivi associati"""
         try:
+            # Aggiorna il peso della spedizione
             stmt = update(Shipping).where(
                 Shipping.id_shipping == id_shipping
             ).values(weight=weight)
             self._session.execute(stmt)
+            
+            # Aggiorna il peso degli ordini associati a questa spedizione (solo con id_order_state = 1)
+            stmt_orders = update(Order).where(
+                Order.id_shipping == id_shipping,
+                Order.id_order_state == 1
+            ).values(total_weight=weight)
+            self._session.execute(stmt_orders)
+            
+            # Aggiorna il peso dei preventivi (OrderDocument) associati a questa spedizione
+            stmt_preventivi = update(OrderDocument).where(
+                OrderDocument.id_shipping == id_shipping
+            ).values(total_weight=weight)
+            self._session.execute(stmt_preventivi)
+            
             self._session.commit()
         except Exception as e:
             self._session.rollback()
-            raise InfrastructureException(f"Database error updating shipping weight: {str(e)}")
+            raise InfrastructureException(f"Errore aggiornamento peso spedizione: {str(e)}")
     

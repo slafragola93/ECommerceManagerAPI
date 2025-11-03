@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
 from src.services.interfaces.order_package_service_interface import IOrderPackageService
 from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
-from src.schemas.order_package_schema import OrderPackageSchema, OrderPackageResponseSchema, OrderPackageResponseSchema
+from src.schemas.order_package_schema import OrderPackageSchema, OrderPackageResponseSchema, AllOrderPackagesResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
     BaseApplicationException,
@@ -41,7 +41,7 @@ def get_order_package_service(db: db_dependency) -> IOrderPackageService:
     
     return order_package_service
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=OrderPackageResponseSchema)
+@router.get("/", status_code=status.HTTP_200_OK, response_model=AllOrderPackagesResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_order_packages(

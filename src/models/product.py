@@ -25,6 +25,7 @@ class Product(Base):
     id_origin = Column(Integer, default=0, index=True)
     id_category = Column(Integer, ForeignKey('categories.id_category'), index=True, default=None)
     id_brand = Column(Integer, ForeignKey('brands.id_brand'), index=True, default=None)
+    id_platform = Column(Integer, ForeignKey('platforms.id_platform'), default=0, nullable=False, index=True)
     img_url = Column(String(500), default=None)
     name = Column(String(128))
     sku = Column(String(32))
@@ -34,6 +35,8 @@ class Product(Base):
     depth = Column(Float, default=0.0)
     height = Column(Float, default=0.0)
     width = Column(Float, default=0.0)
+    price_without_tax = Column(Float, default=0.0, nullable=True)
+    quantity = Column(Integer, default=0, nullable=True)
 
     brand = relationship("Brand", back_populates="products")
     category = relationship("Category", back_populates="products")

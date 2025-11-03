@@ -1,0 +1,14 @@
+disabled_handlers: []
+enabled_handlers: []
+marketplace:
+  api_key: ''
+  base_url: https://marketplace.example.com/api
+  download_timeout_seconds: 30
+  enabled: false
+  verify_signature: false
+plugin_directories:
+- src\events\plugins
+- src\events\plugins\customs
+plugins: {}
+routes:
+  order_status_changed: {}

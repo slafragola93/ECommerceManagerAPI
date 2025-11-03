@@ -1,0 +1,2 @@
+# This plugin relies only on the main application dependencies.
+

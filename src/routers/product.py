@@ -3,6 +3,8 @@ Product Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, UploadFile, File, Form
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.schemas.product_schema import ProductSchema, ProductResponseSchema, AllProductsResponseSchema
@@ -16,6 +18,9 @@ from src.services.core.wrap import check_authentication
 from src.services.media.image_service import ImageService
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
+from src.repository.platform_repository import PlatformRepository
+from src.routers.dependencies import get_ecommerce_service
+from src.database import get_db
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -38,6 +43,7 @@ def get_product_service(db: db_dependency) -> IProductService:
         product_service._product_repository = product_repo
     
     return product_service
+
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllProductsResponseSchema)
 @check_authentication
@@ -213,3 +219,79 @@ async def delete_product_image(
         }
     else:
         raise HTTPException(status_code=500, detail="Errore durante l'eliminazione del file")
+
+
+@router.get("/get-live-price/{id_origin}", status_code=status.HTTP_200_OK)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_live_price(
+    id_origin: int = Path(gt=0),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Recupera il prezzo live (wholesale_price) di un prodotto direttamente dalla piattaforma e-commerce.
+    
+    Questo endpoint:
+    1. Recupera solo id_platform dal database usando id_origin
+    2. Seleziona il service corretto in base alla piattaforma
+    3. Chiama l'API della piattaforma per recuperare il prezzo aggiornato
+    4. Restituisce il prezzo senza salvare nel database
+    
+    Args:
+        id_origin: ID origin del prodotto nella piattaforma e-commerce
+        
+    Returns:
+        Dict con campo "ecommerce_price" contenente il prezzo o None
+    """
+    # Recupera SOLO id_platform dal database usando query SQL diretta
+    result = db.execute(
+        text("SELECT id_platform FROM products WHERE id_origin = :id_origin LIMIT 1"),
+        {"id_origin": id_origin}
+    ).first()
+    
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Product with id_origin={id_origin} not found"
+        )
+    
+    id_platform = result[0]
+    
+    if not id_platform or id_platform == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Product with id_origin={id_origin} has no valid platform associated"
+        )
+    
+    # Recupera la piattaforma dal database
+    platform_repo = PlatformRepository(db)
+    platform = platform_repo.get_by_id(id_platform)
+    
+    if not platform:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Platform with id={id_platform} not found"
+        )
+    
+    # Seleziona il service corretto in base alla piattaforma
+    service_class = get_ecommerce_service(platform, db)
+    
+    # Esegui la chiamata API usando async context manager
+    try:
+        async with service_class as service:
+            price = await service.get_live_price(id_origin)
+            
+            return {
+                "ecommerce_price": price
+            }
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        error_msg = f"Error getting live price from platform: {str(e)}"
+        print(f"DEBUG: {error_msg}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving live price: {str(e)}"
+        )

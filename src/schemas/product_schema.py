@@ -34,6 +34,7 @@ class ProductSchema(BaseModel):
     id_origin: Optional[int] = 0
     id_category: Optional[int] = Field(0, ge=0)
     id_brand: Optional[int] = Field(0, ge=0)
+    id_platform: int = Field(default=0, ge=0)
     img_url: Optional[str] = Field(default=None, max_length=500)
     name: str = Field(..., max_length=128)
     sku: str = Field(..., max_length=32)
@@ -43,6 +44,8 @@ class ProductSchema(BaseModel):
     depth: float = Field(default=0.0, ge=0)
     height: float = Field(default=0.0, ge=0)
     width: float = Field(default=0.0, ge=0)
+    price_without_tax: Optional[float] = Field(default=0.0, ge=0)
+    quantity: Optional[int] = Field(default=0, ge=0)
     
     model_config = {"from_attributes": True}
     
@@ -50,6 +53,7 @@ class ProductSchema(BaseModel):
 class ProductResponseSchema(BaseModel):
     id_product: int
     id_origin: int
+    id_platform: int
     img_url: str | None
     name: str
     sku: str
@@ -59,8 +63,12 @@ class ProductResponseSchema(BaseModel):
     depth: float
     height: float
     width: float
+    price_without_tax: float | None
+    quantity: int | None
     category: CategoryResponseSchema | None
     brand: BrandResponseSchema | None
+    
+    model_config = {"from_attributes": True}
 
 
 class ProductUpdateSchema(BaseModel):
@@ -72,6 +80,7 @@ class ProductUpdateSchema(BaseModel):
     id_origin: Optional[int] = None
     id_category: Optional[int] = Field(None, ge=0)
     id_brand: Optional[int] = Field(None, ge=0)
+    id_platform: Optional[int] = Field(None, ge=0)
     img_url: Optional[str] = Field(None, max_length=500)
     name: Optional[str] = Field(None, max_length=128)
     sku: Optional[str] = Field(None, max_length=32)
@@ -81,6 +90,8 @@ class ProductUpdateSchema(BaseModel):
     depth: Optional[float] = Field(None, ge=0)
     height: Optional[float] = Field(None, ge=0)
     width: Optional[float] = Field(None, ge=0)
+    price_without_tax: Optional[float] = Field(None, ge=0)
+    quantity: Optional[int] = Field(None, ge=0)
     
     model_config = {"from_attributes": True}
 

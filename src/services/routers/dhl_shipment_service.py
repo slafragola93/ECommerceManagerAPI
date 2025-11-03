@@ -126,21 +126,21 @@ class DhlShipmentService(IDhlShipmentService):
                 logger.error(f"❌ DHL Validation Error for order {order_id}: {str(e)}")
                 raise HTTPException(
                     status_code=400, 
-                    detail=f"DHL Validation Error: {str(e)}"
+                    detail=str(e)
                 )
             except RuntimeError as e:
                 # Handle DHL server errors (500)
                 logger.error(f"❌ DHL Server Error for order {order_id}: {str(e)}")
                 raise HTTPException(
                     status_code=500, 
-                    detail=f"DHL Server Error: {str(e)}"
+                    detail=str(e)
                 )
             except Exception as e:
                 # Handle other DHL API errors
                 logger.error(f"❌ DHL API Error for order {order_id}: {str(e)}")
                 raise HTTPException(
                     status_code=500, 
-                    detail=f"DHL API Error: {str(e)}"
+                    detail=str(e)
                 )
             
             # 13. Estrazione AWB e documenti

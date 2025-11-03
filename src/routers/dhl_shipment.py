@@ -47,20 +47,18 @@ async def create_shipment(
     """
     try:
         logger.info(f"Creating DHL shipment for order {order_id}")
-        
         result = await dhl_service.create_shipment(order_id)
         
         return DhlCreateShipmentResponse(
             awb=result["awb"]
         )
         
-    except ValueError as e:
-        logger.error(f"Validation error creating DHL shipment: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error creating DHL shipment: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
+    except HTTPException:
+        raise
+    except ValueError:
+        raise 
+    except Exception:
+        raise
 
 @router.get("/tracking", response_model=List[NormalizedTrackingResponseSchema])
 async def get_tracking(
@@ -105,6 +103,9 @@ async def get_tracking(
 
         return result
         
+    except HTTPException:
+        # Rilancia HTTPException così mantiene il formato corretto
+        raise
     except ValueError as e:
         logger.error(f"Validation error getting DHL tracking: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))

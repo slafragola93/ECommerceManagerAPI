@@ -1,24 +1,36 @@
+import logging
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from starlette import status
 from sqlalchemy.orm import Session
-from .dependencies import MAX_LIMIT, LIMIT_DEFAULT
+from starlette import status
+
 from src.database import get_db
-from src.services.routers.auth_service import get_current_user
-from .. import OrderSchema
-from ..schemas.order_schema import OrderIdSchema, OrderUpdateSchema
-from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
-from ..schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema, ReturnResponseSchema, AllReturnsResponseSchema
-from src.services.core.wrap import check_authentication
-from ..repository.order_repository import OrderRepository
-from ..services.routers.auth_service import authorize
-from ..models.relations.relations import orders_history
-from src.database import get_db
-from src.services.routers.auth_service import get_current_user
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
 from src.models.user import User
 from src.routers.dependencies import get_fiscal_document_service
+from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
-from src.models.order_state import OrderState
+from src.services.routers.auth_service import authorize, get_current_user
+
+from .. import OrderSchema
+from ..models.order_state import OrderState
+from ..models.relations.relations import orders_history
+from ..repository.order_repository import OrderRepository
+from ..schemas.order_schema import OrderIdSchema, OrderUpdateSchema
+from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
+from ..schemas.return_schema import (
+    AllReturnsResponseSchema,
+    ReturnCreateSchema,
+    ReturnDetailUpdateSchema,
+    ReturnResponseSchema,
+    ReturnUpdateSchema,
+)
+from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
+
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix='/api/v1/orders',
@@ -272,20 +284,45 @@ async def update_order_status(order_id: int = Path(gt=0),
     if order is None:
         raise HTTPException(status_code=404, detail="Ordine non trovato")
 
-    # Aggiorna solo lo stato dell'ordine
+    old_state_id = order.id_order_state
+    if old_state_id == new_status_id:
+        return {
+            "message": "Stato ordine aggiornato con successo",
+            "order_id": order_id,
+            "new_status_id": new_status_id,
+        }
+
     order.id_order_state = new_status_id
     or_repo.session.add(order)
-    
-    # Aggiungi record nell'order history con data e ora
+
     from datetime import datetime
+
     order_history_insert = orders_history.insert().values(
         id_order=order_id,
         id_order_state=new_status_id,
         date_add=datetime.now()
     )
     or_repo.session.execute(order_history_insert)
-    
+
     or_repo.session.commit()
+
+    event = Event(
+        event_type=EventType.ORDER_STATUS_CHANGED.value,
+        data={
+            "order_id": order_id,
+            "old_state_id": old_state_id,
+            "new_state_id": new_status_id,
+        },
+        metadata={
+            "source": "order_router.update_order_status",
+            "id_order": order_id,
+        },
+    )
+
+    try:
+        emit_event(event)
+    except Exception:  # pragma: no cover - safeguard event system failures
+        logger.exception("Failed to emit order status change event for order %s", order_id)
 
     return {"message": "Stato ordine aggiornato con successo", "order_id": order_id, "new_status_id": new_status_id}
 

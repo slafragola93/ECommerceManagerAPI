@@ -24,7 +24,14 @@ class OrderPackageResponseSchema(BaseModel):
     weight: float
     length: float
     value: float
+    
+    model_config = {"from_attributes": True}
 
 
-class ConfigDict:
-    from_attributes = True
+class AllOrderPackagesResponseSchema(BaseModel):
+    order_packages: list[OrderPackageResponseSchema]
+    total: int
+    page: int
+    limit: int
+    
+    model_config = {"from_attributes": True}
