@@ -46,6 +46,8 @@ class ProductSchema(BaseModel):
     width: float = Field(default=0.0, ge=0)
     price_without_tax: Optional[float] = Field(default=0.0, ge=0)
     quantity: Optional[int] = Field(default=0, ge=0)
+    purchase_price: Optional[float] = Field(default=0.0, ge=0)
+    minimal_quantity: Optional[int] = Field(default=0, ge=0)
     
     model_config = {"from_attributes": True}
     
@@ -65,6 +67,8 @@ class ProductResponseSchema(BaseModel):
     width: float
     price_without_tax: float | None
     quantity: int | None
+    purchase_price: float | None
+    minimal_quantity: int | None
     category: CategoryResponseSchema | None
     brand: BrandResponseSchema | None
     
@@ -92,6 +96,8 @@ class ProductUpdateSchema(BaseModel):
     width: Optional[float] = Field(None, ge=0)
     price_without_tax: Optional[float] = Field(None, ge=0)
     quantity: Optional[int] = Field(None, ge=0)
+    purchase_price: Optional[float] = Field(None, ge=0)
+    minimal_quantity: Optional[int] = Field(None, ge=0)
     
     model_config = {"from_attributes": True}
 

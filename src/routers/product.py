@@ -1,14 +1,11 @@
 """
 Product Router rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, UploadFile, File, Form
-from sqlalchemy.orm import Session
-from sqlalchemy import text
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
+from src.repository.interfaces.platform_repository_interface import IPlatformRepository
 from src.schemas.product_schema import ProductSchema, ProductResponseSchema, AllProductsResponseSchema
-from src.core.container import container
 from src.core.exceptions import (
     NotFoundException
 )
@@ -18,8 +15,6 @@ from src.services.core.wrap import check_authentication
 from src.services.media.image_service import ImageService
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
-from src.repository.platform_repository import PlatformRepository
-from src.routers.dependencies import get_ecommerce_service
 from src.database import get_db
 
 router = APIRouter(
@@ -29,19 +24,20 @@ router = APIRouter(
 
 def get_product_service(db: db_dependency) -> IProductService:
     """Dependency injection per Product Service"""
-    # Configura il container se necessario
     from src.core.container_config import get_configured_container
+
     configured_container = get_configured_container()
-    
-    # Crea il repository con la sessione DB usando il metodo specifico
+
     product_repo = configured_container.resolve_with_session(IProductRepository, db)
-    
-    # Crea il service con il repository
+    platform_repo = configured_container.resolve_with_session(IPlatformRepository, db)
+
     product_service = configured_container.resolve(IProductService)
-    # Inietta il repository nel service
-    if hasattr(product_service, '_product_repository'):
+
+    if hasattr(product_service, "set_dependencies"):
+        product_service.set_dependencies(product_repo, platform_repo, db)
+    elif hasattr(product_service, "_product_repository"):
         product_service._product_repository = product_repo
-    
+
     return product_service
 
 
@@ -226,72 +222,11 @@ async def delete_product_image(
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_live_price(
     id_origin: int = Path(gt=0),
-    db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    product_service: IProductService = Depends(get_product_service)
 ):
-    """
-    Recupera il prezzo live (wholesale_price) di un prodotto direttamente dalla piattaforma e-commerce.
-    
-    Questo endpoint:
-    1. Recupera solo id_platform dal database usando id_origin
-    2. Seleziona il service corretto in base alla piattaforma
-    3. Chiama l'API della piattaforma per recuperare il prezzo aggiornato
-    4. Restituisce il prezzo senza salvare nel database
-    
-    Args:
-        id_origin: ID origin del prodotto nella piattaforma e-commerce
-        
-    Returns:
-        Dict con campo "ecommerce_price" contenente il prezzo o None
-    """
-    # Recupera SOLO id_platform dal database usando query SQL diretta
-    result = db.execute(
-        text("SELECT id_platform FROM products WHERE id_origin = :id_origin LIMIT 1"),
-        {"id_origin": id_origin}
-    ).first()
-    
-    if not result:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Product with id_origin={id_origin} not found"
-        )
-    
-    id_platform = result[0]
-    
-    if not id_platform or id_platform == 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Product with id_origin={id_origin} has no valid platform associated"
-        )
-    
-    # Recupera la piattaforma dal database
-    platform_repo = PlatformRepository(db)
-    platform = platform_repo.get_by_id(id_platform)
-    
-    if not platform:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Platform with id={id_platform} not found"
-        )
-    
-    # Seleziona il service corretto in base alla piattaforma
-    service_class = get_ecommerce_service(platform, db)
-    
-    # Esegui la chiamata API usando async context manager
-    try:
-        async with service_class as service:
-            price = await service.get_live_price(id_origin)
-            
-            return {
-                "ecommerce_price": price
-            }
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        error_msg = f"Error getting live price from platform: {str(e)}"
-        print(f"DEBUG: {error_msg}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error retrieving live price: {str(e)}"
-        )
+    """Recupera il prezzo live di un prodotto demandando la logica al service applicativo."""
+
+    price = await product_service.get_live_price(id_origin)
+
+    return {"ecommerce_price": price}

@@ -75,7 +75,7 @@ class ArticoloPreventivoSchema(BaseModel):
     id_product: Optional[int] = None  # Se articolo esistente
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
-    product_price: Optional[float] = Field(0.0, gt=0)
+    product_price: Optional[float] = Field(0.0, ge=0)
     product_weight: Optional[float] = Field(0.0, ge=0)
     product_qty: int = Field(1, gt=0)  # Integer come nel modello
     id_tax: int = Field(..., gt=0)  # Sempre obbligatorio
@@ -85,8 +85,13 @@ class ArticoloPreventivoSchema(BaseModel):
     @validator('product_name', 'product_reference', 'product_price', 'product_qty')
     def validate_fields_when_no_product(cls, v, values):
         """Valida che i campi siano presenti quando non c'è id_product"""
-        if not values.get('id_product') and not v:
-            raise ValueError('I campi product_name, product_reference, product_price e product_qty sono obbligatori quando non viene specificato id_product')
+        # Per product_price, 0.0 è un valore valido, quindi controlliamo solo None
+        if not values.get('id_product'):
+            if v is None:
+                raise ValueError('I campi product_name, product_reference, product_price e product_qty sono obbligatori quando non viene specificato id_product')
+            # Per product_name e product_reference, controlla anche stringa vuota
+            if isinstance(v, str) and not v.strip():
+                raise ValueError('I campi product_name, product_reference, product_price e product_qty sono obbligatori quando non viene specificato id_product')
         return v
 
 
@@ -102,6 +107,22 @@ class PreventivoCreateSchema(BaseModel):
     note: Optional[str] = None
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackagePreventivoSchema] = Field(default_factory=list, description="Lista dei package del preventivo (opzionale)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "customer": {"id": 294488},
+                "address_delivery": {"id": 470625},
+                "note": "Preventivo esempio",
+                "articoli": [
+                    {
+                        "id_product": 123,
+                        "product_qty": 2,
+                        "id_tax": 9
+                    }
+                ]
+            }
+        }
 
 
 class PreventivoUpdateSchema(BaseModel):
@@ -130,7 +151,7 @@ class ArticoloPreventivoUpdateSchema(BaseModel):
     """Schema per modifica articolo in preventivo (OrderDetail)"""
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
-    product_price: Optional[float] = Field(None, gt=0)
+    product_price: Optional[float] = Field(None, ge=0)
     product_weight: Optional[float] = Field(None, ge=0)
     product_qty: Optional[int] = Field(None, gt=0)  # Integer come nel modello
     id_tax: Optional[int] = Field(None, gt=0)
@@ -157,7 +178,7 @@ class PreventivoResponseSchema(BaseModel):
     """Schema per risposta preventivo (lista) - usa ID per gli indirizzi"""
     id_order_document: int
     id_order: Optional[int] = None
-    document_number: str
+    document_number: int
     id_customer: int
     id_address_delivery: Optional[int] = None
     id_address_invoice: Optional[int] = None
@@ -185,7 +206,7 @@ class PreventivoDetailResponseSchema(BaseModel):
     """Schema per risposta preventivo (dettaglio) - usa oggetti Address completi"""
     id_order_document: int
     id_order: Optional[int] = None
-    document_number: str
+    document_number: int
     id_customer: int
     address_delivery: Optional[AddressResponseSchema] = None
     address_invoice: Optional[AddressResponseSchema] = None

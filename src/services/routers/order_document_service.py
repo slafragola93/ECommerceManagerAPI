@@ -19,7 +19,7 @@ class OrderDocumentService:
     def __init__(self, db: Session):
         self.db = db
     
-    def get_next_document_number(self, type_document: str) -> str:
+    def get_next_document_number(self, type_document: str) -> int:
         """
         Genera il prossimo numero sequenziale per un tipo di documento
         
@@ -27,7 +27,7 @@ class OrderDocumentService:
             type_document: Tipo di documento ("preventivo", "DDT", "fattura", etc.)
             
         Returns:
-            str: Prossimo numero sequenziale
+            int: Prossimo numero sequenziale
         """
         current_year = datetime.now().year
         
@@ -40,13 +40,12 @@ class OrderDocumentService:
         ).scalar()
         
         if max_number is None:
-            return "1"
+            return 1
         
         try:
-            next_number = int(max_number) + 1
-            return str(next_number)
+            return int(max_number) + 1
         except (ValueError, TypeError):
-            return "1"
+            return 1
     
     def get_sender_config(self) -> Dict[str, Any]:
         """

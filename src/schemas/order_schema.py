@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional, Union
+from typing import Optional, Union, List
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.schemas import AddressSchema, CustomerSchema, ShippingSchema, SectionalSchema
 from src.schemas.address_schema import AddressResponseSchema
@@ -183,5 +183,52 @@ class AllOrderResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+
+
+class OrderStatusUpdateItem(BaseModel):
+    """Schema per singolo aggiornamento stato ordine in bulk update."""
+    id_order: int = Field(gt=0, description="ID dell'ordine da aggiornare")
+    id_order_state: int = Field(gt=0, description="Nuovo stato dell'ordine")
+
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+
+
+# BulkOrderStatusUpdateSchema è semplicemente una lista di OrderStatusUpdateItem
+BulkOrderStatusUpdateSchema = List[OrderStatusUpdateItem]
+
+
+class OrderStatusUpdateResult(BaseModel):
+    """Risultato di un aggiornamento stato ordine riuscito."""
+    id_order: int
+    old_state_id: int
+    new_state_id: int
+
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+
+
+class OrderStatusUpdateError(BaseModel):
+    """Errore di un aggiornamento stato ordine fallito."""
+    id_order: int
+    error: str
+    reason: str
+
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+
+
+class BulkOrderStatusUpdateResponseSchema(BaseModel):
+    """Schema per risposta aggiornamento massivo stati ordini."""
+    successful: List[OrderStatusUpdateResult] = Field(
+        default_factory=list,
+        description="Lista di aggiornamenti riusciti"
+    )
+    failed: List[OrderStatusUpdateError] = Field(
+        default_factory=list,
+        description="Lista di aggiornamenti falliti"
+    )
+    summary: dict = Field(
+        description="Riepilogo operazione: total, successful_count, failed_count"
+    )
 
     model_config = ConfigDict(from_attributes=True, extra='forbid')

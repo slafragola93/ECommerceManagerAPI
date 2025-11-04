@@ -8,8 +8,9 @@ from src.database import get_db
 from src.core.container import container
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.services.routers.auth_service import get_current_user
-from src.services.ecommerce import PrestaShopService
 from src.models.platform import Platform
+from src.services.ecommerce.service_factory import create_ecommerce_service
+from src.core.exceptions import BusinessRuleException
 
 # Costanti per paginazione
 LIMIT_DEFAULT = 10
@@ -44,17 +45,11 @@ def get_ecommerce_service(platform: Platform, db: Session, new_elements: bool = 
     Raises:
         HTTPException: Se la piattaforma non è supportata
     """
-    platform_name = platform.name.lower() if platform.name else ""
-    
-    if platform_name == "prestashop":
-        # Passa new_elements solo se specificato
-        service_kwargs = {"platform_id": platform.id_platform}
-        if new_elements is not None:
-            service_kwargs["new_elements"] = new_elements
-        service_kwargs.update(kwargs)
-        return PrestaShopService(db, **service_kwargs)
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Piattaforma '{platform.name}' non supportata."
-        )
+    service_kwargs = dict(kwargs)
+    if new_elements is not None:
+        service_kwargs["new_elements"] = new_elements
+
+    try:
+        return create_ecommerce_service(platform, db, **service_kwargs)
+    except BusinessRuleException as exc:
+        raise HTTPException(status_code=400, detail=exc.message)

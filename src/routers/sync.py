@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from starlette import status
 from sqlalchemy.orm import Session
 from typing import Dict, Any
+import asyncio
 
 from src.database import get_db
 from src.services.routers.auth_service import db_dependency, get_current_user
@@ -405,7 +406,7 @@ async def sync_products_price(
     
     Questo endpoint avvia un processo asincrono che:
     1. Seleziona il service corretto in base alla piattaforma (PrestaShop, etc.)
-    2. Chiama l'API della piattaforma per recuperare i prezzi aggiornati (wholesale_price)
+    2. Chiama l'API della piattaforma per recuperare i prezzi aggiornati (price)
     3. Aggiorna i prodotti nel database con i nuovi prezzi (price_without_tax)
     
     Returns:
@@ -491,4 +492,139 @@ async def _run_price_sync(db: Session, platform_id: int, platform_name: str):
         error_msg = f"Error in price synchronization: {str(e)}"
         print(f"❌ {error_msg}")
         raise
+
+
+@router.post("/products/details", status_code=status.HTTP_202_ACCEPTED)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def sync_products_details(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    platform = Depends(get_default_platform),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Sincronizza i dettagli dei prodotti dalla piattaforma e-commerce.
+    
+    Questo endpoint avvia un processo asincrono che:
+    1. Recupera dettagli prodotti (SKU, REFERENCE, WEIGHT, DEPTH, HEIGHT, WIDTH, 
+       PURCHASE_PRICE, MINIMAL_QUANTITY, PRICE_WITHOUT_TAX) dall'API della piattaforma
+    2. Recupera quantità prodotti usando sync_quantity esistente
+    3. Unisce i dati e aggiorna i prodotti nel database con bulk update
+    
+    Returns:
+        202 Accepted: Sincronizzazione dettagli prodotti avviata con successo
+        400 Bad Request: Piattaforma non supportata o configurazione mancante
+        500 Internal Server Error: Errore nell'avvio della sincronizzazione
+    """
+    background_tasks.add_task(
+        _run_details_sync,
+        db=db,
+        platform_id=platform.id_platform,
+        platform_name=platform.name
+    )
+    
+    return {
+        "message": "Product details synchronization started",
+        "status": "accepted",
+        "platform_id": platform.id_platform,
+        "platform_name": platform.name,
+        "sync_id": f"details_sync_{user['id']}_{int(time.time())}"
+    }
+
+
+async def _run_details_sync(db: Session, platform_id: int, platform_name: str):
+    """
+    Background task per eseguire la sincronizzazione dei dettagli dei prodotti.
+    
+    Recupera dettagli prodotti e quantità in parallelo, li unisce e aggiorna il database.
+    
+    Args:
+        db: Database session
+        platform_id: ID della piattaforma
+        platform_name: Nome della piattaforma
+    """
+    print(f"🚀 Starting product details synchronization for platform: {platform_name} (ID: {platform_id})")
+    
+    try:
+        # Recupera la piattaforma per ottenere l'oggetto completo
+        platform_repo = PlatformRepository(db)
+        platform = platform_repo.get_by_id(platform_id)
         
+        if not platform:
+            raise Exception(f"Platform with ID {platform_id} not found")
+        
+        # Seleziona il service corretto in base alla piattaforma
+        service_class = get_ecommerce_service(platform, db)
+        
+        # Crea il repository per i prodotti
+        product_repo = ProductRepository(db)
+        
+        # Esegui la sincronizzazione usando async context manager
+        async with service_class as service:
+            print(f"📡 Fetching product details and quantities from {platform_name} API...")
+            
+            # Ottimizzazione: chiama sync_product_details() e sync_quantity() in parallelo
+            details_result, quantity_result = await asyncio.gather(
+                service.sync_product_details(),
+                service.sync_quantity(),
+                return_exceptions=True
+            )
+            
+            # Gestisci eccezioni dai risultati paralleli
+            if isinstance(details_result, Exception):
+                raise details_result
+            if isinstance(quantity_result, Exception):
+                raise quantity_result
+            
+            details_map = details_result.get('details_map', {})
+            quantity_map = quantity_result.get('quantity_map', {})
+            total_items = details_result.get('total_items', 0)
+            stats_details = details_result.get('stats', {})
+            stats_quantity = quantity_result.get('stats', {})
+            
+            print(f"✅ Retrieved {total_items} product details from API")
+            print(f"✅ Retrieved {len(quantity_map)} product quantities from API")
+            
+            if not details_map:
+                print("⚠️ No product details to update")
+                return
+            
+            # Unisce i due dict: aggiungi quantity a details_map
+            # Filtra id_origin = 0 (già fatto in sync_product_details, ma doppio check)
+            print(f"🔗 Merging details and quantities...")
+            for id_origin in list(details_map.keys()):
+                if id_origin > 0:  # SKIP id_origin = 0 (double check)
+                    details_map[id_origin]['quantity'] = quantity_map.get(id_origin, 0)
+                else:
+                    # Rimuovi se id_origin = 0 (non dovrebbe accadere, ma sicurezza)
+                    details_map.pop(id_origin, None)
+            
+            # Filtra finale per rimuovere eventuali id_origin = 0 rimasti
+            details_map = {k: v for k, v in details_map.items() if k > 0}
+            
+            print(f"✅ Merged {len(details_map)} products with details and quantities")
+            
+            # Aggiorna i dettagli nel database
+            print(f"💾 Updating product details in database for platform {platform_id}...")
+            updated_count = product_repo.bulk_update_product_details(
+                details_map=details_map,
+                id_platform=platform_id
+            )
+            
+            print(f"✅ Product details synchronization completed:")
+            print(f"   - Retrieved: {total_items} items")
+            print(f"   - Updated: {updated_count} products")
+            if stats_details.get('errors'):
+                print(f"   - Details errors: {len(stats_details.get('errors', []))}")
+            if stats_quantity.get('errors'):
+                print(f"   - Quantity errors: {len(stats_quantity.get('errors', []))}")
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        error_msg = f"Error in product details synchronization: {str(e)}"
+        print(f"❌ {error_msg}")
+        raise
+         

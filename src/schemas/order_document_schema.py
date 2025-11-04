@@ -12,7 +12,7 @@ class OrderDocumentSchema(BaseModel):
     id_customer: Optional[int] = 0
     id_sectional: int = Field(..., gt=0)
     id_shipping: int = Field(..., gt=0)
-    document_number: str = Field(..., max_length=32)
+    document_number: int = Field(..., gt=0)
     type_document: str = Field(..., max_length=32)
     total_weight: Optional[float] = 0.0
     total_price_with_tax: Optional[float] = 0.0
@@ -27,7 +27,7 @@ class OrderDocumentResponseSchema(BaseModel):
     customer: CustomerResponseSchema | None
     sectional: str
     id_shipping: int
-    document_number: str
+    document_number: int
     type_document: str
     total_weight: float
     total_price_with_tax: float

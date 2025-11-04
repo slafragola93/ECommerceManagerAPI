@@ -25,8 +25,6 @@ from ..models.relations.relations import orders_history
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
 from ..services import QueryUtils
-from src.events.core.event import Event, EventType
-from src.events.runtime import emit_event
 
 
 logger = logging.getLogger(__name__)
@@ -387,26 +385,8 @@ class OrderRepository:
         self.session.add(edited_order)
         self.session.commit()
 
-        if state_changed:
-            try:
-                event = Event(
-                    event_type=EventType.ORDER_STATUS_CHANGED.value,
-                    data={
-                        "order_id": edited_order.id_order,
-                        "old_state_id": old_state_id,
-                        "new_state_id": edited_order.id_order_state,
-                    },
-                    metadata={
-                        "source": "order_repository.update",
-                        "id_order": edited_order.id_order,
-                    },
-                )
-                emit_event(event)
-            except Exception:  # pragma: no cover - safeguard event system failures
-                logger.exception(
-                    "Failed to emit order status change event for order %s",
-                    edited_order.id_order,
-                )
+        # Event emission is now handled by the @emit_event_on_success decorator
+        # in the router layer to avoid duplication and centralize event handling
 
         return edited_order
 

@@ -122,6 +122,7 @@ class PreventivoService:
             note=order_document.note,
             status=None,  # OrderDocument non ha campo status
             type_document=order_document.type_document,
+            is_invoice_requested=order_document.is_invoice_requested,
             total_imponibile=totals["total_imponibile"],
             total_iva=totals["total_iva"],
             total_finale=totals["total_finale"],

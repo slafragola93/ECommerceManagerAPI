@@ -52,7 +52,7 @@ class DDTSenderSchema(BaseModel):
 class DDTResponseSchema(BaseModel):
     """Schema per risposta DDT completo"""
     id_order_document: int
-    document_number: str
+    document_number: int
     type_document: str
     date_add: Optional[datetime] = None
     updated_at: datetime

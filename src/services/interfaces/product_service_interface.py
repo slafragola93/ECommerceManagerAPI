@@ -2,7 +2,7 @@
 Interfaccia per Product Service seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from src.core.interfaces import IBaseService
 from src.schemas.product_schema import ProductSchema, ProductResponseSchema
 from src.models.product import Product
@@ -38,4 +38,9 @@ class IProductService(IBaseService):
     @abstractmethod
     async def get_products_count(self, **filters) -> int:
         """Ottiene il numero totale di product con filtri"""
+        pass
+
+    @abstractmethod
+    async def get_live_price(self, id_origin: int) -> Optional[float]:
+        """Recupera il prezzo live da piattaforma esterna"""
         pass

@@ -1,24 +1,31 @@
+"""
+Router per gestione ordini seguendo principi SOLID.
+Tutte le funzioni helper e la logica business sono nel service.
+"""
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body
 from sqlalchemy.orm import Session
 from starlette import status
 
 from src.database import get_db
-from src.events.core.event import Event, EventType
-from src.events.runtime import emit_event
-from src.models.user import User
 from src.routers.dependencies import get_fiscal_document_service
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.services.routers.auth_service import authorize, get_current_user
 
 from .. import OrderSchema
-from ..models.order_state import OrderState
-from ..models.relations.relations import orders_history
 from ..repository.order_repository import OrderRepository
-from ..schemas.order_schema import OrderIdSchema, OrderUpdateSchema
+from typing import List
+from ..schemas.order_schema import (
+    OrderIdSchema, 
+    OrderUpdateSchema,
+    OrderStatusUpdateItem,
+    BulkOrderStatusUpdateResponseSchema
+)
+from src.services.routers.order_service import OrderService
+from src.services.interfaces.order_service_interface import IOrderService
 from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
 from ..schemas.return_schema import (
     AllReturnsResponseSchema,
@@ -40,8 +47,14 @@ router = APIRouter(
 
 
 def get_repository(db: Session = Depends(get_db)) -> OrderRepository:
+    """Dependency injection per Order Repository."""
     return OrderRepository(db)
 
+
+def get_order_service(db: Session = Depends(get_db)) -> IOrderService:
+    """Dependency injection per Order Service."""
+    order_repo = OrderRepository(db)
+    return OrderService(order_repo)
 
 @router.get("/", 
            status_code=status.HTTP_200_OK,
@@ -211,10 +224,12 @@ async def create_order(order: OrderSchema,
 @router.put("/{order_id}", status_code=status.HTTP_200_OK, response_description="Ordine aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
-async def update_order(order_schema: OrderUpdateSchema,
-                      order_id: int = Path(gt=0),
-                      user: dict = Depends(get_current_user),
-                      or_repo: OrderRepository = Depends(get_repository)):
+async def update_order(
+    order_schema: OrderUpdateSchema,
+    order_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service)
+):
     """
     Aggiorna un ordine esistente con aggiornamenti parziali.
 
@@ -230,12 +245,14 @@ async def update_order(order_schema: OrderUpdateSchema,
         "payment_date": "2025-01-15T10:30:00"
     }
     ```
+    
+    Gli eventi ORDER_STATUS_CHANGED vengono emessi automaticamente dal decorator
+    nel service se lo stato viene modificato.
     """
-    order = or_repo.get_by_id(_id=order_id)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Ordine non trovato")
-
-    or_repo.update(edited_order=order, data=order_schema)
+    try:
+        return await order_service.update_order(order_id, order_schema)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Ordine eliminato correttamente")
@@ -259,15 +276,17 @@ async def delete_order(order_id: int = Path(gt=0),
     or_repo.delete(order=order)
 
 
-# Endpoint aggiuntivi per la gestione degli ordini
+
 
 @router.patch("/{order_id}/status", status_code=status.HTTP_200_OK, response_description="Stato ordine aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
-async def update_order_status(order_id: int = Path(gt=0),
-                             new_status_id: int = Query(gt=0),
-                             user: dict = Depends(get_current_user),
-                             or_repo: OrderRepository = Depends(get_repository)):
+async def update_order_status(
+    order_id: int = Path(gt=0),
+    new_status_id: int = Query(gt=0),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service)
+):
     """
     Aggiorna lo stato di un ordine e crea un record nell'order history.
 
@@ -278,53 +297,54 @@ async def update_order_status(order_id: int = Path(gt=0),
     
     La funzione aggiorna lo stato dell'ordine nella tabella orders e crea
     un nuovo record nella tabella orders_history per tracciare il cambio di stato.
+    
+    Gli eventi ORDER_STATUS_CHANGED vengono emessi automaticamente dal decorator
+    nel service se lo stato viene modificato.
     """
-    order = or_repo.get_by_id(_id=order_id)
-
-    if order is None:
-        raise HTTPException(status_code=404, detail="Ordine non trovato")
-
-    old_state_id = order.id_order_state
-    if old_state_id == new_status_id:
-        return {
-            "message": "Stato ordine aggiornato con successo",
-            "order_id": order_id,
-            "new_status_id": new_status_id,
-        }
-
-    order.id_order_state = new_status_id
-    or_repo.session.add(order)
-
-    from datetime import datetime
-
-    order_history_insert = orders_history.insert().values(
-        id_order=order_id,
-        id_order_state=new_status_id,
-        date_add=datetime.now()
-    )
-    or_repo.session.execute(order_history_insert)
-
-    or_repo.session.commit()
-
-    event = Event(
-        event_type=EventType.ORDER_STATUS_CHANGED.value,
-        data={
-            "order_id": order_id,
-            "old_state_id": old_state_id,
-            "new_state_id": new_status_id,
-        },
-        metadata={
-            "source": "order_router.update_order_status",
-            "id_order": order_id,
-        },
-    )
-
     try:
-        emit_event(event)
-    except Exception:  # pragma: no cover - safeguard event system failures
-        logger.exception("Failed to emit order status change event for order %s", order_id)
+        return await order_service.update_order_status(order_id, new_status_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
-    return {"message": "Stato ordine aggiornato con successo", "order_id": order_id, "new_status_id": new_status_id}
+
+@router.post("/bulk-status", 
+             status_code=status.HTTP_200_OK, 
+             response_model=BulkOrderStatusUpdateResponseSchema,
+             response_description="Aggiornamento massivo stati ordini completato")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
+async def bulk_update_order_status(
+    updates: List[OrderStatusUpdateItem] = Body(..., description="Lista di aggiornamenti stato ordine"),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service)
+):
+    """
+    Aggiorna gli stati di più ordini in modo massivo.
+    
+    Parametri:
+    - `updates`: Lista di aggiornamenti stato con `id_order` e `id_order_state`
+    
+    Per ogni ordine nella lista:
+    - Verifica esistenza ordine
+    - Verifica che lo stato sia diverso da quello corrente
+    - Valida che lo stato esista nella tabella order_states
+    - Se valido: aggiorna stato, crea record in orders_history, emette evento ORDER_STATUS_CHANGED
+    - Se non valido: aggiunge a lista errori
+    
+    Restituisce risultati dettagliati con successi e fallimenti.
+    
+    Esempio di richiesta:
+    ```json
+    [
+        {"id_order": 1, "id_order_state": 2},
+        {"id_order": 2, "id_order_state": 2}
+    ]
+    ```
+    
+    Gli eventi ORDER_STATUS_CHANGED vengono emessi automaticamente dal decorator
+    nel service per ogni cambio stato valido.
+    """
+    return await order_service.bulk_update_order_status(updates)
 
 
 @router.patch("/{order_id}/payment", status_code=status.HTTP_200_OK, response_description="Stato pagamento aggiornato correttamente")
@@ -480,7 +500,7 @@ async def generate_ddt_pdf(
 async def update_ddt_articolo(
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
     articolo_data: ArticoloPreventivoUpdateSchema = ...,
-    user: User = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """

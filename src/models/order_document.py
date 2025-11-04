@@ -16,7 +16,7 @@ class OrderDocument(Base):
     id_sectional = Column(Integer, ForeignKey('sectionals.id_sectional'), index=True, default=None)
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'), index=True, default=None)
     id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=None)
-    document_number = Column(String(32))
+    document_number = Column(Integer)
     type_document = Column(String(32))
     total_weight = Column(Float)
     total_price_with_tax = Column(Float)

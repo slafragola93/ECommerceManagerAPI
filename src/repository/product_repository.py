@@ -1,7 +1,7 @@
 """
 Product Repository rifattorizzato seguendo SOLID
 """
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc, text
 from src.models.product import Product
@@ -227,7 +227,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         Aggiorna i prezzi dei prodotti in batch utilizzando SQL diretto per performance.
         
         Args:
-            price_map: Dizionario {id_origin: price} mappando id_origin a nuovo prezzo (wholesale_price -> price_without_tax)
+            price_map: Dizionario {id_origin: price} mappando id_origin a nuovo prezzo (price -> price_without_tax)
             id_platform: ID della piattaforma per filtrare i prodotti
             batch_size: Dimensione del batch per l'aggiornamento (default: 1000)
             
@@ -279,6 +279,100 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Database error updating product prices: {str(e)}")
+
+    def bulk_update_product_details(self, details_map: Dict[int, Dict[str, Any]], id_platform: int, batch_size: int = 5000) -> int:
+        """
+        Aggiorna i dettagli dei prodotti in batch utilizzando SQL diretto per performance ottimizzata.
+        
+        Aggiorna: sku, reference, weight, depth, height, width, purchase_price, 
+        minimal_quantity, price_without_tax, quantity.
+        
+        Usa batch processing con commit ogni N batch per ridurre I/O.
+        
+        Args:
+            details_map: Dizionario {id_origin: {sku, reference, weight, ...}} con tutti i dettagli
+            id_platform: ID della piattaforma per filtrare i prodotti
+            batch_size: Dimensione del batch per l'aggiornamento (default: 5000)
+            
+        Returns:
+            int: Numero di prodotti aggiornati
+        """
+        if not details_map:
+            print("DEBUG: No product details to update, details_map is empty")
+            return 0
+        
+        try:
+            total_updated = 0
+            items = list(details_map.items())
+            
+            # SQL statement per l'update - usa parametri per prepared statement
+            stmt = text("""
+                UPDATE products 
+                SET 
+                    sku = :sku,
+                    reference = :reference,
+                    weight = :weight,
+                    depth = :depth,
+                    height = :height,
+                    width = :width,
+                    purchase_price = :purchase_price,
+                    minimal_quantity = :minimal_quantity,
+                    price_without_tax = :price_without_tax,
+                    quantity = :quantity
+                WHERE id_origin = :id_origin AND id_platform = :id_platform
+            """)
+            
+            # Processa in batch per evitare transazioni troppo lunghe
+            # Commit ogni 3 batch per ridurre I/O (performance optimization)
+            commit_interval = 3
+            batch_count = 0
+            
+            for i in range(0, len(items), batch_size):
+                batch = items[i:i + batch_size]
+                batch_updated = 0
+                
+                # Esegui ogni update nel batch
+                for id_origin, details in batch:
+                    try:
+                        # Estrai valori con default sicuri
+                        result = self._session.execute(stmt, {
+                            'id_origin': id_origin,
+                            'sku': str(details.get('sku', '') or '')[:32],
+                            'reference': str(details.get('reference', 'ND') or 'ND')[:64],
+                            'weight': float(details.get('weight', 0.0) or 0.0),
+                            'depth': float(details.get('depth', 0.0) or 0.0),
+                            'height': float(details.get('height', 0.0) or 0.0),
+                            'width': float(details.get('width', 0.0) or 0.0),
+                            'purchase_price': float(details.get('purchase_price', 0.0) or 0.0),
+                            'minimal_quantity': int(details.get('minimal_quantity', 0) or 0),
+                            'price_without_tax': float(details.get('price_without_tax', 0.0) or 0.0),
+                            'quantity': int(details.get('quantity', 0) or 0),
+                            'id_platform': id_platform
+                        })
+                        if result.rowcount > 0:
+                            batch_updated += result.rowcount
+                    except Exception as e:
+                        print(f"DEBUG: Error updating product details id_origin={id_origin}: {str(e)}")
+                        continue
+                
+                batch_count += 1
+                total_updated += batch_updated
+                
+                # Commit ogni N batch invece che ogni batch (performance optimization)
+                if batch_count % commit_interval == 0 or i + batch_size >= len(items):
+                    self._session.commit()
+                    print(f"DEBUG: Updated batch {batch_count}: {batch_updated} products (total: {total_updated})")
+            
+            # Final commit per sicurezza
+            if batch_count % commit_interval != 0:
+                self._session.commit()
+            
+            print(f"DEBUG: Total products details updated: {total_updated} out of {len(details_map)} in details_map")
+            return total_updated
+            
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error updating product details: {str(e)}")
 
     @staticmethod
     def formatted_output(product: Product,

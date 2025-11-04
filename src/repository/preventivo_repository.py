@@ -31,7 +31,7 @@ class PreventivoRepository:
         self.db = db
         self.order_repository = OrderRepository(db)
     
-    def get_next_document_number(self, type_document: str = "preventivo") -> str:
+    def get_next_document_number(self, type_document: str = "preventivo") -> int:
         """Genera il prossimo numero documento sequenziale"""
         # Trova l'ultimo numero per questo tipo di documento
         last_doc = self.db.query(OrderDocument).filter(
@@ -40,14 +40,13 @@ class PreventivoRepository:
         
         if last_doc and last_doc.document_number:
             try:
-                # Estrai numero e incrementa
-                last_number = int(last_doc.document_number)
-                return str(last_number + 1).zfill(6)  # Formato 6 cifre con zeri
-            except ValueError:
+                # Restituisce direttamente l'intero incrementato
+                return int(last_doc.document_number) + 1
+            except (ValueError, TypeError):
                 pass
         
         # Se non ci sono documenti o errore, inizia da 1
-        return "000001"
+        return 1
     
     def create_preventivo(self, preventivo_data: PreventivoCreateSchema, user_id: int) -> OrderDocument:
         """Crea un nuovo preventivo"""
@@ -213,7 +212,7 @@ class PreventivoRepository:
                 )
             )
         
-        return query.order_by(OrderDocument.date_add.desc()).offset(skip).limit(limit).all()
+        return query.order_by(OrderDocument.id_order_document.desc()).offset(skip).limit(limit).all()
     
     def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int) -> Optional[OrderDocument]:
         """Aggiorna preventivo"""

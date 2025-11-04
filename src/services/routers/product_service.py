@@ -2,23 +2,41 @@
 Product Service rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional, Any
+
+from sqlalchemy.orm import Session
+
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
+from src.repository.interfaces.platform_repository_interface import IPlatformRepository
 from src.schemas.product_schema import ProductSchema
 from src.models.product import Product
+from src.services.ecommerce.service_factory import create_ecommerce_service
 from src.core.exceptions import (
-    ValidationException, 
-    NotFoundException, 
+    ValidationException,
+    NotFoundException,
     BusinessRuleException,
-    ExceptionFactory,
-    ErrorCode
+    InfrastructureException,
+    ErrorCode,
 )
+
 
 class ProductService(IProductService):
     """Product Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
-    
+
     def __init__(self, product_repository: IProductRepository):
         self._product_repository = product_repository
+        self._platform_repository: Optional[IPlatformRepository] = None
+        self._db: Optional[Session] = None
+
+    def set_dependencies(
+        self,
+        product_repository: IProductRepository,
+        platform_repository: IPlatformRepository,
+        db: Session,
+    ) -> None:
+        self._product_repository = product_repository
+        self._platform_repository = platform_repository
+        self._db = db
     
     async def create_product(self, product_data: ProductSchema) -> Product:
         """Crea un nuovo product con validazioni business"""
@@ -107,7 +125,54 @@ class ProductService(IProductService):
         except Exception as e:
             raise ValidationException(f"Errore nel conteggio dei prodotti: {str(e)}")
     
+    async def get_live_price(self, id_origin: int) -> Optional[float]:
+        self._ensure_dependencies_configured()
+
+        product = self._product_repository.get_by_origin_id(str(id_origin))
+        if not product:
+            raise NotFoundException(
+                "Product",
+                None,
+                {"id_origin": id_origin},
+            )
+
+        if not product.id_platform:
+            raise BusinessRuleException(
+                "Product has no platform associated",
+                details={"id_origin": id_origin},
+            )
+
+        platform = self._platform_repository.get_by_id(product.id_platform)
+        if not platform:
+            raise NotFoundException(
+                "Platform",
+                product.id_platform,
+                {"id_origin": id_origin},
+            )
+
+        ecommerce_service = create_ecommerce_service(platform, self._db)
+
+        try:
+            async with ecommerce_service as service:
+                return await service.get_live_price(id_origin)
+        except (InfrastructureException, BusinessRuleException, NotFoundException):
+            raise
+        except Exception as exc:
+            raise InfrastructureException(
+                "Errore nel recupero del prezzo live",
+                ErrorCode.EXTERNAL_SERVICE_ERROR,
+                {
+                    "id_origin": id_origin,
+                    "platform_id": platform.id_platform,
+                    "platform_name": platform.name,
+                },
+            ) from exc
+
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per Product"""
         # Validazioni specifiche per Product se necessarie
         pass
+
+    def _ensure_dependencies_configured(self) -> None:
+        if not self._product_repository or not self._platform_repository or not self._db:
+            raise RuntimeError("ProductService dependencies are not configured")

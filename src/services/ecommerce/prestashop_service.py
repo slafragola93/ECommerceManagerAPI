@@ -873,11 +873,17 @@ class PrestaShopService(BaseEcommerceService):
                     else:
                         img_url = None
                     # Extract price without tax (PrestaShop 'price' field is without tax)
-                    price_without_tax = float(product.get('wholesale_price', 0.0)) if product.get('wholesale_price') else 0.0
+                    price_without_tax = float(product.get('price', 0.0)) if product.get('price') else 0.0
+                    
+                    # Extract purchase_price from wholesale_price
+                    purchase_price = float(product.get('wholesale_price', 0.0)) if product.get('wholesale_price') else 0.0
                     
                     # Extract quantity - try different possible fields
                     # PrestaShop might have quantity in different places
                     quantity = 0
+                    
+                    # Extract minimal_quantity
+                    minimal_quantity = int(product.get('minimal_quantity', 0)) if product.get('minimal_quantity') else 0
                     
                     return ProductSchema(
                         id_origin=int(product.get('id', 0)),
@@ -894,6 +900,8 @@ class PrestaShopService(BaseEcommerceService):
                         width=float(product.get('width', 0.0)) if product.get('width') else 0.0,
                         price_without_tax=price_without_tax,
                         quantity=quantity,
+                        purchase_price=purchase_price,
+                        minimal_quantity=minimal_quantity,
                         type=product_type
                     )
                 except Exception as e:
@@ -1040,11 +1048,11 @@ class PrestaShopService(BaseEcommerceService):
         Sincronizza i prezzi dei prodotti da PrestaShop products.
         
         Chiama l'endpoint /api/products con paginazione per recuperare i prezzi aggiornati
-        e restituisce un dizionario mappando id_product (id_origin) a wholesale_price.
+        e restituisce un dizionario mappando id_product (id_origin) a price.
         
         Returns:
             Dict con:
-                - price_map: Dict[int, float] - Mappa {id_origin: wholesale_price}
+                - price_map: Dict[int, float] - Mappa {id_origin: price}
                 - total_items: int - Numero totale di prodotti con prezzo
                 - stats: Dict con statistiche
         """
@@ -1054,7 +1062,7 @@ class PrestaShopService(BaseEcommerceService):
             limit = 5000  # Batch size per evitare crash del server
             offset = 0
             params = {
-                'display': '[id,wholesale_price]',  # Solo i campi necessari
+                'display': '[id,price]',  # Solo i campi necessari
             }
             
             while True:
@@ -1094,7 +1102,7 @@ class PrestaShopService(BaseEcommerceService):
             
             print(f"DEBUG: Finished price sync loop. Total products fetched: {len(all_products)}")
             
-            # Crea il dizionario {id_product: wholesale_price}
+            # Crea il dizionario {id_product: price}
             # Nota: id nell'API PrestaShop corrisponde a id_origin nel nostro DB
             price_map = {}
             errors = []
@@ -1103,13 +1111,13 @@ class PrestaShopService(BaseEcommerceService):
                 try:
                     # L'API restituisce id come ID del prodotto in PrestaShop (id_origin)
                     id_product_origin = safe_int(product.get('id', 0))
-                    wholesale_price = safe_float(product.get('wholesale_price', 0.0))
+                    price = safe_float(product.get('price', 0.0))
                     
                     if id_product_origin and id_product_origin > 0:
                         # Converti None o stringa vuota a 0.0
-                        if wholesale_price is None or wholesale_price == '':
-                            wholesale_price = 0.0
-                        price_map[id_product_origin] = float(wholesale_price)
+                        if price is None or price == '':
+                            price = 0.0
+                        price_map[id_product_origin] = float(price)
                 except Exception as e:
                     error_msg = f"Error processing product {product.get('id', 'unknown')}: {str(e)}"
                     errors.append(error_msg)
@@ -1135,19 +1143,143 @@ class PrestaShopService(BaseEcommerceService):
             self._log_sync_result("Product Prices", 0, [error_msg])
             raise
     
+    async def sync_product_details(self) -> Dict[str, Any]:
+        """
+        Sincronizza i dettagli dei prodotti da PrestaShop products.
+        
+        Recupera SKU, REFERENCE, WEIGHT, DEPTH, HEIGHT, WIDTH, PURCHASE_PRICE, 
+        MINIMAL_QUANTITY, PRICE_WITHOUT_TAX da PrestaShop API.
+        
+        Chiama l'endpoint /api/products con paginazione per recuperare i dettagli aggiornati
+        e restituisce un dizionario mappando id_product (id_origin) ai dettagli completi.
+        Filtra automaticamente prodotti con id_origin = 0 (SKIP).
+        
+        Returns:
+            Dict con:
+                - details_map: Dict[int, Dict[str, Any]] - Mappa {id_origin: {sku, reference, weight, ...}}
+                - total_items: int - Numero totale di prodotti con dettagli
+                - stats: Dict con statistiche
+        """
+        print("🚀 STARTING SYNC_PRODUCT_DETAILS")
+        try:
+            all_products = []
+            limit = 5000  # Batch size per evitare crash del server
+            offset = 0
+            params = {
+                'display': '[id,reference,ean13,weight,depth,height,width,wholesale_price,minimal_quantity,price]',
+            }
+            
+            while True:
+                try:
+                    print(f"DEBUG: Starting product details sync loop - offset: {offset}, limit: {limit}")
+                    
+                    params['limit'] = f'{offset},{limit}'
+                    
+                    # Chiama l'endpoint products con paginazione
+                    response = await self._make_request_with_rate_limit('/api/products', params)
+                    
+                    products = self._extract_items_from_response(response, 'products')
+                    print(f"DEBUG: Extracted {len(products)} products from response")
+                    
+                    if not products:
+                        print("DEBUG: No products found, breaking loop")
+                        break
+                    
+                    all_products.extend(products)
+                    print(f"DEBUG: Total products so far: {len(all_products)}")
+                    offset += limit
+                    
+                    # Small delay to avoid overwhelming the server
+                    await asyncio.sleep(0.1)
+                    
+                except Exception as e:
+                    print(f"DEBUG: Exception in product details sync loop: {str(e)}")
+                    error_msg = str(e).lower()
+                    if any(keyword in error_msg for keyword in ['server disconnected', '500', 'timeout', 'connection reset']):
+                        print(f"DEBUG: Server error detected, reducing batch size from {limit} to {max(10, limit // 2)}")
+                        limit = max(10, limit // 2)  # Reduce batch size
+                        await asyncio.sleep(2)  # Wait before retry
+                        continue
+                    else:
+                        print(f"DEBUG: Non-server error, raising exception")
+                        raise
+            
+            print(f"DEBUG: Finished product details sync loop. Total products fetched: {len(all_products)}")
+            
+            # Crea il dizionario {id_origin: {sku, reference, weight, ...}}
+            # Nota: id nell'API PrestaShop corrisponde a id_origin nel nostro DB
+            details_map = {}
+            errors = []
+            
+            for product in all_products:
+                try:
+                    # L'API restituisce id come ID del prodotto in PrestaShop (id_origin)
+                    id_product_origin = safe_int(product.get('id', 0))
+                    
+                    # SKIP prodotti con id_origin = 0
+                    if not id_product_origin or id_product_origin == 0:
+                        continue
+                    
+                    # Estrai e converti tutti i campi
+                    sku = str(product.get('ean13', '') or '')[:32]  # Max 32 chars
+                    reference = str(product.get('reference', 'ND') or 'ND')[:64]  # Max 64 chars
+                    weight = safe_float(product.get('weight', 0.0)) or 0.0
+                    depth = safe_float(product.get('depth', 0.0)) or 0.0
+                    height = safe_float(product.get('height', 0.0)) or 0.0
+                    width = safe_float(product.get('width', 0.0)) or 0.0
+                    purchase_price = safe_float(product.get('wholesale_price', 0.0)) or 0.0
+                    minimal_quantity = safe_int(product.get('minimal_quantity', 0)) or 0
+                    price_without_tax = safe_float(product.get('price', 0.0)) or 0.0
+                    
+                    details_map[id_product_origin] = {
+                        'sku': sku,
+                        'reference': reference,
+                        'weight': float(weight),
+                        'depth': float(depth),
+                        'height': float(height),
+                        'width': float(width),
+                        'purchase_price': float(purchase_price),
+                        'minimal_quantity': int(minimal_quantity),
+                        'price_without_tax': float(price_without_tax)
+                    }
+                except Exception as e:
+                    error_msg = f"Error processing product {product.get('id', 'unknown')}: {str(e)}"
+                    errors.append(error_msg)
+                    print(f"DEBUG: {error_msg}")
+            
+            print(f"DEBUG: Successfully processed {len(details_map)} products with details")
+            if errors:
+                print(f"DEBUG: {len(errors)} errors during processing")
+            
+            return {
+                'details_map': details_map,
+                'total_items': len(details_map),
+                'stats': {
+                    'success': True,
+                    'errors': errors,
+                    'error_count': len(errors)
+                }
+            }
+            
+        except Exception as e:
+            error_msg = f"Error in sync_product_details: {str(e)}"
+            print(f"DEBUG: {error_msg}")
+            self._log_sync_result("Product Details", 0, [error_msg])
+            raise
+    
     async def get_live_price(self, id_origin: int) -> Optional[float]:
         """
-        Recupera il prezzo live (wholesale_price) di un prodotto direttamente da PrestaShop.
+        Recupera il prezzo live (price) di un prodotto direttamente da PrestaShop.
         
         Args:
             id_origin: ID origin del prodotto in PrestaShop
             
         Returns:
-            float: Prezzo wholesale_price del prodotto, o None se non trovato
+            float: Prezzo price del prodotto, o None se non trovato
         """
         try:
             params = {
-                'display': '[wholesale_price]',
+                'display': '[price]',
                 'filter[id]': f'[{id_origin}]',
                 'output_format': 'JSON'
             }
@@ -1164,13 +1296,13 @@ class PrestaShopService(BaseEcommerceService):
             
             # Prendi il primo prodotto (dovrebbe essere solo uno con il filtro)
             product = products[0]
-            wholesale_price = safe_float(product.get('wholesale_price', 0.0))
+            price = safe_float(product.get('price', 0.0))
             
             # Converti None o stringa vuota a None
-            if wholesale_price is None or wholesale_price == '':
+            if price is None or price == '':
                 return None
             
-            return float(wholesale_price)
+            return float(price)
             
         except Exception as e:
             error_msg = f"Error getting live price for product id_origin={id_origin}: {str(e)}"
