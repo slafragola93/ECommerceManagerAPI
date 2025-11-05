@@ -26,6 +26,7 @@ class OrderSchema(BaseModel):
     customer: CustomerSchema | int = 0
     id_platform: Optional[int] = 0
     id_payment: Optional[int] = 0
+    id_carrier: Optional[int] = 0
     shipping: int | ShippingSchema | None = 0
     sectional: int | SectionalSchema = 0
     id_order_state: int
@@ -51,6 +52,7 @@ class OrderUpdateSchema(BaseModel):
     id_customer: Optional[int] = None
     id_platform: Optional[int] = None
     id_payment: Optional[int] = None
+    id_carrier: Optional[int] = None
     id_shipping: Optional[int] = None
     id_sectional: Optional[int] = None
     id_order_state: Optional[int] = None
@@ -82,6 +84,7 @@ class OrderSimpleResponseSchema(BaseModel):
     id_customer: Optional[int]
     id_platform: Optional[int]
     id_payment: Optional[int]
+    id_carrier: Optional[int]
     id_shipping: Optional[int]
     id_sectional: Optional[int]
     id_order_state: int
@@ -112,6 +115,7 @@ class OrderResponseSchema(BaseModel):
     id_customer: Optional[int]
     id_platform: Optional[int]
     id_payment: Optional[int]
+    id_carrier: Optional[int]
     id_shipping: Optional[int]
     id_sectional: Optional[int]
     id_order_state: int

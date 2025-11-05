@@ -27,13 +27,22 @@ class AS400ValidationHandler(BaseEventHandler):
         - old_state_id == 1
         - new_state_id == 2
         """
+        logger.info(f"[AS400] can_handle chiamato per evento: type={event.event_type}")
+        logger.info(f"[AS400] Dati evento: {event.data}")
+        
         if event.event_type != EventType.ORDER_STATUS_CHANGED.value:
+            logger.debug(f"[AS400] Evento non è ORDER_STATUS_CHANGED, tipo: {event.event_type}")
             return False
         
         old_state_id = event.data.get("old_state_id")
         new_state_id = event.data.get("new_state_id")
         
-        return old_state_id == 1 and new_state_id == 2
+        logger.info(f"[AS400] old_state_id={old_state_id} (type: {type(old_state_id)}), new_state_id={new_state_id} (type: {type(new_state_id)})")
+        
+        can_handle_result = old_state_id == 1 and new_state_id == 2
+        logger.info(f"[AS400] can_handle result: {can_handle_result}")
+        
+        return can_handle_result
 
     async def handle(self, event: Event) -> None:
         """
@@ -48,8 +57,15 @@ class AS400ValidationHandler(BaseEventHandler):
            - stampataDistinta="N": rollback a stato 1
            - Errore: rollback a stato 1
         """
+        logger.info(f"[AS400] ════════════════════════════════════════════════════")
+        logger.info(f"[AS400] handle() CHIAMATO per evento: {event.event_type}")
+        logger.info(f"[AS400] Dati evento completi: {event.data}")
+        logger.info(f"[AS400] Metadata evento: {event.metadata}")
+        
         order_id = event.data.get("order_id")
         old_state_id = event.data.get("old_state_id")
+        
+        logger.info(f"[AS400] order_id={order_id}, old_state_id={old_state_id}")
         
         if not order_id:
             logger.warning("ID ordine non trovato nei dati dell'evento")

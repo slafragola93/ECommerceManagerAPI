@@ -8,7 +8,6 @@ class ShipmentDocument(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     awb = Column(String(50), nullable=False, index=True)
-    id_shipment_request = Column(Integer, ForeignKey('shipment_requests.id'), nullable=True)
     order_id = Column(Integer, nullable=True, index=True)  # Order ID for easy retrieval
     carrier_api_id = Column(Integer, nullable=True, index=True)  # Carrier API ID for easy retrieval
     type_code = Column(String(50), nullable=False)  # label, invoice, customsDoc, waybillDoc
@@ -18,6 +17,3 @@ class ShipmentDocument(Base):
     size_bytes = Column(BigInteger, nullable=False)
     created_at = Column(DateTime, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
-    
-    # Relationships
-    shipment_request = relationship("ShipmentRequest", back_populates="shipment_documents")

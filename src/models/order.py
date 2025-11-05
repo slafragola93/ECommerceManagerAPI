@@ -25,6 +25,7 @@ class Order(Base):
     id_customer = Column(Integer, index=True, nullable=True, default=None)
     id_platform = Column(Integer, index=True, nullable=True, default=1)
     id_payment = Column(Integer, index=True, nullable=True, default=None)
+    id_carrier = Column(Integer, ForeignKey('carriers.id_carrier'), default=0, nullable=True)
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'), default=None)
     id_sectional = Column(Integer, index=True, nullable=True, default=None)
     id_order_state = Column(Integer, default=1)
@@ -44,8 +45,8 @@ class Order(Base):
 
     # Relazioni
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")
+    carrier = relationship("Carrier", back_populates="orders")
     shipments = relationship("Shipping", back_populates="orders")
     orders_document = relationship("OrderDocument", back_populates="order")
     fiscal_documents = relationship("FiscalDocument", back_populates="order")
     order_packages = relationship("OrderPackage", back_populates="order")
-    shipment_requests = relationship("ShipmentRequest", back_populates="order")

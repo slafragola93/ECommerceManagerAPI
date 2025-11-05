@@ -249,10 +249,7 @@ async def update_order(
     Gli eventi ORDER_STATUS_CHANGED vengono emessi automaticamente dal decorator
     nel service se lo stato viene modificato.
     """
-    try:
-        return await order_service.update_order(order_id, order_schema)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    return await order_service.update_order(order_id, order_schema)
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Ordine eliminato correttamente")

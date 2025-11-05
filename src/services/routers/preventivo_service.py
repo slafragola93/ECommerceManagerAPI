@@ -7,7 +7,7 @@ from src.repository.tax_repository import TaxRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.address_repository import AddressRepository
 from src.services.routers.order_document_service import OrderDocumentService
-from src.core.exceptions import NotFoundException, AlreadyExistsError
+from src.core.exceptions import NotFoundException, AlreadyExistsError, ValidationException, ErrorCode
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema,
     PreventivoUpdateSchema,
@@ -49,7 +49,11 @@ class PreventivoService:
         if preventivo_data.id_payment is not None:
             payment = self.payment_repo.get_by_id(preventivo_data.id_payment)
             if not payment:
-                raise ValueError(f"Metodo di pagamento con id_payment={preventivo_data.id_payment} non trovato")
+                raise NotFoundException(
+                    "Payment",
+                    preventivo_data.id_payment,
+                    {"id_payment": preventivo_data.id_payment}
+                )
         
         # Crea preventivo (il repository gestisce customer e address)
         order_document = self.preventivo_repo.create_preventivo(preventivo_data, user_id)
@@ -112,15 +116,16 @@ class PreventivoService:
 
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
+            id_order=order_document.id_order,
             document_number=order_document.document_number,
             id_customer=order_document.id_customer,
+            id_address_delivery=order_document.id_address_delivery,
+            id_address_invoice=order_document.id_address_invoice,
             sectional=sectional_obj,
             shipping=shipment_obj,
             payment=payment_obj,
             customer_name=customer_name,
-            reference=None,  # OrderDocument non ha campo reference
             note=order_document.note,
-            status=None,  # OrderDocument non ha campo status
             type_document=order_document.type_document,
             is_invoice_requested=order_document.is_invoice_requested,
             total_imponibile=totals["total_imponibile"],
@@ -168,6 +173,7 @@ class PreventivoService:
                     address_delivery_obj = AddressResponseSchema(
                         id_address=address_delivery.id_address,
                         id_origin=address_delivery.id_origin,
+                        id_platform=getattr(address_delivery, 'id_platform', None),
                         customer=None,
                         country=country_obj,
                         company=address_delivery.company,
@@ -212,6 +218,7 @@ class PreventivoService:
                     address_invoice_obj = AddressResponseSchema(
                         id_address=address_invoice.id_address,
                         id_origin=address_invoice.id_origin,
+                        id_platform=getattr(address_invoice, 'id_platform', None),
                         customer=None,
                         country=country_obj,
                         company=address_invoice.company,
@@ -483,7 +490,11 @@ class PreventivoService:
         if articolo_data.id_tax is not None:
             tax = self.tax_repo.get_by_id(articolo_data.id_tax)
             if not tax:
-                raise ValueError(f"Tassa con ID {articolo_data.id_tax} non trovata")
+                raise NotFoundException(
+                    "Tax",
+                    articolo_data.id_tax,
+                    {"id_tax": articolo_data.id_tax}
+                )
         
         order_detail = self.order_doc_service.update_articolo(id_order_detail, articolo_data, "preventivo")
         if not order_detail:
@@ -515,7 +526,11 @@ class PreventivoService:
         # Converte in ordine
         order = self.preventivo_repo.convert_to_order(id_order_document, user_id)
         if not order:
-            raise ValueError("Errore durante la conversione")
+            raise ValidationException(
+                "Errore durante la conversione del preventivo in ordine",
+                ErrorCode.BUSINESS_RULE_VIOLATION,
+                {"id_order_document": id_order_document}
+            )
         
         return {
             "id_order": order.id_order,
@@ -537,7 +552,11 @@ class PreventivoService:
         # Verifica che la tassa esista
         tax = self.tax_repo.get_by_id(articolo.id_tax)
         if not tax:
-            raise ValueError(f"Tassa con ID {articolo.id_tax} non trovata")
+            raise NotFoundException(
+                "Tax",
+                articolo.id_tax,
+                {"id_tax": articolo.id_tax}
+            )
         
         # Se è un prodotto esistente, verifica che esista
         if articolo.id_product is not None:
@@ -566,19 +585,31 @@ class PreventivoService:
         if preventivo_data.id_tax is not None:
             tax = self.tax_repo.get_by_id(preventivo_data.id_tax)
             if not tax:
-                raise ValueError(f"Tassa con ID {preventivo_data.id_tax} non trovata")
+                raise NotFoundException(
+                    "Tax",
+                    preventivo_data.id_tax,
+                    {"id_tax": preventivo_data.id_tax}
+                )
         
         # Valida customer se specificato
         if preventivo_data.id_customer is not None:
             customer = self.customer_repo.get_by_id(preventivo_data.id_customer)
             if not customer:
-                raise ValueError(f"Customer con ID {preventivo_data.id_customer} non trovato")
+                raise NotFoundException(
+                    "Customer",
+                    preventivo_data.id_customer,
+                    {"id_customer": preventivo_data.id_customer}
+                )
         
         # Valida payment se specificato
         if preventivo_data.id_payment is not None:
             payment = self.payment_repo.get_by_id(preventivo_data.id_payment)
             if not payment:
-                raise ValueError(f"Metodo di pagamento con ID {preventivo_data.id_payment} non trovato")
+                raise NotFoundException(
+                    "Payment",
+                    preventivo_data.id_payment,
+                    {"id_payment": preventivo_data.id_payment}
+                )
         
         # Note: Per gli altri campi (address, sectional, shipping) potresti aggiungere validazioni simili
         # se necessario, ma per ora lasciamo la validazione al livello del database
@@ -633,12 +664,12 @@ class PreventivoService:
             # Recupera i dati del preventivo
             preventivo_data = self.get_preventivo(id_order_document)
             if not preventivo_data:
-                raise ValueError("Preventivo non trovato")
+                raise NotFoundException("Preventivo", id_order_document)
             
             # Recupera OrderDocument per accedere agli ID indirizzi
             order_document = self.preventivo_repo.get_preventivo_by_id(id_order_document)
             if not order_document:
-                raise ValueError("OrderDocument non trovato")
+                raise NotFoundException("OrderDocument", id_order_document)
             
             # Recupera dati cliente
             customer_data = None

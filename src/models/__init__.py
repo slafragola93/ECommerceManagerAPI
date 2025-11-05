@@ -32,6 +32,5 @@ from .relations import *
 from .brt_configuration import BrtConfiguration
 from .dhl_configuration import DhlConfiguration
 from .fedex_configuration import FedexConfiguration
-from .shipment_request import ShipmentRequest
 from .shipment_document import ShipmentDocument
 from .shipments_history import ShipmentsHistory

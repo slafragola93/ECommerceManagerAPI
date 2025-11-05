@@ -7,13 +7,14 @@ from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerRes
 
 class AddressSchema(BaseModel):
     id_origin: Optional[int] = None
+    id_platform: Optional[int] = Field(None, ge=0)
     id_country: Optional[int] = None
     id_customer: Optional[int] = None
     company: Optional[str] = None
     firstname: str = Field(..., max_length=255)
     lastname: str = Field(..., max_length=255)
     address1: str = Field(..., max_length=128)
-    address2: str = Field(..., max_length=128)
+    address2: Optional[str] = Field(None, max_length=128)
     state: str = Field(..., max_length=128)
     postcode: str = Field(..., max_length=12)
     city: str = Field(..., max_length=64)
@@ -35,6 +36,7 @@ class CountryResponseSchema(BaseModel):
 class AddressResponseSchema(BaseModel):
     id_address: int | None
     id_origin: int | None
+    id_platform: int | None = None
     customer: Optional[CustomerResponseWithoutAddressSchema] = None
     country: CountryResponseSchema | None
     company: str | None
@@ -70,6 +72,9 @@ class AddressResponseSchema(BaseModel):
         elif value is None:
             return None
         raise ValueError("date_add must be a datetime/date object or a 'DD-MM-YYYY' formatted string")
+    
+    class Config:
+        from_attributes = True
 
 
 class AllAddressResponseSchema(BaseModel):
@@ -77,7 +82,3 @@ class AllAddressResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
-
-
-class ConfigDict:
-    from_attributes = True

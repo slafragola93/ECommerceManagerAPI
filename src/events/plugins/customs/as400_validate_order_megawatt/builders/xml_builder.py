@@ -150,12 +150,19 @@ class OrderXMLBuilder:
             # Unità di misura: sempre "PCE"
             self._safe_set_text(prodotto, "unitaDiMisura", "PCE")
             
-            # Prezzo unitario
-            prezzo_unitario = detail.product_price or 0.0
+            # Prezzo unitario: usa purchase_price del prodotto, fallback a product_price
+            prezzo_unitario = 0.0
+            if detail.product and detail.product.purchase_price is not None:
+                prezzo_unitario = detail.product.purchase_price or 0.0
+            else:
+                prezzo_unitario = detail.product_price or 0.0
             self._safe_set_text(prodotto, "prezzoUnitario", str(prezzo_unitario))
             
-            # Moltiplicatore: sempre 1
-            self._safe_set_text(prodotto, "moltiplicatore", "1")
+            # Moltiplicatore: usa minimal_quantity del prodotto, fallback a 1
+            moltiplicatore = "1"
+            if detail.product and detail.product.minimal_quantity is not None:
+                moltiplicatore = str(detail.product.minimal_quantity or 1)
+            self._safe_set_text(prodotto, "moltiplicatore", moltiplicatore)
             
             # Quantità
             quantita = detail.product_qty or 1

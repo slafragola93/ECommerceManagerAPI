@@ -28,7 +28,7 @@ class PaymentService(IPaymentService):
             existing_payment = self._payment_repository.get_by_name(payment_data.name)
             if existing_payment:
                 raise BusinessRuleException(
-                    f"Payment with name '{payment_data.name}' already exists",
+                    f"Metodo di pagamento '{payment_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": payment_data.name}
                 )
@@ -52,7 +52,7 @@ class PaymentService(IPaymentService):
             existing = self._payment_repository.get_by_name(payment_data.name)
             if existing and existing.id_payment != payment_id:
                 raise BusinessRuleException(
-                    f"Payment with name '{payment_data.name}' already exists",
+                    f"Metodo di pagamento '{payment_data.name}' già esistente",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": payment_data.name}
                 )

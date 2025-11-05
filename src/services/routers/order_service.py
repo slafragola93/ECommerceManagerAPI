@@ -28,10 +28,17 @@ def _extract_order_status_data(*args, result=None, **kwargs):
     """Estrae i dati dell'evento di cambio stato ordine."""
     if not isinstance(result, dict) or result.get("old_state_id") is None:
         return None
+    
+    # Prendi order_id da result o kwargs
+    order_id = result.get("order_id") or kwargs.get("order_id")
+    
+    # Prendi new_state_id da result (può essere "new_status_id" o "new_state_id")
+    new_state_id = result.get("new_state_id") or result.get("new_status_id") or kwargs.get("new_status_id")
+    
     return {
-        "order_id": kwargs.get("order_id"),
+        "order_id": order_id,
         "old_state_id": result.get("old_state_id"),
-        "new_state_id": kwargs.get("new_status_id"),
+        "new_state_id": new_state_id,
     }
 
 

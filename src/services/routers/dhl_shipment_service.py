@@ -16,11 +16,9 @@ from src.repository.interfaces.dhl_configuration_repository_interface import IDh
 from src.repository.interfaces.address_repository_interface import IAddressRepository
 from src.repository.interfaces.country_repository_interface import ICountryRepository
 from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
-from src.repository.interfaces.shipment_request_repository_interface import IShipmentRequestRepository
 from src.services.ecommerce.shipments.dhl_client import DhlClient, generate_message_reference
 # generate_shipment_reference rimosso - ora si usa order.internal_reference
 from src.services.ecommerce.shipments.dhl_mapper import DhlMapper
-from src.models.shipment_request import ShipmentRequest, EnvironmentEnum
 from src.models.shipment_document import ShipmentDocument
 
 logger = logging.getLogger(__name__)
@@ -38,7 +36,6 @@ class DhlShipmentService(IDhlShipmentService):
         address_repository: IAddressRepository,
         country_repository: ICountryRepository,
         order_package_repository: IOrderPackageRepository,
-        shipment_request_repository: IShipmentRequestRepository,
         dhl_client: DhlClient,
         dhl_mapper: DhlMapper
     ):
@@ -49,7 +46,6 @@ class DhlShipmentService(IDhlShipmentService):
         self.address_repository = address_repository
         self.country_repository = country_repository
         self.order_package_repository = order_package_repository
-        self.shipment_request_repository = shipment_request_repository
         self.dhl_client = dhl_client
         self.dhl_mapper = dhl_mapper
         self.settings = get_cache_settings()
@@ -93,16 +89,7 @@ class DhlShipmentService(IDhlShipmentService):
             # 8. Recupero internal_reference dell'ordine
             internal_reference = order_data.internal_reference
             
-            # 10. Controllo idempotenza se audit abilitato
-            if self.settings.shipment_audit_enabled:
-                existing_request = self.shipment_request_repository.get_by_message_reference(message_ref)
-                if existing_request:
-                    logger.info(f"Found existing shipment request for message_ref {message_ref}")
-                    return {
-                        "awb": existing_request.awb
-                    }
-            
-            # 11. Costruzione DHL payload con internal_reference dell'ordine
+            # 9. Costruzione DHL payload con internal_reference dell'ordine
             dhl_payload = self.dhl_mapper.build_shipment_request(
                 order_data=order_data,
                 dhl_config=dhl_config,
@@ -112,7 +99,7 @@ class DhlShipmentService(IDhlShipmentService):
                 reference=internal_reference
             )
             
-            # 12. Chiama a API DHL
+            # 10. Chiama a API DHL
             logger.info(f"Creating DHL shipment for order {order_id}")
             try:
                 dhl_response = await self.dhl_client.create_shipment(
@@ -143,39 +130,26 @@ class DhlShipmentService(IDhlShipmentService):
                     detail=str(e)
                 )
             
-            # 13. Estrazione AWB e documenti
+            # 11. Estrazione AWB e documenti
             awb = dhl_response.get("shipmentTrackingNumber")
             documents = dhl_response.get("documents", [])
             
-            # 14. Salva PDF
-            saved_documents = []
+            # 12. Salva PDF
             if documents:
-                saved_documents = await self._save_documents(
+                await self._save_documents(
                     awb=awb, 
                     documents=documents, 
                     order_id=order_id, 
                     carrier_api_id=carrier_api_id
                 )
             
-            # 15. Aggiornamento tracking e stato (2 = Presa In Carico)
+            # 13. Aggiornamento tracking e stato (2 = Presa In Carico)
             if awb:
                 try:
                     self.shipping_repository.update_tracking_and_state(order_data.id_shipping, awb, 2)
                 except Exception:
                     # fallback: almeno salva il tracking
                     self.shipping_repository.update_tracking(order_data.id_shipping, awb)
-            
-            # 16. Salva audit se abilitato
-            if self.settings.shipment_audit_enabled:
-                self._save_audit(
-                    order_id=order_id,
-                    carrier_api_id=carrier_api_id,
-                    request=dhl_payload,
-                    response=dhl_response,
-                    awb=awb,
-                    environment=EnvironmentEnum.SANDBOX if credentials.use_sandbox else EnvironmentEnum.PRODUCTION,
-                    message_ref=message_ref
-                )
             
             # 14. Aggiorno stato spedizione e tracking se AWB è valido
             if awb:
@@ -185,7 +159,7 @@ class DhlShipmentService(IDhlShipmentService):
                     from src.models.order import Order
                     
                     stmt = select(Order.id_shipping).where(Order.id_order == order_id)
-                    result = self.shipment_request_repository._session.execute(stmt)
+                    result = self.order_repository.session.execute(stmt)
                     id_shipping = result.scalar_one_or_none()
                     
                     if id_shipping:
@@ -290,8 +264,8 @@ class DhlShipmentService(IDhlShipmentService):
                 )
                 
                 # Aggiungo a sessione e salvo
-                self.shipment_request_repository._session.add(document)
-                self.shipment_request_repository._session.commit()
+                self.order_repository.session.add(document)
+                self.order_repository.session.commit()
                 
                 saved_documents.append({
                     "type_code": doc_type,
@@ -308,60 +282,28 @@ class DhlShipmentService(IDhlShipmentService):
                 logger.error(f"Error saving document for AWB {awb}: {str(e)}")
                 continue
         
+        # Aggiorna automaticamente il tracking in Shipping quando viene salvato awb
+        if saved_documents and awb:
+            try:
+                # Recupera l'Order per ottenere id_shipping
+                from sqlalchemy import select
+                from src.models.order import Order
+                
+                stmt = select(Order.id_shipping).where(Order.id_order == order_id)
+                result = self.order_repository.session.execute(stmt)
+                id_shipping = result.scalar_one_or_none()
+                
+                if id_shipping:
+                    # Aggiorna il tracking della Shipping con l'awb
+                    self.shipping_repository.update_tracking(id_shipping, awb)
+                    logger.info(f"Updated tracking for shipping {id_shipping} with AWB {awb}")
+                else:
+                    logger.warning(f"No id_shipping found for order {order_id}, cannot update tracking")
+            except Exception as e:
+                logger.error(f"Error updating tracking for order {order_id}: {str(e)}")
+                # Non sollevo eccezione per non bloccare il salvataggio documenti
+        
         return saved_documents
-    
-    def _save_audit(
-        self,
-        order_id: int,
-        carrier_api_id: int,
-        request: Dict[str, Any],
-        response: Dict[str, Any],
-        awb: str,
-        environment: EnvironmentEnum,
-        message_ref: str
-    ) -> None:
-        """Salva record audit per richiesta spedizione"""
-        try:
-            # Redact sensitive data
-            redacted_request = self._redact_sensitive_data(request)
-            redacted_response = self._redact_sensitive_data(response)
-            
-            # Truncate JSON if too large
-            max_size_kb = self.settings.shipment_audit_max_json_size_kb
-            redacted_request_str = str(redacted_request)
-            redacted_response_str = str(redacted_response)
-            
-            if len(redacted_request_str) > max_size_kb * 1024:
-                redacted_request_str = redacted_request_str[:max_size_kb * 1024] + "... [TRUNCATED]"
-            
-            if len(redacted_response_str) > max_size_kb * 1024:
-                redacted_response_str = redacted_response_str[:max_size_kb * 1024] + "... [TRUNCATED]"
-            
-            # Create audit record
-            now = datetime.utcnow()
-            expires_at = now + timedelta(days=self.settings.shipment_audit_ttl_days)
-            
-            audit_record = ShipmentRequest(
-                id_order=order_id,
-                id_carrier_api=carrier_api_id,
-                awb=awb,
-                message_reference=message_ref,
-                request_json_redacted=redacted_request_str,
-                response_json_redacted=redacted_response_str,
-                environment=environment,
-                status_code=200,  # Assuming success
-                created_at=now,
-                expires_at=expires_at
-            )
-            
-            self.shipment_request_repository.session.add(audit_record)
-            self.shipment_request_repository.session.commit()
-            
-            logger.info(f"Saved audit record for order {order_id}, AWB {awb}")
-            
-        except Exception as e:
-            logger.error(f"Error saving audit record: {str(e)}")
-            # Don't raise exception to avoid breaking the main flow
     
     def _redact_sensitive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Riduzione dati sensibili da richiesta/risposta per audit"""
@@ -417,7 +359,7 @@ class DhlShipmentService(IDhlShipmentService):
             from pathlib import Path
             
             # Recupera tutti i documenti esistenti per l'ordine
-            document_repo = ShipmentDocumentRepository(self.shipment_request_repository._session)
+            document_repo = ShipmentDocumentRepository(self.order_repository.session)
             existing_documents = document_repo.get_by_order_id(order_id)
             
             if not existing_documents:
@@ -467,7 +409,7 @@ class DhlShipmentService(IDhlShipmentService):
             from src.repository.shipment_document_repository import ShipmentDocumentRepository
             
             # Cerca il documento per AWB
-            document_repo = ShipmentDocumentRepository(self.shipment_request_repository._session)
+            document_repo = ShipmentDocumentRepository(self.order_repository.session)
             documents = document_repo.get_by_awb(awb)
             
             if not documents:

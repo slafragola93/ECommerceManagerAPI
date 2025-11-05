@@ -38,6 +38,7 @@ class CountryResponseSchema(BaseModel):
 class AddressResponseSchema(BaseModel):
     id_address: int | None
     id_origin: int | None
+    id_platform: int | None = Field(None, description="Platform ID (0 for manual addresses, 1 for PrestaShop)")
     country: Optional[CountryResponseSchema] = None
     company: str | None
     firstname: str | None

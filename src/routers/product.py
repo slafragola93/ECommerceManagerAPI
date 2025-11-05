@@ -2,6 +2,7 @@
 Product Router rifattorizzato seguendo i principi SOLID
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, UploadFile, File, Form
+from typing import Optional
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.repository.interfaces.platform_repository_interface import IPlatformRepository
@@ -48,19 +49,25 @@ async def get_all_products(
     user: dict = Depends(get_current_user),
     product_service: IProductService = Depends(get_product_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    product_name: Optional[str] = Query(None, description="Filtra prodotti per nome (ricerca parziale)")
 ):
     """
-    Restituisce tutti i product con supporto alla paginazione.
+    Restituisce tutti i product con supporto alla paginazione e filtro per nome.
     
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
+    - **product_name**: Filtra i prodotti che contengono questa stringa in name, sku o reference (minimo 4 caratteri, ricerca parziale, case-insensitive).
     """
-    products = await product_service.get_products(page=page, limit=limit)
+    filters = {}
+    if product_name and len(product_name.strip()) >= 4:
+        filters['product_name'] = product_name.strip()
+    
+    products = await product_service.get_products(page=page, limit=limit, **filters)
     if not products:
         raise NotFoundException("Products", None)
 
-    total_count = await product_service.get_products_count()
+    total_count = await product_service.get_products_count(**filters)
 
     return {"products": products, "total": total_count, "page": page, "limit": limit}
 

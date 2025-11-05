@@ -203,8 +203,6 @@ def configure_container():
     container.register_transient(IDhlConfigurationService, DhlConfigurationService)
     
     # DHL Shipment Services
-    from src.repository.interfaces.shipment_request_repository_interface import IShipmentRequestRepository
-    from src.repository.shipment_request_repository import ShipmentRequestRepository
     from src.repository.interfaces.shipment_document_repository_interface import IShipmentDocumentRepository
     from src.repository.shipment_document_repository import ShipmentDocumentRepository
     from src.services.interfaces.dhl_shipment_service_interface import IDhlShipmentService
@@ -215,7 +213,6 @@ def configure_container():
     from src.services.ecommerce.shipments.dhl_mapper import DhlMapper
     
     # Register DHL repositories
-    container.register_transient(IShipmentRequestRepository, ShipmentRequestRepository)
     container.register_transient(IShipmentDocumentRepository, ShipmentDocumentRepository)
     
     # Register DHL services (singleton for client, transient for others)

@@ -9,6 +9,7 @@ class Address(Base):
 
     id_address = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, default=0)
+    id_platform = Column(Integer, ForeignKey('platforms.id_platform'), default=0, nullable=True)
     id_country = Column(Integer, ForeignKey('countries.id_country'), default=None)
     id_customer = Column(Integer, ForeignKey('customers.id_customer'), default=None)
     company = Column(String(255), default=None)

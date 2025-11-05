@@ -163,6 +163,8 @@ origins = [
 ]
 
 # Add CORS middleware - DEVE essere il primo middleware
+# Nota: allow_credentials=True non può essere usato con allow_origins=["*"]
+# Se serve supportare credentials, specifica origini esplicite
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Permettiamo tutte le origini per sviluppo

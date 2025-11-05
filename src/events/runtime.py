@@ -42,14 +42,16 @@ def get_plugin_manager() -> PluginManager:
 
 def emit_event(event: Event) -> None:
     """Publish an event using the currently configured EventBus."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[RUNTIME] emit_event chiamato per evento: type={event.event_type}, data={event.data}")
 
     event_bus = get_event_bus()
     try:
         loop = asyncio.get_running_loop()
+        loop.create_task(event_bus.publish(event))
     except RuntimeError:
         asyncio.run(event_bus.publish(event))
-    else:
-        loop.create_task(event_bus.publish(event))
 
 
 def set_config_loader(loader: EventConfigLoader) -> None:

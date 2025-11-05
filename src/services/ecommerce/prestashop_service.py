@@ -1853,6 +1853,7 @@ class PrestaShopService(BaseEcommerceService):
                 
                 return {
                     'id_origin': address.get('id', 0),
+                    'id_platform': self.platform_id,
                     'id_country': country_id,
                     'id_customer': customer_id,
                     'company': address.get('company', ''),
@@ -1922,6 +1923,7 @@ class PrestaShopService(BaseEcommerceService):
                 
                 insert_data.append({
                     'id_origin': data.get('id_origin', 0),
+                    'id_platform': data.get('id_platform', self.platform_id),
                     'id_country': data.get('id_country'),
                     'id_customer': data.get('id_customer'),
                     'company': data.get('company', ''),
@@ -1947,10 +1949,10 @@ class PrestaShopService(BaseEcommerceService):
             # Execute bulk insert in batches
             insert_sql = text("""
                 INSERT INTO addresses (
-                    id_origin, id_country, id_customer, company, firstname, lastname,
+                    id_origin, id_platform, id_country, id_customer, company, firstname, lastname,
                     address1, address2, state, postcode, city, phone, vat, dni, pec, sdi, date_add
                 ) VALUES (
-                    :id_origin, :id_country, :id_customer, :company, :firstname, :lastname,
+                    :id_origin, :id_platform, :id_country, :id_customer, :company, :firstname, :lastname,
                     :address1, :address2, :state, :postcode, :city, :phone, :vat, :dni, :pec, :sdi, :date_add
                 )
             """)
@@ -3263,6 +3265,7 @@ class PrestaShopService(BaseEcommerceService):
             customer_origins = set()
             product_origins = set()
             address_origins = set()
+            carrier_origins = set()
             # Note: payments are handled dynamically during order processing
             for order in all_orders:
                 # Collect customer origins
@@ -3299,6 +3302,8 @@ class PrestaShopService(BaseEcommerceService):
                             product_origins.add(int(product_origin))
                         except (ValueError, TypeError):
                             pass
+                
+
             
             # Now pre-fetch all mappings using raw SQL queries
             all_customers = {}
@@ -3327,6 +3332,14 @@ class PrestaShopService(BaseEcommerceService):
                 result = self.db.execute(query, params)
                 all_addresses = {int(row.id_origin): row.id_address for row in result}
             
+            # Pre-fetch carrier mappings (id_carrier PrestaShop = id_origin Carrier)
+            all_carriers = {}
+            if carrier_origins:
+                placeholders = ','.join([':id_origin_' + str(i) for i in range(len(carrier_origins))])
+                params = {f'id_origin_{i}': origin for i, origin in enumerate(carrier_origins)}
+                query = text(f"SELECT id_carrier, id_origin FROM carriers WHERE id_origin IN ({placeholders})")
+                result = self.db.execute(query, params)
+                all_carriers = {int(row.id_origin): row.id_carrier for row in result}
             
             # Pre-fetch all taxes using raw SQL
             all_taxes = {}
@@ -3408,6 +3421,13 @@ class PrestaShopService(BaseEcommerceService):
                     if id_tax is None:
                         id_tax = 1
 
+                    # Map carrier (id_carrier PrestaShop = id_origin Carrier)
+                    carrier_id = 0  # Default
+                    carrier_origin = safe_int(order.get('id_carrier', 0))
+                    if carrier_origin and carrier_origin in all_carriers:
+                        carrier_id = all_carriers[carrier_origin]
+                    # Note: If carrier doesn't exist, it will be created during sync_carriers()
+                    # and will be available in subsequent syncs. For now, use default 0.
                     
                     # Prepare complete order data
                     order_data = {
@@ -3418,6 +3438,7 @@ class PrestaShopService(BaseEcommerceService):
                         'customer': customer_id,
                         'id_platform': self.platform_id,
                         'id_payment': payment_id,
+                        'id_carrier': carrier_id,
                         'sectional': 1,  # Default
                         'id_order_state': 1,  # Default
                         'is_invoice_requested': order.get('fattura', 0),
@@ -3545,11 +3566,11 @@ class PrestaShopService(BaseEcommerceService):
             orders_sql_file = "temp_orders_insert.sql"
             with open(orders_sql_file, 'w', encoding='utf-8') as f:
                 f.write("-- Orders bulk insert\n")
-                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_tax_excl, total_paid, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
+                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_tax_excl, total_paid, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
                 
                 for i, order_data in enumerate(valid_order_data):
                     comma = "," if i < len(valid_order_data) - 1 else ";"
-                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_tax_excl']}, {order_data['total_paid']}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_tax_excl']}, {order_data['total_paid']}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
             with open(orders_sql_file, 'r', encoding='utf-8') as f:

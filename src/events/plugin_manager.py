@@ -203,6 +203,7 @@ class PluginManager:
 
     async def _handle_event(self, event: Event) -> None:
         handlers = self._resolve_handlers(event)
+        
         if not handlers:
             return
 
@@ -214,6 +215,7 @@ class PluginManager:
                 logger.exception(
                     "Handler %s failed for event '%s'", handler.name, event.event_type, exc_info=result
                 )
+
 
     def _resolve_handlers(self, event: Event) -> List[BaseEventHandler]:
         config = self._ensure_config()
@@ -232,13 +234,16 @@ class PluginManager:
                 continue
 
             plugin = self._loaded_plugins.get(registered.plugin_name)
-            if not plugin or not plugin.enabled:
+            if not plugin:
+                continue
+            if not plugin.enabled:
                 continue
 
             if not config.is_handler_enabled(name):
                 continue
 
-            if not registered.handler.can_handle(event):
+            can_handle_result = registered.handler.can_handle(event)
+            if not can_handle_result:
                 continue
 
             resolved.append(registered.handler)

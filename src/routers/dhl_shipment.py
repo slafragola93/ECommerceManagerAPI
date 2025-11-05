@@ -114,48 +114,6 @@ async def get_tracking(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/debug-documents/{awb}")
-async def debug_shipment_documents(
-    awb: str,
-    dhl_service: IDhlShipmentService = Depends(get_dhl_shipment_service)
-):
-    """
-    Debug: Mostra tutti i documenti salvati per un AWB
-    
-    Args:
-        awb: Air Waybill number della spedizione
-        dhl_service: Dipendenza del servizio di spedizione DHL
-        
-    Returns:
-        Lista dei documenti salvati
-    """
-    try:
-        from src.repository.shipment_document_repository import ShipmentDocumentRepository
-        
-        # Cerca tutti i documenti per AWB
-        document_repo = ShipmentDocumentRepository(dhl_service.shipment_request_repository._session)
-        documents = document_repo.get_by_awb(awb)
-        
-        result = []
-        for doc in documents:
-            result.append({
-                "id": doc.id,
-                "awb": doc.awb,
-                "type_code": doc.type_code,
-                "file_path": doc.file_path,
-                "size_bytes": doc.size_bytes,
-                "created_at": doc.created_at.isoformat() if doc.created_at else None
-            })
-        
-        return {
-            "awb": awb,
-            "documents_count": len(documents),
-            "documents": result
-        }
-        
-    except Exception as e:
-        logger.error(f"Error debugging documents for AWB {awb}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/download-label/{awb}")
@@ -199,24 +157,19 @@ async def download_shipment_label(
 
 
 @router.delete("/cleanup-documents")
-async def cleanup_expired_documents():
+async def cleanup_expired_documents(db: Session = Depends(get_db)):
     """
-    Cleanup expired shipment documents and audit records
+    Cleanup expired shipment documents
     
     Returns:
         Cleanup results with counts and memory freed
     """
     try:
         from src.core.container_config import get_configured_container
-        from src.repository.interfaces.shipment_request_repository_interface import IShipmentRequestRepository
         from src.repository.interfaces.shipment_document_repository_interface import IShipmentDocumentRepository
         
         configured_container = get_configured_container()
-        shipment_repo = configured_container.resolve(IShipmentRequestRepository)
-        document_repo = configured_container.resolve(IShipmentDocumentRepository)
-        
-        # Cleanup expired audit records
-        deleted_audit = shipment_repo.cleanup_expired()
+        document_repo = configured_container.resolve_with_session(IShipmentDocumentRepository, db)
         
         # POINT 1: Finding expired documents in shipment_documents table
         expired_documents = document_repo.get_expired_documents()
@@ -227,11 +180,8 @@ async def cleanup_expired_documents():
         # TODO: Point 3 - Removing database records
         # TODO: Point 4 - Calculating memory freed
         
-        logger.info(f"Cleaned up {deleted_audit} expired audit records")
-        
         return {
             "message": "Cleanup completed",
-            "audit_records_deleted": deleted_audit,
             "expired_documents_found": len(expired_documents),
             "documents_deleted": 0,  # TODO: Implement document cleanup (points 2-4)
             "memory_freed_bytes": 0  # TODO: Calculate actual memory freed

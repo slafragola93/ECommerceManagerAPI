@@ -3,7 +3,7 @@ Product Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session, noload
-from sqlalchemy import func, desc, text
+from sqlalchemy import func, desc, text, or_
 from src.models.product import Product
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.core.base_repository import BaseRepository
@@ -22,6 +22,19 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         try:
             query = self._session.query(self._model_class).order_by(desc(Product.id_product))
             
+            # Filtro per nome prodotto (ricerca parziale, case-insensitive)
+            # Cerca in name, sku e reference (almeno 4 caratteri richiesti)
+            product_name = filters.get('product_name')
+            if product_name and len(product_name) >= 4:
+                search_term = f"%{product_name}%"
+                query = query.filter(
+                    or_(
+                        Product.name.ilike(search_term),
+                        Product.sku.ilike(search_term),
+                        Product.reference.ilike(search_term)
+                    )
+                )
+            
             # Paginazione
             page = filters.get('page', 1)
             limit = filters.get('limit', 100)
@@ -35,6 +48,19 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         """Conta le entità con filtri opzionali"""
         try:
             query = self._session.query(self._model_class)
+            
+            # Applica gli stessi filtri del get_all per conteggio corretto
+            product_name = filters.get('product_name')
+            if product_name and len(product_name) >= 4:
+                search_term = f"%{product_name}%"
+                query = query.filter(
+                    or_(
+                        Product.name.ilike(search_term),
+                        Product.sku.ilike(search_term),
+                        Product.reference.ilike(search_term)
+                    )
+                )
+            
             return query.count()
         except Exception as e:
             raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
