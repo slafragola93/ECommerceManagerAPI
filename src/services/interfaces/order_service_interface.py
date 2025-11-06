@@ -67,3 +67,8 @@ class IOrderService(IBaseService):
             Risposta con successi, fallimenti e summary
         """
         pass
+
+    @abstractmethod
+    def recalculate_totals_for_order(self, order_id: int) -> None:
+        """Ricalcola e persiste i totali di un ordine (imponibile e ivato)."""
+        pass

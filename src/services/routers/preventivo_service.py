@@ -131,6 +131,9 @@ class PreventivoService:
             total_imponibile=totals["total_imponibile"],
             total_iva=totals["total_iva"],
             total_finale=totals["total_finale"],
+            total_price_with_tax=totals["total_finale"],
+            total_discount=order_document.total_discount,
+            apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
             date_add=order_document.date_add,
             updated_at=order_document.updated_at,
             articoli=articoli_data
@@ -143,12 +146,33 @@ class PreventivoService:
         if not order_document:
             return None
         
-        # Recupera cliente
-        customer = self.customer_repo.get_by_id(order_document.id_customer)
-        customer_name = f"{customer.firstname} {customer.lastname}" if customer else None
+        # Recupera cliente completo
+        customer_obj = None
+        customer_name = None
+        if order_document.id_customer:
+            customer = self.customer_repo.get_by_id(order_document.id_customer)
+            if customer:
+                from src.schemas.customer_schema import CustomerResponseSchema
+                customer_obj = CustomerResponseSchema(
+                    id_customer=customer.id_customer,
+                    id_origin=customer.id_origin,
+                    id_lang=customer.id_lang,
+                    firstname=customer.firstname,
+                    lastname=customer.lastname,
+                    email=customer.email,
+                    date_add=customer.date_add,
+                    addresses=None  # Non includiamo gli indirizzi nel customer del preventivo
+                )
+                customer_name = f"{customer.firstname} {customer.lastname}"
         
-        # Calcola totali
+        # Calcola totali (sempre ricalcolati per assicurare correttezza)
         totals = self.order_doc_service.calculate_totals(id_order_document, "preventivo")
+        
+        # Aggiorna i totali nel database per assicurarsi che siano sempre sincronizzati
+        self.order_doc_service.update_document_totals(id_order_document, "preventivo")
+        
+        # Ricarica il documento dal database per avere i valori aggiornati
+        self.db.refresh(order_document)
         
         # Recupera articoli
         articoli = self.order_doc_service.get_articoli_order_document(id_order_document, "preventivo")
@@ -239,8 +263,6 @@ class PreventivoService:
                         date_add=address_invoice.date_add
                     )
         except Exception as e:
-            # Log dell'errore per debug
-            print(f"Errore nel recupero di address_invoice: {str(e)}")
             import traceback
             traceback.print_exc()
             address_invoice_obj = None
@@ -323,7 +345,7 @@ class PreventivoService:
             id_order_document=order_document.id_order_document,
             id_order=order_document.id_order,
             document_number=order_document.document_number,
-            id_customer=order_document.id_customer,
+            customer=customer_obj,
             address_delivery=address_delivery_obj,
             address_invoice=address_invoice_obj,
             sectional=sectional_obj,
@@ -335,11 +357,14 @@ class PreventivoService:
             type_document=order_document.type_document,
             total_imponibile=totals["total_imponibile"],
             total_iva=totals["total_iva"],
-            total_finale=totals["total_finale"],
+            total_finale=order_document.total_price_with_tax,
+            total_discount=order_document.total_discount,
+            apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
+            total_discounts_applied=totals.get("total_discounts_applicati", 0.0),
+            articoli=articoli_data,
+            order_packages=order_packages_data,
             date_add=order_document.date_add,
             updated_at=order_document.updated_at,
-            articoli=articoli_data,
-            order_packages=order_packages_data
         )
     
     def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False) -> List[PreventivoResponseSchema]:
@@ -453,11 +478,13 @@ class PreventivoService:
                 type_document=order_document.type_document,
                 total_imponibile=totals["total_imponibile"],
                 total_iva=totals["total_iva"],
-                total_finale=totals["total_finale"],
-                date_add=order_document.date_add,
-                updated_at=order_document.updated_at,
+                total_finale=order_document.total_price_with_tax,
+                total_discount=order_document.total_discount,
+                apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
                 articoli=articoli_data,
-                order_packages=order_packages_data
+                order_packages=order_packages_data,
+                date_add=order_document.date_add,
+                updated_at=order_document.updated_at
             ))
         
         return result

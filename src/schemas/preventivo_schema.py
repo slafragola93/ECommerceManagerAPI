@@ -1,7 +1,7 @@
 from typing import Optional, List, Union
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
-from .customer_schema import CustomerSchema
+from .customer_schema import CustomerSchema, CustomerResponseSchema
 from .address_schema import AddressResponseSchema, AddressSchema
 from .shipping_schema import ShippingSchema
 from .sectional_schema import SectionalSchema, SectionalResponseSchema
@@ -105,6 +105,8 @@ class PreventivoCreateSchema(BaseModel):
     id_payment: Optional[int] = Field(None, gt=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = Field(False, description="Se richiedere fattura")
     note: Optional[str] = None
+    total_discount: Optional[float] = Field(0.0, ge=0, description="Sconto totale applicato al documento")
+    apply_discount_to_tax_included: Optional[bool] = Field(False, description="Se True, applica lo sconto al totale con IVA, altrimenti al totale senza IVA")
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackagePreventivoSchema] = Field(default_factory=list, description="Lista dei package del preventivo (opzionale)")
     
@@ -138,6 +140,8 @@ class PreventivoUpdateSchema(BaseModel):
     id_payment: Optional[int] = Field(None, gt=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = None
     note: Optional[str] = Field(None, max_length=200)
+    total_discount: Optional[float] = Field(None, ge=0, description="Sconto totale applicato al documento")
+    apply_discount_to_tax_included: Optional[bool] = Field(None, description="Se True, applica lo sconto al totale con IVA, altrimenti al totale senza IVA")
     
     # Campi NON modificabili (esclusi dallo schema):
     # - document_number (generato automaticamente)
@@ -193,6 +197,8 @@ class PreventivoResponseSchema(BaseModel):
     total_imponibile: float
     total_iva: float
     total_finale: float
+    total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
+    apply_discount_to_tax_included: bool = Field(default=False, description="Se True, lo sconto è applicato al totale con IVA, altrimenti al totale senza IVA")
     date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
@@ -207,7 +213,7 @@ class PreventivoDetailResponseSchema(BaseModel):
     id_order_document: int
     id_order: Optional[int] = None
     document_number: int
-    id_customer: int
+    customer: Optional[CustomerResponseSchema] = None
     address_delivery: Optional[AddressResponseSchema] = None
     address_invoice: Optional[AddressResponseSchema] = None
     sectional: Optional[SectionalResponseSchema] = None
@@ -221,6 +227,9 @@ class PreventivoDetailResponseSchema(BaseModel):
     total_imponibile: float
     total_iva: float
     total_finale: float
+    total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
+    apply_discount_to_tax_included: bool = Field(default=False, description="Se True, lo sconto è applicato al totale con IVA, altrimenti al totale senza IVA")
+    total_discounts_applied: float = Field(default=0.0, description="Totale di tutti gli sconti applicati (sconti articoli + sconto totale documento)")
     date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)

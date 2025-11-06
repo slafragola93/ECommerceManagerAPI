@@ -77,14 +77,13 @@ class PreventivoRepository:
             id_sectional=sectional_id,
             id_payment=preventivo_data.id_payment if preventivo_data.id_payment else None,
             is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
-            note=preventivo_data.note
+            note=preventivo_data.note,
+            total_discount=preventivo_data.total_discount if preventivo_data.total_discount is not None else 0.0,
+            apply_discount_to_tax_included=preventivo_data.apply_discount_to_tax_included if preventivo_data.apply_discount_to_tax_included is not None else False
         )
         
         
-        # Calcola totali prima di aggiungere OrderDocument
-        total_weight, total_price_with_tax = self._calculate_totals_from_articoli_with_tax(preventivo_data.articoli)
-        
-        # Crea Shipping se presente e aggiungi al totale
+        # Crea Shipping se presente (i totali verranno calcolati dopo)
         shipping_id = None
         if preventivo_data.shipping:
             # Crea oggetto Shipping
@@ -93,7 +92,7 @@ class PreventivoRepository:
                 id_shipping_state=1, 
                 id_tax=preventivo_data.shipping.id_tax,
                 tracking=None,
-                weight=total_weight,  # Imposta automaticamente dal total_weight dei prodotti
+                weight=0.0,  # Verrà calcolato automaticamente dopo
                 price_tax_incl=preventivo_data.shipping.price_tax_incl,
                 price_tax_excl=preventivo_data.shipping.price_tax_excl,
                 shipping_message=preventivo_data.shipping.shipping_message
@@ -101,12 +100,7 @@ class PreventivoRepository:
             self.db.add(shipping)
             self.db.flush()  # Per ottenere l'ID
             shipping_id = shipping.id_shipping
-            
-            # Aggiungi le spese di spedizione al totale
-            total_price_with_tax += preventivo_data.shipping.price_tax_incl
         
-        order_document.total_weight = total_weight
-        order_document.total_price_with_tax = total_price_with_tax
         order_document.id_shipping = shipping_id
         
         self.db.add(order_document)
@@ -135,6 +129,19 @@ class PreventivoRepository:
                 self.db.add(order_package)
         
         self.db.commit()
+        
+        # Ricalcola i totali usando il metodo centralizzato che include lo sconto totale
+        from src.services.routers.order_document_service import OrderDocumentService
+        order_doc_service = OrderDocumentService(self.db)
+        order_doc_service.update_document_totals(order_document.id_order_document, "preventivo")
+        
+        # Aggiorna il peso della spedizione se presente
+        if shipping_id:
+            from src.repository.shipping_repository import ShippingRepository
+            shipping_repo = ShippingRepository(self.db)
+            # Ricarica il documento per avere il peso aggiornato
+            self.db.refresh(order_document)
+            shipping_repo.update_weight(shipping_id, order_document.total_weight)
         
         return order_document
     
@@ -220,6 +227,11 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
+        # Traccia se total_discount o apply_discount_to_tax_included sono stati modificati
+        discount_changed = False
+        previous_total_discount = preventivo.total_discount if hasattr(preventivo, 'total_discount') else 0.0
+        previous_apply_discount_to_tax_included = preventivo.apply_discount_to_tax_included if hasattr(preventivo, 'apply_discount_to_tax_included') else False
+        
         # Aggiorna campi modificabili
         if preventivo_data.id_order is not None:
             preventivo.id_order = preventivo_data.id_order
@@ -241,11 +253,26 @@ class PreventivoRepository:
             preventivo.is_invoice_requested = preventivo_data.is_invoice_requested
         if preventivo_data.note is not None:
             preventivo.note = preventivo_data.note
+        if preventivo_data.total_discount is not None:
+            preventivo.total_discount = preventivo_data.total_discount
+            if preventivo.total_discount != previous_total_discount:
+                discount_changed = True
+        if preventivo_data.apply_discount_to_tax_included is not None:
+            preventivo.apply_discount_to_tax_included = preventivo_data.apply_discount_to_tax_included
+            if preventivo.apply_discount_to_tax_included != previous_apply_discount_to_tax_included:
+                discount_changed = True
         
         # Aggiorna timestamp
         preventivo.updated_at = datetime.now()
         
         self.db.commit()
+        
+        # Ricalcola i totali se total_discount o apply_discount_to_tax_included sono stati modificati
+        if discount_changed:
+            from src.services.routers.order_document_service import OrderDocumentService
+            order_doc_service = OrderDocumentService(self.db)
+            order_doc_service.recalculate_totals_for_order_document(id_order_document, "preventivo")
+        
         return preventivo
     
     # METODI DEPRECATI - Centralizzati in OrderDocumentService
@@ -279,7 +306,7 @@ class PreventivoRepository:
             total_weight=preventivo.total_weight or 0.0,
             total_price_tax_excl=total_price_tax_excl,  # Include prodotti + spedizione senza IVA
             total_paid=preventivo.total_price_with_tax,  # total_paid = total_price_with_tax del preventivo
-            total_discounts=0.0,
+            total_discounts=preventivo.total_discount,  # Porta lo sconto totale dal preventivo
             cash_on_delivery=0.0
         )
         
@@ -329,6 +356,10 @@ class PreventivoRepository:
         # Imposta il total_price_tax_excl corretto dopo aver creato tutti gli articoli
         order.total_price_tax_excl = total_price_tax_excl
         self.db.flush()
+
+        # Ricalcola i totali ordine con il servizio dedicato per garantire coerenza
+        from src.services.routers.order_service import OrderService
+        OrderService(self.order_repository).recalculate_totals_for_order(order.id_order)
         
         # Aggiorna il preventivo con l'ID dell'ordine creato
         preventivo.id_order = order.id_order

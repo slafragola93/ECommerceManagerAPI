@@ -5,6 +5,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
 from src.services.interfaces.order_detail_service_interface import IOrderDetailService
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
+from src.repository.order_repository import OrderRepository
+from src.services.routers.order_service import OrderService
 from src.schemas.order_detail_schema import OrderDetailSchema, OrderDetailResponseSchema, AllOrderDetailsResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
@@ -33,6 +35,8 @@ def get_order_detail_service(db: db_dependency) -> IOrderDetailService:
     order_detail_service = configured_container.resolve(IOrderDetailService)
     if hasattr(order_detail_service, '_order_detail_repository'):
         order_detail_service._order_detail_repository = order_detail_repo
+    if hasattr(order_detail_service, '_order_service'):
+        order_detail_service._order_service = OrderService(OrderRepository(db))
     
     return order_detail_service
 

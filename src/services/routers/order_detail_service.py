@@ -1,7 +1,7 @@
 """
 Order Detail Service rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from src.services.interfaces.order_detail_service_interface import IOrderDetailService
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.schemas.order_detail_schema import OrderDetailSchema
@@ -13,12 +13,37 @@ from src.core.exceptions import (
     ExceptionFactory,
     ErrorCode
 )
+from src.services.interfaces.order_service_interface import IOrderService
+
+
+def _collect_tracked_values(order_detail: OrderDetail) -> Dict[str, Any]:
+    """Raccoglie i valori di confronto per capire se serve ricalcolare l'ordine."""
+    return {
+        "id_tax": getattr(order_detail, "id_tax", None),
+        "product_price": getattr(order_detail, "product_price", None),
+        "product_weight": getattr(order_detail, "product_weight", None),
+        "product_qty": getattr(order_detail, "product_qty", None),
+        "reduction_percent": getattr(order_detail, "reduction_percent", None),
+        "reduction_amount": getattr(order_detail, "reduction_amount", None),
+    }
 
 class OrderDetailService(IOrderDetailService):
     """Order Detail Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
     
-    def __init__(self, order_detail_repository: IOrderDetailRepository):
+    def __init__(
+        self,
+        order_detail_repository: IOrderDetailRepository,
+        order_service: Optional[IOrderService] = None
+    ):
         self._order_detail_repository = order_detail_repository
+        self._order_service = order_service
+
+    def _recalculate_order_totals(self, order_id: Optional[int]) -> None:
+        """Ricalcola i totali dell'ordine se il servizio ordini è disponibile."""
+        if not order_id or order_id <= 0 or self._order_service is None:
+            return
+
+        self._order_service.recalculate_totals_for_order(order_id)
     
     async def create_order_detail(self, order_detail_data: OrderDetailSchema) -> OrderDetail:
         """Crea un nuovo order detail con validazioni business"""
@@ -39,6 +64,7 @@ class OrderDetailService(IOrderDetailService):
         try:
             order_detail = OrderDetail(**order_detail_data.model_dump())
             order_detail = self._order_detail_repository.create(order_detail)
+            self._recalculate_order_totals(order_detail.id_order)
             return order_detail
         except Exception as e:
             raise ValidationException(f"Error creating order detail: {str(e)}")
@@ -48,6 +74,7 @@ class OrderDetailService(IOrderDetailService):
         
         # Verifica esistenza
         order_detail = self._order_detail_repository.get_by_id_or_raise(order_detail_id)
+        previous_values = _collect_tracked_values(order_detail)
         
         # Business Rule: Validazione quantità se fornita
         if order_detail_data.product_qty is not None:
@@ -71,11 +98,27 @@ class OrderDetailService(IOrderDetailService):
         # Aggiorna l'order detail
         try:
             # Aggiorna i campi
-            for field_name, value in order_detail_data.model_dump(exclude_unset=True).items():
+            update_payload = order_detail_data.model_dump(exclude_unset=True)
+            for field_name, value in update_payload.items():
                 if hasattr(order_detail, field_name) and value is not None:
                     setattr(order_detail, field_name, value)
             
             updated_order_detail = self._order_detail_repository.update(order_detail)
+            if update_payload and updated_order_detail.id_order and updated_order_detail.id_order > 0:
+                tracked_fields = (
+                    "id_tax",
+                    "product_price",
+                    "product_weight",
+                    "product_qty",  
+                    "reduction_percent",
+                    "reduction_amount",
+                )
+                tracked_changed = any(
+                    field in update_payload and previous_values.get(field) != getattr(updated_order_detail, field)
+                    for field in tracked_fields
+                )
+                if tracked_changed:
+                    self._recalculate_order_totals(updated_order_detail.id_order)
             return updated_order_detail
         except Exception as e:
             raise ValidationException(f"Error updating order detail: {str(e)}")
@@ -108,10 +151,14 @@ class OrderDetailService(IOrderDetailService):
     async def delete_order_detail(self, order_detail_id: int) -> bool:
         """Elimina un order detail"""
         # Verifica esistenza
-        self._order_detail_repository.get_by_id_or_raise(order_detail_id)
+        order_detail = self._order_detail_repository.get_by_id_or_raise(order_detail_id)
+        order_id = getattr(order_detail, "id_order", None)
         
         try:
-            return self._order_detail_repository.delete(order_detail_id)
+            result = self._order_detail_repository.delete(order_detail_id)
+            if result:
+                self._recalculate_order_totals(order_id)
+            return result
         except Exception as e:
             raise ValidationException(f"Error deleting order detail: {str(e)}")
     

@@ -14,7 +14,9 @@ from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
+from src.repository.order_repository import OrderRepository
 from src.services.routers.order_document_service import OrderDocumentService
+from src.services.routers.order_service import OrderService
 from src.models.order import Order
 from src.models.order_document import OrderDocument
 
@@ -92,10 +94,16 @@ async def create_shipping(
     # Ricalcolo totali ordine/documento collegati alla nuova spedizione
 
     ods = OrderDocumentService(db)
+    order_service = OrderService(OrderRepository(db))
     # Order collegati
-    orders = db.query(Order).filter(Order.id_shipping == getattr(shipping, 'id_shipping', None)).all()
-    for o in orders:
-        ods.recalculate_totals_for_order(o.id_order)
+    order = (
+        db.query(Order)
+        .filter(Order.id_shipping == getattr(shipping, 'id_shipping', None))
+        .order_by(Order.id_order.desc())
+        .first()
+    )
+    if order:
+        order_service.recalculate_totals_for_order(order.id_order)
     # Documenti collegati
     docs = db.query(OrderDocument).filter(OrderDocument.id_shipping == getattr(shipping, 'id_shipping', None)).all()
     for d in docs:
@@ -124,9 +132,15 @@ async def update_shipping(
     # Ricalcolo totali ordine/documento collegati a questa spedizione
 
     ods = OrderDocumentService(db)
-    orders = db.query(Order).filter(Order.id_shipping == shipping_id).all()
-    for o in orders:
-        ods.recalculate_totals_for_order(o.id_order)
+    order_service = OrderService(OrderRepository(db))
+    order = (
+        db.query(Order)
+        .filter(Order.id_shipping == shipping_id)
+        .order_by(Order.id_order.desc())
+        .first()
+    )
+    if order:
+        order_service.recalculate_totals_for_order(order.id_order)
     docs = db.query(OrderDocument).filter(OrderDocument.id_shipping == shipping_id).all()
     for d in docs:
         ods.recalculate_totals_for_order_document(d.id_order_document, d.type_document)
@@ -150,9 +164,15 @@ async def delete_shipping(
     await shipping_service.delete_shipping(shipping_id)
     # Dopo la cancellazione, ricalcola i totali per azzerare la spedizione
     ods = OrderDocumentService(db)
-    orders = db.query(Order).filter(Order.id_shipping == shipping_id).all()
-    for o in orders:
-        ods.recalculate_totals_for_order(o.id_order)
+    order_service = OrderService(OrderRepository(db))
+    order = (
+        db.query(Order)
+        .filter(Order.id_shipping == shipping_id)
+        .order_by(Order.id_order.desc())
+        .first()
+    )
+    if order:
+        order_service.recalculate_totals_for_order(order.id_order)
     docs = db.query(OrderDocument).filter(OrderDocument.id_shipping == shipping_id).all()
     for d in docs:
         ods.recalculate_totals_for_order_document(d.id_order_document, d.type_document)

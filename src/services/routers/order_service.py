@@ -1,13 +1,16 @@
 """
 Order Service per gestione logica business ordini seguendo principi SOLID
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 
 from src.services.interfaces.order_service_interface import IOrderService
 from src.repository.order_repository import OrderRepository
+from src.models.order_detail import OrderDetail
 from src.models.order_state import OrderState
+from src.models.shipping import Shipping
+from src.models.tax import Tax
 from src.models.relations.relations import orders_history
 from src.schemas.order_schema import (
     OrderUpdateSchema,
@@ -18,6 +21,7 @@ from src.schemas.order_schema import (
 )
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
+from src.services.core.tool import calculate_order_totals
 import logging
 
 logger = logging.getLogger(__name__)
@@ -174,6 +178,65 @@ class OrderService(IOrderService):
     
     def __init__(self, order_repository: OrderRepository):
         self._order_repository = order_repository
+
+    def recalculate_totals_for_order(self, order_id: int) -> None:
+        """Ricalcola e salva peso, imponibile e totale ivato dell'ordine."""
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            return
+
+        session = self._order_repository.session
+        order_details: List[OrderDetail] = session.query(OrderDetail).filter(
+            OrderDetail.id_order == order_id
+        ).all()
+
+        if not order_details:
+            order.total_weight = 0.0
+            order.total_price_tax_excl = 0.0
+            order.total_paid = 0.0
+
+            shipping: Optional[Shipping] = None
+            if order.id_shipping:
+                shipping = session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+                if shipping:
+                    shipping.weight = 0.0
+
+            session.commit()
+            return
+
+        tax_ids = {
+            od.id_tax for od in order_details if getattr(od, "id_tax", None)
+        }
+
+        tax_percentages: Dict[int, float] = {}
+        if tax_ids:
+            taxes = session.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+            tax_percentages = {tax.id_tax: tax.percentage for tax in taxes}
+
+        totals = calculate_order_totals(order_details, tax_percentages)
+
+        order.total_weight = sum(
+            (od.product_weight or 0.0) * (od.product_qty or 0) for od in order_details
+        )
+
+        shipping: Optional[Shipping] = None
+        shipping_cost_incl = 0.0
+        shipping_cost_excl = 0.0
+        if order.id_shipping:
+            shipping = session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+            if shipping:
+                shipping_cost_incl = getattr(shipping, "price_tax_incl", 0.0) or 0.0
+                shipping_cost_excl = getattr(shipping, "price_tax_excl", 0.0) or 0.0
+
+        discount = getattr(order, "total_discounts", 0.0) or 0.0
+
+        order.total_price_tax_excl = totals["total_price"] + shipping_cost_excl
+        order.total_paid = totals["total_price_with_tax"] + shipping_cost_incl - discount
+
+        if shipping:
+            shipping.weight = order.total_weight
+
+        session.commit()
     
     async def validate_business_rules(self, data: Any) -> None:
         """
@@ -265,13 +328,16 @@ class OrderService(IOrderService):
 
         # Salvare vecchio stato prima dell'aggiornamento
         old_state_id = order.id_order_state
+        old_total_discounts = getattr(order, "total_discounts", None)
         
         # Verificare se id_order_state viene aggiornato
         new_state_id = None
         if hasattr(order_schema, 'id_order_state') and order_schema.id_order_state is not None:
             new_state_id = order_schema.id_order_state
         
-        self._order_repository.update(edited_order=order, data=order_schema)
+        updated_order = self._order_repository.update(edited_order=order, data=order_schema)
+        if getattr(updated_order, "total_discounts", None) != old_total_discounts:
+            self.recalculate_totals_for_order(order_id)
         
         # Restituire risultato con old_state_id se lo stato è cambiato
         if new_state_id is not None and new_state_id != old_state_id:

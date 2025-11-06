@@ -59,6 +59,8 @@ class DDTResponseSchema(BaseModel):
     note: Optional[str] = None
     total_weight: float
     total_price_with_tax: float
+    total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
+    apply_discount_to_tax_included: bool = Field(default=False, description="Se True, lo sconto è applicato al totale con IVA, altrimenti al totale senza IVA")
     
     # Dati ordine collegato
     id_order: int

@@ -16,6 +16,8 @@ class OrderDocumentSchema(BaseModel):
     type_document: str = Field(..., max_length=32)
     total_weight: Optional[float] = 0.0
     total_price_with_tax: Optional[float] = 0.0
+    total_discount: Optional[float] = 0.0
+    apply_discount_to_tax_included: Optional[bool] = False
     is_invoice_requested: Optional[bool] = False
     note: Optional[str] = None
 
@@ -31,6 +33,8 @@ class OrderDocumentResponseSchema(BaseModel):
     type_document: str
     total_weight: float
     total_price_with_tax: float
+    total_discount: float
+    apply_discount_to_tax_included: bool
     is_invoice_requested: bool
     note: str | None
 
