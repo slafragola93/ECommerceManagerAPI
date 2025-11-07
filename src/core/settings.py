@@ -86,6 +86,7 @@ TTL_PRESETS = {
     "product": 21600,           # 6 hours
     "order": 120,               # 2 minutes
     "quote": 300,               # 5 minutes
+    "preventivo": 300,          # 5 minutes
     "address": 7200,            # 2 hours
     
     # Lists and queries
@@ -93,6 +94,7 @@ TTL_PRESETS = {
     "products_list": 60,        # 1 minute
     "orders_list": 30,          # 30 seconds
     "quotes_list": 60,          # 1 minute
+    "preventivi_list": 300,     # 5 minutes
     "orders_history": 300,      # 5 minutes
     
     # External APIs

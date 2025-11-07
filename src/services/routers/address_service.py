@@ -13,6 +13,9 @@ from src.core.exceptions import (
     ExceptionFactory,
     ErrorCode
 )
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import extract_address_created_data
 
 class AddressService(IAddressService):
     """Address Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
@@ -20,8 +23,22 @@ class AddressService(IAddressService):
     def __init__(self, address_repository: IAddressRepository):
         self._address_repository = address_repository
     
-    async def create_address(self, address_data: AddressSchema) -> Address:
-        """Crea un nuovo address con validazioni business"""
+    @emit_event_on_success(
+        event_type=EventType.ADDRESS_CREATED,
+        data_extractor=extract_address_created_data,
+        source="address_service.create_address"
+    )
+    async def create_address(self, address_data: AddressSchema, user: dict = None) -> Address:
+        """
+        Crea un nuovo address con validazioni business.
+        
+        Args:
+            address_data: Dati dell'indirizzo da creare
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Address creato
+        """
         
         # Business Rule 1: Nome deve essere unico
         if hasattr(address_data, 'name') and address_data.name:
@@ -41,8 +58,18 @@ class AddressService(IAddressService):
         except Exception as e:
             raise ValidationException(f"Errore nella creazione dell'indirizzo: {str(e)}")
     
-    async def update_address(self, address_id: int, address_data: AddressSchema) -> Address:
-        """Aggiorna un address esistente"""
+    async def update_address(self, address_id: int, address_data: AddressSchema, user: dict = None) -> Address:
+        """
+        Aggiorna un address esistente.
+        
+        Args:
+            address_id: ID dell'indirizzo da aggiornare
+            address_data: Nuovi dati dell'indirizzo
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Address aggiornato
+        """
         
         # Verifica esistenza
         address = self._address_repository.get_by_id_or_raise(address_id)
@@ -74,18 +101,21 @@ class AddressService(IAddressService):
         address = self._address_repository.get_by_id_or_raise(address_id)
         return address
     
-    async def get_addresses(self, page: int = 1, limit: int = 10, **filters) -> List[Address]:
+    async def get_addresses(self, page: Optional[int] = None, limit: Optional[int] = None, **filters) -> List[Address]:
         """Ottiene la lista dei address con filtri"""
         try:
-            # Validazione parametri
-            if page < 1:
-                page = 1
-            if limit < 1:
-                limit = 10
+            # Aggiungi page e limit ai filtri solo se specificati
+            if page is not None:
+                # Validazione parametri
+                if page < 1:
+                    page = 1
+                filters['page'] = page
             
-            # Aggiungi page e limit ai filtri
-            filters['page'] = page
-            filters['limit'] = limit
+            if limit is not None:
+                # Validazione parametri
+                if limit < 1:
+                    limit = 10
+                filters['limit'] = limit
             
             # Usa il repository con i filtri
             addresses = self._address_repository.get_all(**filters)
@@ -94,8 +124,17 @@ class AddressService(IAddressService):
         except Exception as e:
             raise ValidationException(f"Errore nel recupero degli indirizzi: {str(e)}")
     
-    async def delete_address(self, address_id: int) -> bool:
-        """Elimina un address"""
+    async def delete_address(self, address_id: int, user: dict = None) -> bool:
+        """
+        Elimina un address.
+        
+        Args:
+            address_id: ID dell'indirizzo da eliminare
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            True se eliminato con successo
+        """
         # Verifica esistenza
         self._address_repository.get_by_id_or_raise(address_id)
         

@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, Float, ForeignKey
+from sqlalchemy import Integer, Column, Numeric, ForeignKey
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -19,11 +19,11 @@ class FiscalDocumentDetail(Base):
     id_order_detail = Column(Integer, ForeignKey("order_details.id_order_detail"), nullable=False, index=True)
     
     # Quantità da stornare (può essere minore della quantità originale)
-    quantity = Column(Float, nullable=False)
+    quantity = Column(Numeric(10, 5), nullable=False)
     
     # Importo da stornare (può essere diverso dal prezzo originale)
-    unit_price = Column(Float, nullable=False)
-    total_amount = Column(Float, nullable=False)
+    unit_price = Column(Numeric(10, 5), nullable=False)
+    total_amount = Column(Numeric(10, 5), nullable=False)
     
     # Tassa applicata (riferimento all'order detail originale)
     id_tax = Column(Integer, ForeignKey("taxes.id_tax"), nullable=True, index=True)

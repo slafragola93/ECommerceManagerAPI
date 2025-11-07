@@ -216,7 +216,7 @@ class OrderService(IOrderService):
         totals = calculate_order_totals(order_details, tax_percentages)
 
         order.total_weight = sum(
-            (od.product_weight or 0.0) * (od.product_qty or 0) for od in order_details
+            (float(od.product_weight) if od.product_weight is not None else 0.0) * (od.product_qty or 0) for od in order_details
         )
 
         shipping: Optional[Shipping] = None
@@ -225,8 +225,8 @@ class OrderService(IOrderService):
         if order.id_shipping:
             shipping = session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
             if shipping:
-                shipping_cost_incl = getattr(shipping, "price_tax_incl", 0.0) or 0.0
-                shipping_cost_excl = getattr(shipping, "price_tax_excl", 0.0) or 0.0
+                shipping_cost_incl = float(getattr(shipping, "price_tax_incl", 0.0) or 0.0)
+                shipping_cost_excl = float(getattr(shipping, "price_tax_excl", 0.0) or 0.0)
 
         discount = getattr(order, "total_discounts", 0.0) or 0.0
 

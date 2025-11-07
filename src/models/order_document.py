@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, Float, Date, DateTime, func, ForeignKey, Boolean
+from sqlalchemy import Integer, Column, String, Numeric, Date, DateTime, func, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -18,13 +18,13 @@ class OrderDocument(Base):
     id_payment = Column(Integer, ForeignKey('payments.id_payment'), index=True, nullable=True, default=None)
     document_number = Column(Integer)
     type_document = Column(String(32))
-    total_weight = Column(Float)
-    total_price_with_tax = Column(Float)
-    total_discount = Column(Float, default=0.0)
+    total_weight = Column(Numeric(10, 5))
+    total_price_with_tax = Column(Numeric(10, 5))
+    total_discount = Column(Numeric(10, 5), default=0.0)
     apply_discount_to_tax_included = Column(Boolean, default=False)
     is_invoice_requested = Column(Boolean, default=False)
     note = Column(String(200))
-    date_add = Column(Date, default=func.now())
+    date_add = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     order = relationship("Order", back_populates="orders_document")

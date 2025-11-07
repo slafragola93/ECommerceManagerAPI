@@ -198,7 +198,7 @@ class OrderDocumentService:
         ).first()
         
         if not articoli:
-            total_discount = document.total_discount if document and document.total_discount else 0.0
+            total_discount = float(document.total_discount) if document and document.total_discount else 0.0
             return {
                 "total_imponibile": 0.0,
                 "total_iva": 0.0,
@@ -229,7 +229,7 @@ class OrderDocumentService:
         total_articoli_base = totals['total_price_with_tax']
         
         # Recupera total_discount e apply_discount_to_tax_included dal documento
-        total_discount = document.total_discount if document and document.total_discount else 0.0
+        total_discount = float(document.total_discount) if document and document.total_discount else 0.0
         apply_discount_to_tax_included = document.apply_discount_to_tax_included if document and document.apply_discount_to_tax_included else False
         
         # Applica lo sconto in base al flag
@@ -271,7 +271,7 @@ class OrderDocumentService:
                 Shipping.id_shipping == document.id_shipping
             ).first()
             if shipping and shipping.price_tax_incl:
-                shipping_cost = shipping.price_tax_incl
+                shipping_cost = float(shipping.price_tax_incl)
         
         total_finale = total_articoli_dopo_sconto + shipping_cost
         
@@ -310,7 +310,7 @@ class OrderDocumentService:
             
             # Calcola peso totale
             articoli = self.get_articoli_order_document(id_order_document, document_type)
-            total_weight = sum(articolo.product_weight * articolo.product_qty for articolo in articoli)
+            total_weight = sum((float(articolo.product_weight) if articolo.product_weight is not None else 0.0) * articolo.product_qty for articolo in articoli)
             document.total_weight = round(total_weight, 2)
             
             # Aggiorna timestamp
@@ -371,7 +371,8 @@ class OrderDocumentService:
             product_price=articolo.product_price or 0.0,
             id_tax=articolo.id_tax,
             reduction_percent=articolo.reduction_percent or 0.0,
-            reduction_amount=articolo.reduction_amount or 0.0
+            reduction_amount=articolo.reduction_amount or 0.0,
+            note=articolo.note
         )
         
         self.db.add(order_detail)

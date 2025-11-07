@@ -1,7 +1,7 @@
 """
 Customer Service rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from src.services.interfaces.customer_service_interface import ICustomerService
 from src.repository.interfaces.customer_repository_interface import ICustomerRepository
 from src.schemas.customer_schema import CustomerSchema, CustomerResponseSchema
@@ -13,6 +13,13 @@ from src.core.exceptions import (
     ExceptionFactory,
     ErrorCode
 )
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import (
+    extract_customer_created_data,
+    extract_customer_updated_data,
+    extract_customer_deleted_data
+)
 import re
 
 class CustomerService(ICustomerService):
@@ -21,16 +28,32 @@ class CustomerService(ICustomerService):
     def __init__(self, customer_repository: ICustomerRepository):
         self._customer_repository = customer_repository
     
-    async def create_customer(self, customer_data: CustomerSchema) -> Customer:
-        """Crea un nuovo cliente con validazioni business"""
+    @emit_event_on_success(
+        event_type=EventType.CUSTOMER_CREATED,
+        data_extractor=extract_customer_created_data,
+        source="customer_service.create_customer"
+    )
+    async def create_customer(self, customer_data: CustomerSchema, user: dict = None) -> Tuple[Customer, bool]:
+        """
+        Crea un nuovo cliente con validazioni business.
+        Se l'email esiste già, restituisce il customer esistente.
+        
+        Args:
+            customer_data: Dati del customer da creare
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Tuple[Customer, bool]: (customer, is_created) dove is_created è True se creato, False se esistente
+        """
         
         # Business Rule 1: Validazione email
         await self._validate_email(customer_data.email)
         
-        # Business Rule 2: Email deve essere unica
+        # Business Rule 2: Controlla se email esiste già
         existing_customer = self._customer_repository.get_by_email(customer_data.email)
         if existing_customer:
-            raise ExceptionFactory.email_duplicate(customer_data.email)
+            # Restituisce il customer esistente invece di sollevare un'eccezione
+            return (existing_customer, False)
         
         # Business Rule 3: Validazione nome e cognome
         await self._validate_name_fields(customer_data.firstname, customer_data.lastname)
@@ -53,12 +76,27 @@ class CustomerService(ICustomerService):
             customer = Customer(**customer_data.model_dump())
             customer.date_add = date.today()  # Aggiungi data di creazione
             customer = self._customer_repository.create(customer)
-            return customer
+            return (customer, True)
         except Exception as e:
             raise ValidationException(f"Errore nella creazione del cliente: {str(e)}")
     
-    async def update_customer(self, customer_id: int, customer_data: CustomerSchema) -> Customer:
-        """Aggiorna un cliente esistente"""
+    @emit_event_on_success(
+        event_type=EventType.CUSTOMER_UPDATED,
+        data_extractor=extract_customer_updated_data,
+        source="customer_service.update_customer"
+    )
+    async def update_customer(self, customer_id: int, customer_data: CustomerSchema, user: dict = None) -> Customer:
+        """
+        Aggiorna un cliente esistente.
+        
+        Args:
+            customer_id: ID del customer da aggiornare
+            customer_data: Nuovi dati del customer
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Customer aggiornato
+        """
         
         # Verifica esistenza
         customer = self._customer_repository.get_by_id_or_raise(customer_id)
@@ -110,8 +148,22 @@ class CustomerService(ICustomerService):
         except Exception as e:
             raise ValidationException(f"Errore nel recupero dei clienti: {str(e)}")
     
-    async def delete_customer(self, customer_id: int) -> bool:
-        """Elimina un cliente"""
+    @emit_event_on_success(
+        event_type=EventType.CUSTOMER_DELETED,
+        data_extractor=extract_customer_deleted_data,
+        source="customer_service.delete_customer"
+    )
+    async def delete_customer(self, customer_id: int, user: dict = None) -> bool:
+        """
+        Elimina un cliente.
+        
+        Args:
+            customer_id: ID del customer da eliminare
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            True se eliminato con successo
+        """
         # Verifica esistenza
         self._customer_repository.get_by_id_or_raise(customer_id)
         

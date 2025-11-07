@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, Text, DateTime, ForeignKey, Boolean, Float
+from sqlalchemy import Integer, Column, String, Text, DateTime, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -44,7 +44,7 @@ class FiscalDocument(Base):
     includes_shipping = Column(Boolean, default=True, nullable=False)  # True se include spese di spedizione
     
     # Importi (per note parziali)
-    total_amount = Column(Float, nullable=True)  # Importo totale documento
+    total_amount = Column(Numeric(10, 5), nullable=True)  # Importo totale documento
     
     # Timestamp
     date_add = Column(DateTime, default=datetime.utcnow, nullable=False)

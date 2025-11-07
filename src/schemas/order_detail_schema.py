@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class OrderDetailSchema(BaseModel):
@@ -16,6 +16,7 @@ class OrderDetailSchema(BaseModel):
     product_weight: Optional[float] = 0.0
     reduction_percent: Optional[float] = 0.0
     reduction_amount: Optional[float] = 0.0
+    note: Optional[str] = Field(None, max_length=200)
 
 
 class OrderDetailResponseSchema(BaseModel):
@@ -32,6 +33,13 @@ class OrderDetailResponseSchema(BaseModel):
     product_weight: float
     reduction_percent: float
     reduction_amount: float
+    note: Optional[str] = None
+    
+    @validator('product_price', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class AllOrderDetailsResponseSchema(BaseModel):

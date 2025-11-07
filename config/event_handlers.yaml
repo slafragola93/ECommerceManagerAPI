@@ -9,6 +9,8 @@ marketplace:
 plugin_directories:
 - src\events\plugins
 - src\events\plugins\customs
-plugins: {}
+plugins:
+  email_notification:
+    enabled: false
 routes:
   order_status_changed: {}

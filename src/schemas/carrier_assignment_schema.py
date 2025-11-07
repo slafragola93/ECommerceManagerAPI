@@ -103,6 +103,12 @@ class CarrierAssignmentResponseSchema(BaseModel):
     max_weight: Optional[float]
     carrier_api: Optional[CarrierApiResponseSchema] = None  # Popolato dalla repository
 
+    @validator('min_weight', 'max_weight', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
     class Config:
         from_attributes = True
 

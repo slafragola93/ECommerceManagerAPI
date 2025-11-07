@@ -200,11 +200,19 @@ class OrderRepository:
             **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional', 'order_details']))
 
         if isinstance(data.customer, CustomerSchema):
-            # Se cliente non esiste in DB viene creato altrimenti se esiste si setta l'ID
-            customer = self.customer_repository.get_by_email(data.customer.email)
-
-            order.id_customer = QueryUtils.create_and_set_id(repository=self.customer_repository, schema_datas=data,
-                                                             field_name="customer") if customer is None else customer.id_customer
+            # Controlla se esiste già un customer con questa email (case-insensitive)
+            existing_customer = self.customer_repository.get_by_email(data.customer.email)
+            
+            if existing_customer:
+                # Usa il customer esistente invece di crearne uno nuovo
+                order.id_customer = existing_customer.id_customer
+            else:
+                # Crea nuovo customer solo se l'email non esiste
+                order.id_customer = QueryUtils.create_and_set_id(
+                    repository=self.customer_repository, 
+                    schema_datas=data,
+                    field_name="customer"
+                )
         else:
             # E' stato passato l'ID per intero, no oggetto
             # Converti 0 a None per foreign key

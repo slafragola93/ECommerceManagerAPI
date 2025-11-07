@@ -78,7 +78,6 @@ def cached(
                     # Check cache after acquiring lock
                     cached_result = await cache_manager.get(cache_key, layer)
                     if cached_result is not None:
-                        print(f"[SINGLE-FLIGHT CACHE HIT] {func.__name__} -> Key: {cache_key}")
                         logger.info(f"Single-flight cache HIT for {func.__name__} with key: {cache_key}")
                         return cached_result
                     
@@ -99,18 +98,14 @@ def cached(
                 # Try to get from cache
                 cached_result = await cache_manager.get(cache_key, layer)
                 if cached_result is not None:
-                    print(f"[CACHE HIT] {func.__name__} -> Key: {cache_key}")
                     logger.info(f"Cache HIT for {func.__name__} with key: {cache_key}")
                     return cached_result
                 
                 # Cache miss - execute function
-                print(f"[CACHE MISS] {func.__name__} -> Key: {cache_key}")
                 logger.info(f"Cache MISS for {func.__name__} with key: {cache_key}")
                 result = await func(*args, **func_kwargs)
                 
                 # Store in cache
-                print(f"[CACHE SET] {func.__name__} -> Key: {cache_key} -> TTL: {ttl}s")
-                logger.info(f"Cache SET for {func.__name__} with key: {cache_key}, TTL: {ttl}s")
                 await cache_manager.set(cache_key, result, ttl, preset, layer)
                 
                 return result
@@ -140,7 +135,6 @@ async def _stale_while_revalidate(
     # Try to get fresh value
     fresh_result = await cache_manager.get(cache_key, layer)
     if fresh_result is not None:
-        print(f"[FRESH CACHE HIT] {cache_key}")
         logger.info(f"Fresh cache HIT: {cache_key}")
         return fresh_result
     
@@ -150,7 +144,6 @@ async def _stale_while_revalidate(
     
     # Start background refresh if we have stale data
     if stale_result is not None:
-        print(f"[SERVING STALE DATA] {cache_key} -> Background refresh started")
         logger.info(f"Serving stale data: {cache_key} -> Background refresh started")
         # Schedule background refresh
         asyncio.create_task(_background_refresh(
@@ -160,7 +153,6 @@ async def _stale_while_revalidate(
         return stale_result
     
     # No cache data - execute synchronously
-    print(f"[CACHE MISS (SWR)] {cache_key} -> Executing function")
     logger.info(f"Cache MISS (SWR): {cache_key} -> Executing function")
     result = await func(*args, **func_kwargs)
     

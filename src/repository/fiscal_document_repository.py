@@ -410,7 +410,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             if order and order.id_shipping:
                 shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
                 if shipping and shipping.price_tax_excl and shipping.price_tax_excl > 0:
-                    shipping_cost_no_vat = shipping.price_tax_excl
+                    shipping_cost_no_vat = float(shipping.price_tax_excl)
                     # Calcola IVA spedizione
                     shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
                     shipping_vat_amount = calculate_amount_with_percentage(shipping_cost_no_vat, shipping_vat_percentage)
@@ -817,7 +817,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         total_products = 0.0
         for detail in details:
             tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).first()[0]
-            total_products += detail.total_amount * (1 + tax_percentage / 100)
+            total_amount = float(detail.total_amount) if detail.total_amount is not None else 0.0
+            total_products += total_amount * (1 + tax_percentage / 100)
 
         
         # Aggiungi spese di spedizione se incluse
@@ -826,7 +827,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             if order_id_shipping:
                 shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order_id_shipping).first()
                 if shipping and shipping.price_tax_incl:
-                    total_products += shipping.price_tax_incl
+                    total_products += float(shipping.price_tax_incl)
         
         fiscal_doc.total_amount = total_products
         self._session.commit()
@@ -973,5 +974,5 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             if order and order.id_shipping:
                 shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
                 if shipping and shipping.price_tax_incl:
-                    total_amount += shipping.price_tax_incl
+                    total_amount += float(shipping.price_tax_incl)
         return total_amount

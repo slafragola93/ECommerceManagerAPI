@@ -2,7 +2,7 @@
 Interfaccia per Customer Service seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from src.schemas.customer_schema import CustomerSchema, CustomerResponseSchema
 from src.models.customer import Customer
 
@@ -10,8 +10,13 @@ class ICustomerService(ABC):
     """Interfaccia per Customer Service"""
     
     @abstractmethod
-    async def create_customer(self, customer_data: CustomerSchema) -> Customer:
-        """Crea un nuovo cliente"""
+    async def create_customer(self, customer_data: CustomerSchema) -> Tuple[Customer, bool]:
+        """
+        Crea un nuovo cliente o restituisce quello esistente se l'email è già presente.
+        
+        Returns:
+            Tuple[Customer, bool]: (customer, is_created) dove is_created è True se creato, False se esistente
+        """
         pass
     
     @abstractmethod

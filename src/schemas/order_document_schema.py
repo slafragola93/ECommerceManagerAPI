@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from .address_schema import AddressResponseSchema
 from .customer_schema import CustomerResponseSchema
@@ -37,6 +37,12 @@ class OrderDocumentResponseSchema(BaseModel):
     apply_discount_to_tax_included: bool
     is_invoice_requested: bool
     note: str | None
+    
+    @validator('total_weight', 'total_price_with_tax', 'total_discount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class AllOrderDocumentResponseSchema(BaseModel):

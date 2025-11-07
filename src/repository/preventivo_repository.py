@@ -177,7 +177,8 @@ class PreventivoRepository:
             product_price=product_price,
             id_tax=articolo.id_tax,
             reduction_percent=articolo.reduction_percent or 0.0,
-            reduction_amount=articolo.reduction_amount or 0.0
+            reduction_amount=articolo.reduction_amount or 0.0,
+            note=articolo.note
         )
         
         self.db.add(order_detail)
@@ -286,6 +287,24 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
+        # Validazione campi obbligatori per la conversione
+        missing_fields = []
+        if not preventivo.id_address_delivery or preventivo.id_address_delivery <= 0:
+            missing_fields.append("id_address_delivery")
+        if not preventivo.id_address_invoice or preventivo.id_address_invoice <= 0:
+            missing_fields.append("id_address_invoice")
+        if not preventivo.id_customer or preventivo.id_customer <= 0:
+            missing_fields.append("id_customer")
+        if not preventivo.id_shipping or preventivo.id_shipping <= 0:
+            missing_fields.append("id_shipping")
+        
+        if missing_fields:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail=f"Impossibile convertire il preventivo: campi obbligatori mancanti: {', '.join(missing_fields)}"
+            )
+        
         # Calcola total_price_tax_excl corretto (prodotti + spedizione senza IVA)
         total_price_tax_excl = self._calculate_total_tax_excl_for_order(preventivo)
 
@@ -371,7 +390,7 @@ class PreventivoRepository:
         return order
     
     def _handle_customer(self, preventivo_data: PreventivoCreateSchema, user_id: int) -> int:
-        """Gestisce customer: crea se necessario, restituisce ID"""
+        """Gestisce customer: crea se necessario, restituisce ID. Se l'email esiste già, restituisce il customer esistente."""
         if preventivo_data.customer.id:
             # Verifica che il customer esista
             customer = self.db.query(Customer).filter(Customer.id_customer == preventivo_data.customer.id).first()
@@ -380,7 +399,16 @@ class PreventivoRepository:
             return preventivo_data.customer.id
         
         elif preventivo_data.customer.data:
-            # Crea nuovo customer
+            # Controlla se esiste già un customer con questa email (case-insensitive)
+            existing_customer = self.db.query(Customer).filter(
+                func.lower(Customer.email) == func.lower(preventivo_data.customer.data.email)
+            ).first()
+            
+            if existing_customer:
+                # Restituisce il customer esistente invece di crearne uno nuovo
+                return existing_customer.id_customer
+            
+            # Crea nuovo customer solo se l'email non esiste
             customer = Customer(
                 id_origin=preventivo_data.customer.data.id_origin,
                 id_lang=preventivo_data.customer.data.id_lang,

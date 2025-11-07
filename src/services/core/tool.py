@@ -155,19 +155,22 @@ def calculate_order_totals(order_details: list, tax_percentages: dict = None) ->
     total_price_with_tax = 0.0
     
     for order_detail in order_details:
-        # Calcola peso totale
-        weight = (order_detail.product_weight or 0.0) * (order_detail.product_qty or 1)
+        # Calcola peso totale - converti Decimal in float se necessario
+        product_weight = float(order_detail.product_weight) if order_detail.product_weight is not None else 0.0
+        weight = product_weight * (order_detail.product_qty or 1)
         total_weight += weight
         
-        # Calcola prezzo base
-        price_base = (order_detail.product_price or 0.0) * (order_detail.product_qty or 1)
+        # Calcola prezzo base - converti Decimal in float se necessario
+        product_price = float(order_detail.product_price) if order_detail.product_price is not None else 0.0
+        price_base = product_price * (order_detail.product_qty or 1)
         
         # Applica sconti
         discount_amount = 0.0
         if order_detail.reduction_percent and order_detail.reduction_percent > 0:
-            discount_amount = calculate_amount_with_percentage(price_base, order_detail.reduction_percent)
+            reduction_percent = float(order_detail.reduction_percent)
+            discount_amount = calculate_amount_with_percentage(price_base, reduction_percent)
         elif order_detail.reduction_amount and order_detail.reduction_amount > 0:
-            discount_amount = order_detail.reduction_amount
+            discount_amount = float(order_detail.reduction_amount)
         
         price_after_discount = price_base - discount_amount
         total_discounts += discount_amount

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, Union, List
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, validator
 
 from src.schemas import AddressSchema, CustomerSchema, ShippingSchema, SectionalSchema
 from src.schemas.address_schema import AddressResponseSchema
@@ -102,6 +102,12 @@ class OrderSimpleResponseSchema(BaseModel):
     delivery_date: Optional[datetime]
     date_add: Optional[datetime] = None
 
+    @validator('total_weight', 'total_price_tax_excl', 'total_paid', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
     model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
@@ -142,6 +148,12 @@ class OrderResponseSchema(BaseModel):
     order_states: Optional[list[OrderStateResponseSchema]] = None
     order_details: Optional[list] = None 
     order_history: Optional[list[OrderHistorySchema]] = None
+
+    @validator('total_weight', 'total_price_tax_excl', 'total_paid', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
     model_config = ConfigDict(from_attributes=True, extra='forbid')
 

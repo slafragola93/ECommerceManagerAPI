@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class OrderPackageSchema(BaseModel):
@@ -24,6 +24,12 @@ class OrderPackageResponseSchema(BaseModel):
     weight: float
     length: float
     value: float
+    
+    @validator('height', 'width', 'depth', 'weight', 'length', 'value', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
     
     model_config = {"from_attributes": True}
 

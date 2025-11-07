@@ -173,9 +173,16 @@ class CacheManager:
                 
                 # Set in Redis cache
                 if layer in ["auto", "redis", "hybrid"] and self._redis_client:
-                    await self._redis_client.setex(key, ttl_seconds, serialized)
+                    try:
+                        await self._redis_client.setex(key, ttl_seconds, serialized)
+                        logger.info(f"Cache SET for key: {key} (TTL: {ttl_seconds}s)")
+                    except Exception as e:
+                        logger.error(f"Redis cache set error for {key}: {e}")
+                        success = False
+                elif layer in ["auto", "memory"] and self._memory_cache:
+                    # If only memory cache, log here
+                    logger.info(f"Cache SET for key: {key} (TTL: {ttl_seconds}s)")
                 
-                logger.debug(f"Cache set: {key} (TTL: {ttl_seconds}s)")
                 return success
                 
         except Exception as e:
@@ -206,21 +213,54 @@ class CacheManager:
             logger.error(f"Cache delete error for key {key}: {e}")
             return False
     
-    async def delete_pattern(self, pattern: str, layer: str = "redis") -> int:
+    async def delete_pattern(self, pattern: str, layer: str = "auto") -> int:
         """Delete keys matching pattern"""
-        if not self.settings.cache_enabled or not self._redis_client:
+        if not self.settings.cache_enabled:
             return 0
+        
+        total_deleted = 0
+        
+        # Delete from Redis cache
+        if layer in ["auto", "redis", "hybrid"] and self._redis_client:
+            try:
+                keys = await self._redis_client.keys(pattern)
+                if keys:
+                    deleted = await self._redis_client.delete(*keys)
+                    logger.info(f"Deleted {deleted} keys from Redis matching pattern: {pattern}")
+                    total_deleted += deleted
+            except Exception as e:
+                logger.error(f"Cache delete pattern error for {pattern}: {e}")
+        
+        # Delete from memory cache (limited support - only exact matches or prefix matches)
+        if layer in ["auto", "memory", "hybrid"] and self._memory_cache:
+            try:
+                # TTLCache doesn't support pattern matching, so we try to match common patterns
+                # Convert Redis pattern to Python regex-like matching
+                import re
+                # Convert Redis pattern (*) to regex
+                regex_pattern = pattern.replace("*", ".*")
+                regex = re.compile(f"^{regex_pattern}$")
+                
+                # Get all keys from memory cache (this is a limitation of TTLCache)
+                # We can only iterate if we have access to the internal dict
+                keys_to_delete = []
+                if hasattr(self._memory_cache, 'data'):
+                    # TTLCache stores data in .data attribute
+                    for key in list(self._memory_cache.data.keys()):
+                        if regex.match(key):
+                            keys_to_delete.append(key)
+                
+                # Delete matched keys
+                for key in keys_to_delete:
+                    self._memory_cache.pop(key, None)
+                    total_deleted += 1
+                
+                if keys_to_delete:
+                    logger.info(f"Deleted {len(keys_to_delete)} keys from memory cache matching pattern: {pattern}")
+            except Exception as e:
+                logger.error(f"Memory cache delete pattern error for {pattern}: {e}")
             
-        try:
-            keys = await self._redis_client.keys(pattern)
-            if keys:
-                deleted = await self._redis_client.delete(*keys)
-                logger.info(f"Deleted {deleted} keys matching pattern: {pattern}")
-                return deleted
-        except Exception as e:
-            logger.error(f"Cache delete pattern error for {pattern}: {e}")
-            
-        return 0
+        return total_deleted
     
     async def try_acquire_lock(self, key: str, ttl: int = 60) -> bool:
         """Try to acquire distributed lock"""

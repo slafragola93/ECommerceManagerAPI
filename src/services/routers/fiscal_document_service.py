@@ -8,6 +8,12 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import (
+    extract_invoice_created_data,
+    extract_credit_note_created_data
+)
 
 
 class FiscalDocumentService(IFiscalDocumentService):
@@ -16,17 +22,51 @@ class FiscalDocumentService(IFiscalDocumentService):
     def __init__(self, fiscal_document_repository: IFiscalDocumentRepository):
         self._fiscal_document_repository = fiscal_document_repository
     
-    async def create_invoice(self, id_order: int, is_electronic: bool = True) -> FiscalDocument:
-        """Crea una fattura per un ordine"""
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_invoice_created_data,
+        source="fiscal_document_service.create_invoice"
+    )
+    async def create_invoice(self, id_order: int, is_electronic: bool = True, user: dict = None) -> FiscalDocument:
+        """
+        Crea una fattura per un ordine.
+        
+        Args:
+            id_order: ID dell'ordine per cui creare la fattura
+            is_electronic: Se True, genera fattura elettronica
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            FiscalDocument (fattura) creata
+        """
         try:
             return self._fiscal_document_repository.create_invoice(id_order, is_electronic)
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della fattura: {str(e)}")
     
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_credit_note_created_data,
+        source="fiscal_document_service.create_credit_note"
+    )
     async def create_credit_note(self, id_invoice: int, reason: str, is_partial: bool = False, 
                                items: Optional[List[dict]] = None, is_electronic: bool = True, 
-                               include_shipping: bool = True) -> FiscalDocument:
-        """Crea una nota di credito per una fattura"""
+                               include_shipping: bool = True, user: dict = None) -> FiscalDocument:
+        """
+        Crea una nota di credito per una fattura.
+        
+        Args:
+            id_invoice: ID della fattura di riferimento
+            reason: Motivo della nota di credito
+            is_partial: Se True, nota parziale
+            items: Lista articoli da includere (per note parziali)
+            is_electronic: Se True, genera nota elettronica
+            include_shipping: Se True, include spese di spedizione
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            FiscalDocument (nota di credito) creata
+        """
         try:
             return self._fiscal_document_repository.create_credit_note(
                 id_invoice, reason, is_partial, items, is_electronic, include_shipping

@@ -18,6 +18,12 @@ from src.core.exceptions import (
     InfrastructureException,
     ErrorCode,
 )
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import (
+    extract_product_created_data,
+    extract_product_updated_data
+)
 
 
 class ProductService(IProductService):
@@ -38,8 +44,22 @@ class ProductService(IProductService):
         self._platform_repository = platform_repository
         self._db = db
     
-    async def create_product(self, product_data: ProductSchema) -> Product:
-        """Crea un nuovo product con validazioni business"""
+    @emit_event_on_success(
+        event_type=EventType.PRODUCT_CREATED,
+        data_extractor=extract_product_created_data,
+        source="product_service.create_product"
+    )
+    async def create_product(self, product_data: ProductSchema, user: dict = None) -> Product:
+        """
+        Crea un nuovo product con validazioni business.
+        
+        Args:
+            product_data: Dati del prodotto da creare
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Product creato
+        """
         
         # Business Rule 1: Nome deve essere unico
         if hasattr(product_data, 'name') and product_data.name:
@@ -59,8 +79,23 @@ class ProductService(IProductService):
         except Exception as e:
             raise ValidationException(f"Errore nella creazione del prodotto: {str(e)}")
     
-    async def update_product(self, product_id: int, product_data: ProductSchema) -> Product:
-        """Aggiorna un product esistente"""
+    @emit_event_on_success(
+        event_type=EventType.PRODUCT_UPDATED,
+        data_extractor=extract_product_updated_data,
+        source="product_service.update_product"
+    )
+    async def update_product(self, product_id: int, product_data: ProductSchema, user: dict = None) -> Product:
+        """
+        Aggiorna un product esistente.
+        
+        Args:
+            product_id: ID del prodotto da aggiornare
+            product_data: Nuovi dati del prodotto
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Product aggiornato
+        """
         
         # Verifica esistenza
         product = self._product_repository.get_by_id_or_raise(product_id)
@@ -107,8 +142,18 @@ class ProductService(IProductService):
         except Exception as e:
             raise ValidationException(f"Errore nel recupero dei prodotti: {str(e)}")
     
-    async def delete_product(self, product_id: int) -> bool:
-        """Elimina un product"""
+
+    async def delete_product(self, product_id: int, user: dict = None) -> bool:
+        """
+        Elimina un product.
+        
+        Args:
+            product_id: ID del prodotto da eliminare
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            True se eliminato con successo
+        """
         # Verifica esistenza e ottieni il prodotto
         product = self._product_repository.get_by_id_or_raise(product_id)
         

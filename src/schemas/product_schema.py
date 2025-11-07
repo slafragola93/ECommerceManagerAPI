@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from .category_schema import CategoryResponseSchema
 from .brand_schema import BrandResponseSchema
@@ -71,6 +71,12 @@ class ProductResponseSchema(BaseModel):
     minimal_quantity: int | None
     category: CategoryResponseSchema | None
     brand: BrandResponseSchema | None
+    
+    @validator('weight', 'depth', 'height', 'width', 'price_without_tax', 'purchase_price', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
     
     model_config = {"from_attributes": True}
 

@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
 from src.services.interfaces.address_service_interface import IAddressService
 from src.repository.interfaces.address_repository_interface import IAddressRepository
-from src.schemas.address_schema import AddressSchema, AddressResponseSchema, AllAddressResponseSchema
+from src.schemas.address_schema import AddressSchema, AddressResponseSchema, AllAddressResponseSchema, AddressesByCustomerResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
     BaseApplicationException,
@@ -60,6 +60,24 @@ async def get_all_addresses(
     total_count = await address_service.get_addresses_count()
 
     return {"addresses": addresses, "total": total_count, "page": page, "limit": limit}
+
+@router.get("/customer/{customer_id}", status_code=status.HTTP_200_OK, response_model=AddressesByCustomerResponseSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
+async def get_addresses_by_customer(
+    customer_id: int = Path(gt=0, description="ID del customer"),
+    user: dict = Depends(get_current_user),
+    address_service: IAddressService = Depends(get_address_service)
+):
+    """
+    Restituisce tutti gli indirizzi di un customer specifico.
+    
+    - **customer_id**: ID del customer per cui recuperare gli indirizzi.
+    """
+    addresses = await address_service.get_addresses(id_customer=customer_id)
+    total_count = await address_service.get_addresses_count(id_customer=customer_id)
+
+    return {"addresses": addresses, "total": total_count}
     
 
 @router.get("/{address_id}", status_code=status.HTTP_200_OK, response_model=AddressResponseSchema)

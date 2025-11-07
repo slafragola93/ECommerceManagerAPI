@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from datetime import datetime
 
 
@@ -15,6 +15,12 @@ class DDTDetailSchema(BaseModel):
     id_tax: int = Field(..., gt=0)
     reduction_percent: Optional[float] = Field(0.0, ge=0)
     reduction_amount: Optional[float] = Field(0.0, ge=0)
+    
+    @validator('product_price', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class DDTDetailUpdateSchema(BaseModel):
@@ -86,6 +92,12 @@ class DDTResponseSchema(BaseModel):
     
     # Flag di modifica
     is_modifiable: bool
+    
+    @validator('total_weight', 'total_price_with_tax', 'total_discount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class DDTGenerateRequestSchema(BaseModel):

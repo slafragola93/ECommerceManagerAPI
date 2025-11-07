@@ -1,13 +1,27 @@
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+import hashlib
+import asyncio
+from src.core.settings import get_cache_settings
+from datetime import datetime
 from src.repository.preventivo_repository import PreventivoRepository
+from src.core.cached import cached, invalidate_pattern
 from src.repository.customer_repository import CustomerRepository
 from src.repository.tax_repository import TaxRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.address_repository import AddressRepository
 from src.services.routers.order_document_service import OrderDocumentService
 from src.core.exceptions import NotFoundException, AlreadyExistsError, ValidationException, ErrorCode
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import (
+    extract_preventivo_created_data,
+    extract_preventivo_updated_data,
+    extract_preventivo_deleted_data,
+    extract_preventivo_converted_data,
+    extract_bulk_preventivo_deleted_data
+)
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema,
     PreventivoUpdateSchema,
@@ -15,7 +29,17 @@ from src.schemas.preventivo_schema import (
     PreventivoDetailResponseSchema,
     ArticoloPreventivoSchema,
     ArticoloPreventivoUpdateSchema,
-    PaymentPreventivoSchema
+    PaymentPreventivoSchema,
+    BulkPreventivoDeleteResponseSchema,
+    BulkPreventivoDeleteError,
+    BulkPreventivoConvertResponseSchema,
+    BulkPreventivoConvertResult,
+    BulkPreventivoConvertError,
+    BulkRemoveArticoliResponseSchema,
+    BulkRemoveArticoliError,
+    BulkUpdateArticoliResponseSchema,
+    BulkUpdateArticoliError,
+    BulkUpdateArticoliItem
 )
 from src.schemas.order_package_schema import OrderPackageResponseSchema
 from src.schemas.sectional_schema import SectionalResponseSchema
@@ -40,8 +64,147 @@ class PreventivoService:
         self.address_repo = AddressRepository(db)
         self.order_doc_service = OrderDocumentService(db)
     
-    def create_preventivo(self, preventivo_data: PreventivoCreateSchema, user_id: int) -> PreventivoResponseSchema:
-        """Crea nuovo preventivo"""
+    @staticmethod
+    def _create_params_hash(**params) -> str:
+        """
+        Crea hash MD5 deterministico dei parametri per chiavi cache.
+        Normalizza i parametri (rimuove None, ordina, converte tipi) prima di hashare.
+        """
+        # Filtra None e normalizza i valori
+        normalized = {}
+        for key, value in params.items():
+            if value is None:
+                continue
+            # Converti tipi per consistenza
+            if isinstance(value, bool):
+                normalized[key] = str(value).lower()
+            elif isinstance(value, (int, float)):
+                normalized[key] = str(value)
+            elif isinstance(value, str):
+                normalized[key] = value.strip() if value.strip() else ""
+            else:
+                normalized[key] = str(value)
+        
+        # Ordina per chiave per consistenza
+        sorted_items = sorted(normalized.items())
+        # Crea stringa serializzata
+        param_str = "|".join(f"{k}={v}" for k, v in sorted_items)
+        
+        # Hash MD5 deterministico
+        return hashlib.md5(param_str.encode('utf-8')).hexdigest()[:8]
+    
+    def _invalidate_preventivo_cache(self, id_order_document: int, tenant: str = "default", invalidate_lists: bool = True):
+        """Helper per invalidare cache preventivo (esegue async in background)"""
+        try:
+            loop = None
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            if loop.is_running():
+                asyncio.create_task(self._invalidate_preventivo_cache_async(id_order_document, tenant, invalidate_lists))
+            else:
+                loop.run_until_complete(self._invalidate_preventivo_cache_async(id_order_document, tenant, invalidate_lists))
+        except Exception as e:
+            # Log errore ma non bloccare l'esecuzione
+            pass
+    
+    async def _invalidate_preventivo_cache_async(self, id_order_document: int, tenant: str = "default", invalidate_lists: bool = True):
+        """Invalidazione asincrona cache preventivo"""
+        cache_settings = get_cache_settings()
+        cache_salt = cache_settings.cache_key_salt
+        
+        patterns = [
+            f"{cache_salt}:preventivo:detail:{tenant}:{id_order_document}:*"
+        ]
+        if invalidate_lists:
+            patterns.append(f"{cache_salt}:preventivo:list:{tenant}:*")
+        
+        patterns.append(f"{cache_salt}:preventivo:detail:*:{id_order_document}:*")
+        if invalidate_lists:
+            patterns.append(f"{cache_salt}:preventivo:list:*")
+        
+        for pattern in patterns:
+            try:
+                await invalidate_pattern(pattern)
+            except Exception:
+                pass
+    
+    def _invalidate_all_preventivi_cache(self, tenant: str = "default"):
+        """Helper per invalidare tutta la cache preventivi"""
+        try:
+            loop = None
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            if loop.is_running():
+                asyncio.create_task(self._invalidate_all_preventivi_cache_async(tenant))
+            else:
+                loop.run_until_complete(self._invalidate_all_preventivi_cache_async(tenant))
+        except Exception:
+            pass
+    
+    async def _invalidate_all_preventivi_cache_async(self, tenant: str = "default"):
+        """Invalidazione asincrona completa cache preventivi"""
+        cache_settings = get_cache_settings()
+        cache_salt = cache_settings.cache_key_salt
+        
+        pattern = f"{cache_salt}:preventivo:*:{tenant}:*"
+        try:
+            await invalidate_pattern(pattern)
+        except Exception:
+            pass
+    
+    @staticmethod
+    def _get_version_from_updated_at(updated_at: Optional[datetime]) -> str:
+        """
+        Estrae versione da updated_at per chiavi cache.
+        Usa data giornaliera (YYYY-MM-DD) invece del timestamp per permettere cache hit durante la giornata.
+        """
+        if updated_at is None:
+            return "0"
+        
+        try:
+            # Converti datetime in data giornaliera (YYYY-MM-DD)
+            if isinstance(updated_at, datetime):
+                date_str = updated_at.strftime("%Y-%m-%d")
+                return date_str
+            else:
+                # Se non è datetime, prova a parsare come stringa
+                if isinstance(updated_at, str):
+                    try:
+                        dt = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+                        return dt.strftime("%Y-%m-%d")
+                    except:
+                        pass
+                # Fallback: usa hash MD5 dei primi 8 caratteri
+                return hashlib.md5(str(updated_at).encode('utf-8')).hexdigest()[:8]
+        except Exception:
+            # Fallback a hash MD5
+            return hashlib.md5(str(updated_at).encode('utf-8')).hexdigest()[:8]
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_preventivo_created_data,
+        source="preventivo_service.create_preventivo"
+    )
+    def create_preventivo(self, preventivo_data: PreventivoCreateSchema, user_id: int, user: dict = None) -> PreventivoResponseSchema:
+        """
+        Crea nuovo preventivo.
+        
+        Args:
+            preventivo_data: Dati del preventivo da creare
+            user_id: ID utente che crea il preventivo
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Preventivo creato con dati completi
+        """
         # Valida articoli
         self._validate_articoli(preventivo_data.articoli)
         
@@ -114,6 +277,10 @@ class PreventivoService:
         except Exception:
             payment_obj = None
 
+        # Invalidazione cache: invalidare liste (create sempre modifica le liste)
+        tenant = f"user_{user_id}"  # Usa user_id come tenant
+        self._invalidate_preventivo_cache(order_document.id_order_document, tenant, invalidate_lists=True)
+        
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
             id_order=order_document.id_order,
@@ -139,8 +306,8 @@ class PreventivoService:
             articoli=articoli_data
         )
     
-    def get_preventivo(self, id_order_document: int) -> Optional[PreventivoDetailResponseSchema]:
-        """Recupera preventivo per ID con indirizzi completi"""
+    def _get_preventivo_sync(self, id_order_document: int) -> Optional[PreventivoDetailResponseSchema]:
+        """Recupera preventivo per ID con indirizzi completi (metodo sincrono interno)"""
         order_document = self.preventivo_repo.get_preventivo_by_id(id_order_document)
 
         if not order_document:
@@ -367,8 +534,20 @@ class PreventivoService:
             updated_at=order_document.updated_at,
         )
     
-    def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False) -> List[PreventivoResponseSchema]:
-        """Recupera lista preventivi"""
+    @cached(
+        preset="preventivo",
+        key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivo_detail_static(args, kwargs),
+        tenant_from_user=True
+    )
+    async def get_preventivo(self, id_order_document: int, user=None) -> Optional[PreventivoDetailResponseSchema]:
+        """Recupera preventivo per ID con indirizzi completi (con caching)"""
+        # Esegui il metodo sincrono in un thread
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self._get_preventivo_sync, id_order_document)
+        return result
+    
+    def _get_preventivi_sync(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False) -> List[PreventivoResponseSchema]:
+        """Recupera lista preventivi (metodo sincrono interno)"""
         order_documents = self.preventivo_repo.get_preventivi(skip, limit, search)
         
         result = []
@@ -489,8 +668,155 @@ class PreventivoService:
         
         return result
     
-    def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int) -> Optional[PreventivoDetailResponseSchema]:
-        """Aggiorna preventivo"""
+    def _get_cache_key_preventivo_detail(self, id_order_document: int, user=None, **kwargs) -> str:
+        """Genera chiave cache per dettaglio preventivo con versione"""
+        # Estrai tenant da user
+        tenant = "default"
+        if user and hasattr(user, 'id'):
+            tenant = f"user_{user.id}"
+        elif user and isinstance(user, dict) and 'id' in user:
+            tenant = f"user_{user['id']}"
+        
+        # Recupera updated_at dal database per la versione
+        order_document = self.preventivo_repo.get_preventivo_by_id(id_order_document)
+        if order_document and order_document.updated_at:
+            version = self._get_version_from_updated_at(order_document.updated_at)
+        else:
+            version = "0"
+        
+        # Le chiavi cache includono il cache_key_salt come prefisso
+        cache_settings = get_cache_settings()
+        cache_salt = cache_settings.cache_key_salt
+        
+        return f"{cache_salt}:preventivo:detail:{tenant}:{id_order_document}:{version}"
+    
+    @staticmethod
+    def _get_cache_key_preventivo_detail_static(args: tuple, kwargs: dict) -> str:
+        """Helper statico per generare chiave cache dettaglio preventivo"""
+        # Estrai self da args
+        if len(args) < 1:
+            return None
+        self = args[0]
+        # id_order_document può essere in args[1] o in kwargs
+        id_order_document = args[1] if len(args) > 1 else kwargs.get('id_order_document')
+        if id_order_document is None:
+            return None
+        # user è sempre in kwargs se specificato
+        user = kwargs.get('user')
+        
+        # Estrai tenant da user
+        tenant = "default"
+        if user and hasattr(user, 'id'):
+            tenant = f"user_{user.id}"
+        elif user and isinstance(user, dict) and 'id' in user:
+            tenant = f"user_{user['id']}"
+        
+        # Recupera updated_at dal database per la versione
+        order_document = self.preventivo_repo.get_preventivo_by_id(id_order_document)
+        if order_document and order_document.updated_at:
+            version = PreventivoService._get_version_from_updated_at(order_document.updated_at)
+        else:
+            version = "0"
+        
+        # Le chiavi cache includono il cache_key_salt come prefisso
+        cache_settings = get_cache_settings()
+        cache_salt = cache_settings.cache_key_salt
+        
+        return f"{cache_salt}:preventivo:detail:{tenant}:{id_order_document}:{version}"
+    
+    def _get_cache_key_preventivi_list(self, skip: int, limit: int, search: Optional[str], show_details: bool, user=None, **kwargs) -> str:
+        """Genera chiave cache per lista preventivi con params_hash"""
+        # Estrai tenant da user
+        tenant = "default"
+        if user and hasattr(user, 'id'):
+            tenant = f"user_{user.id}"
+        elif user and isinstance(user, dict) and 'id' in user:
+            tenant = f"user_{user['id']}"
+        
+        # Calcola page da skip e limit
+        page = (skip // limit) + 1 if limit > 0 else 1
+        
+        # Crea params_hash da tutti i parametri
+        params = {
+            "search": search or "",
+            "show_details": show_details
+        }
+        params_hash = self._create_params_hash(**params)
+        
+        # Le chiavi cache includono il cache_key_salt come prefisso
+        cache_settings = get_cache_settings()
+        cache_salt = cache_settings.cache_key_salt
+        
+        return f"{cache_salt}:preventivo:list:{tenant}:{page}:{limit}:{params_hash}"
+    
+    @staticmethod
+    def _get_cache_key_preventivi_list_static(args: tuple, kwargs: dict) -> str:
+        """Helper statico per generare chiave cache lista preventivi"""
+        # Estrai parametri da args (self è args[0])
+        if len(args) < 1:
+            return None
+        self = args[0]
+        # I parametri possono essere in args o kwargs
+        skip = args[1] if len(args) > 1 else kwargs.get('skip', 0)
+        limit = args[2] if len(args) > 2 else kwargs.get('limit', 100)
+        search = args[3] if len(args) > 3 else kwargs.get('search')
+        show_details = args[4] if len(args) > 4 else kwargs.get('show_details', False)
+        user = kwargs.get('user')
+        
+        # Estrai tenant da user
+        tenant = "default"
+        if user and hasattr(user, 'id'):
+            tenant = f"user_{user.id}"
+        elif user and isinstance(user, dict) and 'id' in user:
+            tenant = f"user_{user['id']}"
+        
+        # Calcola page da skip e limit
+        page = (skip // limit) + 1 if limit > 0 else 1
+        
+        # Crea params_hash da tutti i parametri
+        params = {
+            "search": search or "",
+            "show_details": show_details
+        }
+        params_hash = PreventivoService._create_params_hash(**params)
+        
+        # Le chiavi cache includono il cache_key_salt come prefisso
+        
+        cache_settings = get_cache_settings()
+        cache_salt = cache_settings.cache_key_salt
+        
+        return f"{cache_salt}:preventivo:list:{tenant}:{page}:{limit}:{params_hash}"
+    
+    @cached(
+        preset="preventivi_list",
+        key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivi_list_static(args, kwargs),
+        tenant_from_user=True
+    )
+    async def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False, user=None) -> List[PreventivoResponseSchema]:
+        """Recupera lista preventivi (con caching)"""
+        # Esegui il metodo sincrono in un thread
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self._get_preventivi_sync, skip, limit, search, show_details)
+        return result
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_UPDATED,
+        data_extractor=extract_preventivo_updated_data,
+        source="preventivo_service.update_preventivo"
+    )
+    def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int, user: dict = None) -> Optional[PreventivoDetailResponseSchema]:
+        """
+        Aggiorna preventivo.
+        
+        Args:
+            id_order_document: ID del preventivo da aggiornare
+            preventivo_data: Nuovi dati del preventivo
+            user_id: ID utente che aggiorna
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Preventivo aggiornato con dettagli
+        """
         # Valida i riferimenti alle entità correlate se specificati
         self._validate_preventivo_references(preventivo_data)
         
@@ -498,10 +824,25 @@ class PreventivoService:
         if not order_document:
             return None
         
-        return self.get_preventivo(id_order_document)
+        # Invalidazione cache: invalidare dettaglio (tutte versioni) e liste
+        tenant = f"user_{user_id}"
+        self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
+        
+        # Chiama il metodo sync direttamente (non async per compatibilità)
+        return self._get_preventivo_sync(id_order_document)
     
-    def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema) -> Optional[ArticoloPreventivoSchema]:
-        """Aggiunge articolo a preventivo"""
+    def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema, user: dict = None) -> Optional[ArticoloPreventivoSchema]:
+        """
+        Aggiunge articolo a preventivo.
+        
+        Args:
+            id_order_document: ID del preventivo
+            articolo: Dati articolo da aggiungere
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Articolo aggiunto
+        """
         # Valida articolo
         self._validate_single_articolo(articolo)
         
@@ -509,10 +850,24 @@ class PreventivoService:
         if not order_detail:
             return None
         
+        # Invalidazione cache: invalidare dettaglio e liste
+        tenant = "default"
+        self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
+        
         return self._format_articolo(order_detail)
     
-    def update_articolo(self, id_order_detail: int, articolo_data: ArticoloPreventivoUpdateSchema) -> Optional[ArticoloPreventivoSchema]:
-        """Aggiorna articolo in preventivo"""
+    def update_articolo(self, id_order_detail: int, articolo_data: ArticoloPreventivoUpdateSchema, user: dict = None) -> Optional[ArticoloPreventivoSchema]:
+        """
+        Aggiorna articolo in preventivo.
+        
+        Args:
+            id_order_detail: ID dell'articolo da aggiornare
+            articolo_data: Nuovi dati dell'articolo
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Articolo aggiornato
+        """
         # Valida articolo se necessario
         if articolo_data.id_tax is not None:
             tax = self.tax_repo.get_by_id(articolo_data.id_tax)
@@ -527,14 +882,56 @@ class PreventivoService:
         if not order_detail:
             return None
         
+        # Invalidazione cache: invalidare dettaglio e liste
+        id_order_document = order_detail.id_order_document if hasattr(order_detail, 'id_order_document') else None
+        if id_order_document:
+            tenant = "default"
+            self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
+        
         return self._format_articolo(order_detail)
     
-    def remove_articolo(self, id_order_detail: int) -> bool:
-        """Rimuove articolo da preventivo"""
-        return self.order_doc_service.remove_articolo(id_order_detail, "preventivo")
+    def remove_articolo(self, id_order_detail: int, user: dict = None) -> bool:
+        """
+        Rimuove articolo da preventivo.
+        
+        Args:
+            id_order_detail: ID dell'articolo da rimuovere
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            True se rimosso con successo
+        """
+        # Recupera id_order_document prima di rimuovere
+        from src.models.order_detail import OrderDetail
+        order_detail = self.db.query(OrderDetail).filter(OrderDetail.id_order_detail == id_order_detail).first()
+        id_order_document = order_detail.id_order_document if order_detail else None
+        
+        result = self.order_doc_service.remove_articolo(id_order_detail, "preventivo")
+        
+        # Invalidazione cache: invalidare dettaglio e liste
+        if result and id_order_document:
+            tenant = "default"
+            self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
+        
+        return result
     
-    def convert_to_order(self, id_order_document: int, user_id: int) -> Optional[Dict[str, Any]]:
-        """Converte preventivo in ordine"""
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CONVERTED,
+        data_extractor=extract_preventivo_converted_data,
+        source="preventivo_service.convert_to_order"
+    )
+    def convert_to_order(self, id_order_document: int, user_id: int, user: dict = None) -> Optional[Dict[str, Any]]:
+        """
+        Converte preventivo in ordine.
+        
+        Args:
+            id_order_document: ID del preventivo da convertire
+            user_id: ID utente che converte
+            user: Contesto utente per eventi (tenant, user_id)
+        
+        Returns:
+            Dictionary con id_order e messaggio
+        """
         # Verifica che il preventivo esista
         preventivo = self.preventivo_repo.get_preventivo_by_id(id_order_document)
         if not preventivo:
@@ -558,6 +955,10 @@ class PreventivoService:
                 ErrorCode.BUSINESS_RULE_VIOLATION,
                 {"id_order_document": id_order_document}
             )
+        
+        # Invalidazione cache: invalidare dettaglio e liste
+        tenant = f"user_{user_id}"
+        self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
         
         return {
             "id_order": order.id_order,
@@ -603,7 +1004,8 @@ class PreventivoService:
             id_tax=order_detail.id_tax,
             reduction_percent=order_detail.reduction_percent,
             reduction_amount=order_detail.reduction_amount,
-            rda=order_detail.rda
+            rda=order_detail.rda,
+            note=order_detail.note
         )
     
     def _validate_preventivo_references(self, preventivo_data: PreventivoUpdateSchema) -> None:
@@ -638,28 +1040,41 @@ class PreventivoService:
                     {"id_payment": preventivo_data.id_payment}
                 )
         
-        # Note: Per gli altri campi (address, sectional, shipping) potresti aggiungere validazioni simili
-        # se necessario, ma per ora lasciamo la validazione al livello del database
+
     
-    def delete_preventivo(self, id_order_document: int) -> bool:
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_DELETED,
+        data_extractor=extract_preventivo_deleted_data,
+        source="preventivo_service.delete_preventivo"
+    )
+    def delete_preventivo(self, id_order_document: int, user: dict = None) -> bool:
         """
-        Elimina un preventivo
+        Elimina un preventivo.
         
         Args:
             id_order_document: ID del preventivo da eliminare
+            user: Contesto utente per eventi (tenant, user_id)
             
         Returns:
             bool: True se eliminato con successo, False se non trovato
         """
-        return self.preventivo_repo.delete_preventivo(id_order_document)
+        result = self.preventivo_repo.delete_preventivo(id_order_document)
+        
+        # Invalidazione cache: invalidare dettaglio e liste
+        if result:
+            tenant = "default"  # Non abbiamo user_id qui
+            self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
+        
+        return result
     
-    def duplicate_preventivo(self, id_order_document: int, user_id: int) -> Optional[PreventivoResponseSchema]:
+    def duplicate_preventivo(self, id_order_document: int, user_id: int, user: dict = None) -> Optional[PreventivoResponseSchema]:
         """
-        Duplica un preventivo esistente
+        Duplica un preventivo esistente.
         
         Args:
             id_order_document: ID del preventivo da duplicare
             user_id: ID dell'utente che esegue la duplicazione
+            user: Contesto utente per eventi (tenant, user_id)
             
         Returns:
             PreventivoResponseSchema: Il nuovo preventivo duplicato, None se il preventivo originale non esiste
@@ -674,8 +1089,121 @@ class PreventivoService:
         if not new_preventivo:
             return None
         
-        # Restituisce il preventivo duplicato usando la logica esistente
-        return self.get_preventivo(new_preventivo.id_order_document)
+        # Invalidazione cache: invalidare liste (duplicate modifica le liste)
+        tenant = f"user_{user_id}"
+        self._invalidate_preventivo_cache(new_preventivo.id_order_document, tenant, invalidate_lists=True)
+        
+        # Recupera il preventivo duplicato e formatta come PreventivoResponseSchema
+        order_document = self.preventivo_repo.get_preventivo_by_id(new_preventivo.id_order_document)
+        if not order_document:
+            return None
+        
+        # Recupera cliente per nome
+        customer = self.customer_repo.get_by_id(order_document.id_customer)
+        customer_name = f"{customer.firstname} {customer.lastname}" if customer else None
+        
+        # Calcola totali
+        totals = self.order_doc_service.calculate_totals(order_document.id_order_document, "preventivo")
+        
+        # Recupera articoli
+        articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
+        articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+        
+        # Recupera order_packages
+        order_packages_data = []
+        try:
+            from src.models.order_package import OrderPackage
+            packages = self.db.query(OrderPackage).filter(
+                OrderPackage.id_order_document == order_document.id_order_document,
+                OrderPackage.id_order.is_(None)
+            ).all()
+            
+            for package in packages:
+                order_packages_data.append(OrderPackageResponseSchema(
+                    id_order_package=package.id_order_package,
+                    id_order=package.id_order,
+                    id_order_document=package.id_order_document,
+                    height=package.height,
+                    width=package.width,
+                    depth=package.depth,
+                    weight=package.weight,
+                    length=package.length,
+                    value=package.value
+                ))
+        except Exception:
+            order_packages_data = []
+        
+        sectional_obj = None
+        try:
+            if getattr(order_document, "sectional", None):
+                sectional_obj = SectionalResponseSchema(
+                    id_sectional=order_document.sectional.id_sectional,
+                    name=order_document.sectional.name
+                )
+        except Exception:
+            sectional_obj = None
+        
+        shipment_obj = None
+        try:
+            if getattr(order_document, "shipping", None):
+                s = order_document.shipping
+                tax_rate = 0.0
+                if getattr(s, 'id_tax', None):
+                    tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
+                shipment_obj = PreventivoShipmentSchema(
+                    id_tax=int(s.id_tax) if getattr(s, 'id_tax', None) else 0,
+                    tax_rate=tax_rate,
+                    weight=float(s.weight or 0.0),
+                    price_tax_incl=float(s.price_tax_incl or 0.0),
+                    price_tax_excl=float(s.price_tax_excl or 0.0),
+                    shipping_message=s.shipping_message
+                )
+        except Exception:
+            shipment_obj = None
+        
+        payment_obj = None
+        try:
+            if getattr(order_document, "payment", None) and order_document.payment:
+                payment_obj = PaymentPreventivoSchema(
+                    id_payment=order_document.payment.id_payment,
+                    name=order_document.payment.name
+                )
+            elif getattr(order_document, "id_payment", None) and order_document.id_payment:
+                payment = self.payment_repo.get_by_id(order_document.id_payment)
+                if payment:
+                    payment_obj = PaymentPreventivoSchema(
+                        id_payment=payment.id_payment,
+                        name=payment.name
+                    )
+        except Exception:
+            payment_obj = None
+        
+        return PreventivoResponseSchema(
+            id_order_document=order_document.id_order_document,
+            id_order=order_document.id_order,
+            document_number=order_document.document_number,
+            id_customer=order_document.id_customer,
+            id_address_delivery=order_document.id_address_delivery,
+            id_address_invoice=order_document.id_address_invoice,
+            sectional=sectional_obj,
+            shipping=shipment_obj,
+            payment=payment_obj,
+            customer_name=customer_name,
+            is_invoice_requested=order_document.is_invoice_requested,
+            reference=None,
+            note=order_document.note,
+            type_document=order_document.type_document,
+            total_imponibile=totals["total_imponibile"],
+            total_iva=totals["total_iva"],
+            total_finale=totals["total_finale"],
+            total_price_with_tax=totals["total_finale"],
+            total_discount=order_document.total_discount,
+            apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
+            articoli=articoli_data,
+            order_packages=order_packages_data,
+            date_add=order_document.date_add,
+            updated_at=order_document.updated_at
+        )
     
     def generate_preventivo_pdf(self, id_order_document: int) -> bytes:
         """
@@ -780,3 +1308,267 @@ class PreventivoService:
             raise Exception("Libreria fpdf2 non installata. Installare con: pip install fpdf2")
         except Exception as e:
             raise Exception(f"Errore durante la generazione del PDF: {str(e)}")
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_BULK_DELETED,
+        data_extractor=extract_bulk_preventivo_deleted_data,
+        source="preventivo_service.bulk_delete_preventivi"
+    )
+    def bulk_delete_preventivi(self, ids: List[int], user: dict = None) -> BulkPreventivoDeleteResponseSchema:
+        """
+        Elimina più preventivi in modo massivo.
+        
+        Args:
+            ids: Lista di ID preventivi da eliminare
+            user: Contesto utente per eventi (tenant, user_id)
+            
+        Returns:
+            BulkPreventivoDeleteResponseSchema: Risposta con successi, fallimenti e summary
+        """
+        successful: List[int] = []
+        failed: List[BulkPreventivoDeleteError] = []
+        
+        for id_order_document in ids:
+            try:
+                success = self.delete_preventivo(id_order_document)
+                if success:
+                    successful.append(id_order_document)
+                else:
+                    failed.append(BulkPreventivoDeleteError(
+                        id_order_document=id_order_document,
+                        error="NOT_FOUND",
+                        reason=f"Preventivo {id_order_document} non trovato"
+                    ))
+            except Exception as e:
+                self.db.rollback()
+                failed.append(BulkPreventivoDeleteError(
+                    id_order_document=id_order_document,
+                    error="DELETE_ERROR",
+                    reason=f"Errore durante eliminazione: {str(e)}"
+                ))
+        
+        total = len(ids)
+        successful_count = len(successful)
+        failed_count = len(failed)
+        
+        # Invalidazione cache: per ogni ID eliminato + invalidazione generale
+        tenant = "default"  # Non abbiamo user_id qui
+        for id_order_document in successful:
+            self._invalidate_preventivo_cache(id_order_document, tenant, invalidate_lists=True)
+        # Invalidazione completa alla fine per sicurezza
+        self._invalidate_all_preventivi_cache(tenant)
+        
+        return BulkPreventivoDeleteResponseSchema(
+            successful=successful,
+            failed=failed,
+            summary={
+                "total": total,
+                "successful_count": successful_count,
+                "failed_count": failed_count
+            }
+        )
+    
+    def bulk_convert_to_orders(self, ids: List[int], user_id: int, user: dict = None) -> BulkPreventivoConvertResponseSchema:
+        """
+        Converte più preventivi in ordini in modo massivo.
+        
+        Args:
+            ids: Lista di ID preventivi da convertire
+            user_id: ID utente che converte
+            user: Contesto utente per eventi (tenant, user_id)
+            
+        Returns:
+            BulkPreventivoConvertResponseSchema: Risposta con successi, fallimenti e summary
+        """
+        successful: List[BulkPreventivoConvertResult] = []
+        failed: List[BulkPreventivoConvertError] = []
+        
+        for id_order_document in ids:
+            try:
+                order = self.preventivo_repo.convert_to_order(id_order_document, user_id)
+                if order:
+                    # Recupera il preventivo per ottenere document_number
+                    preventivo = self.preventivo_repo.get_preventivo_by_id(id_order_document)
+                    successful.append(BulkPreventivoConvertResult(
+                        id_order_document=id_order_document,
+                        id_order=order.id_order,
+                        document_number=preventivo.document_number if preventivo else 0
+                    ))
+                else:
+                    failed.append(BulkPreventivoConvertError(
+                        id_order_document=id_order_document,
+                        error="NOT_FOUND",
+                        reason=f"Preventivo {id_order_document} non trovato"
+                    ))
+            except Exception as e:
+                self.db.rollback()
+                error_msg = str(e)
+                # Determina il tipo di errore
+                if "non trovato" in error_msg.lower() or "not found" in error_msg.lower():
+                    error_type = "NOT_FOUND"
+                elif "campi obbligatori mancanti" in error_msg.lower() or "missing" in error_msg.lower():
+                    error_type = "VALIDATION_ERROR"
+                else:
+                    error_type = "CONVERSION_ERROR"
+                
+                failed.append(BulkPreventivoConvertError(
+                    id_order_document=id_order_document,
+                    error=error_type,
+                    reason=error_msg
+                ))
+        
+        total = len(ids)
+        successful_count = len(successful)
+        failed_count = len(failed)
+        
+        # Invalidazione cache: per ogni ID convertito + invalidazione generale
+        tenant = f"user_{user_id}"
+        for result in successful:
+            self._invalidate_preventivo_cache(result.id_order_document, tenant, invalidate_lists=True)
+        # Invalidazione completa alla fine per sicurezza
+        self._invalidate_all_preventivi_cache(tenant)
+        
+        return BulkPreventivoConvertResponseSchema(
+            successful=successful,
+            failed=failed,
+            summary={
+                "total": total,
+                "successful_count": successful_count,
+                "failed_count": failed_count
+            }
+        )
+    
+    def bulk_remove_articoli(self, ids: List[int], user: dict = None) -> BulkRemoveArticoliResponseSchema:
+        """
+        Elimina più articoli in modo massivo.
+        Riutilizza remove_articolo per ogni ID (rispetta OCP - Open/Closed Principle).
+        
+        Args:
+            user: Contesto utente per eventi (tenant, user_id)
+            ids: Lista di ID order_detail da eliminare
+            
+        Returns:
+            BulkRemoveArticoliResponseSchema: Risposta con successi, fallimenti e summary
+        """
+        successful: List[int] = []
+        failed: List[BulkRemoveArticoliError] = []
+        
+        for id_order_detail in ids:
+            try:
+                # Riutilizza il metodo esistente (OCP - non modifica codice esistente)
+                success = self.remove_articolo(id_order_detail)
+                if success:
+                    successful.append(id_order_detail)
+                else:
+                    failed.append(BulkRemoveArticoliError(
+                        id_order_detail=id_order_detail,
+                        error="NOT_FOUND",
+                        reason=f"Articolo {id_order_detail} non trovato"
+                    ))
+            except Exception as e:
+                self.db.rollback()
+                error_msg = str(e)
+                # Determina il tipo di errore
+                if "non trovato" in error_msg.lower() or "not found" in error_msg.lower():
+                    error_type = "NOT_FOUND"
+                else:
+                    error_type = "REMOVE_ERROR"
+                
+                failed.append(BulkRemoveArticoliError(
+                    id_order_detail=id_order_detail,
+                    error=error_type,
+                    reason=error_msg
+                ))
+        
+        total = len(ids)
+        successful_count = len(successful)
+        failed_count = len(failed)
+        
+        # La cache viene invalidata automaticamente da remove_articolo per ogni articolo
+        # Non serve invalidazione aggiuntiva qui (evita duplicazione logica - SRP)
+        
+        return BulkRemoveArticoliResponseSchema(
+            successful=successful,
+            failed=failed,
+            summary={
+                "total": total,
+                "successful_count": successful_count,
+                "failed_count": failed_count
+            }
+        )
+    
+    def bulk_update_articoli(self, articoli: List[BulkUpdateArticoliItem], user: dict = None) -> BulkUpdateArticoliResponseSchema:
+        """
+        Aggiorna più articoli in modo massivo.
+        Riutilizza update_articolo per ogni articolo (rispetta OCP - Open/Closed Principle).
+        
+        Args:
+            articoli: Lista di articoli da aggiornare (contenenti id_order_detail e dati da aggiornare)
+            user: Contesto utente per eventi (tenant, user_id)
+            
+        Returns:
+            BulkUpdateArticoliResponseSchema: Risposta con successi, fallimenti e summary
+        """
+        successful: List[int] = []
+        failed: List[BulkUpdateArticoliError] = []
+        
+        for articolo_item in articoli:
+            id_order_detail = articolo_item.id_order_detail
+            try:
+                # Crea ArticoloPreventivoUpdateSchema dai dati dell'item (escludendo id_order_detail)
+                articolo_data = ArticoloPreventivoUpdateSchema(
+                    product_name=articolo_item.product_name,
+                    product_reference=articolo_item.product_reference,
+                    product_price=articolo_item.product_price,
+                    product_weight=articolo_item.product_weight,
+                    product_qty=articolo_item.product_qty,
+                    id_tax=articolo_item.id_tax,
+                    reduction_percent=articolo_item.reduction_percent,
+                    reduction_amount=articolo_item.reduction_amount,
+                    rda=articolo_item.rda,
+                    note=articolo_item.note
+                )
+                
+                # Riutilizza il metodo esistente (OCP - non modifica codice esistente)
+                result = self.update_articolo(id_order_detail, articolo_data)
+                if result:
+                    successful.append(id_order_detail)
+                else:
+                    failed.append(BulkUpdateArticoliError(
+                        id_order_detail=id_order_detail,
+                        error="NOT_FOUND",
+                        reason=f"Articolo {id_order_detail} non trovato"
+                    ))
+            except Exception as e:
+                self.db.rollback()
+                error_msg = str(e)
+                # Determina il tipo di errore
+                if "non trovato" in error_msg.lower() or "not found" in error_msg.lower():
+                    error_type = "NOT_FOUND"
+                elif "validation" in error_msg.lower() or "invalid" in error_msg.lower():
+                    error_type = "VALIDATION_ERROR"
+                else:
+                    error_type = "UPDATE_ERROR"
+                
+                failed.append(BulkUpdateArticoliError(
+                    id_order_detail=id_order_detail,
+                    error=error_type,
+                    reason=error_msg
+                ))
+        
+        total = len(articoli)
+        successful_count = len(successful)
+        failed_count = len(failed)
+        
+        # La cache viene invalidata automaticamente da update_articolo per ogni articolo
+        # Non serve invalidazione aggiuntiva qui (evita duplicazione logica - SRP)
+        
+        return BulkUpdateArticoliResponseSchema(
+            successful=successful,
+            failed=failed,
+            summary={
+                "total": total,
+                "successful_count": successful_count,
+                "failed_count": failed_count
+            }
+        )

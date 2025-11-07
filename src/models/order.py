@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Integer, Column, Text, Boolean, Date, DateTime, Float, Table, ForeignKey, String
+from sqlalchemy import Integer, Column, Text, Boolean, Date, DateTime, Numeric, Table, ForeignKey, String
 from sqlalchemy.orm import relationship
 from .relations.relations import orders_history
 
@@ -32,12 +32,12 @@ class Order(Base):
     is_invoice_requested = Column(Boolean, default=False)
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
-    total_weight = Column(Float, default=0)
-    total_price_tax_excl = Column(Float, default=0)
-    total_paid = Column(Float, default=0)
-    total_discounts = Column(Float, default=0.0)
-    cash_on_delivery = Column(Float, default=0)
-    insured_value = Column(Float, default=0)
+    total_weight = Column(Numeric(10, 5), default=0)
+    total_price_tax_excl = Column(Numeric(10, 5), default=0)
+    total_paid = Column(Numeric(10, 5), default=0)
+    total_discounts = Column(Numeric(10, 5), default=0.0)
+    cash_on_delivery = Column(Numeric(10, 5), default=0)
+    insured_value = Column(Numeric(10, 5), default=0)
     privacy_note = Column(Text, nullable=True)
     general_note = Column(Text, nullable=True)
     delivery_date = Column(Date, nullable=True)

@@ -82,3 +82,8 @@ class AllAddressResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class AddressesByCustomerResponseSchema(BaseModel):
+    addresses: list[AddressResponseSchema]
+    total: int

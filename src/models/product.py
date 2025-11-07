@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, ForeignKey, Float
+from sqlalchemy import Integer, Column, String, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 
 from src import Base
@@ -31,13 +31,13 @@ class Product(Base):
     sku = Column(String(32))
     reference = Column(String(64), default='ND')
     type = Column(String(32), default='', index=True)
-    weight = Column(Float, default=0.0)
-    depth = Column(Float, default=0.0)
-    height = Column(Float, default=0.0)
-    width = Column(Float, default=0.0)
-    price_without_tax = Column(Float, default=0.0, nullable=True)
+    weight = Column(Numeric(10, 5), default=0.0)
+    depth = Column(Numeric(10, 5), default=0.0)
+    height = Column(Numeric(10, 5), default=0.0)
+    width = Column(Numeric(10, 5), default=0.0)
+    price_without_tax = Column(Numeric(10, 5), default=0.0, nullable=True)
     quantity = Column(Integer, default=0, nullable=True)
-    purchase_price = Column(Float, default=0.0, nullable=True)
+    purchase_price = Column(Numeric(10, 5), default=0.0, nullable=True)
     minimal_quantity = Column(Integer, default=0, nullable=True)
 
     brand = relationship("Brand", back_populates="products")

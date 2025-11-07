@@ -40,18 +40,26 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
             
             query = self._session.query(self._model_class).order_by(desc(Address.id_address))
             
+            # Filtro per id_customer se specificato
+            id_customer = filters.get('id_customer')
+            if id_customer is not None:
+                query = query.filter(Address.id_customer == id_customer)
+            
             # Carica sempre le relazioni customer e country per lo schema di risposta
             query = query.options(
                 joinedload(Address.customer),
                 joinedload(Address.country)
             )
             
-            # Paginazione
-            page = filters.get('page', 1)
-            limit = filters.get('limit', 100)
-            offset = self.get_offset(limit, page)
+            # Paginazione (solo se page e limit sono specificati)
+            page = filters.get('page')
+            limit = filters.get('limit')
             
-            return query.offset(offset).limit(limit).all()
+            if page is not None and limit is not None:
+                offset = self.get_offset(limit, page)
+                query = query.offset(offset).limit(limit)
+            
+            return query.all()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
     
@@ -59,6 +67,12 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
         """Conta le entità con filtri opzionali"""
         try:
             query = self._session.query(self._model_class)
+            
+            # Filtro per id_customer se specificato
+            id_customer = filters.get('id_customer')
+            if id_customer is not None:
+                query = query.filter(Address.id_customer == id_customer)
+            
             return query.count()
         except Exception as e:
             raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")

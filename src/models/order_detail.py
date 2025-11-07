@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, Float, ForeignKey
+from sqlalchemy import Integer, Column, String, Numeric, ForeignKey
 from src.database import Base
 
 
@@ -14,11 +14,12 @@ class OrderDetail(Base):
     product_name = Column(String(100))
     product_reference = Column(String(100))
     product_qty = Column(Integer)
-    product_weight = Column(Float)
-    product_price = Column(Float)
-    reduction_percent = Column(Float, default=0.0)
-    reduction_amount = Column(Float, default=0.0)
+    product_weight = Column(Numeric(10, 5))
+    product_price = Column(Numeric(10, 5))
+    reduction_percent = Column(Numeric(10, 5), default=0.0)
+    reduction_amount = Column(Numeric(10, 5), default=0.0)
     rda = Column(String(10))
+    note = Column(String(200))
 
 
     

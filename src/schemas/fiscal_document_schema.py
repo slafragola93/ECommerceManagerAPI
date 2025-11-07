@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from datetime import datetime
 
 
@@ -24,6 +24,12 @@ class FiscalDocumentDetailResponseSchema(BaseModel):
     unit_price: float
     total_amount: float
     id_tax: Optional[int] = None
+    
+    @validator('quantity', 'unit_price', 'total_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
     
     class Config:
         from_attributes = True
@@ -78,6 +84,12 @@ class InvoiceResponseSchema(BaseModel):
     total_amount: Optional[float]
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
+    
+    @validator('total_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
     
     class Config:
         from_attributes = True
@@ -160,6 +172,12 @@ class CreditNoteResponseSchema(BaseModel):
     date_upd: Optional[datetime] = None
     details: List[FiscalDocumentDetailResponseSchema] = []
     
+    @validator('total_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+    
     class Config:
         from_attributes = True
 
@@ -185,6 +203,12 @@ class FiscalDocumentResponseSchema(BaseModel):
     total_amount: Optional[float]
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
+    
+    @validator('total_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
     
     class Config:
         from_attributes = True

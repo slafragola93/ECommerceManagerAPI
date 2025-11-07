@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class ShippingSchema(BaseModel):
@@ -22,6 +22,12 @@ class ShippingResponseSchema(BaseModel):
     price_tax_incl: float
     price_tax_excl: float
     shipping_message: Optional[str] = None
+    
+    @validator('weight', 'price_tax_incl', 'price_tax_excl', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class AllShippingResponseSchema(BaseModel):

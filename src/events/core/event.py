@@ -11,7 +11,50 @@ from typing import Any, Dict, Mapping, MutableMapping
 class EventType(str, Enum):
     """Types of events supported by the system."""
 
+    # Eventi esistenti
     ORDER_STATUS_CHANGED = "order_status_changed"
+
+    # ===== DOCUMENTI (OrderDocument + FiscalDocument unificati) =====
+    # Distinguere tramite document_source ("order_document" o "fiscal_document")
+    # e document_type ("preventivo", "ddt", "invoice", "credit_note")
+    DOCUMENT_CREATED = "document_created"
+    DOCUMENT_UPDATED = "document_updated"
+    DOCUMENT_DELETED = "document_deleted"
+    DOCUMENT_CONVERTED = "document_converted"  # preventivo -> order
+    DOCUMENT_BULK_DELETED = "document_bulk_deleted"
+
+    # ===== ORDINI =====
+    ORDER_CREATED = "order_created"
+    ORDER_UPDATED = "order_updated"
+    ORDER_DELETED = "order_deleted"
+
+    # ===== CUSTOMER =====
+    CUSTOMER_CREATED = "customer_created"
+    CUSTOMER_UPDATED = "customer_updated"
+    CUSTOMER_DELETED = "customer_deleted"
+
+    # ===== PRODUCT =====
+    PRODUCT_CREATED = "product_created"
+    PRODUCT_UPDATED = "product_updated"
+
+    # ===== ADDRESS =====
+    ADDRESS_CREATED = "address_created"
+
+    # ===== SYNC/IMPORT =====
+    PRESTASHOP_SYNC_STARTED = "prestashop_sync_started"
+    PRESTASHOP_SYNC_COMPLETED = "prestashop_sync_completed"
+    PRESTASHOP_SYNC_FAILED = "prestashop_sync_failed"
+    PRODUCT_IMPORTED = "product_imported"
+    ORDER_IMPORTED = "order_imported"
+    CUSTOMER_IMPORTED = "customer_imported"
+
+    # ===== PLUGIN LIFECYCLE =====
+    PLUGIN_INSTALLED = "plugin_installed"
+    PLUGIN_UNINSTALLED = "plugin_uninstalled"
+    PLUGIN_ENABLED = "plugin_enabled"
+    PLUGIN_DISABLED = "plugin_disabled"
+    PLUGIN_LOADED = "plugin_loaded"
+    PLUGIN_UNLOADED = "plugin_unloaded"
 
     @classmethod
     def has_value(cls, value: str) -> bool:
@@ -73,4 +116,3 @@ class Event:
         """Generate a deterministic idempotency key for the event."""
 
         return f"{self.event_type}:{int(self.timestamp.timestamp() * 1_000_000)}"
-

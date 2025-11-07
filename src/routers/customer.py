@@ -2,7 +2,7 @@
 Customer Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
+from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form, Response
 from src.services.interfaces.customer_service_interface import ICustomerService
 from src.repository.interfaces.customer_repository_interface import ICustomerRepository
 from src.schemas.customer_schema import CustomerSchema, CustomerResponseSchema
@@ -35,18 +35,28 @@ def get_customer_service(db: db_dependency) -> ICustomerService:
     
     return customer_service
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Cliente creato correttamente")
+@router.post("/", response_description="Cliente creato o recuperato")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
 async def create_customer(
     customer: CustomerSchema,
+    response: Response,
     user: dict = Depends(get_current_user),
     customer_service: ICustomerService = Depends(get_customer_service)
 ):
     """
     Crea un nuovo cliente con i dati forniti.
+    Se l'email esiste già, restituisce il cliente esistente.
     """
-    return await customer_service.create_customer(customer)
+    customer_result, is_created = await customer_service.create_customer(customer)
+    
+    # Imposta il codice HTTP in base a se il customer è stato creato o recuperato
+    if is_created:
+        response.status_code = status.HTTP_201_CREATED
+    else:
+        response.status_code = status.HTTP_200_OK
+    
+    return customer_result
 
 @router.put("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Customer modificato")
 @check_authentication

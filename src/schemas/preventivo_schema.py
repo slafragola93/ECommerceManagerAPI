@@ -81,6 +81,7 @@ class ArticoloPreventivoSchema(BaseModel):
     id_tax: int = Field(..., gt=0)  # Sempre obbligatorio
     reduction_percent: Optional[float] = Field(0.0, ge=0)  # Sconto percentuale
     reduction_amount: Optional[float] = Field(0.0, ge=0)  # Sconto importo
+    note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
     
     @validator('product_name', 'product_reference', 'product_price', 'product_qty')
     def validate_fields_when_no_product(cls, v, values):
@@ -93,6 +94,12 @@ class ArticoloPreventivoSchema(BaseModel):
             if isinstance(v, str) and not v.strip():
                 raise ValueError('I campi product_name, product_reference, product_price e product_qty sono obbligatori quando non viene specificato id_product')
         return v
+    
+    @validator('product_price', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class PreventivoCreateSchema(BaseModel):
@@ -162,6 +169,7 @@ class ArticoloPreventivoUpdateSchema(BaseModel):
     reduction_percent: Optional[float] = Field(None, ge=0)  # Sconto percentuale
     reduction_amount: Optional[float] = Field(None, ge=0)  # Sconto importo
     rda: Optional[str] = Field(None, max_length=10)  # RDA
+    note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
 
 
 class PreventivoShipmentSchema(BaseModel):
@@ -170,6 +178,12 @@ class PreventivoShipmentSchema(BaseModel):
     price_tax_incl: float
     price_tax_excl: float
     shipping_message: Optional[str] = None
+    
+    @validator('tax_rate', 'weight', 'price_tax_incl', 'price_tax_excl', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class PaymentPreventivoSchema(BaseModel):
@@ -204,6 +218,12 @@ class PreventivoResponseSchema(BaseModel):
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo (solo se show_details=True)")
 
+    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
     class Config:
         from_attributes = True
 
@@ -235,6 +255,12 @@ class PreventivoDetailResponseSchema(BaseModel):
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo")
 
+    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', 'total_discounts_applied', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
     class Config:
         from_attributes = True
 
@@ -253,3 +279,216 @@ class PreventivoListResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
+
+# Schemi per operazioni bulk
+
+class BulkPreventivoDeleteRequestSchema(BaseModel):
+    """Schema per richiesta eliminazione massiva preventivi"""
+    ids: List[int] = Field(..., min_items=1, description="Lista di ID preventivi da eliminare")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "ids": [1, 2, 3]
+            }
+        }
+
+
+class BulkPreventivoDeleteError(BaseModel):
+    """Errore di eliminazione preventivo fallita"""
+    id_order_document: int
+    error: str
+    reason: str
+
+
+class BulkPreventivoDeleteResponseSchema(BaseModel):
+    """Schema per risposta eliminazione massiva preventivi"""
+    successful: List[int] = Field(
+        default_factory=list,
+        description="Lista di ID preventivi eliminati con successo"
+    )
+    failed: List[BulkPreventivoDeleteError] = Field(
+        default_factory=list,
+        description="Lista di eliminazioni fallite"
+    )
+    summary: dict = Field(
+        description="Riepilogo operazione: total, successful_count, failed_count"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "successful": [71, 72, 73, 74, 75],
+                "failed": [],
+                "summary": {
+                    "total": 5,
+                    "successful_count": 5,
+                    "failed_count": 0
+                }
+            }
+        }
+
+
+class BulkPreventivoConvertRequestSchema(BaseModel):
+    """Schema per richiesta conversione massiva preventivi in ordini"""
+    ids: List[int] = Field(..., min_items=1, description="Lista di ID preventivi da convertire")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "ids": [1, 2, 3]
+            }
+        }
+
+
+class BulkPreventivoConvertResult(BaseModel):
+    """Risultato di una conversione preventivo in ordine riuscita"""
+    id_order_document: int
+    id_order: int
+    document_number: int
+
+
+class BulkPreventivoConvertError(BaseModel):
+    """Errore di conversione preventivo fallita"""
+    id_order_document: int
+    error: str
+    reason: str
+
+
+class BulkPreventivoConvertResponseSchema(BaseModel):
+    """Schema per risposta conversione massiva preventivi in ordini"""
+    successful: List[BulkPreventivoConvertResult] = Field(
+        default_factory=list,
+        description="Lista di conversioni riuscite"
+    )
+    failed: List[BulkPreventivoConvertError] = Field(
+        default_factory=list,
+        description="Lista di conversioni fallite"
+    )
+    summary: dict = Field(
+        description="Riepilogo operazione: total, successful_count, failed_count"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "successful": [
+                    {
+                        "id_order_document": 71,
+                        "id_order": 101,
+                        "document_number": 2024001
+                    },
+                    {
+                        "id_order_document": 72,
+                        "id_order": 102,
+                        "document_number": 2024002
+                    }
+                ],
+                "failed": [],
+                "summary": {
+                    "total": 2,
+                    "successful_count": 2,
+                    "failed_count": 0
+                }
+            }
+        }
+
+
+# Schemi per operazioni bulk articoli
+
+class BulkRemoveArticoliRequestSchema(BaseModel):
+    """Schema per richiesta eliminazione massiva articoli"""
+    ids: List[int] = Field(..., min_items=1, description="Lista di ID order_detail da eliminare")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "ids": [101, 102, 103]
+            }
+        }
+
+
+class BulkRemoveArticoliError(BaseModel):
+    """Errore di eliminazione articolo fallita"""
+    id_order_detail: int
+    error: str
+    reason: str
+
+
+class BulkRemoveArticoliResponseSchema(BaseModel):
+    """Schema per risposta eliminazione massiva articoli"""
+    successful: List[int] = Field(
+        default_factory=list,
+        description="Lista di ID order_detail eliminati con successo"
+    )
+    failed: List[BulkRemoveArticoliError] = Field(
+        default_factory=list,
+        description="Lista di eliminazioni fallite"
+    )
+    summary: dict = Field(
+        description="Riepilogo operazione: total, successful_count, failed_count"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "successful": [101, 102, 103],
+                "failed": [],
+                "summary": {
+                    "total": 3,
+                    "successful_count": 3,
+                    "failed_count": 0
+                }
+            }
+        }
+
+
+class BulkUpdateArticoliItem(BaseModel):
+    """Schema per singolo articolo da aggiornare in operazione bulk"""
+    id_order_detail: int = Field(..., gt=0, description="ID dell'articolo da aggiornare")
+    product_name: Optional[str] = Field(None, max_length=100)
+    product_reference: Optional[str] = Field(None, max_length=100)
+    product_price: Optional[float] = Field(None, ge=0)
+    product_weight: Optional[float] = Field(None, ge=0)
+    product_qty: Optional[int] = Field(None, gt=0)
+    id_tax: Optional[int] = Field(None, gt=0)
+    reduction_percent: Optional[float] = Field(None, ge=0)
+    reduction_amount: Optional[float] = Field(None, ge=0)
+    rda: Optional[str] = Field(None, max_length=10)
+    note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
+
+
+class BulkUpdateArticoliError(BaseModel):
+    """Errore di aggiornamento articolo fallito"""
+    id_order_detail: int
+    error: str
+    reason: str
+
+
+class BulkUpdateArticoliResponseSchema(BaseModel):
+    """Schema per risposta aggiornamento massivo articoli"""
+    successful: List[int] = Field(
+        default_factory=list,
+        description="Lista di ID order_detail aggiornati con successo"
+    )
+    failed: List[BulkUpdateArticoliError] = Field(
+        default_factory=list,
+        description="Lista di aggiornamenti falliti"
+    )
+    summary: dict = Field(
+        description="Riepilogo operazione: total, successful_count, failed_count"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "successful": [101, 102],
+                "failed": [],
+                "summary": {
+                    "total": 2,
+                    "successful_count": 2,
+                    "failed_count": 0
+                }
+            }
+        }

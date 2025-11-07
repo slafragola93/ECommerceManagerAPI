@@ -15,6 +15,13 @@ from src.models.customer import Customer
 from src.models.address import Address
 from src.models.shipping import Shipping
 from src.models.order_package import OrderPackage
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import (
+    extract_ddt_created_data,
+    extract_ddt_updated_data,
+    extract_ddt_deleted_data
+)
 
 
 class DDTService:
@@ -25,13 +32,19 @@ class DDTService:
         self.ddt_repo = DDTRepository(db)
         self.order_doc_service = OrderDocumentService(db)
     
-    def generate_ddt_from_order(self, id_order: int, user_id: int) -> DDTGenerateResponseSchema:
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_ddt_created_data,
+        source="ddt_service.generate_ddt_from_order"
+    )
+    def generate_ddt_from_order(self, id_order: int, user_id: int, user: dict = None) -> DDTGenerateResponseSchema:
         """
-        Genera un DDT a partire da un ordine
+        Genera un DDT a partire da un ordine.
         
         Args:
             id_order: ID dell'ordine
             user_id: ID dell'utente
+            user: Contesto utente per eventi (tenant, user_id)
             
         Returns:
             DDTGenerateResponseSchema: Risposta con il DDT generato
@@ -244,13 +257,19 @@ class DDTService:
         except Exception as e:
             raise Exception(f"Errore durante la generazione del PDF: {str(e)}")
     
-    def update_ddt_detail(self, id_order_detail: int, detail_data: dict) -> Optional[DDTDetailSchema]:
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_UPDATED,
+        data_extractor=extract_ddt_updated_data,
+        source="ddt_service.update_ddt_detail"
+    )
+    def update_ddt_detail(self, id_order_detail: int, detail_data: dict, user: dict = None) -> Optional[DDTDetailSchema]:
         """
-        Aggiorna un dettaglio del DDT
+        Aggiorna un dettaglio del DDT.
         
         Args:
             id_order_detail: ID del dettaglio
             detail_data: Dati da aggiornare
+            user: Contesto utente per eventi (tenant, user_id)
             
         Returns:
             DDTDetailSchema: Dettaglio aggiornato
@@ -279,12 +298,18 @@ class DDTService:
         except Exception as e:
             raise Exception(f"Errore durante l'aggiornamento del dettaglio: {str(e)}")
     
-    def delete_ddt_detail(self, id_order_detail: int) -> bool:
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_DELETED,
+        data_extractor=extract_ddt_deleted_data,
+        source="ddt_service.delete_ddt_detail"
+    )
+    def delete_ddt_detail(self, id_order_detail: int, user: dict = None) -> bool:
         """
-        Elimina un dettaglio del DDT
+        Elimina un dettaglio del DDT.
         
         Args:
             id_order_detail: ID del dettaglio
+            user: Contesto utente per eventi (tenant, user_id)
             
         Returns:
             bool: True se eliminato con successo

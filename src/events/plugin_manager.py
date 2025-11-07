@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import ModuleType
 from typing import Awaitable, Callable, Dict, List, Optional, Sequence
 
@@ -53,6 +55,12 @@ class PluginManager:
         self._loaded_plugins: Dict[str, LoadedPlugin] = {}
         self._handlers: Dict[str, RegisteredHandler] = {}
         self._event_callbacks: Dict[str, Callable[[Event], Awaitable[None]]] = {}
+        
+        # Circuit breaker per isolamento plugin
+        self._plugin_failures: Dict[str, int] = defaultdict(int)
+        self._plugin_last_failure: Dict[str, datetime] = {}
+        self._plugin_circuit_breaker_threshold = 5  # Dopo 5 errori, disabilita temporaneamente
+        self._plugin_circuit_breaker_timeout = timedelta(minutes=5)
 
     async def initialise(self) -> EventConfig:
         return await self.reload()
@@ -207,14 +215,74 @@ class PluginManager:
         if not handlers:
             return
 
-        tasks = [handler(event) for handler in handlers]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for handler, result in zip(handlers, results):
-            if isinstance(result, Exception):
-                logger.exception(
-                    "Handler %s failed for event '%s'", handler.name, event.event_type, exc_info=result
+        # Esegui handler con circuit breaker e isolamento errori
+        tasks = []
+        for handler in handlers:
+            plugin_name = self._get_plugin_name_for_handler(handler)
+            
+            # Controlla circuit breaker prima di eseguire
+            if self._is_plugin_circuit_open(plugin_name):
+                logger.warning(
+                    f"Plugin '{plugin_name}' in circuit breaker, skipping event '{event.event_type}'"
                 )
+                continue
+            
+            tasks.append(self._safe_execute_handler(handler, event, plugin_name))
+
+        # return_exceptions=True: cattura TUTTE le eccezioni
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _safe_execute_handler(
+        self, handler: BaseEventHandler, event: Event, plugin_name: str
+    ) -> None:
+        """Esegue handler con circuit breaker e isolamento errori."""
+        try:
+            await handler(event)
+            # Reset contatore errori se successo
+            self._plugin_failures[plugin_name] = 0
+        except Exception as e:
+            # Incrementa contatore errori
+            self._plugin_failures[plugin_name] += 1
+            self._plugin_last_failure[plugin_name] = datetime.now()
+            
+            logger.exception(
+                f"Plugin '{plugin_name}' handler '{handler.name}' failed for event '{event.event_type}' "
+                f"(error count: {self._plugin_failures[plugin_name]})",
+                exc_info=e
+            )
+            
+            # Se supera threshold, disabilita temporaneamente
+            if self._plugin_failures[plugin_name] >= self._plugin_circuit_breaker_threshold:
+                logger.error(
+                    f"Plugin '{plugin_name}' circuit breaker OPEN - disabling temporarily "
+                    f"(will retry after {self._plugin_circuit_breaker_timeout})"
+                )
+
+    def _is_plugin_circuit_open(self, plugin_name: str) -> bool:
+        """Verifica se il plugin è in circuit breaker."""
+        if plugin_name not in self._plugin_failures:
+            return False
+
+        if self._plugin_failures[plugin_name] < self._plugin_circuit_breaker_threshold:
+            return False
+
+        # Verifica se è passato abbastanza tempo per riprovare
+        last_failure = self._plugin_last_failure.get(plugin_name)
+        if last_failure:
+            if datetime.now() - last_failure > self._plugin_circuit_breaker_timeout:
+                # Reset circuit breaker
+                self._plugin_failures[plugin_name] = 0
+                logger.info(f"Plugin '{plugin_name}' circuit breaker CLOSED - retrying")
+                return False
+
+        return True
+
+    def _get_plugin_name_for_handler(self, handler: BaseEventHandler) -> str:
+        """Trova il nome del plugin per un handler."""
+        for registered in self._handlers.values():
+            if registered.handler == handler:
+                return registered.plugin_name
+        return "unknown"
 
 
     def _resolve_handlers(self, event: Event) -> List[BaseEventHandler]:

@@ -12,7 +12,15 @@ from src.schemas.preventivo_schema import (
     PreventivoDetailResponseSchema,
     PreventivoListResponseSchema,
     ArticoloPreventivoSchema,
-    ArticoloPreventivoUpdateSchema
+    ArticoloPreventivoUpdateSchema,
+    BulkPreventivoDeleteRequestSchema,
+    BulkPreventivoDeleteResponseSchema,
+    BulkPreventivoConvertRequestSchema,
+    BulkPreventivoConvertResponseSchema,
+    BulkRemoveArticoliRequestSchema,
+    BulkRemoveArticoliResponseSchema,
+    BulkUpdateArticoliItem,
+    BulkUpdateArticoliResponseSchema
 )
 
 router = APIRouter(prefix="/api/v1/preventivi", tags=["Preventivi"])
@@ -347,7 +355,7 @@ async def get_preventivi(
     service = get_preventivo_service(db)
     skip = (page - 1) * limit
     
-    preventivi = service.get_preventivi(skip, limit, search, show_details)
+    preventivi = await service.get_preventivi(skip, limit, search, show_details, user=user)
     
     return PreventivoListResponseSchema(
         preventivi=preventivi,
@@ -373,7 +381,7 @@ async def get_preventivo(
     Include: customer, indirizzi (delivery/invoice), sectional, shipping, payment, articoli, totali.
     """
     service = get_preventivo_service(db)
-    preventivo = service.get_preventivo(id_order_document)
+    preventivo = await service.get_preventivo(id_order_document, user=user)
     
     if not preventivo:
         raise HTTPException(status_code=404, detail="Preventivo non trovato")
@@ -666,6 +674,189 @@ async def convert_to_order(
         raise HTTPException(status_code=404, detail="Preventivo non trovato")
     
     return result
+
+
+@router.post("/bulk-delete",
+             status_code=status.HTTP_200_OK,
+             response_model=BulkPreventivoDeleteResponseSchema,
+             summary="Eliminazione massiva preventivi",
+             description="Elimina più preventivi in modo massivo. Restituisce risultati dettagliati con successi e fallimenti.",
+             response_description="Risultato eliminazione massiva.")
+async def bulk_delete_preventivi(
+    request: BulkPreventivoDeleteRequestSchema = Body(..., examples={
+        "eliminazione_semplice": {
+            "summary": "Eliminazione di 5 preventivi",
+            "description": "Esempio base di eliminazione massiva",
+            "value": {
+                "ids": [71, 72, 73, 74, 75]
+            }
+        },
+        "eliminazione_singola": {
+            "summary": "Eliminazione di un singolo preventivo",
+            "description": "Anche un solo ID è valido",
+            "value": {
+                "ids": [71]
+            }
+        }
+    }),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Elimina più preventivi in modo massivo.
+    
+    **Input**: Lista di ID preventivi da eliminare.
+    
+    **Output**: Risposta con:
+    - `successful`: Lista di ID eliminati con successo
+    - `failed`: Lista di errori con dettagli (NOT_FOUND, DELETE_ERROR)
+    - `summary`: Riepilogo (total, successful_count, failed_count)
+    
+    **Comportamento**:
+    - Ogni preventivo viene eliminato indipendentemente
+    - Errori non bloccano l'eliminazione degli altri
+    - Operazione irreversibile
+    """
+    service = get_preventivo_service(db)
+    return service.bulk_delete_preventivi(request.ids)
+
+
+@router.post("/bulk-convert-to-orders",
+             status_code=status.HTTP_200_OK,
+             response_model=BulkPreventivoConvertResponseSchema,
+             summary="Conversione massiva preventivi in ordini",
+             description="Converte più preventivi in ordini in modo massivo. Restituisce risultati dettagliati con successi e fallimenti.",
+             response_description="Risultato conversione massiva.")
+async def bulk_convert_to_orders(
+    request: BulkPreventivoConvertRequestSchema = Body(..., examples={
+        "conversione_semplice": {
+            "summary": "Conversione di 5 preventivi",
+            "description": "Esempio base di conversione massiva",
+            "value": {
+                "ids": [71, 72, 73, 74, 75]
+            }
+        },
+        "conversione_singola": {
+            "summary": "Conversione di un singolo preventivo",
+            "description": "Anche un solo ID è valido",
+            "value": {
+                "ids": [71]
+            }
+        }
+    }),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Converte più preventivi in ordini in modo massivo.
+    
+    **Input**: Lista di ID preventivi da convertire.
+    
+    **Output**: Risposta con:
+    - `successful`: Lista di conversioni riuscite (id_order_document, id_order, document_number)
+    - `failed`: Lista di errori con dettagli (NOT_FOUND, VALIDATION_ERROR, CONVERSION_ERROR)
+    - `summary`: Riepilogo (total, successful_count, failed_count)
+    
+    **Validazioni richieste per ogni preventivo**:
+    - `id_address_delivery` deve essere presente
+    - `id_address_invoice` deve essere presente
+    - `id_customer` deve essere presente
+    - `id_shipping` deve essere presente
+    
+    **Comportamento**:
+    - Ogni preventivo viene convertito indipendentemente
+    - Errori non bloccano la conversione degli altri
+    - Preventivi già convertiti vengono saltati
+    """
+    service = get_preventivo_service(db)
+    return service.bulk_convert_to_orders(request.ids, user["id"])
+
+
+@router.post("/bulk-remove-articoli",
+             status_code=status.HTTP_200_OK,
+             response_model=BulkRemoveArticoliResponseSchema,
+             summary="Eliminazione massiva articoli",
+             description="Elimina più articoli da preventivi in modo massivo. Restituisce risultati dettagliati con successi e fallimenti.",
+             response_description="Risultato eliminazione massiva articoli.")
+async def bulk_remove_articoli(
+    request: BulkRemoveArticoliRequestSchema = Body(..., examples={
+        "eliminazione_semplice": {
+                "ids": [101, 102, 103]
+            },
+        "eliminazione_singola": {
+                "ids": [101]
+            }
+    }),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Elimina più articoli da preventivi in modo massivo.
+    
+    **Parametri**:
+    - `ids`: Lista di ID order_detail da eliminare
+    
+    **Comportamento**:
+    - Ogni articolo viene eliminato indipendentemente usando `remove_articolo`
+    - Errori non bloccano l'eliminazione degli altri articoli
+    - La cache viene invalidata automaticamente per ogni articolo rimosso
+    - Restituisce lista di successi, fallimenti e summary
+    """
+    service = get_preventivo_service(db)
+    return service.bulk_remove_articoli(request.ids)
+
+
+@router.post("/bulk-update-articoli",
+             status_code=status.HTTP_200_OK,
+             response_model=BulkUpdateArticoliResponseSchema,
+             summary="Aggiornamento massivo articoli",
+             description="Aggiorna più articoli di preventivi in modo massivo. Restituisce risultati dettagliati con successi e fallimenti.",
+             response_description="Risultato aggiornamento massivo articoli.")
+async def bulk_update_articoli(
+    articoli: List[BulkUpdateArticoliItem] = Body(..., min_items=1, examples={
+        "aggiornamento_semplice": {
+            "summary": "Aggiornamento di 2 articoli",
+            "description": "Esempio base di aggiornamento massivo articoli",
+            "value": [
+                {
+                    "id_order_detail": 101,
+                    "product_qty": 5,
+                    "product_price": 25.50
+                },
+                {
+                    "id_order_detail": 102,
+                    "reduction_percent": 10.0
+                }
+            ]
+        },
+        "aggiornamento_singolo": {
+            "summary": "Aggiornamento di un singolo articolo",
+            "description": "Anche un solo articolo è valido",
+            "value": [
+                {
+                    "id_order_detail": 101,
+                    "product_qty": 3
+                }
+            ]
+        }
+    }),
+    user: User = user_dependency,
+    db: Session = db_dependency
+):
+    """
+    Aggiorna più articoli di preventivi in modo massivo.
+    
+    **Parametri**:
+    - Array di articoli da aggiornare, ognuno con `id_order_detail` e i campi da modificare
+    
+    **Comportamento**:
+    - Ogni articolo viene aggiornato indipendentemente usando `update_articolo`
+    - Errori non bloccano l'aggiornamento degli altri articoli
+    - La cache viene invalidata automaticamente per ogni articolo aggiornato
+    - Restituisce lista di successi, fallimenti e summary
+    """
+    service = get_preventivo_service(db)
+    return service.bulk_update_articoli(articoli)
 
 
 @router.get("/{id_order_document}/download-pdf",
