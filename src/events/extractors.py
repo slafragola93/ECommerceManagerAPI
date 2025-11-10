@@ -6,7 +6,7 @@ business in dati ricchi e completi per gli eventi, permettendo ai plugin di oper
 senza query aggiuntive al database.
 
 Ogni estrattore:
-- Accetta *args, result=None, **kwargs
+- Accetta result=None, **kwargs (non usa *args)
 - Estrae dati completi dall'entità (non solo ID)
 - Include tenant/contesto dal parametro 'user'
 - Gestisce None/errori gracefully
@@ -78,7 +78,7 @@ def _safe_datetime_to_iso(dt: Optional[datetime]) -> Optional[str]:
 
 # ==================== CUSTOMER EXTRACTORS ====================
 
-def extract_customer_created_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_customer_created_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento CUSTOMER_CREATED.
     
@@ -133,7 +133,7 @@ def extract_customer_created_data(*args, result=None, **kwargs) -> Optional[Dict
         return None
 
 
-def extract_customer_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_customer_updated_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento CUSTOMER_UPDATED.
     
@@ -163,7 +163,7 @@ def extract_customer_updated_data(*args, result=None, **kwargs) -> Optional[Dict
         return None
 
 
-def extract_customer_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_customer_deleted_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento CUSTOMER_DELETED.
     
@@ -186,7 +186,7 @@ def extract_customer_deleted_data(*args, result=None, **kwargs) -> Optional[Dict
 
 # ==================== PRODUCT EXTRACTORS ====================
 
-def extract_product_created_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_product_created_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento PRODUCT_CREATED.
     
@@ -220,7 +220,7 @@ def extract_product_created_data(*args, result=None, **kwargs) -> Optional[Dict[
         return None
 
 
-def extract_product_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_product_updated_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento PRODUCT_UPDATED.
     
@@ -250,30 +250,9 @@ def extract_product_updated_data(*args, result=None, **kwargs) -> Optional[Dict[
         return None
 
 
-def extract_product_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
-    """
-    Estrae dati per evento PRODUCT_DELETED.
-    
-    Args:
-        kwargs: Contiene 'product_id' e 'user'
-    
-    Returns:
-        Dictionary con ID prodotto e contesto
-    """
-    try:
-        return {
-            "id_product": kwargs.get('product_id'),
-            "tenant": _safe_get_tenant(kwargs),
-            "deleted_by": _safe_get_user_id(kwargs)
-        }
-    except Exception as e:
-        logger.error(f"Errore estrazione dati product deleted: {e}", exc_info=True)
-        return None
-
-
 # ==================== ORDER EXTRACTORS ====================
 
-def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_order_created_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento ORDER_CREATED.
     
@@ -315,7 +294,7 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
         return None
 
 
-def extract_order_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_order_updated_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento ORDER_UPDATED.
     
@@ -343,7 +322,7 @@ def extract_order_updated_data(*args, result=None, **kwargs) -> Optional[Dict[st
         return None
 
 
-def extract_order_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_order_deleted_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento ORDER_DELETED.
     
@@ -366,7 +345,7 @@ def extract_order_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[st
 
 # ==================== DOCUMENT EXTRACTORS (OrderDocument + FiscalDocument unificati) ====================
 
-def extract_document_created_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_document_created_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento DOCUMENT_CREATED.
     Gestisce sia OrderDocument (preventivo, ddt) che FiscalDocument (invoice, credit_note).
@@ -443,7 +422,7 @@ def extract_document_created_data(*args, result=None, **kwargs) -> Optional[Dict
         return None
 
 
-def extract_document_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_document_updated_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento DOCUMENT_UPDATED.
     
@@ -476,7 +455,7 @@ def extract_document_updated_data(*args, result=None, **kwargs) -> Optional[Dict
         return None
 
 
-def extract_document_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_document_deleted_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento DOCUMENT_DELETED.
     
@@ -508,7 +487,7 @@ def extract_document_deleted_data(*args, result=None, **kwargs) -> Optional[Dict
         return None
 
 
-def extract_document_converted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_document_converted_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento DOCUMENT_CONVERTED (preventivo -> order).
     
@@ -538,7 +517,7 @@ def extract_document_converted_data(*args, result=None, **kwargs) -> Optional[Di
         return None
 
 
-def extract_document_bulk_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_document_bulk_deleted_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento DOCUMENT_BULK_DELETED.
     
@@ -578,68 +557,68 @@ def extract_document_bulk_deleted_data(*args, result=None, **kwargs) -> Optional
 # ==================== WRAPPER PER COMPATIBILITÀ ====================
 # Wrapper che usano gli estrattori unificati DOCUMENT_*
 
-def extract_preventivo_created_data(*args, result=None, **kwargs):
+def extract_preventivo_created_data(result=None, **kwargs):
     """Wrapper per extract_document_created_data con document_source='order_document'"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_created_data(*args, result=result, **kwargs)
+    return extract_document_created_data(result=result, **kwargs)
 
 
-def extract_preventivo_updated_data(*args, result=None, **kwargs):
+def extract_preventivo_updated_data(result=None, **kwargs):
     """Wrapper per extract_document_updated_data con document_source='order_document'"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_updated_data(*args, result=result, **kwargs)
+    return extract_document_updated_data(result=result, **kwargs)
 
 
-def extract_preventivo_deleted_data(*args, result=None, **kwargs):
+def extract_preventivo_deleted_data(result=None, **kwargs):
     """Wrapper per extract_document_deleted_data con document_source='order_document'"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_deleted_data(*args, result=result, **kwargs)
+    return extract_document_deleted_data(result=result, **kwargs)
 
 
-def extract_preventivo_converted_data(*args, result=None, **kwargs):
+def extract_preventivo_converted_data(result=None, **kwargs):
     """Wrapper per extract_document_converted_data"""
-    return extract_document_converted_data(*args, result=result, **kwargs)
+    return extract_document_converted_data(result=result, **kwargs)
 
 
-def extract_bulk_preventivo_deleted_data(*args, result=None, **kwargs):
+def extract_bulk_preventivo_deleted_data(result=None, **kwargs):
     """Wrapper per extract_document_bulk_deleted_data con document_source='order_document'"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_bulk_deleted_data(*args, result=result, **kwargs)
+    return extract_document_bulk_deleted_data(result=result, **kwargs)
 
 
-def extract_ddt_created_data(*args, result=None, **kwargs):
+def extract_ddt_created_data(result=None, **kwargs):
     """Wrapper per extract_document_created_data per DDT"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_created_data(*args, result=result, **kwargs)
+    return extract_document_created_data(result=result, **kwargs)
 
 
-def extract_ddt_updated_data(*args, result=None, **kwargs):
+def extract_ddt_updated_data(result=None, **kwargs):
     """Wrapper per extract_document_updated_data per DDT"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_updated_data(*args, result=result, **kwargs)
+    return extract_document_updated_data(result=result, **kwargs)
 
 
-def extract_ddt_deleted_data(*args, result=None, **kwargs):
+def extract_ddt_deleted_data(result=None, **kwargs):
     """Wrapper per extract_document_deleted_data per DDT"""
     kwargs['document_source'] = 'order_document'
-    return extract_document_deleted_data(*args, result=result, **kwargs)
+    return extract_document_deleted_data(result=result, **kwargs)
 
 
-def extract_invoice_created_data(*args, result=None, **kwargs):
+def extract_invoice_created_data(result=None, **kwargs):
     """Wrapper per extract_document_created_data per Invoice"""
     kwargs['document_source'] = 'fiscal_document'
-    return extract_document_created_data(*args, result=result, **kwargs)
+    return extract_document_created_data(result=result, **kwargs)
 
 
-def extract_credit_note_created_data(*args, result=None, **kwargs):
+def extract_credit_note_created_data(result=None, **kwargs):
     """Wrapper per extract_document_created_data per Credit Note"""
     kwargs['document_source'] = 'fiscal_document'
-    return extract_document_created_data(*args, result=result, **kwargs)
+    return extract_document_created_data(result=result, **kwargs)
 
 
 # ==================== ADDRESS EXTRACTORS ====================
 
-def extract_address_created_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+def extract_address_created_data(result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati per evento ADDRESS_CREATED.
     
