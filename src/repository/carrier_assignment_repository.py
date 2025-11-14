@@ -108,3 +108,85 @@ class CarrierAssignmentRepository(BaseRepository[CarrierAssignment, int], ICarri
             ).all()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving carrier assignments by weight: {str(e)}")
+    
+    def find_matching_assignment(self, 
+                                postal_code: Optional[str] = None,
+                                country_id: Optional[int] = None,
+                                origin_carrier_id: Optional[int] = None,
+                                weight: Optional[float] = None) -> Optional[CarrierAssignment]:
+        """
+        Trova l'assegnazione che corrisponde ai criteri specificati.
+        
+        I campi nel DB (postal_codes, countries, origin_carriers) sono stringhe JSON
+        che contengono liste di valori separati da virgola.
+
+        Args:
+            postal_code: Codice postale
+            country_id: ID del paese
+            origin_carrier_id: ID del corriere di origine
+            weight: Peso del pacco
+
+        Returns:
+            Optional[CarrierAssignment]: Prima assegnazione che corrisponde ai criteri
+        """
+        try:
+            query = self._session.query(CarrierAssignment).options(
+                joinedload(CarrierAssignment.carrier_api)
+            )
+            
+            # Filtro per peso se specificato
+            if weight is not None:
+                query = query.filter(
+                    or_(
+                        CarrierAssignment.min_weight.is_(None),
+                        CarrierAssignment.min_weight <= weight
+                    ),
+                    or_(
+                        CarrierAssignment.max_weight.is_(None),
+                        CarrierAssignment.max_weight >= weight
+                    )
+                )
+            
+            # Filtro per codice postale se specificato
+            if postal_code:
+                query = query.filter(
+                    or_(
+                        CarrierAssignment.postal_codes.is_(None),
+                        CarrierAssignment.postal_codes.like(f'%{postal_code}%')
+                    )
+                )
+            
+            # Filtro per paese se specificato
+            if country_id:
+                query = query.filter(
+                    or_(
+                        CarrierAssignment.countries.is_(None),
+                        CarrierAssignment.countries.like(f'%{country_id}%')
+                    )
+                )
+            
+            # Filtro per corriere di origine se specificato
+            if origin_carrier_id:
+                query = query.filter(
+                    or_(
+                        CarrierAssignment.origin_carriers.is_(None),
+                        CarrierAssignment.origin_carriers.like(f'%{origin_carrier_id}%')
+                    )
+                )
+            
+            # Ordina per priorità: regole con più condizioni specifiche hanno priorità
+            # Calcola un punteggio di specificità per ogni regola
+            from sqlalchemy import case
+            
+            specificity_score = (
+                case((CarrierAssignment.postal_codes.isnot(None), 1), else_=0) +
+                case((CarrierAssignment.countries.isnot(None), 1), else_=0) +
+                case((CarrierAssignment.origin_carriers.isnot(None), 1), else_=0) +
+                case((CarrierAssignment.min_weight.isnot(None), 1), else_=0) +
+                case((CarrierAssignment.max_weight.isnot(None), 1), else_=0)
+            )
+            
+            return query.order_by(specificity_score.desc(), CarrierAssignment.id_carrier_assignment).first()
+            
+        except Exception as e:
+            raise InfrastructureException(f"Database error finding matching carrier assignment: {str(e)}")

@@ -34,7 +34,7 @@ class AddressService(IAddressService):
         
         Args:
             address_data: Dati dell'indirizzo da creare
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             Address creato
@@ -65,7 +65,7 @@ class AddressService(IAddressService):
         Args:
             address_id: ID dell'indirizzo da aggiornare
             address_data: Nuovi dati dell'indirizzo
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             Address aggiornato
@@ -130,14 +130,13 @@ class AddressService(IAddressService):
         
         Args:
             address_id: ID dell'indirizzo da eliminare
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             True se eliminato con successo
         """
         # Verifica esistenza
-        self._address_repository.get_by_id_or_raise(address_id)
-        
+        self._address_repository.get_by_id_or_raise(address_id)        
         try:
             return self._address_repository.delete(address_id)
         except Exception as e:

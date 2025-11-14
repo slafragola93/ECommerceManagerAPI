@@ -21,7 +21,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, events
+    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, events, csv_import
 from src.database import Base, engine
 
 # Import new cache system
@@ -38,8 +38,10 @@ from src.core.exceptions import (
     InfrastructureException,
     AuthenticationException,
     AuthorizationException,
-    AlreadyExistsError
+    AlreadyExistsError,
+    ErrorCode
 )
+from src.core.pydantic_error_formatter import PydanticErrorFormatter
 from src.core.monitoring import get_performance_monitor
 from src.events.config import EventConfigLoader
 from src.events.config.config_schema import EventConfig
@@ -164,10 +166,14 @@ origins = [
 
 # Add CORS middleware - DEVE essere il primo middleware
 # Nota: allow_credentials=True non può essere usato con allow_origins=["*"]
-# Se serve supportare credentials, specifica origini esplicite
+# Per il frontend in locale, specifichiamo le origini esplicite
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permettiamo tutte le origini per sviluppo
+    allow_origins=[
+        "http://localhost:4200",      # Angular default
+        "http://127.0.0.1:4200",
+        # Aggiungi qui altre origini se necessario (es. produzione)
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -304,20 +310,23 @@ async def infrastructure_exception_handler(request: Request, exc: Infrastructure
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    """Handler per errori di validazione FastAPI"""
-    logger.warning(f"Request validation error: {exc.errors()}", extra={
+    """Handler per errori di validazione FastAPI con formattazione standardizzata"""
+    pydantic_errors = exc.errors()
+    
+    logger.warning(f"Errori di validazione: {pydantic_errors}", extra={
         "path": str(request.url),
         "method": request.method
     })
     
+    # Format errors using the standardized formatter
+    formatted_error = PydanticErrorFormatter.format(
+        pydantic_errors,
+        error_code=ErrorCode.VALIDATION_ERROR.value
+    )
+    
     return JSONResponse(
-        status_code=422,
-        content={
-            "error_code": "VALIDATION_ERROR",
-            "message": "Request validation failed",
-            "details": exc.errors(),
-            "status_code": 422
-        }
+        status_code=formatted_error["status_code"],
+        content=formatted_error
     )
 
 @app.exception_handler(StarletteHTTPException)
@@ -390,6 +399,7 @@ app.include_router(init.router)
 app.include_router(carriers_configuration.router)
 app.include_router(dhl_shipment.router)
 app.include_router(events.router)
+app.include_router(csv_import.router)
 
 # CORS preflight handler per tutti gli endpoint
 @app.options("/{full_path:path}")

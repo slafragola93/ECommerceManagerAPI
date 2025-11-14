@@ -228,7 +228,7 @@ class OrderService(IOrderService):
                 shipping_cost_incl = float(getattr(shipping, "price_tax_incl", 0.0) or 0.0)
                 shipping_cost_excl = float(getattr(shipping, "price_tax_excl", 0.0) or 0.0)
 
-        discount = getattr(order, "total_discounts", 0.0) or 0.0
+        discount = float(getattr(order, "total_discounts", 0.0) or 0.0)
 
         order.total_price_tax_excl = totals["total_price"] + shipping_cost_excl
         order.total_paid = totals["total_price_with_tax"] + shipping_cost_incl - discount

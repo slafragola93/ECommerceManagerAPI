@@ -9,6 +9,7 @@ from src.repository.interfaces.carrier_repository_interface import ICarrierRepos
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
+from src.schemas.carrier_schema import CarrierSchema
 
 class CarrierRepository(BaseRepository[Carrier, int], ICarrierRepository):
     """Carrier Repository rifattorizzato seguendo SOLID"""
@@ -46,3 +47,46 @@ class CarrierRepository(BaseRepository[Carrier, int], ICarrierRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving carrier by name: {str(e)}")
+    
+    def bulk_create_csv_import(self, data_list: List[CarrierSchema], batch_size: int = 1000) -> int:
+        """
+        Bulk insert carriers da CSV import.
+        
+        Args:
+            data_list: Lista CarrierSchema da inserire
+            batch_size: Dimensione batch (default: 1000)
+            
+        Returns:
+            Numero carriers inseriti
+        """
+        if not data_list:
+            return 0
+        
+        try:
+            # Get existing id_origin to avoid duplicates
+            origin_ids = [data.id_origin for data in data_list if data.id_origin]
+            existing_carriers = self._session.query(Carrier.id_origin).filter(
+                Carrier.id_origin.in_(origin_ids)
+            ).all()
+            existing_origins = {c.id_origin for c in existing_carriers}
+            
+            # Filter new carriers
+            new_carriers_data = [data for data in data_list if data.id_origin not in existing_origins]
+            
+            if not new_carriers_data:
+                return 0
+            
+            # Batch insert
+            total_inserted = 0
+            for i in range(0, len(new_carriers_data), batch_size):
+                batch = new_carriers_data[i:i + batch_size]
+                carriers = [Carrier(**c.model_dump()) for c in batch]
+                self._session.bulk_save_objects(carriers)
+                total_inserted += len(carriers)
+            
+            self._session.commit()
+            return total_inserted
+            
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error bulk creating carriers: {str(e)}")

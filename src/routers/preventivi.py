@@ -44,242 +44,148 @@ async def create_preventivo(
     preventivo_data: PreventivoCreateSchema = Body(
         ...,
 
-        example={
-            "con_id_esistenti": {
-                "summary": "Preventivo base con entità esistenti",
-                "description": "Formato ottimale quando customer e indirizzi esistono già. Passa solo gli ID per massime performance.",
+example={
+            "esempio_completo": {
+                "summary": "Esempio completo con tutti i campi disponibili (* = obbligatorio)",
+                "description": "Mostra tutti i campi disponibili. I campi contrassegnati con * sono obbligatori, gli altri sono opzionali. Puoi usare id esistente O creare nuove entità inline con 'data'.",
                 "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "address_invoice": {"id": 470626},
-                    "note": "Preventivo per cliente esistente",
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 3,
-                            "id_tax": 9,
-                            "reduction_percent": 10.0
-                        }
-                    ]
-                }
-            },
-            "crea_nuovo_customer": {
-                "summary": "Preventivo con nuovo customer e address",
-                "description": "Crea customer e indirizzi inline durante la creazione del preventivo. Passa oggetti completi invece di ID.",
-                "value": {
+                    # CUSTOMER* (obbligatorio - usa 'id' per esistente O 'data' per nuovo)
                     "customer": {
                         "data": {
-                            "firstname": "Mario",
-                            "lastname": "Rossi",
-                            "email": "mario.rossi@example.com",
-                            "company": "Rossi SRL",
-                            "id_origin": 0
+                            "firstname": "Mario",              # * obbligatorio se nuovo customer
+                            "lastname": "Rossi",               # * obbligatorio se nuovo customer
+                            "email": "mario.rossi@example.com", # * obbligatorio se nuovo customer
+                            "id_lang": 1,                      # * obbligatorio se nuovo customer
+                            "id_origin": 12345,                # ID esterno opzionale (es. PrestaShop)
+                            "company": "Rossi SRL"             # Opzionale
                         }
+                        # Alternativa: {"id": 294488}  per usare customer esistente
                     },
+                    
+                    # ADDRESS DELIVERY* (obbligatorio - usa 'id' per esistente O 'data' per nuovo)
                     "address_delivery": {
                         "data": {
-                            "id_customer": 0,
-                            "id_country": 1,
-                            "firstname": "Mario",
-                            "lastname": "Rossi",
-                            "address1": "Via Roma 123",
-                            "city": "Milano",
-                            "postcode": "20100",
-                            "phone": "02123456",
-                            "id_origin": 0
+                            "firstname": "Mario",              # * obbligatorio se nuovo address
+                            "lastname": "Rossi",               # * obbligatorio se nuovo address
+                            "address1": "Via Roma 123",        # * obbligatorio se nuovo address
+                            "city": "Milano",                  # * obbligatorio se nuovo address
+                            "postcode": "20100",               # * obbligatorio se nuovo address
+                            "state": "MI",                     # * obbligatorio se nuovo address
+                            "phone": "0212345678",             # * obbligatorio se nuovo address
+                            "id_country": 1,                   # ID nazione (1=Italia)
+                            "id_customer": 0,                  # Auto-assegnato
+                            "id_origin": 67890,                # ID esterno opzionale
+                            "id_platform": 1,                  # 0=manuale, 1=PrestaShop
+                            "company": "Rossi SRL",            # Nome azienda
+                            "address2": "Interno 5",           # Secondo indirizzo
+                            "mobile_phone": "3331234567",      # Cellulare
+                            "vat": "IT12345678901",            # Partita IVA
+                            "dni": "RSSMRA80A01F205X",         # Codice fiscale
+                            "pec": "rossi@pec.it",             # Email PEC
+                            "sdi": "ABCDE12",                  # Codice SDI
+                            "ipa": "ABC123"                    # Codice IPA
                         }
+                        # Alternativa: {"id": 470625}  per usare address esistente
                     },
-                    "note": "Preventivo per nuovo cliente",
-                    "articoli": [
-                        {
-                            "product_name": "Prodotto personalizzato",
-                            "product_reference": "CUSTOM-001",
-                            "product_price": 120.50,
-                            "product_weight": 1.5,
-                            "product_qty": 3,
-                            "id_tax": 9
-                        }
-                    ]
-                }
-            },
-            "senza_address_invoice": {
-                "summary": "Preventivo senza indirizzo fatturazione",
-                "description": "Se address_invoice è omesso, viene automaticamente riutilizzato address_delivery per fatturazione.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "note": "Delivery = Invoice",
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 2,
-                            "id_tax": 9
-                        }
-                    ]
-                }
-            },
-            "prodotto_personalizzato": {
-                "summary": "Articolo personalizzato (senza id_product)",
-                "description": "Crea articoli custom senza riferimento a prodotti esistenti. Richiesti: product_name, product_reference, product_price, product_qty, id_tax.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "note": "Preventivo con articolo custom",
-                    "articoli": [
-                        {
-                            "product_name": "Servizio di consulenza",
-                            "product_reference": "SERV-CONS-2024",
-                            "product_price": 500.00,
-                            "product_weight": 0.0,
-                            "product_qty": 1,
-                            "id_tax": 9,
-                            "reduction_percent": 15.0
-                        }
-                    ]
-                }
-            },
-            "mix_prodotti": {
-                "summary": "Articoli misti (esistenti + custom)",
-                "description": "Combina prodotti esistenti (id_product) e articoli personalizzati nello stesso preventivo.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 2,
-                            "id_tax": 9
-                        },
-                        {
-                            "product_name": "Installazione",
-                            "product_reference": "INST-001",
-                            "product_price": 100.00,
-                            "product_qty": 1,
-                            "id_tax": 9,
-                            "reduction_amount": 20.0
-                        }
-                    ]
-                }
-            },
-            "con_spedizione": {
-                "summary": "Preventivo con costi spedizione",
-                "description": "Include costi di spedizione. Crea oggetto Shipping separato riutilizzabile. Richiesti: price_tax_excl, price_tax_incl, id_carrier_api, id_tax.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "shipping": {
-                        "price_tax_excl": 10.00,
-                        "price_tax_incl": 12.20,
-                        "id_carrier_api": 1,
-                        "id_tax": 1,
-                        "shipping_message": "Spedizione express"
-                    },
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 2,
-                            "id_tax": 9
-                        }
-                    ]
-                }
-            },
-            "con_sectional_esistente": {
-                "summary": "Sezionale esistente (per ID)",
-                "description": "Collega preventivo a sezionale esistente usando solo l'ID.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "sectional": {"id": 1},
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 1,
-                            "id_tax": 1
-                        }
-                    ]
-                }
-            },
-            "con_sectional_nuovo": {
-                "summary": "Sezionale per nome (auto-deduplica)",
-                "description": "Se esiste sezionale con stesso nome, viene riutilizzato. Altrimenti viene creato nuovo. Deduplicazione automatica.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "sectional": {
-                        "data": {
-                            "name": "Preventivi 2025"
-                        }
-                    },
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 1,
-                            "id_tax": 1
-                        }
-                    ]
-                }
-            },
-            "con_fattura": {
-                "summary": "Preventivo con richiesta fattura",
-                "description": "Imposta is_invoice_requested=true per indicare richiesta fatturazione. Valore viene trasferito all'ordine in conversione.",
-                "value": {
-                    "customer": {"id": 294488},
-                    "address_delivery": {"id": 470625},
-                    "is_invoice_requested": True,
-                    "articoli": [
-                        {
-                            "id_product": 123,
-                            "product_qty": 1,
-                            "id_tax": 1
-                        }
-                    ]
-                }
-            },
-            "stesso_indirizzo": {
-                "summary": "Deduplicazione indirizzi identici",
-                "description": "Se address_invoice e address_delivery sono identici, viene creato un solo indirizzo e riutilizzato per entrambi. Evita duplicati.",
-                "value": {
-                    "customer": {
-                        "data": {
-                            "firstname": "Mario",
-                            "lastname": "Rossi",
-                            "email": "mario@example.com",
-                            "id_origin": 0
-                        }
-                    },
-                    "address_delivery": {
-                        "data": {
-                            "firstname": "Mario",
-                            "lastname": "Rossi",
-                            "address1": "Via Roma 1",
-                            "address2": "",
-                            "city": "Milano",
-                            "postcode": "20100",
-                            "state": "MI",
-                            "phone": "123456789",
-                            "id_country": 1,
-                            "id_origin": 0
-                        }
-                    },
+                    
+                    # ADDRESS INVOICE (opzionale - se omesso usa address_delivery)
                     "address_invoice": {
                         "data": {
-                            "firstname": "Mario",
-                            "lastname": "Rossi",
-                            "address1": "Via Roma 1",
-                            "address2": "",
-                            "city": "Milano",
-                            "postcode": "20100",
-                            "state": "MI",
-                            "phone": "123456789",
+                            "firstname": "Mario",              # * obbligatorio se nuovo address
+                            "lastname": "Rossi",               # * obbligatorio se nuovo address
+                            "address1": "Via Fatture 456",     # * obbligatorio se nuovo address
+                            "city": "Roma",                    # * obbligatorio se nuovo address
+                            "postcode": "00100",               # * obbligatorio se nuovo address
+                            "state": "RM",                     # * obbligatorio se nuovo address
+                            "phone": "0698765432",             # * obbligatorio se nuovo address
                             "id_country": 1,
-                            "id_origin": 0
+                            "company": "Rossi SRL Sede Legale",
+                            "address2": "Piano 3",
+                            "mobile_phone": "3339876543",
+                            "vat": "IT12345678901",
+                            "dni": "RSSMRA80A01F205X",
+                            "pec": "amministrazione@pec.it",
+                            "sdi": "ABCDE12",
+                            "ipa": "ABC123"
                         }
+                        # Alternativa: {"id": 470626} per usare address esistente
+                        # Se omesso: viene usato address_delivery anche per fatturazione
                     },
+                    
+                    # SECTIONAL (opzionale - sezionale contabile)
+                    "sectional": {
+                        "data": {
+                            "name": "Preventivi 2025"          # Nome sezionale (deduplica automatica)
+                        }
+                        # Alternativa: {"id": 9}  per usare sezionale esistente
+                    },
+                    
+                    # SHIPPING (opzionale - dati spedizione)
+                    "shipping": {
+                        "price_tax_excl": 10.00,               # * obbligatorio se shipping presente
+                        "price_tax_incl": 12.20,               # * obbligatorio se shipping presente
+                        "id_carrier_api": 1,                   # * obbligatorio se shipping presente
+                        "id_tax": 1,                           # * obbligatorio se shipping presente (aliquota IVA)
+                        "shipping_message": "Consegna express 24h"  # Messaggio spedizione (opzionale)
+                    },
+                    
+                    # ID_PAYMENT (opzionale - metodo di pagamento)
+                    "id_payment": 3,                           # ID metodo pagamento (es. bonifico, carta)
+                    
+                    # IS_INVOICE_REQUESTED (opzionale - richiesta fattura)
+                    "is_invoice_requested": True,              # Se richiedere fattura (default: False)
+                    
+                    # NOTE (opzionale - note generali)
+                    "note": "Preventivo per progetto speciale - sconto applicato per cliente fedele",
+                    
+                    # TOTAL_DISCOUNT (opzionale - sconto totale documento)
+                    "total_discount": 50.00,                   # Sconto totale sul documento (oltre agli sconti articoli)
+                    
+                    # APPLY_DISCOUNT_TO_TAX_INCLUDED (opzionale)
+                    "apply_discount_to_tax_included": False,   # True=sconto su totale IVA inclusa, False=su IVA esclusa
+                    
+                    # ARTICOLI* (obbligatorio - almeno un articolo)
                     "articoli": [
+                        # Articolo con prodotto esistente
                         {
-                            "id_product": 123,
-                            "product_qty": 1,
-                            "id_tax": 1
+                            "id_product": 123,                 # ID prodotto esistente (alternativa a campi custom)
+                            "product_qty": 2,                  # Quantità (default: 1)
+                            "id_tax": 9,                       # * SEMPRE obbligatorio - aliquota IVA
+                            "reduction_percent": 10.0,         # Sconto percentuale su articolo
+                            "reduction_amount": 0.0,           # Sconto importo fisso su articolo
+                            "note": "Versione aggiornata"      # Note specifiche articolo
+                        },
+                        # Articolo personalizzato (senza id_product)
+                        {
+                            "product_name": "Servizio installazione",     # * obbligatorio se no id_product
+                            "product_reference": "SERV-INST-2025",        # * obbligatorio se no id_product
+                            "product_price": 150.00,                      # * obbligatorio se no id_product (anche 0.0)
+                            "product_weight": 0.0,                        # Peso articolo
+                            "product_qty": 1,                             # * obbligatorio se no id_product
+                            "id_tax": 9,                                  # * SEMPRE obbligatorio
+                            "reduction_percent": 0.0,                     # Sconto percentuale
+                            "reduction_amount": 25.00,                    # Sconto fisso
+                            "note": "Include configurazione base"         # Note articolo
+                        }
+                    ],
+                    
+                    # ORDER_PACKAGES (opzionale - dimensioni colli)
+                    "order_packages": [
+                        {
+                            "height": 30.0,                    # Altezza pacco (cm)
+                            "width": 40.0,                     # Larghezza pacco (cm)
+                            "depth": 25.0,                     # Profondità pacco (cm)
+                            "length": 50.0,                    # Lunghezza pacco (cm)
+                            "weight": 5.5,                     # Peso pacco (kg)
+                            "value": 500.00                    # Valore dichiarato pacco
+                        },
+                        {
+                            "height": 15.0,
+                            "width": 20.0,
+                            "depth": 10.0,
+                            "length": 25.0,
+                            "weight": 2.0,
+                            "value": 150.00
                         }
                     ]
                 }
@@ -391,38 +297,111 @@ async def get_preventivo(
 
 @router.put("/{id_order_document}", 
             response_model=PreventivoDetailResponseSchema,
-            summary="Aggiorna preventivo",
-            description="Modifica campi di un preventivo esistente. Solo i campi forniti vengono aggiornati.",
+            summary="Aggiorna preventivo completo",
+            description="Modifica preventivo con supporto creazione/aggiornamento entità nidificate. Usa id=null per creare, id=presente per aggiornare.",
             response_description="Preventivo aggiornato con successo.")
 async def update_preventivo(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
     preventivo_data: PreventivoUpdateSchema = Body(..., examples={
+        "crea_nuovo_customer": {
+            "summary": "Crea nuovo customer per il preventivo",
+            "value": {
+                "customer": {
+                    "id": None,
+                    "firstname": "Giovanni",
+                    "lastname": "Verdi",
+                    "email": "giovanni.verdi@example.com",
+                    "id_lang": 1
+                }
+            }
+        },
+        "aggiorna_customer_esistente": {
+            "summary": "Aggiorna customer esistente (ID 100)",
+            "value": {
+                "customer": {
+                    "id": 100,
+                    "firstname": "Giovanni",
+                    "lastname": "Rossi",
+                    "email": "giovanni.rossi@example.com"
+                }
+            }
+        },
+        "smart_merge_articoli": {
+            "summary": "Smart merge articoli (update + create + delete)",
+            "value": {
+                "articoli": [
+                    {
+                        "id_order_detail": 123,
+                        "product_qty": 5,
+                        "product_price": 120.00
+                    },
+                    {
+                        "id_order_detail": 124,
+                        "reduction_percent": 15.0
+                    },
+                    {
+                        "id_order_detail": None,
+                        "product_name": "Nuovo prodotto",
+                        "product_reference": "NEW-001",
+                        "product_price": 50.00,
+                        "product_qty": 2,
+                        "id_tax": 9
+                    }
+                ]
+            }
+        },
+        "update_completo": {
+            "summary": "Aggiornamento completo con tutte le entità",
+            "value": {
+                "customer": {
+                    "id": None,
+                    "firstname": "Maria",
+                    "lastname": "Bianchi",
+                    "email": "maria.bianchi@example.com",
+                    "id_lang": 1
+                },
+                "address_delivery": {
+                    "id": None,
+                    "firstname": "Maria",
+                    "lastname": "Bianchi",
+                    "address1": "Via Roma 123",
+                    "city": "Milano",
+                    "postcode": "20100",
+                    "state": "MI",
+                    "phone": "0212345678",
+                    "id_country": 1
+                },
+                "sectional": {
+                    "id": None,
+                    "name": "Preventivi 2025"
+                },
+                "shipping": {
+                    "id": None,
+                    "price_tax_excl": 10.00,
+                    "price_tax_incl": 12.20,
+                    "id_carrier_api": 1,
+                    "id_tax": 1
+                },
+                "articoli": [
+                    {
+                        "id_order_detail": None,
+                        "product_name": "Prodotto A",
+                        "product_reference": "PROD-A",
+                        "product_price": 100.00,
+                        "product_qty": 2,
+                        "id_tax": 9
+                    }
+                ],
+                "note": "Preventivo completamente aggiornato",
+                "total_discount": 20.00
+            }
+        },
         "aggiornamento_base": {
-            "summary": "Aggiorna informazioni base",
+            "summary": "Aggiorna solo campi semplici",
             "value": {
                 "note": "Preventivo aggiornato",
                 "is_invoice_requested": True,
                 "id_payment": 1
-            }
-        },
-        "cambio_indirizzi": {
-            "summary": "Cambia indirizzi",
-            "value": {
-                "id_address_delivery": 456,
-                "id_address_invoice": 457
-            }
-        },
-        "aggiornamento_completo": {
-            "summary": "Aggiornamento completo",
-            "value": {
-                "id_customer": 123,
-                "id_address_delivery": 456,
-                "id_address_invoice": 457,
-                "id_sectional": 1,
-                "id_shipping": 5,
-                "id_payment": 2,
-                "note": "Preventivo completamente aggiornato",
-                "is_invoice_requested": True
             }
         }
     }),
@@ -430,20 +409,42 @@ async def update_preventivo(
     db: Session = db_dependency
 ):
     """
-    Aggiorna preventivo esistente (campi opzionali).
+    Aggiorna preventivo esistente con supporto completo per entità nidificate.
     
-    **Campi modificabili**:
-    - `id_customer`, `id_tax`, `note` (max 200 char), `is_invoice_requested`
-    - `id_address_delivery`, `id_address_invoice`
-    - `id_order`, `id_sectional`, `id_shipping`, `id_payment`
+    **Struttura JSON unificata:**
+    - Ogni entità ha `id` + campi nello stesso oggetto
+    - `id` presente (non null) → aggiorna entità esistente
+    - `id` null → crea nuova entità
+    
+    **Entità supportate:**
+    - `customer`: ID o creazione nuovo customer
+    - `address_delivery`: ID o creazione nuovo indirizzo consegna
+    - `address_invoice`: ID o creazione nuovo indirizzo fatturazione
+    - `sectional`: ID o creazione nuovo sezionale
+    - `shipping`: ID o creazione nuova spedizione
+    
+    **Smart merge per liste:**
+    - `articoli`: update esistenti (id_order_detail presente), create nuovi (id null), delete mancanti
+    - `order_packages`: update esistenti (id_order_package presente), create nuovi (id null), delete mancanti
+    
+    **Validazioni:**
+    - Preventivo non deve essere convertito in ordine
+    - Tutti gli ID forniti devono esistere
+    - Campi obbligatori per nuove entità devono essere forniti
+    - `id_tax` obbligatorio per nuovi articoli
+    
+    **Ricalcolo automatico:**
+    - Totali ricalcolati automaticamente dopo modifiche articoli
+    - Peso totale aggiornato automaticamente
     
     **Campi NON modificabili** (calcolati/immutabili):
     - `document_number`, `type_document`, `total_weight`, `total_price_with_tax`, `date_add`
-    
-    **Validazione**: Tutti gli ID devono esistere. Solo campi forniti vengono aggiornati.
     """
     service = get_preventivo_service(db)
-    preventivo = service.update_preventivo(id_order_document, preventivo_data, user["id"])
+    # Converti user in dict per il service (gestisce sia User object che dict)
+    user_id = user.id if hasattr(user, "id") else user.get("id") if isinstance(user, dict) else None
+    user_dict = {"id": user_id}
+    preventivo = service.update_preventivo(id_order_document, preventivo_data, user_id, user=user_dict)
     
     if not preventivo:
         raise HTTPException(status_code=404, detail="Preventivo non trovato")

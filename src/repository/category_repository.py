@@ -9,6 +9,7 @@ from src.repository.interfaces.category_repository_interface import ICategoryRep
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
+from src.schemas.category_schema import CategorySchema
 
 class CategoryRepository(BaseRepository[Category, int], ICategoryRepository):
     """Category Repository rifattorizzato seguendo SOLID"""
@@ -55,3 +56,46 @@ class CategoryRepository(BaseRepository[Category, int], ICategoryRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving category by origin ID: {str(e)}")
+    
+    def bulk_create_csv_import(self, data_list: List[CategorySchema], batch_size: int = 1000) -> int:
+        """
+        Bulk insert categories da CSV import.
+        
+        Args:
+            data_list: Lista CategorySchema da inserire
+            batch_size: Dimensione batch (default: 1000)
+            
+        Returns:
+            Numero categories inserite
+        """
+        if not data_list:
+            return 0
+        
+        try:
+            # Get existing id_origin to avoid duplicates
+            origin_ids = [data.id_origin for data in data_list if data.id_origin]
+            existing_categories = self._session.query(Category.id_origin).filter(
+                Category.id_origin.in_(origin_ids)
+            ).all()
+            existing_origins = {c.id_origin for c in existing_categories}
+            
+            # Filter new categories
+            new_categories_data = [data for data in data_list if data.id_origin not in existing_origins]
+            
+            if not new_categories_data:
+                return 0
+            
+            # Batch insert
+            total_inserted = 0
+            for i in range(0, len(new_categories_data), batch_size):
+                batch = new_categories_data[i:i + batch_size]
+                categories = [Category(**c.model_dump()) for c in batch]
+                self._session.bulk_save_objects(categories)
+                total_inserted += len(categories)
+            
+            self._session.commit()
+            return total_inserted
+            
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error bulk creating categories: {str(e)}")

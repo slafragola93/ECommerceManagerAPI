@@ -29,6 +29,8 @@ router = APIRouter(
 def get_order_detail_service(db: db_dependency) -> IOrderDetailService:
     """Dependency injection per Order Detail Service"""
     from src.core.container_config import get_configured_container
+    from src.services.routers.product_service import ProductService
+    from src.repository.product_repository import ProductRepository
     configured_container = get_configured_container()
     
     order_detail_repo = configured_container.resolve_with_session(IOrderDetailRepository, db)
@@ -37,6 +39,10 @@ def get_order_detail_service(db: db_dependency) -> IOrderDetailService:
         order_detail_service._order_detail_repository = order_detail_repo
     if hasattr(order_detail_service, '_order_service'):
         order_detail_service._order_service = OrderService(OrderRepository(db))
+    if hasattr(order_detail_service, '_db'):
+        order_detail_service._db = db
+    if hasattr(order_detail_service, '_product_service'):
+        order_detail_service._product_service = ProductService(ProductRepository(db))
     
     return order_detail_service
 

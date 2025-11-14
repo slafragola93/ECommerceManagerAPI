@@ -34,6 +34,7 @@ class OrderDetailResponseSchema(BaseModel):
     reduction_percent: float
     reduction_amount: float
     note: Optional[str] = None
+    img_url: Optional[str] = None  
     
     @validator('product_price', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):

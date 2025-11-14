@@ -317,6 +317,9 @@ class OrderDocumentService:
             document.updated_at = datetime.now()
             
             self.db.commit()
+            
+            # Aggiorna peso spedizione automaticamente
+            self.update_shipping_weight_from_articles(id_order_document=id_order_document)
 
     # ----------------- Nuovi metodi di ricalcolo leggeri -----------------
     def recalculate_totals_for_order_document(self, id_order_document: int, document_type: str) -> None:
@@ -384,6 +387,9 @@ class OrderDocumentService:
         # Ricalcola i totali
         self.update_document_totals(id_order_document, document_type)
         
+        # Aggiorna peso spedizione automaticamente
+        self.update_shipping_weight_from_articles(id_order_document=id_order_document)
+        
         return order_detail
     
     def update_articolo(self, id_order_detail: int, articolo_data: ArticoloPreventivoUpdateSchema, document_type: str) -> Optional[OrderDetail]:
@@ -427,6 +433,12 @@ class OrderDocumentService:
         # Ricalcola i totali del documento
         self.update_document_totals(order_detail.id_order_document, document_type)
         
+        # Aggiorna peso spedizione automaticamente
+        if order_detail.id_order_document and order_detail.id_order_document > 0:
+            self.update_shipping_weight_from_articles(id_order_document=order_detail.id_order_document)
+        elif order_detail.id_order and order_detail.id_order > 0:
+            self.update_shipping_weight_from_articles(id_order=order_detail.id_order, check_order_state=True)
+        
         return order_detail
     
     def remove_articolo(self, id_order_detail: int, document_type: str) -> bool:
@@ -461,4 +473,110 @@ class OrderDocumentService:
         # Ricalcola i totali del documento
         self.update_document_totals(id_order_document, document_type)
         
+        # Aggiorna peso spedizione automaticamente
+        if id_order_document and id_order_document > 0:
+            self.update_shipping_weight_from_articles(id_order_document=id_order_document)
+        elif order_id and order_id > 0:
+            self.update_shipping_weight_from_articles(id_order=order_id, check_order_state=True)
+        
         return True
+    
+    def update_shipping_weight_from_articles(
+        self,
+        id_order_document: Optional[int] = None,
+        id_order: Optional[int] = None,
+        check_order_state: bool = True
+    ) -> bool:
+        """
+        Aggiorna il peso della spedizione basandosi sul totale peso articoli * quantità.
+        
+        Calcola automaticamente il peso totale degli articoli (peso * quantità) e 
+        aggiorna il campo weight della spedizione collegata.
+        
+        Args:
+            id_order_document: ID OrderDocument (per preventivi/DDT)
+            id_order: ID Order (per ordini)
+            check_order_state: Se True, aggiorna solo ordini con stato = 1
+            
+        Returns:
+            bool: True se aggiornato con successo, False altrimenti
+        
+        Raises:
+            ValueError: Se né id_order_document né id_order sono forniti
+        
+        Note:
+            - Per OrderDocument: aggiorna sempre il peso
+            - Per Order: aggiorna solo se stato = 1 (quando check_order_state=True)
+            - I modelli sono già importati in cima al file (no import locali)
+        """
+        if not id_order_document and not id_order:
+            raise ValueError("Deve essere fornito id_order_document o id_order")
+        
+        shipping_id = None
+        total_weight = 0.0
+        
+        # Caso 1: OrderDocument (preventivi/DDT)
+        if id_order_document:
+            # Recupera solo product_weight e product_qty degli articoli (ottimizzazione)
+            articoli = self.db.query(
+                OrderDetail.product_weight,
+                OrderDetail.product_qty
+            ).filter(
+                OrderDetail.id_order_document == id_order_document,
+                OrderDetail.id_order == 0
+            ).all()
+            
+            # Calcola peso totale: sum(peso * quantità)
+            total_weight = sum(
+                float(a.product_weight or 0.0) * int(a.product_qty or 0)
+                for a in articoli
+            )
+            
+            # Recupera solo id_shipping dall'OrderDocument (ottimizzazione)
+            result = self.db.query(OrderDocument.id_shipping).filter(
+                OrderDocument.id_order_document == id_order_document
+            ).first()
+            if result:
+                shipping_id = result.id_shipping
+        
+        # Caso 2: Order (ordini)
+        elif id_order:
+            # Recupera solo id_order_state e id_shipping (ottimizzazione)
+            order_result = self.db.query(
+                Order.id_order_state,
+                Order.id_shipping
+            ).filter(Order.id_order == id_order).first()
+            
+            if not order_result:
+                return False
+            
+            if check_order_state and order_result.id_order_state != 1:
+                return False  # Non aggiornare se stato != 1
+            
+            # Recupera solo product_weight e product_qty degli articoli (ottimizzazione)
+            articoli = self.db.query(
+                OrderDetail.product_weight,
+                OrderDetail.product_qty
+            ).filter(
+                OrderDetail.id_order == id_order
+            ).all()
+            
+            # Calcola peso totale: sum(peso * quantità)
+            total_weight = sum(
+                float(a.product_weight or 0.0) * int(a.product_qty or 0)
+                for a in articoli
+            )
+            
+            shipping_id = order_result.id_shipping
+        
+        # Aggiorna shipping.weight se esiste
+        if shipping_id:
+            shipping = self.db.query(Shipping).filter(
+                Shipping.id_shipping == shipping_id
+            ).first()
+            if shipping:
+                shipping.weight = total_weight
+                self.db.commit()
+                return True
+        
+        return False

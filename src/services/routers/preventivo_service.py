@@ -12,6 +12,8 @@ from src.repository.tax_repository import TaxRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.address_repository import AddressRepository
 from src.services.routers.order_document_service import OrderDocumentService
+from src.services.routers.product_service import ProductService
+from src.repository.product_repository import ProductRepository
 from src.core.exceptions import NotFoundException, AlreadyExistsError, ValidationException, ErrorCode
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
@@ -63,6 +65,8 @@ class PreventivoService:
         self.payment_repo = PaymentRepository(db)
         self.address_repo = AddressRepository(db)
         self.order_doc_service = OrderDocumentService(db)
+        # Inizializza ProductService per gestione immagini (DIP - Dependency Inversion)
+        self.product_service = ProductService(ProductRepository(db))
     
     @staticmethod
     def _create_params_hash(**params) -> str:
@@ -228,9 +232,11 @@ class PreventivoService:
         # Calcola totali
         totals = self.order_doc_service.calculate_totals(order_document.id_order_document, "preventivo")
         
-        # Recupera articoli
+        # Recupera articoli con img_url (PERFORMANCE: batch query)
         articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
-        articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+        product_ids = [a.id_product for a in articoli if a.id_product]
+        images_map = self.product_service.get_product_images_map(product_ids, self.db)
+        articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
         
         sectional_obj = None
         try:
@@ -341,9 +347,11 @@ class PreventivoService:
         # Ricarica il documento dal database per avere i valori aggiornati
         self.db.refresh(order_document)
         
-        # Recupera articoli
+        # Recupera articoli con img_url (PERFORMANCE: batch query)
         articoli = self.order_doc_service.get_articoli_order_document(id_order_document, "preventivo")
-        articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+        product_ids = [a.id_product for a in articoli if a.id_product]
+        images_map = self.product_service.get_product_images_map(product_ids, self.db)
+        articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
         
         # Recupera indirizzi completi
         address_delivery_obj = None
@@ -452,6 +460,8 @@ class PreventivoService:
                 if getattr(s, 'id_tax', None):
                     tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
                 shipment_obj = PreventivoShipmentSchema(
+                    id_shipping=s.id_shipping,
+                    id_carrier_api=s.id_carrier_api,
                     id_tax=int(s.id_tax) if getattr(s, 'id_tax', None) else 0,
                     tax_rate=tax_rate,
                     weight=float(s.weight or 0.0),
@@ -563,7 +573,9 @@ class PreventivoService:
             articoli_data = []
             if show_details:
                 articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
-                articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+                product_ids = [a.id_product for a in articoli if a.id_product]
+                images_map = self.product_service.get_product_images_map(product_ids, self.db)
+                articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
             
             # Recupera order_packages solo se show_details è True
             order_packages_data = []
@@ -611,6 +623,8 @@ class PreventivoService:
                     if getattr(s, 'id_tax', None):
                         tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
                     shipment_obj = PreventivoShipmentSchema(
+                        id_shipping=s.id_shipping,
+                        id_carrier_api=s.id_carrier_api,
                         id_tax=int(s.id_tax) if getattr(s, 'id_tax', None) else 0,
                         tax_rate=tax_rate,
                         weight=float(s.weight or 0.0),
@@ -806,7 +820,7 @@ class PreventivoService:
     )
     def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int, user: dict = None) -> Optional[PreventivoDetailResponseSchema]:
         """
-        Aggiorna preventivo.
+        Aggiorna preventivo con supporto completo per entità nidificate.
         
         Args:
             id_order_document: ID del preventivo da aggiornare
@@ -817,9 +831,10 @@ class PreventivoService:
         Returns:
             Preventivo aggiornato con dettagli
         """
-        # Valida i riferimenti alle entità correlate se specificati
-        self._validate_preventivo_references(preventivo_data)
+        # Valida i riferimenti alle entità correlate (incluse quelle nidificate)
+        self._validate_preventivo_update_references(preventivo_data)
         
+        # Chiama repository con nuova logica che gestisce entità nidificate
         order_document = self.preventivo_repo.update_preventivo(id_order_document, preventivo_data, user_id)
         if not order_document:
             return None
@@ -831,7 +846,7 @@ class PreventivoService:
         # Chiama il metodo sync direttamente (non async per compatibilità)
         return self._get_preventivo_sync(id_order_document)
     
-    def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema, user: dict = None) -> Optional[ArticoloPreventivoSchema]:
+    def add_articolo(self, id_order_document: int, articolo: ArticoloPreventivoSchema) -> Optional[ArticoloPreventivoSchema]:
         """
         Aggiunge articolo a preventivo.
         
@@ -991,8 +1006,20 @@ class PreventivoService:
             # Qui potresti aggiungere validazione per prodotti esistenti
             pass
     
-    def _format_articolo(self, order_detail) -> ArticoloPreventivoSchema:
-        """Formatta articolo per risposta"""
+    def _format_articolo(self, order_detail, img_url: Optional[str] = None) -> ArticoloPreventivoSchema:
+        """
+        Formatta articolo per risposta con img_url.
+        Segue OCP: aperto all'estensione (img_url) senza modificare logica base.
+        Segue DIP: dipende da ProductService (abstraction) per recuperare immagini.
+        """
+        # Fallback image se non fornita
+        if img_url is None and order_detail.id_product:
+            # Usa ProductService per recuperare immagine (DIP - Dependency Inversion)
+            images_map = self.product_service.get_product_images_map([order_detail.id_product], self.db)
+            img_url = images_map.get(order_detail.id_product, "media/fallback/product_not_found.jpg")
+        elif img_url is None:
+            img_url = "media/fallback/product_not_found.jpg"
+        
         return ArticoloPreventivoSchema(
             id_order_detail=order_detail.id_order_detail,
             id_product=order_detail.id_product,
@@ -1005,31 +1032,12 @@ class PreventivoService:
             reduction_percent=order_detail.reduction_percent,
             reduction_amount=order_detail.reduction_amount,
             rda=order_detail.rda,
-            note=order_detail.note
+            note=order_detail.note,
+            img_url=img_url
         )
     
     def _validate_preventivo_references(self, preventivo_data: PreventivoUpdateSchema) -> None:
-        """Valida i riferimenti alle entità correlate nel preventivo"""
-        # Valida tassa se specificata
-        if preventivo_data.id_tax is not None:
-            tax = self.tax_repo.get_by_id(preventivo_data.id_tax)
-            if not tax:
-                raise NotFoundException(
-                    "Tax",
-                    preventivo_data.id_tax,
-                    {"id_tax": preventivo_data.id_tax}
-                )
-        
-        # Valida customer se specificato
-        if preventivo_data.id_customer is not None:
-            customer = self.customer_repo.get_by_id(preventivo_data.id_customer)
-            if not customer:
-                raise NotFoundException(
-                    "Customer",
-                    preventivo_data.id_customer,
-                    {"id_customer": preventivo_data.id_customer}
-                )
-        
+        """Valida i riferimenti alle entità correlate nel preventivo (campi semplici)"""
         # Valida payment se specificato
         if preventivo_data.id_payment is not None:
             payment = self.payment_repo.get_by_id(preventivo_data.id_payment)
@@ -1039,6 +1047,79 @@ class PreventivoService:
                     preventivo_data.id_payment,
                     {"id_payment": preventivo_data.id_payment}
                 )
+    
+    def _validate_preventivo_update_references(self, preventivo_data: PreventivoUpdateSchema) -> None:
+        """Valida tutti i riferimenti nelle entità nidificate per update"""
+        # Valida campi semplici (riusa metodo esistente)
+        self._validate_preventivo_references(preventivo_data)
+        
+        # Valida customer.id se presente e non null
+        if preventivo_data.customer and preventivo_data.customer.id is not None:
+            customer = self.customer_repo.get_by_id(preventivo_data.customer.id)
+            if not customer:
+                raise NotFoundException("Customer", preventivo_data.customer.id, {"id": preventivo_data.customer.id})
+        
+        # Valida address_delivery.id se presente e non null
+        if preventivo_data.address_delivery and preventivo_data.address_delivery.id is not None:
+            address = self.address_repo.get_by_id(preventivo_data.address_delivery.id)
+            if not address:
+                raise NotFoundException("Address", preventivo_data.address_delivery.id, {"id": preventivo_data.address_delivery.id})
+        
+        # Valida address_invoice.id se presente e non null
+        if preventivo_data.address_invoice and preventivo_data.address_invoice.id is not None:
+            address = self.address_repo.get_by_id(preventivo_data.address_invoice.id)
+            if not address:
+                raise NotFoundException("Address", preventivo_data.address_invoice.id, {"id": preventivo_data.address_invoice.id})
+        
+        # Valida sectional.id se presente e non null
+        if preventivo_data.sectional and preventivo_data.sectional.id is not None:
+            from src.models.sectional import Sectional
+            sectional = self.db.query(Sectional).filter(Sectional.id_sectional == preventivo_data.sectional.id).first()
+            if not sectional:
+                raise NotFoundException("Sectional", preventivo_data.sectional.id, {"id": preventivo_data.sectional.id})
+        
+        # Valida shipping.id se presente e non null
+        if preventivo_data.shipping and preventivo_data.shipping.id is not None:
+            from src.models.shipping import Shipping
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == preventivo_data.shipping.id).first()
+            if not shipping:
+                raise NotFoundException("Shipping", preventivo_data.shipping.id, {"id": preventivo_data.shipping.id})
+        
+        # Valida articoli (id_tax obbligatorio per nuovi, id_order_detail per update)
+        if preventivo_data.articoli:
+            for articolo in preventivo_data.articoli:
+                # Se è un nuovo articolo (id_order_detail null), id_tax è obbligatorio
+                if articolo.id_order_detail is None:
+                    if articolo.id_tax is None:
+                        raise ValidationException(
+                            "id_tax obbligatorio per nuovi articoli",
+                            ErrorCode.VALIDATION_ERROR,
+                            {"articolo": articolo.model_dump() if hasattr(articolo, 'model_dump') else str(articolo)}
+                        )
+                    # Valida che id_tax esista
+                    tax = self.tax_repo.get_by_id(articolo.id_tax)
+                    if not tax:
+                        raise NotFoundException("Tax", articolo.id_tax, {"id_tax": articolo.id_tax})
+                else:
+                    # Se è un update, verifica che id_order_detail esista
+                    from src.models.order_detail import OrderDetail
+                    order_detail = self.db.query(OrderDetail).filter(
+                        OrderDetail.id_order_detail == articolo.id_order_detail
+                    ).first()
+                    if not order_detail:
+                        raise NotFoundException("OrderDetail", articolo.id_order_detail, {"id_order_detail": articolo.id_order_detail})
+        
+        # Valida order_packages (id_order_package per update)
+        if preventivo_data.order_packages:
+            for package in preventivo_data.order_packages:
+                if package.id_order_package is not None:
+                    # Verifica che il package esista
+                    from src.models.order_package import OrderPackage
+                    order_package = self.db.query(OrderPackage).filter(
+                        OrderPackage.id_order_package == package.id_order_package
+                    ).first()
+                    if not order_package:
+                        raise NotFoundException("OrderPackage", package.id_order_package, {"id_order_package": package.id_order_package})
         
 
     
@@ -1107,7 +1188,9 @@ class PreventivoService:
         
         # Recupera articoli
         articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
-        articoli_data = [self._format_articolo(articolo) for articolo in articoli]
+        product_ids = [a.id_product for a in articoli if a.id_product]
+        images_map = self.product_service.get_product_images_map(product_ids, self.db)
+        articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
         
         # Recupera order_packages
         order_packages_data = []

@@ -1,5 +1,5 @@
 from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, Date, func
+from sqlalchemy import Column, Integer, String, DateTime, func
 
 from ..database import Base
 
@@ -23,8 +23,8 @@ class Customer(Base):
             lastname (Column): Il cognome del cliente, anch'esso con una lunghezza massima di 100 caratteri.
             email (Column): L'indirizzo email del cliente, unico per ogni record per evitare duplicati.
                             La lunghezza massima è di 150 caratteri.
-            date_add (Column): La data di registrazione del cliente nel sistema, utile per tenere traccia
-                               della loro data di aggiunta.
+            date_add (Column): La data e ora di registrazione del cliente nel sistema, utile per tenere traccia
+                               del momento esatto della loro aggiunta.
     """
     __tablename__ = "customers"
 
@@ -34,7 +34,7 @@ class Customer(Base):
     firstname = Column(String(100))
     lastname = Column(String(100))
     email = Column(String(150), index=True)
-    date_add = Column(Date, default=func.now())
+    date_add = Column(DateTime, default=func.now())
 
     addresses = relationship("Address", back_populates="customer")
     orders_document = relationship("OrderDocument", back_populates="customer")

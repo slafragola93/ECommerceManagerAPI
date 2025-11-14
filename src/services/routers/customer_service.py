@@ -40,7 +40,7 @@ class CustomerService(ICustomerService):
         
         Args:
             customer_data: Dati del customer da creare
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             Tuple[Customer, bool]: (customer, is_created) dove is_created è True se creato, False se esistente
@@ -92,7 +92,7 @@ class CustomerService(ICustomerService):
         Args:
             customer_id: ID del customer da aggiornare
             customer_data: Nuovi dati del customer
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             Customer aggiornato
@@ -159,7 +159,7 @@ class CustomerService(ICustomerService):
         
         Args:
             customer_id: ID del customer da eliminare
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             True se eliminato con successo

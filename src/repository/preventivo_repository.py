@@ -79,7 +79,9 @@ class PreventivoRepository:
             is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
             note=preventivo_data.note,
             total_discount=preventivo_data.total_discount if preventivo_data.total_discount is not None else 0.0,
-            apply_discount_to_tax_included=preventivo_data.apply_discount_to_tax_included if preventivo_data.apply_discount_to_tax_included is not None else False
+            apply_discount_to_tax_included=preventivo_data.apply_discount_to_tax_included if preventivo_data.apply_discount_to_tax_included is not None else False,
+            total_weight=0.0,  # Verrà calcolato da update_document_totals
+            total_price_with_tax=0.0  # Verrà calcolato da update_document_totals
         )
         
         
@@ -173,7 +175,7 @@ class PreventivoRepository:
             product_name=product_name,
             product_reference=product_reference,
             product_qty=product_qty,
-            product_weight=articolo.product_weight or 0.0,
+            product_weight=articolo.product_weight,
             product_price=product_price,
             id_tax=articolo.id_tax,
             reduction_percent=articolo.reduction_percent or 0.0,
@@ -223,7 +225,13 @@ class PreventivoRepository:
         return query.order_by(OrderDocument.id_order_document.desc()).offset(skip).limit(limit).all()
     
     def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int) -> Optional[OrderDocument]:
-        """Aggiorna preventivo"""
+        """
+        Aggiorna preventivo con supporto completo per entità nidificate.
+        Orchestratore principale che coordina tutti gli handler.
+        """
+        # 1. Verifica che non sia convertito (VALIDAZIONE IMPORTANTE)
+        self._check_preventivo_not_converted(id_order_document)
+        
         preventivo = self.get_preventivo_by_id(id_order_document)
         if not preventivo:
             return None
@@ -233,21 +241,44 @@ class PreventivoRepository:
         previous_total_discount = preventivo.total_discount if hasattr(preventivo, 'total_discount') else 0.0
         previous_apply_discount_to_tax_included = preventivo.apply_discount_to_tax_included if hasattr(preventivo, 'apply_discount_to_tax_included') else False
         
-        # Aggiorna campi modificabili
+        # 2. Gestisci customer (se fornito)
+        if preventivo_data.customer is not None:
+            customer_id = self._handle_customer_update(preventivo_data.customer, preventivo.id_customer, user_id)
+            preventivo.id_customer = customer_id
+        
+        # 3. Gestisci address_delivery (se fornito)
+        if preventivo_data.address_delivery is not None:
+            delivery_id = self._handle_address_update(
+                preventivo_data.address_delivery,
+                preventivo.id_address_delivery,
+                preventivo.id_customer,
+                user_id
+            )
+            preventivo.id_address_delivery = delivery_id
+        
+        # 4. Gestisci address_invoice (se fornito)
+        if preventivo_data.address_invoice is not None:
+            invoice_id = self._handle_address_update(
+                preventivo_data.address_invoice,
+                preventivo.id_address_invoice,
+                preventivo.id_customer,
+                user_id
+            )
+            preventivo.id_address_invoice = invoice_id
+        
+        # 5. Gestisci sectional (se fornito)
+        if preventivo_data.sectional is not None:
+            sectional_id = self._handle_sectional_update(preventivo_data.sectional, user_id)
+            preventivo.id_sectional = sectional_id
+        
+        # 6. Gestisci shipping (se fornito)
+        if preventivo_data.shipping is not None:
+            shipping_id = self._handle_shipping_update(preventivo_data.shipping, preventivo.id_shipping)
+            preventivo.id_shipping = shipping_id
+        
+        # 7. Aggiorna campi semplici (codice esistente)
         if preventivo_data.id_order is not None:
             preventivo.id_order = preventivo_data.id_order
-        if preventivo_data.id_tax is not None:
-            preventivo.id_tax = preventivo_data.id_tax
-        if preventivo_data.id_address_delivery is not None:
-            preventivo.id_address_delivery = preventivo_data.id_address_delivery
-        if preventivo_data.id_address_invoice is not None:
-            preventivo.id_address_invoice = preventivo_data.id_address_invoice
-        if preventivo_data.id_customer is not None:
-            preventivo.id_customer = preventivo_data.id_customer
-        if preventivo_data.id_sectional is not None:
-            preventivo.id_sectional = preventivo_data.id_sectional
-        if preventivo_data.id_shipping is not None:
-            preventivo.id_shipping = preventivo_data.id_shipping
         if preventivo_data.id_payment is not None:
             preventivo.id_payment = preventivo_data.id_payment
         if preventivo_data.is_invoice_requested is not None:
@@ -268,11 +299,19 @@ class PreventivoRepository:
         
         self.db.commit()
         
-        # Ricalcola i totali se total_discount o apply_discount_to_tax_included sono stati modificati
-        if discount_changed:
+        # 8. Gestisci articoli (smart merge) - DOPO commit preventivo
+        if preventivo_data.articoli is not None:
+            self._handle_articoli_smart_merge(id_order_document, preventivo_data.articoli)
+        
+        # 9. Gestisci order_packages (smart merge) - DOPO commit preventivo
+        if preventivo_data.order_packages is not None:
+            self._handle_order_packages_smart_merge(id_order_document, preventivo_data.order_packages)
+        
+        # 10. Ricalcola totali (sempre dopo modifiche articoli o se discount cambiato)
+        if preventivo_data.articoli is not None or discount_changed:
             from src.services.routers.order_document_service import OrderDocumentService
             order_doc_service = OrderDocumentService(self.db)
-            order_doc_service.recalculate_totals_for_order_document(id_order_document, "preventivo")
+            order_doc_service.update_document_totals(id_order_document, "preventivo")
         
         return preventivo
     
@@ -676,7 +715,8 @@ class PreventivoRepository:
                 Shipping.id_shipping == preventivo.id_shipping
             ).first()
             if shipping and shipping.price_tax_incl:
-                preventivo.total_price_with_tax += shipping.price_tax_incl
+                # Converti Decimal a float per evitare TypeError
+                preventivo.total_price_with_tax += float(shipping.price_tax_incl)
         
         self.db.commit()
 
@@ -769,17 +809,335 @@ class PreventivoRepository:
         total_tax_excl = 0.0
         if articoli:
             for articolo in articoli:
-                total_tax_excl += articolo.product_price * articolo.product_qty
+                total_tax_excl += float(articolo.product_price) * int(articolo.product_qty)
         
         # Calcola totale spedizione senza IVA
         if preventivo.id_shipping:
             shipping = self.db.query(Shipping).filter(
                 Shipping.id_shipping == preventivo.id_shipping
             ).first()
-
-            total_tax_excl += shipping.price_tax_excl
+            if shipping and shipping.price_tax_excl:
+                # Converti Decimal a float
+                total_tax_excl += float(shipping.price_tax_excl)
         
         return total_tax_excl
+    
+    def _handle_customer_update(self, customer_field, current_customer_id: int, user_id: int) -> int:
+        """
+        Gestisce update customer con struttura unificata.
+        - Se id presente e non null: aggiorna customer esistente con i campi forniti
+        - Se id null: crea nuovo customer
+        """
+        if customer_field.id is not None:
+            # UPDATE customer esistente
+            customer = self.db.query(Customer).filter(Customer.id_customer == customer_field.id).first()
+            if not customer:
+                raise ValueError(f"Customer con ID {customer_field.id} non trovato")
+            
+            # Aggiorna solo i campi forniti
+            if customer_field.firstname is not None:
+                customer.firstname = customer_field.firstname
+            if customer_field.lastname is not None:
+                customer.lastname = customer_field.lastname
+            if customer_field.email is not None:
+                customer.email = customer_field.email
+            if customer_field.id_lang is not None:
+                customer.id_lang = customer_field.id_lang
+            if customer_field.company is not None:
+                customer.company = customer_field.company
+            if customer_field.id_origin is not None:
+                customer.id_origin = customer_field.id_origin
+            
+            self.db.commit()
+            return customer.id_customer
+        else:
+            # CREATE nuovo customer (riusa logica esistente ma senza deduplica per email)
+            customer = Customer(
+                id_origin=customer_field.id_origin or 0,
+                id_lang=customer_field.id_lang,
+                firstname=customer_field.firstname,
+                lastname=customer_field.lastname,
+                email=customer_field.email,
+                company=customer_field.company
+            )
+            self.db.add(customer)
+            self.db.flush()
+            return customer.id_customer
+    
+    def _handle_address_update(self, address_field, current_address_id: Optional[int], customer_id: int, user_id: int) -> int:
+        """
+        Gestisce update address con struttura unificata.
+        - Se id presente e non null: aggiorna address esistente con i campi forniti
+        - Se id null: crea nuovo address
+        """
+        if address_field.id is not None:
+            # UPDATE address esistente
+            address = self.db.query(Address).filter(Address.id_address == address_field.id).first()
+            if not address:
+                raise ValueError(f"Address con ID {address_field.id} non trovato")
+            
+            # Aggiorna solo i campi forniti
+            if address_field.firstname is not None:
+                address.firstname = address_field.firstname
+            if address_field.lastname is not None:
+                address.lastname = address_field.lastname
+            if address_field.address1 is not None:
+                address.address1 = address_field.address1
+            if address_field.address2 is not None:
+                address.address2 = address_field.address2
+            if address_field.city is not None:
+                address.city = address_field.city
+            if address_field.postcode is not None:
+                address.postcode = address_field.postcode
+            if address_field.state is not None:
+                address.state = address_field.state
+            if address_field.phone is not None:
+                address.phone = address_field.phone
+            if address_field.mobile_phone is not None:
+                address.mobile_phone = address_field.mobile_phone
+            if address_field.id_country is not None:
+                address.id_country = address_field.id_country
+            if address_field.company is not None:
+                address.company = address_field.company
+            if address_field.vat is not None:
+                address.vat = address_field.vat
+            if address_field.dni is not None:
+                address.dni = address_field.dni
+            if address_field.pec is not None:
+                address.pec = address_field.pec
+            if address_field.sdi is not None:
+                address.sdi = address_field.sdi
+            if address_field.ipa is not None:
+                address.ipa = address_field.ipa
+            if address_field.id_origin is not None:
+                address.id_origin = address_field.id_origin
+            if address_field.id_platform is not None:
+                address.id_platform = address_field.id_platform
+            
+            self.db.commit()
+            return address.id_address
+        else:
+            # CREATE nuovo address
+            address = Address(
+                id_customer=customer_id,
+                id_origin=address_field.id_origin or 0,
+                id_country=address_field.id_country,
+                id_platform=address_field.id_platform or 0,
+                firstname=address_field.firstname,
+                lastname=address_field.lastname,
+                address1=address_field.address1,
+                address2=address_field.address2,
+                city=address_field.city,
+                postcode=address_field.postcode,
+                state=address_field.state,
+                phone=address_field.phone,
+                mobile_phone=address_field.mobile_phone,
+                company=address_field.company,
+                vat=address_field.vat,
+                dni=address_field.dni,
+                pec=address_field.pec,
+                sdi=address_field.sdi,
+                ipa=address_field.ipa
+            )
+            self.db.add(address)
+            self.db.flush()
+            return address.id_address
+    
+    def _handle_sectional_update(self, sectional_field, user_id: int) -> Optional[int]:
+        """
+        Gestisce update sectional con struttura unificata.
+        - Se id presente e non null: aggiorna sectional esistente
+        - Se id null: cerca per nome o crea nuovo
+        """
+        if sectional_field.id is not None:
+            # UPDATE sectional esistente
+            sectional = self.db.query(Sectional).filter(Sectional.id_sectional == sectional_field.id).first()
+            if not sectional:
+                raise ValueError(f"Sectional con ID {sectional_field.id} non trovato")
+            
+            if sectional_field.name is not None:
+                sectional.name = sectional_field.name
+            
+            self.db.commit()
+            return sectional.id_sectional
+        else:
+            # CREATE nuovo sectional (cerca prima per nome per evitare duplicati)
+            if sectional_field.name:
+                existing = self.db.query(Sectional).filter(Sectional.name == sectional_field.name).first()
+                if existing:
+                    return existing.id_sectional
+            
+            sectional = Sectional(name=sectional_field.name)
+            self.db.add(sectional)
+            self.db.flush()
+            return sectional.id_sectional
+    
+    def _handle_shipping_update(self, shipping_field, current_shipping_id: Optional[int]) -> Optional[int]:
+        """
+        Gestisce update shipping con struttura unificata.
+        - Se id presente e non null: aggiorna shipping esistente
+        - Se id null: crea nuovo shipping
+        """
+        if shipping_field.id is not None:
+            # UPDATE shipping esistente
+            shipping = self.db.query(Shipping).filter(Shipping.id_shipping == shipping_field.id).first()
+            if not shipping:
+                raise ValueError(f"Shipping con ID {shipping_field.id} non trovato")
+            
+            if shipping_field.price_tax_excl is not None:
+                shipping.price_tax_excl = shipping_field.price_tax_excl
+            if shipping_field.price_tax_incl is not None:
+                shipping.price_tax_incl = shipping_field.price_tax_incl
+            if shipping_field.id_carrier_api is not None:
+                shipping.id_carrier_api = shipping_field.id_carrier_api
+            if shipping_field.id_tax is not None:
+                shipping.id_tax = shipping_field.id_tax
+            if shipping_field.shipping_message is not None:
+                shipping.shipping_message = shipping_field.shipping_message
+            
+            self.db.commit()
+            return shipping.id_shipping
+        else:
+            # CREATE nuovo shipping
+            shipping = Shipping(
+                id_carrier_api=shipping_field.id_carrier_api,
+                id_shipping_state=1,
+                id_tax=shipping_field.id_tax,
+                tracking=None,
+                weight=0.0,
+                price_tax_excl=shipping_field.price_tax_excl,
+                price_tax_incl=shipping_field.price_tax_incl,
+                shipping_message=shipping_field.shipping_message
+            )
+            self.db.add(shipping)
+            self.db.flush()
+            return shipping.id_shipping
+    
+    def _handle_articoli_smart_merge(self, id_order_document: int, articoli: List) -> None:
+        """
+        Smart merge per articoli:
+        1. Identifica articoli da UPDATE (id_order_detail presente nella lista)
+        2. Identifica articoli da CREATE (id_order_detail null nella lista)
+        3. Identifica articoli da DELETE (esistenti nel DB ma non nella lista)
+        4. RIUTILIZZA: OrderDocumentService.update_articolo, add_articolo, remove_articolo
+        """
+        from src.services.routers.order_document_service import OrderDocumentService
+        from src.schemas.preventivo_schema import ArticoloPreventivoUpdateSchema, ArticoloPreventivoSchema
+        
+        order_doc_service = OrderDocumentService(self.db)
+        
+        # Recupera articoli esistenti
+        existing_articoli = self.db.query(OrderDetail).filter(
+            OrderDetail.id_order_document == id_order_document,
+            OrderDetail.id_order == 0
+        ).all()
+        existing_ids = {a.id_order_detail for a in existing_articoli}
+        
+        # IDs nella lista fornita
+        provided_ids = {a.id_order_detail for a in articoli if a.id_order_detail is not None}
+        
+        # 1. UPDATE + CREATE
+        for articolo_data in articoli:
+            if articolo_data.id_order_detail is not None:
+                # UPDATE esistente (riusa update_articolo)
+                update_schema = ArticoloPreventivoUpdateSchema(
+                    product_name=articolo_data.product_name,
+                    product_reference=articolo_data.product_reference,
+                    product_price=articolo_data.product_price,
+                    product_weight=articolo_data.product_weight,
+                    product_qty=articolo_data.product_qty,
+                    id_tax=articolo_data.id_tax,
+                    reduction_percent=articolo_data.reduction_percent,
+                    reduction_amount=articolo_data.reduction_amount,
+                    rda=articolo_data.rda,
+                    note=articolo_data.note
+                )
+                order_doc_service.update_articolo(articolo_data.id_order_detail, update_schema, "preventivo")
+            else:
+                # CREATE nuovo (riusa add_articolo)
+                create_schema = ArticoloPreventivoSchema(
+                    id_product=articolo_data.id_product,
+                    product_name=articolo_data.product_name,
+                    product_reference=articolo_data.product_reference,
+                    product_price=articolo_data.product_price or 0.0,
+                    product_qty=articolo_data.product_qty or 1,
+                    id_tax=articolo_data.id_tax,
+                    product_weight=articolo_data.product_weight or 0.0,
+                    reduction_percent=articolo_data.reduction_percent or 0.0,
+                    reduction_amount=articolo_data.reduction_amount or 0.0,
+                    rda=articolo_data.rda,
+                    note=articolo_data.note
+                )
+                order_doc_service.add_articolo(id_order_document, create_schema, "preventivo")
+        
+        # 2. DELETE articoli non presenti nella lista
+        ids_to_delete = existing_ids - provided_ids
+        for id_to_delete in ids_to_delete:
+            order_doc_service.remove_articolo(id_to_delete, "preventivo")
+    
+    def _handle_order_packages_smart_merge(self, id_order_document: int, packages: List) -> None:
+        """
+        Smart merge per order_packages:
+        1. Identifica packages da UPDATE (id_order_package presente nella lista)
+        2. Identifica packages da CREATE (id_order_package null nella lista)
+        3. Identifica packages da DELETE (esistenti nel DB ma non nella lista)
+        """
+        from src.models.order_package import OrderPackage
+        
+        # Recupera packages esistenti
+        existing_packages = self.db.query(OrderPackage).filter(
+            OrderPackage.id_order_document == id_order_document,
+            OrderPackage.id_order.is_(None)
+        ).all()
+        existing_ids = {p.id_order_package for p in existing_packages}
+        
+        # IDs nella lista fornita
+        provided_ids = {p.id_order_package for p in packages if p.id_order_package is not None}
+        
+        # 1. UPDATE + CREATE
+        for package_data in packages:
+            if package_data.id_order_package is not None:
+                # UPDATE esistente
+                package = self.db.query(OrderPackage).filter(
+                    OrderPackage.id_order_package == package_data.id_order_package
+                ).first()
+                if package:
+                    if package_data.height is not None:
+                        package.height = package_data.height
+                    if package_data.width is not None:
+                        package.width = package_data.width
+                    if package_data.depth is not None:
+                        package.depth = package_data.depth
+                    if package_data.length is not None:
+                        package.length = package_data.length
+                    if package_data.weight is not None:
+                        package.weight = package_data.weight
+                    if package_data.value is not None:
+                        package.value = package_data.value
+            else:
+                # CREATE nuovo
+                new_package = OrderPackage(
+                    id_order_document=id_order_document,
+                    id_order=None,
+                    height=package_data.height or 10.0,
+                    width=package_data.width or 10.0,
+                    depth=package_data.depth or 10.0,
+                    length=package_data.length or 10.0,
+                    weight=package_data.weight or 0.0,
+                    value=package_data.value or 0.0
+                )
+                self.db.add(new_package)
+        
+        # 2. DELETE packages non presenti nella lista
+        ids_to_delete = existing_ids - provided_ids
+        for id_to_delete in ids_to_delete:
+            package = self.db.query(OrderPackage).filter(
+                OrderPackage.id_order_package == id_to_delete
+            ).first()
+            if package:
+                self.db.delete(package)
+        
+        self.db.commit()
     
     def duplicate_preventivo(self, id_order_document: int, user_id: int) -> Optional[OrderDocument]:
         """

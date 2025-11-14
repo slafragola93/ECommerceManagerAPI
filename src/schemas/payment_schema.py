@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -11,7 +12,7 @@ class PaymentResponseSchema(BaseModel):
     id_payment: int
     name: str
     is_complete_payment: bool
-    fiscal_mode_payment: str
+    fiscal_mode_payment: Optional[str] = None
 
 
 class AllPaymentsResponseSchema(BaseModel):

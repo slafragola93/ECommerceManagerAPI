@@ -2,6 +2,7 @@
 Order Detail Service rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional, Any, Dict
+from sqlalchemy.orm import Session
 from src.services.interfaces.order_detail_service_interface import IOrderDetailService
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.schemas.order_detail_schema import OrderDetailSchema
@@ -14,6 +15,8 @@ from src.core.exceptions import (
     ErrorCode
 )
 from src.services.interfaces.order_service_interface import IOrderService
+from src.services.routers.product_service import ProductService
+from src.repository.product_repository import ProductRepository
 
 
 def _collect_tracked_values(order_detail: OrderDetail) -> Dict[str, Any]:
@@ -33,10 +36,15 @@ class OrderDetailService(IOrderDetailService):
     def __init__(
         self,
         order_detail_repository: IOrderDetailRepository,
-        order_service: Optional[IOrderService] = None
+        db: Session,
+        order_service: Optional[IOrderService] = None,
+        product_service: Optional[ProductService] = None
     ):
         self._order_detail_repository = order_detail_repository
         self._order_service = order_service
+        self._db = db
+        # Inizializza ProductService se non fornito (DIP - Dependency Inversion)
+        self._product_service = product_service or ProductService(ProductRepository(db))
 
     def _recalculate_order_totals(self, order_id: Optional[int]) -> None:
         """Ricalcola i totali dell'ordine se il servizio ordini è disponibile."""
@@ -123,13 +131,29 @@ class OrderDetailService(IOrderDetailService):
         except Exception as e:
             raise ValidationException(f"Error updating order detail: {str(e)}")
     
-    async def get_order_detail(self, order_detail_id: int) -> OrderDetail:
-        """Ottiene un order detail per ID"""
+    async def get_order_detail(self, order_detail_id: int) -> dict:
+        """
+        Ottiene un order detail per ID, arricchito con img_url.
+        Segue SRP: responsabilità singola di recuperare e arricchire un order detail.
+        Segue DIP: usa ProductService per gestire le immagini.
+        """
         order_detail = self._order_detail_repository.get_by_id_or_raise(order_detail_id)
-        return order_detail
+        
+        # Recupera img_url del prodotto usando ProductService (DIP)
+        if order_detail.id_product:
+            images_map = self._product_service.get_product_images_map([order_detail.id_product], self._db)
+            img_url = images_map.get(order_detail.id_product)
+        else:
+            img_url = None
+        
+        return self._order_detail_repository.formatted_output(order_detail, img_url=img_url)
     
-    async def get_order_details(self, page: int = 1, limit: int = 10, **filters) -> List[OrderDetail]:
-        """Ottiene la lista degli order details con filtri"""
+    async def get_order_details(self, page: int = 1, limit: int = 10, **filters) -> List[dict]:
+        """
+        Ottiene la lista degli order details con filtri, arricchita con img_url.
+        Segue SRP: orchestrazione del recupero dati con enrichment delle immagini.
+        Performance: usa batch query per recuperare tutte le immagini in una sola query.
+        """
         try:
             # Validazione parametri
             if page < 1:
@@ -144,7 +168,22 @@ class OrderDetailService(IOrderDetailService):
             # Usa il repository con i filtri
             order_details = self._order_detail_repository.get_all(**filters)
             
-            return order_details
+            if not order_details:
+                return []
+            
+            # PERFORMANCE OPTIMIZATION: Recupera tutte le immagini in batch (1 query invece di N)
+            # Usa ProductService per gestire le immagini (DIP - Dependency Inversion)
+            product_ids = [od.id_product for od in order_details if od.id_product]
+            images_map = self._product_service.get_product_images_map(product_ids, self._db)
+            
+            # Formatta output con img_url
+            return [
+                self._order_detail_repository.formatted_output(
+                    od, 
+                    img_url=images_map.get(od.id_product)
+                )
+                for od in order_details
+            ]
         except Exception as e:
             raise ValidationException(f"Error retrieving order details: {str(e)}")
     
@@ -169,19 +208,49 @@ class OrderDetailService(IOrderDetailService):
         except Exception as e:
             raise ValidationException(f"Error counting order details: {str(e)}")
     
-    async def get_order_details_by_order_id(self, order_id: int) -> List[OrderDetail]:
-        """Ottiene tutti i dettagli per un ordine specifico"""
+    async def get_order_details_by_order_id(self, order_id: int) -> List[dict]:
+        """
+        Ottiene tutti i dettagli per un ordine specifico, arricchiti con img_url.
+        Performance: usa batch query per recuperare tutte le immagini in una sola query.
+        Segue DIP: usa ProductService per gestire le immagini.
+        """
         try:
             order_details = self._order_detail_repository.get_by_order_id(order_id)
-            return order_details
+            
+            if not order_details:
+                return []
+            
+            # PERFORMANCE: Batch recupero immagini
+            product_ids = [od.id_product for od in order_details if od.id_product]
+            images_map = self._product_service.get_product_images_map(product_ids, self._db)
+            
+            return [
+                self._order_detail_repository.formatted_output(od, img_url=images_map.get(od.id_product))
+                for od in order_details
+            ]
         except Exception as e:
             raise ValidationException(f"Error retrieving order details by order ID: {str(e)}")
     
-    async def get_order_details_by_order_document_id(self, order_document_id: int) -> List[OrderDetail]:
-        """Ottiene tutti i dettagli per un documento ordine specifico"""
+    async def get_order_details_by_order_document_id(self, order_document_id: int) -> List[dict]:
+        """
+        Ottiene tutti i dettagli per un documento ordine specifico, arricchiti con img_url.
+        Performance: usa batch query per recuperare tutte le immagini in una sola query.
+        Segue DIP: usa ProductService per gestire le immagini.
+        """
         try:
             order_details = self._order_detail_repository.get_by_order_document_id(order_document_id)
-            return order_details
+            
+            if not order_details:
+                return []
+            
+            # PERFORMANCE: Batch recupero immagini usando ProductService
+            product_ids = [od.id_product for od in order_details if od.id_product]
+            images_map = self._product_service.get_product_images_map(product_ids, self._db)
+            
+            return [
+                self._order_detail_repository.formatted_output(od, img_url=images_map.get(od.id_product))
+                for od in order_details
+            ]
         except Exception as e:
             raise ValidationException(f"Error retrieving order details by order document ID: {str(e)}")
     

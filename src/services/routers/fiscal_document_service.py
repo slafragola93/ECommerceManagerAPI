@@ -34,7 +34,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         Args:
             id_order: ID dell'ordine per cui creare la fattura
             is_electronic: Se True, genera fattura elettronica
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             FiscalDocument (fattura) creata
@@ -62,7 +62,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             items: Lista articoli da includere (per note parziali)
             is_electronic: Se True, genera nota elettronica
             include_shipping: Se True, include spese di spedizione
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
         
         Returns:
             FiscalDocument (nota di credito) creata

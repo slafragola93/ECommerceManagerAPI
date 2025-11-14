@@ -11,6 +11,7 @@ from src.repository.interfaces.address_repository_interface import IAddressRepos
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
+from src.schemas.address_schema import AddressSchema
 
 class AddressRepository(BaseRepository[Address, int], IAddressRepository):
     """Address Repository rifattorizzato seguendo SOLID"""
@@ -108,3 +109,55 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
             return result
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving address delivery data: {str(e)}")
+    
+    def bulk_create_csv_import(self, data_list: List[AddressSchema], id_platform: int = 1, batch_size: int = 1000) -> int:
+        """
+        Bulk insert addresses da CSV import con gestione id_platform.
+        
+        Args:
+            data_list: Lista AddressSchema da inserire
+            id_platform: ID platform per uniqueness check
+            batch_size: Dimensione batch (default: 1000)
+            
+        Returns:
+            Numero addresses inseriti
+        """
+        if not data_list:
+            return 0
+        
+        try:
+            # Get existing (id_origin, id_platform) pairs to avoid duplicates
+            origin_ids = [data.id_origin for data in data_list if data.id_origin]
+            
+            if origin_ids:
+                from sqlalchemy import and_
+                existing_addresses = self._session.query(Address.id_origin).filter(
+                    and_(
+                        Address.id_origin.in_(origin_ids),
+                        Address.id_platform == id_platform
+                    )
+                ).all()
+                existing_origins = {a.id_origin for a in existing_addresses}
+            else:
+                existing_origins = set()
+            
+            # Filter new addresses
+            new_addresses_data = [data for data in data_list if data.id_origin not in existing_origins]
+            
+            if not new_addresses_data:
+                return 0
+            
+            # Batch insert
+            total_inserted = 0
+            for i in range(0, len(new_addresses_data), batch_size):
+                batch = new_addresses_data[i:i + batch_size]
+                addresses = [Address(**a.model_dump()) for a in batch]
+                self._session.bulk_save_objects(addresses)
+                total_inserted += len(addresses)
+            
+            self._session.commit()
+            return total_inserted
+            
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error bulk creating addresses: {str(e)}")

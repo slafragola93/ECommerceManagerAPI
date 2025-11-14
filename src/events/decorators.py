@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
@@ -50,11 +51,10 @@ def emit_event_on_success(
     """
     
     def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Execute the original function
-            result = await func(*args, **kwargs)
-            
+        is_async = inspect.iscoroutinefunction(func)
+        
+        def _emit_event_logic(result: Any, *args, **kwargs) -> Any:
+            """Common logic for emitting events (used by both sync and async wrappers)"""
             # Check condition if provided
             if condition:
                 try:
@@ -126,7 +126,22 @@ def emit_event_on_success(
             
             return result
         
-        return wrapper
+        if is_async:
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                # Execute the original async function
+                result = await func(*args, **kwargs)
+                return _emit_event_logic(result, *args, **kwargs)
+            
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                # Execute the original sync function
+                result = func(*args, **kwargs)
+                return _emit_event_logic(result, *args, **kwargs)
+            
+            return sync_wrapper
     
     return decorator
 

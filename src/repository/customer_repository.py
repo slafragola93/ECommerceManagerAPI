@@ -9,6 +9,7 @@ from src.repository.interfaces.customer_repository_interface import ICustomerRep
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
+from src.schemas.customer_schema import CustomerSchema
 
 class CustomerRepository(ICustomerRepository, BaseRepository[Customer, int]):
     """Customer Repository rifattorizzato seguendo SOLID"""
@@ -137,3 +138,46 @@ class CustomerRepository(ICustomerRepository, BaseRepository[Customer, int]):
             ).count()
         except Exception as e:
             raise InfrastructureException(f"Database error counting active customers: {str(e)}")
+    
+    def bulk_create_csv_import(self, data_list: List[CustomerSchema], batch_size: int = 1000) -> int:
+        """
+        Bulk insert customers da CSV import.
+        
+        Args:
+            data_list: Lista CustomerSchema da inserire
+            batch_size: Dimensione batch (default: 1000)
+            
+        Returns:
+            Numero customers inseriti
+        """
+        if not data_list:
+            return 0
+        
+        try:
+            # Get existing id_origin to avoid duplicates
+            origin_ids = [data.id_origin for data in data_list if data.id_origin]
+            existing_customers = self._session.query(Customer.id_origin).filter(
+                Customer.id_origin.in_(origin_ids)
+            ).all()
+            existing_origins = {c.id_origin for c in existing_customers}
+            
+            # Filter new customers
+            new_customers_data = [data for data in data_list if data.id_origin not in existing_origins]
+            
+            if not new_customers_data:
+                return 0
+            
+            # Batch insert
+            total_inserted = 0
+            for i in range(0, len(new_customers_data), batch_size):
+                batch = new_customers_data[i:i + batch_size]
+                customers = [Customer(**c.model_dump()) for c in batch]
+                self._session.bulk_save_objects(customers)
+                total_inserted += len(customers)
+            
+            self._session.commit()
+            return total_inserted
+            
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error bulk creating customers: {str(e)}")

@@ -9,13 +9,14 @@ from sqlalchemy import text
 import base64
 import asyncio
 from datetime import datetime
-
+import os
 from src.schemas.order_schema import OrderUpdateSchema
 from src.services.core.tool import safe_int, safe_float, sql_value
 from src.services.external.province_service import province_service
 from src.services.media.image_service import ImageService
 from src.services.media.image_cache_service import get_image_cache_service
-
+from src.repository.customer_repository import CustomerRepository
+from src.schemas.customer_schema import CustomerSchema
 from .base_ecommerce_service import BaseEcommerceService
 
 
@@ -56,7 +57,7 @@ class PrestaShopService(BaseEcommerceService):
             cache_service = await self._get_image_cache_service()
             
             # Ottieni i prodotti con immagini per questa piattaforma
-            from sqlalchemy import text
+            
             query_sql = f"""
                 SELECT id_origin FROM products 
                 WHERE img_url IS NOT NULL 
@@ -107,7 +108,7 @@ class PrestaShopService(BaseEcommerceService):
         try:
             from src.repository.product_repository import ProductRepository
             from src.models.product import Product
-            from sqlalchemy import text
+            
             
             product_repo = ProductRepository(self.db)
             
@@ -167,7 +168,7 @@ class PrestaShopService(BaseEcommerceService):
         """
         try:
             from src.repository.product_repository import ProductRepository
-            from sqlalchemy import text
+            
             
             product_repo = ProductRepository(self.db)
             
@@ -188,11 +189,11 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error force updating product {product_id} img_url: {str(e)}")
             return False
 
-    def _get_six_months_ago_date(self) -> str:
-        """Get date string for six months ago in YYYY-MM-DD format"""
+    def _get_one_year_ago_date(self) -> str:
+        """Get date string for one year ago in YYYY-MM-DD format"""
         from datetime import timedelta
-        six_months_ago = datetime.now() - timedelta(days=365)  # 6 months
-        return six_months_ago.strftime('%Y-%m-%d')
+        one_year_ago = datetime.now() - timedelta(days=365)  # 1 year
+        return one_year_ago.strftime('%Y-%m-%d')
     
     def _parse_prestashop_datetime(self, date_string: str) -> Optional[datetime]:
         """
@@ -218,10 +219,10 @@ class PrestaShopService(BaseEcommerceService):
     def _get_date_range_filter(self) -> str:
         """Get date range filter string for PrestaShop API [start_date,end_date]"""
         from datetime import timedelta
-        six_months_ago = datetime.now() - timedelta(days=365)  # 6 months ago
+        one_year_ago = datetime.now() - timedelta(days=365)  # 1 year ago
         today = datetime.now()
         
-        start_date = six_months_ago.strftime('%Y-%m-%d')
+        start_date = one_year_ago.strftime('%Y-%m-%d')
         end_date = today.strftime('%Y-%m-%d')
         
         date_range = f"[{start_date},{end_date}]"
@@ -284,11 +285,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages),
-                ("Countries", self.sync_countries),
-                ("Brands", self.sync_brands),
-                ("Categories", self.sync_categories),
-                ("Carriers", self.sync_carriers),
+                #("Languages", self.sync_languages),
+                #("Countries", self.sync_countries),
+                #("Brands", self.sync_brands),
+                #("Categories", self.sync_categories),
+                ("Carriers", self.sync_carriers),  # REQUIRED: Must sync carriers before orders
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -303,8 +304,8 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                ("Products", self.sync_products),
-                ("Customers", self.sync_customers),
+                #("Products", self.sync_products),
+                #("Customers", self.sync_customers),
                 ("Addresses", self.sync_addresses),
             ]
             
@@ -694,7 +695,7 @@ class PrestaShopService(BaseEcommerceService):
     async def sync_carriers(self) -> List[Dict[str, Any]]:
         """Synchronize carriers from ps_carrier"""
         try:
-            from sqlalchemy import text
+            
             
             params={
                 'display': '[id,name]'
@@ -871,7 +872,8 @@ class PrestaShopService(BaseEcommerceService):
                         img_url = f"/media/product_images/{self.platform_id}/product_{product.get('id', 0)}.jpg"
                         
                     else:
-                        img_url = None
+                        # Se non c'è immagine, usa l'immagine di fallback
+                        img_url = "media/fallback/product_not_found.jpg"
                     # Extract price without tax (PrestaShop 'price' field is without tax)
                     price_without_tax = float(product.get('price', 0.0)) if product.get('price') else 0.0
                     
@@ -1363,7 +1365,7 @@ class PrestaShopService(BaseEcommerceService):
                 )
                 
                 # Controlla se l'immagine esiste già
-                import os
+
                 full_path = os.path.join(os.getcwd(), local_image_path)
                 if os.path.exists(full_path):
                     print(f"DEBUG: Image already exists for product {id_product}, skipping download")
@@ -1393,13 +1395,13 @@ class PrestaShopService(BaseEcommerceService):
                 else:
                     print(f"DEBUG: Failed to download image for product {id_product}, using fallback image")
                     # Usa l'immagine di fallback quando il download fallisce
-                    fallback_img_url = "/media/product_images/fallback/product_not_found.jpg"
+                    fallback_img_url = "media/fallback/product_not_found.jpg"
                     return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
                     
             except Exception as e:
                 print(f"DEBUG: Error downloading image for product {product_data.id_origin}: {str(e)}, using fallback image")
                 # Usa l'immagine di fallback quando c'è un errore
-                fallback_img_url = "/media/product_images/fallback/product_not_found.jpg"
+                fallback_img_url = "media/fallback/product_not_found.jpg"
                 return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
 
     async def _download_product_images(self, product_data_list: list, original_products_data: list):
@@ -1416,22 +1418,25 @@ class PrestaShopService(BaseEcommerceService):
             # Import repository e model per la query
             from src.repository.product_repository import ProductRepository
             from src.models.product import Product
-            from sqlalchemy import text
+            
             
             product_repo = ProductRepository(self.db)
             
-            # Estrai tutti gli id_origin dai prodotti da processare che hanno immagini
+            # Estrai tutti gli id_origin dai prodotti da processare (con e senza immagini)
             origin_ids = []
             products_with_images = []
+            products_without_images = []
             for i, product_data in enumerate(product_data_list):
                 original_product = original_products_data[i]
                 id_image_default = original_product.get('id_default_image', 0)
+                origin_ids.append(str(product_data.id_origin))
                 if id_image_default and int(id_image_default) > 0:
-                    origin_ids.append(str(product_data.id_origin))
                     products_with_images.append((product_data, id_image_default))
+                else:
+                    products_without_images.append(product_data)
             
             if not origin_ids:
-                print("DEBUG: No products with images to process")
+                print("DEBUG: No products to process")
                 return
             
             # Query unica per ottenere tutti i prodotti necessari
@@ -1510,6 +1515,20 @@ class PrestaShopService(BaseEcommerceService):
                     })
                 else:
                     failed_count += 1
+            
+            # Processa prodotti senza immagini per impostare il fallback se necessario
+            fallback_img_url = "media/fallback/product_not_found.jpg"
+            for product_data in products_without_images:
+                product_info = products_dict.get(str(product_data.id_origin))
+                if product_info:
+                    id_product, current_img_url = product_info
+                    # Se il prodotto non ha img_url o ha None, imposta il fallback
+                    if not current_img_url or current_img_url is None:
+                        updates_to_process.append({
+                            "img_url": fallback_img_url,
+                            "id_product": id_product
+                        })
+                        fallback_count += 1
             
             # Esegui batch update di tutti i prodotti
             if updates_to_process:
@@ -1614,8 +1633,6 @@ class PrestaShopService(BaseEcommerceService):
             
             # Bulk insert customers for better performance
             if customer_data_list:
-                from src.repository.customer_repository import CustomerRepository
-                from src.schemas.customer_schema import CustomerSchema
                 
                 customer_repo = CustomerRepository(self.db)
                 
@@ -1721,10 +1738,16 @@ class PrestaShopService(BaseEcommerceService):
                 state_name = all_states[state_id] if state_id != 0 else 'ND'
                 
                 # Get country ID from pre-fetched dictionary
-                country_origin_id = str(address.get('id_country', ''))
-                country_data = all_countries.get(country_origin_id, {})
-                country_id = int(country_data.get('id')) if country_data.get('id') else None
+                country_origin_id_raw = address.get('id_country')
+                # Converti a int, gestendo stringhe e numeri
+                try:
+                    country_origin_id = int(country_origin_id_raw) if country_origin_id_raw and str(country_origin_id_raw) != '0' else None
+                except (ValueError, TypeError):
+                    country_origin_id = None
                 
+                country_id = all_countries.get(country_origin_id) if country_origin_id else None
+                
+
                 # Get customer ID (still need to call this as it's not pre-fetched)
                 customer_origin = str(address.get('id_customer', ''))
                 customer_id = self._get_customer_id_by_origin(customer_origin)
@@ -1798,7 +1821,7 @@ class PrestaShopService(BaseEcommerceService):
         """Process all addresses and create SQL file for bulk insert"""
         try:
 
-            from sqlalchemy import text
+            
             from datetime import date
             # Pre-fetch all customer IDs to avoid repeated DB calls
             print("DEBUG: Pre-fetching customer IDs...")
@@ -1822,7 +1845,7 @@ class PrestaShopService(BaseEcommerceService):
                 from src.repository.customer_repository import CustomerRepository
                 from src.models.customer import Customer
                 customer_repo = CustomerRepository(self.db)
-                customers = customer_repo.session.query(Customer).filter(
+                customers = customer_repo._session.query(Customer).filter(
                     Customer.id_origin.in_(customer_origins)
                 ).all()
                 all_customers = {int(customer.id_origin): customer.id_customer for customer in customers}
@@ -1839,11 +1862,16 @@ class PrestaShopService(BaseEcommerceService):
                 
                 # Get country ID from pre-fetched dictionary
                 country_origin_id_raw = address.get('id_country')
-                country_origin_id = str(country_origin_id_raw) if country_origin_id_raw is not None else ''
-                country_data = all_countries.get(country_origin_id, {})
-                country_id_raw = country_data.get('id')
-                country_id = int(country_id_raw) if country_id_raw is not None and country_id_raw != '' else None
+                # Converti a int, gestendo stringhe e numeri
+                try:
+                    country_origin_id = int(country_origin_id_raw) if country_origin_id_raw and str(country_origin_id_raw) != '0' else None
+                except (ValueError, TypeError):
+                    country_origin_id = None
                 
+                country_id = all_countries.get(country_origin_id) if country_origin_id else None
+                
+
+
                 # Get customer ID from pre-fetched dictionary
                 customer_origin_raw = address.get('id_customer')
                 customer_origin = int(customer_origin_raw) if customer_origin_raw is not None and customer_origin_raw != '' else 0
@@ -2071,13 +2099,14 @@ class PrestaShopService(BaseEcommerceService):
             print("DEBUG: Starting orders synchronization...")
             
             # Final check: ensure all dependencies are synced successfully
-            from sqlalchemy import text
+            
             customers_count = self.db.execute(text("SELECT COUNT(*) FROM customers")).scalar()
             products_count = self.db.execute(text("SELECT COUNT(*) FROM products")).scalar()
             payments_count = self.db.execute(text("SELECT COUNT(*) FROM payments")).scalar()
             addresses_count = self.db.execute(text("SELECT COUNT(*) FROM addresses")).scalar()
+            carriers_count = self.db.execute(text("SELECT COUNT(*) FROM carriers")).scalar()
             
-            print(f"DEBUG: Dependencies check - Customers: {customers_count}, Products: {products_count}, Payments: {payments_count}, Addresses: {addresses_count}")
+            print(f"DEBUG: Dependencies check - Customers: {customers_count}, Products: {products_count}, Payments: {payments_count}, Addresses: {addresses_count}, Carriers: {carriers_count}")
             
             if customers_count == 0:
                 raise Exception("No customers found. Cannot sync orders without customers.")
@@ -2085,12 +2114,14 @@ class PrestaShopService(BaseEcommerceService):
                 raise Exception("No products found. Cannot sync orders without products.")
             if addresses_count == 0:
                 raise Exception("No addresses found. Cannot sync orders without addresses.")
+            if carriers_count == 0:
+                print("⚠️ WARNING: No carriers found in database. Orders will have id_carrier = 0. Please run sync_carriers first!")
             
             print("DEBUG: All dependencies verified. Proceeding with orders sync...")
             
             orders = await self._get_orders_data()  # Get fresh orders data
             
-            from sqlalchemy import text
+            
             existing_orders = self.db.execute(text("SELECT id_origin FROM orders WHERE id_origin IS NOT NULL")).fetchall()
             existing_order_origins = {str(row[0]) for row in existing_orders}
             
@@ -2357,8 +2388,6 @@ class PrestaShopService(BaseEcommerceService):
     async def _upsert_customer(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Upsert customer record"""
         try:
-            from src.repository.customer_repository import CustomerRepository
-            from src.schemas.customer_schema import CustomerSchema
             
             customer_repo = CustomerRepository(self.db)
             
@@ -2611,13 +2640,26 @@ class PrestaShopService(BaseEcommerceService):
             return 0
     
     def _get_default_tax_id(self) -> int:
-        """Get default tax ID"""
+        """
+        Get default tax ID using optimized query.
+        
+        Returns:
+            int: ID della tassa con is_default = 1, oppure 1 come fallback
+        """
         try:
-            from src.repository.tax_repository import TaxRepository
-            tax_repo = TaxRepository(self.db)
-            # Get first available tax or default to 1
-            tax = tax_repo.get_all()
-            return tax[0].id_tax if tax else 1
+            from src.models.tax import Tax
+            
+            # Query ottimizzata: seleziona solo id_tax dove is_default = 1
+            result = self.db.query(Tax.id_tax).filter(
+                Tax.is_default == 1
+            ).first()
+            
+            if result:
+                return result[0]  # result è una tupla (id_tax,)
+            else:
+                print("WARNING: No default tax found in database, using fallback id_tax=1")
+                return 1  # Default fallback
+                
         except Exception as e:
             print(f"DEBUG: Error getting default tax ID: {str(e)}")
             return 1  # Default fallback
@@ -2625,7 +2667,6 @@ class PrestaShopService(BaseEcommerceService):
     def _get_tax_by_country(self, id_country: int) -> float:
         """Get tax percentage by country ID"""
         try:
-            from src.repository.tax_repository import TaxRepository
             from src.models.tax import Tax
             
             # Check if id_country is valid
@@ -2718,7 +2759,7 @@ class PrestaShopService(BaseEcommerceService):
             
             # Execute bulk insert for order history
             if order_history_values:
-                from sqlalchemy import text
+                
                 
                 # Check for existing records to avoid duplicates
                 existing_combinations = set()
@@ -2785,6 +2826,7 @@ class PrestaShopService(BaseEcommerceService):
                         height=10.0,
                         width=10.0,
                         depth=10.0,
+                        length=10.0,
                         weight=1.0,
                         value=order_data['total_paid']
                     )
@@ -2829,23 +2871,25 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error fetching all states: {str(e)}")
             return {}
 
-    def _get_all_countries(self) -> Dict[str, Dict[str, str]]:
-        """Get all countries from our database and return as dictionary {id_origin: {id: db_id, name: country_name}}"""
+    def _get_all_countries(self) -> Dict[int, int]:
+        """
+        Get all countries from our database and return as dictionary {id_origin: id_country}.
+        
+        Uses optimized repository method that retrieves only necessary fields without limits.
+        
+        Returns:
+            Dict[int, int]: Mapping id_origin -> id_country
+        """
         try:
             from src.repository.country_repository import CountryRepository
             
-            all_countries = {}
             country_repo = CountryRepository(self.db)
             
-            # Get all countries from our database (limit=0 returns query.all())
-            countries = country_repo.get_all()  # This returns a list, not a query
+            # Use optimized method that retrieves ALL countries (no limit) with only required fields
+            all_countries = country_repo.get_all_id_mappings()
             
-            for country in countries:
-                country_id_origin = str(country.id_origin) if country.id_origin else None
-                if country_id_origin:
-                    all_countries[country_id_origin] = {
-                        'id': str(country.id_country)
-                    }
+            print(f"DEBUG: Loaded {len(all_countries)} countries from database for address mapping")
+
                 
             return all_countries
         except Exception as e:
@@ -2856,7 +2900,7 @@ class PrestaShopService(BaseEcommerceService):
         """Disable foreign key checks temporarily"""
         try:
             # Use raw SQL to disable foreign key checks
-            from sqlalchemy import text
+            
             result = self.db.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
             
             # Verify that FK checks are disabled
@@ -3165,7 +3209,7 @@ class PrestaShopService(BaseEcommerceService):
         max_consecutive_errors = 5
         
         date_range_filter = self._get_date_range_filter()
-        six_months_ago = self._get_six_months_ago_date()
+        one_year_ago = self._get_one_year_ago_date()
         
         while True:
             try:
@@ -3175,7 +3219,7 @@ class PrestaShopService(BaseEcommerceService):
                 }
 
                 # Always use date filter for orders sync to avoid old data
-                self.new_elements = True # DEBUG, DA TOGLIERE
+                self.new_elements = False # DEBUG, DA TOGLIERE
                 if self.new_elements:
                     last_id = self.db.execute(text("SELECT MAX(id_origin) FROM orders WHERE id_origin IS NOT NULL")).scalar()
                     last_id = last_id if last_id else 0
@@ -3189,7 +3233,7 @@ class PrestaShopService(BaseEcommerceService):
                     # Print complete URL with parameters
                     url_params = '&'.join([f"{k}={v}" for k, v in params.items()])
                     complete_url = f"{self.base_url}/api/orders?{url_params}&output_format=JSON"
-                    print(f"🔗 PRESTASHOP ORDERS URL: {complete_url}")
+                    print(f"PRESTASHOP ORDERS URL: {complete_url}")
                     
                     response = await asyncio.wait_for(
                         self._make_request_with_rate_limit('/api/orders', params),
@@ -3252,7 +3296,7 @@ class PrestaShopService(BaseEcommerceService):
     async def _process_all_orders_and_create_sql(self, all_orders: List[Dict]) -> int:
         """Process all orders and create SQL file for bulk insert"""
         try:
-            from sqlalchemy import text
+            
             from datetime import date
             from src.repository.shipping_repository import ShippingRepository
             from src.schemas.shipping_schema import ShippingSchema
@@ -3281,6 +3325,14 @@ class PrestaShopService(BaseEcommerceService):
                 invoice_address = order.get('id_address_invoice',0)
                 for addr_id in [delivery_address, invoice_address]:
                     address_origins.add(int(addr_id))
+                
+                # Collect carrier origins
+                carrier_origin = order.get('id_carrier')
+                if carrier_origin and carrier_origin != '0':
+                    try:
+                        carrier_origins.add(int(carrier_origin))
+                    except (ValueError, TypeError):
+                        pass
                 
                 # Collect product origins from order details (if available)
                 order_details = order.get('associations', {}).get('order_rows', {})
@@ -3334,12 +3386,21 @@ class PrestaShopService(BaseEcommerceService):
             
             # Pre-fetch carrier mappings (id_carrier PrestaShop = id_origin Carrier)
             all_carriers = {}
+            print(f"🚚 Carrier origins found in orders: {sorted(list(carrier_origins)) if carrier_origins else 'NONE'}")
             if carrier_origins:
                 placeholders = ','.join([':id_origin_' + str(i) for i in range(len(carrier_origins))])
                 params = {f'id_origin_{i}': origin for i, origin in enumerate(carrier_origins)}
                 query = text(f"SELECT id_carrier, id_origin FROM carriers WHERE id_origin IN ({placeholders})")
                 result = self.db.execute(query, params)
                 all_carriers = {int(row.id_origin): row.id_carrier for row in result}
+                print(f"🚚 Pre-fetched {len(all_carriers)} carrier mappings: {all_carriers}")
+                
+                # Check for missing carriers
+                missing_carriers = carrier_origins - set(all_carriers.keys())
+                if missing_carriers:
+                    print(f"⚠️ {len(missing_carriers)} carriers NOT in DB: {sorted(list(missing_carriers))}")
+            else:
+                print("⚠️ No carrier origins collected from orders!")
             
             # Pre-fetch all taxes using raw SQL
             all_taxes = {}
@@ -3358,7 +3419,7 @@ class PrestaShopService(BaseEcommerceService):
                 params = {f'id_origin_{i}': origin for i, origin in enumerate(product_origins)}
                 query = text(f"SELECT id_origin, weight FROM products WHERE id_origin IN ({placeholders})")
                 result = self.db.execute(query, params)
-                product_weight_mapping = {int(row.id_origin): row.weight for row in result}
+                product_weight_mapping = {int(row.id_origin): float(row.weight) if row.weight else 0.0 for row in result}
                         
             # Pass 2: Process orders using pre-fetched mappings (fast in-memory lookups)
             valid_order_data = []
@@ -3424,11 +3485,12 @@ class PrestaShopService(BaseEcommerceService):
                     # Map carrier (id_carrier PrestaShop = id_origin Carrier)
                     carrier_id = 0  # Default
                     carrier_origin = safe_int(order.get('id_carrier', 0))
-                    if carrier_origin and carrier_origin in all_carriers:
-                        carrier_id = all_carriers[carrier_origin]
-                    # Note: If carrier doesn't exist, it will be created during sync_carriers()
-                    # and will be available in subsequent syncs. For now, use default 0.
-                    
+                    if carrier_origin and carrier_origin > 0:
+                        if carrier_origin in all_carriers:
+                            carrier_id = all_carriers[carrier_origin]
+                        else:
+                            print(f"⚠️ Order {order_id_origin}: Carrier origin {carrier_origin} NOT found in DB")
+
                     # Prepare complete order data
                     order_data = {
                         'id_origin': order_id_origin,
@@ -3878,7 +3940,7 @@ class PrestaShopService(BaseEcommerceService):
         """
         try:
             from src.repository.carrier_assignment_repository import CarrierAssignmentRepository
-            from sqlalchemy import text
+            
             
             # Inizializza la repository
             carrier_assignment_repo = CarrierAssignmentRepository(self.db)
@@ -3920,8 +3982,8 @@ class PrestaShopService(BaseEcommerceService):
             if assignment:
                 return assignment.id_carrier_api
             else:
-                return 1  # Default carrier API
+                return None  # Nessuna assegnazione trovata
                 
         except Exception as e:
             print(f"DEBUG: Error in carrier assignment logic: {str(e)}")
-            return 1  # Default carrier API in case of error
+            return None  # Nessuna assegnazione in caso di errore

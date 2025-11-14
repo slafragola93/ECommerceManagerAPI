@@ -44,7 +44,7 @@ class DDTService:
         Args:
             id_order: ID dell'ordine
             user_id: ID dell'utente
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
             
         Returns:
             DDTGenerateResponseSchema: Risposta con il DDT generato
@@ -269,7 +269,7 @@ class DDTService:
         Args:
             id_order_detail: ID del dettaglio
             detail_data: Dati da aggiornare
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
             
         Returns:
             DDTDetailSchema: Dettaglio aggiornato
@@ -309,7 +309,7 @@ class DDTService:
         
         Args:
             id_order_detail: ID del dettaglio
-            user: Contesto utente per eventi (tenant, user_id)
+            user: Contesto utente per eventi (user_id)
             
         Returns:
             bool: True se eliminato con successo

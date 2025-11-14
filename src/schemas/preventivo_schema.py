@@ -1,3 +1,4 @@
+from operator import ge
 from typing import Optional, List, Union
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
@@ -82,6 +83,8 @@ class ArticoloPreventivoSchema(BaseModel):
     reduction_percent: Optional[float] = Field(0.0, ge=0)  # Sconto percentuale
     reduction_amount: Optional[float] = Field(0.0, ge=0)  # Sconto importo
     note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
+    img_url: Optional[str] = None  # Image URL from product
+    rda: Optional[str] = Field(None, max_length=10, description="RDA")
     
     @validator('product_name', 'product_reference', 'product_price', 'product_qty')
     def validate_fields_when_no_product(cls, v, values):
@@ -106,10 +109,10 @@ class PreventivoCreateSchema(BaseModel):
     """Schema per creazione preventivo"""
     customer: CustomerField = Field(..., description="Customer (ID o oggetto completo)")
     address_delivery: AddressField = Field(..., description="Address delivery (ID o oggetto completo) - obbligatorio")
-    address_invoice: Optional[AddressField] = Field(None, description="Address invoice (ID o oggetto completo) - se non specificato usa address_delivery")
-    sectional: Optional[SectionalField] = Field(None, description="Sezionale (ID o oggetto completo) - se esiste un sectional con lo stesso nome viene riutilizzato")
-    shipping: Optional[ShippingField] = Field(None, description="Dati spedizione (opzionale)")
-    id_payment: Optional[int] = Field(None, gt=0, description="ID metodo di pagamento (opzionale)")
+    address_invoice: AddressField = Field(False, description="Address invoice (ID o oggetto completo) - se non specificato usa address_delivery")
+    sectional: SectionalField = Field(..., description="Sezionale (ID o oggetto completo) - se esiste un sectional con lo stesso nome viene riutilizzato")
+    shipping: ShippingField = Field(..., escription="Dati spedizione (opzionale)")
+    id_payment: int = Field(..., gt=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = Field(False, description="Se richiedere fattura")
     note: Optional[str] = None
     total_discount: Optional[float] = Field(0.0, ge=0, description="Sconto totale applicato al documento")
@@ -134,21 +137,103 @@ class PreventivoCreateSchema(BaseModel):
         }
 
 
-class PreventivoUpdateSchema(BaseModel):
-    """Schema per modifica preventivo"""
-    # Campi che possono essere modificati
-    id_order: Optional[int] = Field(None, gt=0)
+class CustomerUpdateField(BaseModel):
+    """Schema per update customer - id null = crea, id presente = aggiorna"""
+    id: Optional[int] = Field(None, description="ID customer esistente (null per creare nuovo)")
+    firstname: Optional[str] = None
+    lastname: Optional[str] = None
+    email: Optional[str] = None
+    id_lang: Optional[int] = None
+    id_origin: Optional[int] = None
+    company: Optional[str] = None
+
+
+class AddressUpdateField(BaseModel):
+    """Schema per update address - id null = crea, id presente = aggiorna"""
+    id: Optional[int] = Field(None, description="ID address esistente (null per creare nuovo)")
+    firstname: Optional[str] = None
+    lastname: Optional[str] = None
+    address1: Optional[str] = None
+    address2: Optional[str] = None
+    city: Optional[str] = None
+    postcode: Optional[str] = None
+    state: Optional[str] = None
+    phone: Optional[str] = None
+    mobile_phone: Optional[str] = None
+    id_country: Optional[int] = None
+    company: Optional[str] = None
+    vat: Optional[str] = None
+    dni: Optional[str] = None
+    pec: Optional[str] = None
+    sdi: Optional[str] = None
+    ipa: Optional[str] = None
+    id_origin: Optional[int] = None
+    id_platform: Optional[int] = None
+
+
+class SectionalUpdateField(BaseModel):
+    """Schema per update sectional - id null = crea, id presente = aggiorna"""
+    id: Optional[int] = Field(None, description="ID sectional esistente (null per creare nuovo)")
+    name: Optional[str] = None
+
+
+class ShippingUpdateField(BaseModel):
+    """Schema per update shipping - id null = crea, id presente = aggiorna"""
+    id: Optional[int] = Field(None, description="ID shipping esistente (null per creare nuovo)")
+    price_tax_excl: Optional[float] = Field(None, ge=0)
+    price_tax_incl: Optional[float] = Field(None, ge=0)
+    id_carrier_api: Optional[int] = Field(None, gt=0)
     id_tax: Optional[int] = Field(None, gt=0)
-    id_address_delivery: Optional[int] = Field(None, gt=0)
-    id_address_invoice: Optional[int] = Field(None, gt=0)
-    id_customer: Optional[int] = Field(None, gt=0)
-    id_sectional: Optional[int] = Field(None, gt=0)
-    id_shipping: Optional[int] = Field(None, gt=0)
-    id_payment: Optional[int] = Field(None, gt=0, description="ID metodo di pagamento (opzionale)")
+    shipping_message: Optional[str] = Field(None, max_length=200)
+
+
+class ArticoloPreventivoUpdateItemSchema(BaseModel):
+    """Schema per articolo in update preventivo - id_order_detail null = crea, presente = aggiorna"""
+    id_order_detail: Optional[int] = Field(None, description="ID articolo esistente (null per creare nuovo)")
+    id_product: Optional[int] = None
+    product_name: Optional[str] = Field(None, max_length=100)
+    product_reference: Optional[str] = Field(None, max_length=100)
+    product_price: Optional[float] = Field(None, ge=0)
+    product_weight: Optional[float] = Field(None, ge=0)
+    product_qty: Optional[int] = Field(None, gt=0)
+    id_tax: Optional[int] = Field(None, gt=0)
+    reduction_percent: Optional[float] = Field(None, ge=0)
+    reduction_amount: Optional[float] = Field(None, ge=0)
+    note: Optional[str] = Field(None, max_length=200)
+    rda: Optional[str] = Field(None, max_length=10)
+
+
+class OrderPackageUpdateItemSchema(BaseModel):
+    """Schema per package in update preventivo - id_order_package null = crea, presente = aggiorna"""
+    id_order_package: Optional[int] = Field(None, description="ID package esistente (null per creare nuovo)")
+    height: Optional[float] = Field(None, ge=0)
+    width: Optional[float] = Field(None, ge=0)
+    depth: Optional[float] = Field(None, ge=0)
+    length: Optional[float] = Field(None, ge=0)
+    weight: Optional[float] = Field(None, ge=0)
+    value: Optional[float] = Field(None, ge=0)
+
+
+class PreventivoUpdateSchema(BaseModel):
+    """Schema per modifica preventivo con supporto entità nidificate"""
+    # Campi semplici esistenti
+    id_order: Optional[int] = Field(None, ge=0)
+    id_payment: Optional[int] = Field(None, ge=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = None
     note: Optional[str] = Field(None, max_length=200)
     total_discount: Optional[float] = Field(None, ge=0, description="Sconto totale applicato al documento")
     apply_discount_to_tax_included: Optional[bool] = Field(None, description="Se True, applica lo sconto al totale con IVA, altrimenti al totale senza IVA")
+    
+    # NUOVI: Entità complesse con struttura unificata (id + campi)
+    customer: Optional[CustomerUpdateField] = None
+    address_delivery: Optional[AddressUpdateField] = None
+    address_invoice: Optional[AddressUpdateField] = None
+    sectional: Optional[SectionalUpdateField] = None
+    shipping: Optional[ShippingUpdateField] = None
+    
+    # NUOVI: Liste con smart merge
+    articoli: Optional[List[ArticoloPreventivoUpdateItemSchema]] = None
+    order_packages: Optional[List[OrderPackageUpdateItemSchema]] = None
     
     # Campi NON modificabili (esclusi dallo schema):
     # - document_number (generato automaticamente)
@@ -173,6 +258,8 @@ class ArticoloPreventivoUpdateSchema(BaseModel):
 
 
 class PreventivoShipmentSchema(BaseModel):
+    id_shipping: int
+    id_carrier_api: int
     tax_rate: float
     weight: float
     price_tax_incl: float

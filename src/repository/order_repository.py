@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import HTTPException
 from sqlalchemy import desc, func, select
@@ -359,6 +359,15 @@ class OrderRepository:
         )
         self.order_package_repository.create(order_package_data.model_dump())
         
+        # Aggiorna peso spedizione automaticamente (solo se ordine in stato 1)
+        if created_order_details:
+            from src.services.routers.order_document_service import OrderDocumentService
+            order_doc_service = OrderDocumentService(self.session)
+            order_doc_service.update_shipping_weight_from_articles(
+                id_order=order.id_order,
+                check_order_state=True
+            )
+        
         return order.id_order
 
     # def update_order_status(self, id_order: int, id_order_state: int):
@@ -451,6 +460,61 @@ class OrderRepository:
         self.session.delete(order)
         self.session.commit()
         return True
+    
+    def bulk_create_csv_import(self, data_list: List, id_platform: int = 1, batch_size: int = 1000) -> int:
+        """
+        Bulk insert orders da CSV import con gestione id_platform.
+        
+        Args:
+            data_list: Lista OrderSchema da inserire
+            id_platform: ID platform per uniqueness check
+            batch_size: Dimensione batch (default: 1000)
+            
+        Returns:
+            Numero orders inseriti
+        """
+        if not data_list:
+            return 0
+        
+        try:
+            from sqlalchemy import and_, text
+            from src.models.order import Order
+            
+            # Get existing (id_origin, id_platform) pairs
+            origin_ids = [data.id_origin for data in data_list if hasattr(data, 'id_origin') and data.id_origin]
+            
+            if origin_ids:
+                placeholders = ','.join([f':id_{i}' for i in range(len(origin_ids))])
+                params = {f'id_{i}': origin for i, origin in enumerate(origin_ids)}
+                params['id_platform'] = id_platform
+                
+                query = text(f"SELECT id_origin FROM orders WHERE id_origin IN ({placeholders}) AND id_platform = :id_platform")
+                result = self.session.execute(query, params)
+                existing_origins = {row[0] for row in result}
+            else:
+                existing_origins = set()
+            
+            # Filter new orders
+            new_orders_data = [data for data in data_list if hasattr(data, 'id_origin') and data.id_origin not in existing_origins]
+            
+            if not new_orders_data:
+                return 0
+            
+            # Batch insert
+            total_inserted = 0
+            for i in range(0, len(new_orders_data), batch_size):
+                batch = new_orders_data[i:i + batch_size]
+                orders = [Order(**o.model_dump() if hasattr(o, 'model_dump') else o) for o in batch]
+                self.session.bulk_save_objects(orders)
+                total_inserted += len(orders)
+            
+            self.session.commit()
+            return total_inserted
+            
+        except Exception as e:
+            self.session.rollback()
+            from src.core.exceptions import InfrastructureException
+            raise InfrastructureException(f"Database error bulk creating orders: {str(e)}")
 
     def formatted_output(self, order: Order, show_details: bool = False):
         """

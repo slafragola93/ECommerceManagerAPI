@@ -9,6 +9,7 @@ from src.repository.interfaces.payment_repository_interface import IPaymentRepos
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.services import QueryUtils
+from src.schemas.payment_schema import PaymentSchema
 
 class PaymentRepository(BaseRepository[Payment, int], IPaymentRepository):
     """Payment Repository rifattorizzato seguendo SOLID"""
@@ -46,3 +47,48 @@ class PaymentRepository(BaseRepository[Payment, int], IPaymentRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving payment by name: {str(e)}")
+    
+    def bulk_create_csv_import(self, data_list: List[PaymentSchema], batch_size: int = 1000) -> int:
+        """
+        Bulk insert payments da CSV import.
+        
+        Payments non hanno id_origin, usa name come unique key.
+        
+        Args:
+            data_list: Lista PaymentSchema da inserire
+            batch_size: Dimensione batch (default: 1000)
+            
+        Returns:
+            Numero payments inseriti
+        """
+        if not data_list:
+            return 0
+        
+        try:
+            # Get existing names to avoid duplicates
+            names = [data.name.lower() for data in data_list if data.name]
+            existing_payments = self._session.query(func.lower(Payment.name)).filter(
+                func.lower(Payment.name).in_(names)
+            ).all()
+            existing_names = {p[0] for p in existing_payments}
+            
+            # Filter new payments
+            new_payments_data = [data for data in data_list if data.name.lower() not in existing_names]
+            
+            if not new_payments_data:
+                return 0
+            
+            # Batch insert
+            total_inserted = 0
+            for i in range(0, len(new_payments_data), batch_size):
+                batch = new_payments_data[i:i + batch_size]
+                payments = [Payment(**p.model_dump()) for p in batch]
+                self._session.bulk_save_objects(payments)
+                total_inserted += len(payments)
+            
+            self._session.commit()
+            return total_inserted
+            
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error bulk creating payments: {str(e)}")

@@ -10,6 +10,8 @@ plugin_directories:
 - src\events\plugins
 - src\events\plugins\customs
 plugins:
+  as400_validate_order_megawatt:
+    enabled: false
   email_notification:
     enabled: false
 routes:
