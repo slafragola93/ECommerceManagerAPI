@@ -21,6 +21,7 @@ from src.schemas.order_schema import (
 )
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
+from src.events.extractors import extract_order_created_data
 from src.services.core.tool import calculate_order_totals
 import logging
 
@@ -178,6 +179,33 @@ class OrderService(IOrderService):
     
     def __init__(self, order_repository: OrderRepository):
         self._order_repository = order_repository
+    
+    @emit_event_on_success(
+        event_type=EventType.ORDER_CREATED,
+        data_extractor=extract_order_created_data,
+        source="order_service.create_order"
+    )
+    async def create_order(self, order_data, user: dict = None):
+        """
+        Crea un nuovo ordine ed emette evento ORDER_CREATED.
+        
+        Args:
+            order_data: OrderSchema con dati ordine
+            user: Contesto utente per eventi
+            
+        Returns:
+            Order creato
+        """
+        # Delega al repository per creazione (restituisce id_order)
+        order_id = self._order_repository.create(order_data)
+        
+        # Ricalcola totali
+        self.recalculate_totals_for_order(order_id)
+        
+        # Recupera l'ordine completo per return ed evento
+        order = self._order_repository.get_by_id(order_id)
+        
+        return order
 
     def recalculate_totals_for_order(self, order_id: int) -> None:
         """Ricalcola e salva peso, imponibile e totale ivato dell'ordine."""

@@ -438,6 +438,7 @@ async def update_preventivo(
     - Peso totale aggiornato automaticamente
     
     **Campi NON modificabili** (calcolati/immutabili):
+    - `id_order` (gestito automaticamente durante conversione)
     - `document_number`, `type_document`, `total_weight`, `total_price_with_tax`, `date_add`
     """
     service = get_preventivo_service(db)

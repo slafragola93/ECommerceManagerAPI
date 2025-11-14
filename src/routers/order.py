@@ -157,7 +157,6 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     return {"orders": results, "total": total_count, "page": page, "limit": limit}
 
 
-
 @router.get("/{order_id}", status_code=status.HTTP_200_OK, response_model=OrderIdSchema)
 @check_authentication  
 @authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])  
@@ -208,17 +207,34 @@ async def get_order_history(
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Ordine creato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
-async def create_order(order: OrderSchema,
-                       user: dict = Depends(get_current_user),
-                       or_repo: OrderRepository = Depends(get_repository)):
+async def create_order(
+    order: OrderSchema,
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service)
+):
     """
     Crea un nuovo ordine con i dati forniti.
+    
+    **Features**:
+    - Crea ordine nel database
+    - Emette evento ORDER_CREATED
+    - Stock plugin decrementa automaticamente product.quantity
+    - Calcola totali automaticamente
 
-    Parametri:
-    - `user`: Dipendenza dell'utente autenticato.
-    - `order`: Schema dell'ordine da creare.
+    **Parametri**:
+    - `user`: Utente autenticato
+    - `order`: Schema dell'ordine con customer, addresses, shipping, order_details
+    
+    **Eventi emessi**: ORDER_CREATED (attiva plugin stock e altri futuri plugin)
     """
-    return or_repo.create(data=order)
+    created_order = await order_service.create_order(order, user=user)
+    
+    return {
+        "message": "Ordine creato con successo",
+        "id_order": created_order.id_order,
+        "reference": created_order.reference,
+        "total_paid": float(created_order.total_paid or 0)
+    }
 
 
 @router.put("/{order_id}", status_code=status.HTTP_200_OK, response_description="Ordine aggiornato correttamente")

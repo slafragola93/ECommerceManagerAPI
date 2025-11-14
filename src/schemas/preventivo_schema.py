@@ -4,9 +4,7 @@ from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from .customer_schema import CustomerSchema, CustomerResponseSchema
 from .address_schema import AddressResponseSchema, AddressSchema
-from .shipping_schema import ShippingSchema
 from .sectional_schema import SectionalSchema, SectionalResponseSchema
-from .shipping_schema import ShippingResponseSchema
 from .order_package_schema import OrderPackageResponseSchema
 
 
@@ -217,7 +215,6 @@ class OrderPackageUpdateItemSchema(BaseModel):
 class PreventivoUpdateSchema(BaseModel):
     """Schema per modifica preventivo con supporto entità nidificate"""
     # Campi semplici esistenti
-    id_order: Optional[int] = Field(None, ge=0)
     id_payment: Optional[int] = Field(None, ge=0, description="ID metodo di pagamento (opzionale)")
     is_invoice_requested: Optional[bool] = None
     note: Optional[str] = Field(None, max_length=200)
@@ -236,6 +233,7 @@ class PreventivoUpdateSchema(BaseModel):
     order_packages: Optional[List[OrderPackageUpdateItemSchema]] = None
     
     # Campi NON modificabili (esclusi dallo schema):
+    # - id_order (gestito automaticamente durante la conversione)
     # - document_number (generato automaticamente)
     # - type_document (sempre "preventivo")
     # - total_weight (calcolato automaticamente)

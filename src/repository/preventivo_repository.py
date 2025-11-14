@@ -277,8 +277,6 @@ class PreventivoRepository:
             preventivo.id_shipping = shipping_id
         
         # 7. Aggiorna campi semplici (codice esistente)
-        if preventivo_data.id_order is not None:
-            preventivo.id_order = preventivo_data.id_order
         if preventivo_data.id_payment is not None:
             preventivo.id_payment = preventivo_data.id_payment
         if preventivo_data.is_invoice_requested is not None:

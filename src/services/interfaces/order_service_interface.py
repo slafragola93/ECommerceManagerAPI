@@ -17,6 +17,11 @@ class IOrderService(IBaseService):
     """Interface per il servizio order"""
     
     @abstractmethod
+    async def create_order(self, order_data, user: dict = None):
+        """Crea un nuovo ordine ed emette evento ORDER_CREATED"""
+        pass
+    
+    @abstractmethod
     async def update_order_status(
         self, 
         order_id: int,

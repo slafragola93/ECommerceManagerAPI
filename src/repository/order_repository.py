@@ -335,7 +335,7 @@ class OrderRepository:
                 if order.id_shipping:
                     shipping = self.shipping_repository.get_by_id(order.id_shipping)
                     if shipping and shipping.price_tax_incl:
-                        shipping_cost_with_tax = shipping.price_tax_incl
+                        shipping_cost_with_tax = float(shipping.price_tax_incl)
                 
                 total_with_shipping = totals['total_price_with_tax'] + shipping_cost_with_tax
                 

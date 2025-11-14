@@ -14,5 +14,8 @@ plugins:
     enabled: false
   email_notification:
     enabled: false
+  stock_auto_update:
+    enabled: true
 routes:
   order_status_changed: {}
+  order_created: {}

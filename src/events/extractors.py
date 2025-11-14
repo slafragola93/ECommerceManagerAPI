@@ -558,3 +558,72 @@ def extract_bulk_preventivo_deleted_data(*args, result=None, **kwargs) -> Option
         logger.error(f"Errore estrazione dati bulk preventivo deleted: {e}")
         return None
 
+
+def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+    """
+    Estrae dati completi per ORDER_CREATED.
+    
+    Include order_details per plugin stock e altri futuri plugin.
+    Query ottimizzata per performance - solo campi necessari.
+    
+    Args:
+        result: Order dal service
+        kwargs: user context
+    
+    Returns:
+        Dict con dati ordine + details
+    """
+    try:
+        if not result:
+            return None
+        
+        order = result
+        
+        # Query SQL ottimizzata: SOLO campi necessari da order_details
+        from src.database import get_db
+        from sqlalchemy import text
+        
+        db = next(get_db())
+        
+        try:
+            stmt = text("""
+                SELECT id_order_detail, id_product, product_name, 
+                       product_qty, product_price, id_tax
+                FROM order_details 
+                WHERE id_order = :id_order
+            """)
+            result_details = db.execute(stmt, {"id_order": order.id_order})
+            
+            order_details_data = [
+                {
+                    'id_order_detail': row.id_order_detail,
+                    'id_product': row.id_product,
+                    'product_name': row.product_name,
+                    'product_qty': row.product_qty,
+                    'product_price': float(row.product_price or 0),
+                    'id_tax': row.id_tax
+                }
+                for row in result_details
+            ]
+        finally:
+            db.close()
+        
+        return {
+            "id_order": order.id_order,
+            "id_origin": order.id_origin,
+            "id_customer": order.id_customer,
+            "id_address_delivery": order.id_address_delivery    ,
+            "id_address_invoice": order.id_address_invoice,
+            "id_payment": order.id_payment,
+            "id_carrier": order.id_carrier,
+            "id_order_state": order.id_order_state,
+            "reference": order.reference,
+            "total_paid": order.total_paid,
+            "total_weight": order.total_weight,
+            "order_details": order_details_data,
+            "created_by": kwargs.get('user', {}).get('id')
+        }
+    except Exception as e:
+        logger.error(f"Errore estrazione dati order created: {e}")
+        return None
+
