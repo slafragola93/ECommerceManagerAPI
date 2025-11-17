@@ -9,7 +9,6 @@ from src.models.address import Address
 from src.models.tax import Tax
 from src.models.shipping import Shipping
 from src.models.sectional import Sectional
-from src.services.core.tool import calculate_amount_with_percentage
 from src.models.product import Product
 from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.preventivo_schema import (

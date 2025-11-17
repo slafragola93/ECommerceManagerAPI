@@ -627,3 +627,144 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
         logger.error(f"Errore estrazione dati order created: {e}")
         return None
 
+
+def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+    """
+    Estrae dati completi per evento SHIPPING_STATUS_CHANGED.
+    
+    Query ottimizzata per recuperare solo id_order e id_platform necessari.
+    
+    Args:
+        result: Shipping aggiornato o dict con old_state_id, new_state_id, id_shipping
+        kwargs: Contiene 'user' per contesto
+    
+    Returns:
+        Dict con id_shipping, id_order, old_state_id, new_state_id, id_platform
+    """
+    try:
+        if not result:
+            return None
+        
+        # Gestisce sia Shipping object che dict
+        if isinstance(result, dict):
+            id_shipping = result.get("id_shipping")
+            old_state_id = result.get("old_state_id")
+            new_state_id = result.get("new_state_id")
+        else:
+            # Shipping object
+            shipping = result
+            id_shipping = shipping.id_shipping
+            old_state_id = kwargs.get("old_state_id")
+            new_state_id = shipping.id_shipping_state
+        
+        if not id_shipping or not old_state_id or not new_state_id:
+            return None
+        
+        # Query SQL ottimizzata: SOLO id_order e id_platform
+        from src.database import get_db
+        from sqlalchemy import text
+        
+        db = next(get_db())
+        
+        try:
+            stmt = text("""
+                SELECT o.id_order, o.id_platform
+                FROM orders o
+                WHERE o.id_shipping = :id_shipping
+                LIMIT 1
+            """)
+            result_order = db.execute(stmt, {"id_shipping": id_shipping}).first()
+            
+            if not result_order:
+                logger.warning(f"Nessun ordine trovato per shipping {id_shipping}")
+                return None
+            
+            id_order = result_order.id_order
+            id_platform = result_order.id_platform
+        finally:
+            db.close()
+        
+        return {
+            "id_shipping": id_shipping,
+            "id_order": id_order,
+            "old_state_id": old_state_id,
+            "new_state_id": new_state_id,
+            "id_platform": id_platform,
+            "updated_by": kwargs.get('user', {}).get('id')
+        }
+    except Exception as e:
+        logger.error(f"Errore estrazione dati shipping status changed: {e}")
+        return None
+
+
+def extract_shipping_status_from_order_update(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+    """
+    Estrae dati per SHIPPING_STATUS_CHANGED quando shipping viene modificato tramite order update.
+    
+    Verifica se id_shipping è presente nell'order update e se lo shipping ha cambiato stato.
+    
+    Args:
+        result: Dict da update_order con order_id
+        kwargs: Contiene order_schema, old_shipping_state
+    
+    Returns:
+        Dict per evento SHIPPING_STATUS_CHANGED o None se non applicabile
+    """
+    try:
+        if not isinstance(result, dict):
+            return None
+        
+        order_id = result.get("order_id")
+        if not order_id:
+            return None
+        
+        # Verifica se shipping è stato modificato
+        order_schema = kwargs.get("order_schema")
+        if not order_schema or not hasattr(order_schema, 'id_shipping'):
+            return None
+        
+        id_shipping = getattr(order_schema, 'id_shipping', None)
+        if not id_shipping:
+            return None
+        
+        # Recupera shipping e verifica cambio stato
+        from src.database import get_db
+        from sqlalchemy import text
+        
+        db = next(get_db())
+        
+        try:
+            # Recupera shipping con stato attuale
+            stmt = text("""
+                SELECT s.id_shipping_state, o.id_order, o.id_platform
+                FROM shipments s
+                INNER JOIN orders o ON o.id_shipping = s.id_shipping
+                WHERE s.id_shipping = :id_shipping AND o.id_order = :order_id
+                LIMIT 1
+            """)
+            result_shipping = db.execute(stmt, {"id_shipping": id_shipping, "order_id": order_id}).first()
+            
+            if not result_shipping:
+                return None
+            
+            new_state_id = result_shipping.id_shipping_state
+            old_state_id = kwargs.get("old_shipping_state_id")
+            
+            # Se stato non è cambiato, non emettere evento
+            if not old_state_id or old_state_id == new_state_id:
+                return None
+            
+            return {
+                "id_shipping": id_shipping,
+                "id_order": result_shipping.id_order,
+                "old_state_id": old_state_id,
+                "new_state_id": new_state_id,
+                "id_platform": result_shipping.id_platform,
+                "updated_by": kwargs.get('user', {}).get('id')
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Errore estrazione dati shipping status from order update: {e}")
+        return None
+

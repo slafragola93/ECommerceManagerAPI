@@ -16,6 +16,9 @@ plugins:
     enabled: false
   stock_auto_update:
     enabled: true
+  platform_state_sync:
+    enabled: true
 routes:
   order_status_changed: {}
   order_created: {}
+  shipping_status_changed: {}

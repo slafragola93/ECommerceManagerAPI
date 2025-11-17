@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Funzioni helper per estrazione dati eventi
 def _extract_order_status_data(*args, result=None, **kwargs):
-    """Estrae i dati dell'evento di cambio stato ordine."""
+    """Estrae i dati dell'evento di cambio stato ordine con id_platform."""
     if not isinstance(result, dict) or result.get("old_state_id") is None:
         return None
     
@@ -40,10 +40,35 @@ def _extract_order_status_data(*args, result=None, **kwargs):
     # Prendi new_state_id da result (può essere "new_status_id" o "new_state_id")
     new_state_id = result.get("new_state_id") or result.get("new_status_id") or kwargs.get("new_status_id")
     
+    if not order_id:
+        return None
+    
+    # Query SQL ottimizzata: SOLO id_platform
+    from src.database import get_db
+    from sqlalchemy import text
+    
+    db = next(get_db())
+    try:
+        stmt = text("""
+            SELECT id_platform
+            FROM orders
+            WHERE id_order = :order_id
+            LIMIT 1
+        """)
+        result_order = db.execute(stmt, {"order_id": order_id}).first()
+        
+        if not result_order:
+            return None
+        
+        id_platform = result_order.id_platform
+    finally:
+        db.close()
+    
     return {
         "order_id": order_id,
         "old_state_id": result.get("old_state_id"),
         "new_state_id": new_state_id,
+        "id_platform": id_platform,
     }
 
 
@@ -53,7 +78,7 @@ def _should_emit_order_status_event(*args, result=None, **kwargs):
 
 
 def _extract_order_update_status_data(*args, result=None, **kwargs):
-    """Estrae i dati dell'evento di cambio stato da update_order."""
+    """Estrae i dati dell'evento di cambio stato da update_order con id_platform."""
     if not isinstance(result, dict):
         return None
     
@@ -63,11 +88,33 @@ def _extract_order_update_status_data(*args, result=None, **kwargs):
     
     if old_state_id is None or new_state_id is None or order_id is None:
         return None
+    
+    # Query SQL ottimizzata: SOLO id_platform
+    from src.database import get_db
+    from sqlalchemy import text
+    
+    db = next(get_db())
+    try:
+        stmt = text("""
+            SELECT id_platform
+            FROM orders
+            WHERE id_order = :order_id
+            LIMIT 1
+        """)
+        result_order = db.execute(stmt, {"order_id": order_id}).first()
+        
+        if not result_order:
+            return None
+        
+        id_platform = result_order.id_platform
+    finally:
+        db.close()
         
     return {
         "order_id": order_id,
         "old_state_id": old_state_id,
         "new_state_id": new_state_id,
+        "id_platform": id_platform,
     }
 
 
@@ -87,7 +134,7 @@ def _should_emit_order_update_status_event(*args, result=None, **kwargs):
 
 
 def _extract_bulk_order_status_data(*args, result=None, **kwargs):
-    """Estrae i dati dell'evento di cambio stato da bulk update."""
+    """Estrae i dati dell'evento di cambio stato da bulk update con id_platform."""
     if not isinstance(result, dict):
         return None
     
@@ -97,11 +144,33 @@ def _extract_bulk_order_status_data(*args, result=None, **kwargs):
     
     if old_state_id is None or new_state_id is None or order_id is None:
         return None
+    
+    # Query SQL ottimizzata: SOLO id_platform
+    from src.database import get_db
+    from sqlalchemy import text
+    
+    db = next(get_db())
+    try:
+        stmt = text("""
+            SELECT id_platform
+            FROM orders
+            WHERE id_order = :order_id
+            LIMIT 1
+        """)
+        result_order = db.execute(stmt, {"order_id": order_id}).first()
+        
+        if not result_order:
+            return None
+        
+        id_platform = result_order.id_platform
+    finally:
+        db.close()
         
     return {
         "order_id": order_id,
         "old_state_id": old_state_id,
         "new_state_id": new_state_id,
+        "id_platform": id_platform,
     }
 
 

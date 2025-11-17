@@ -15,6 +15,8 @@ from src.events.runtime import (
 )
 from src.services.core.wrap import check_authentication
 from src.services.routers.auth_service import authorize, get_current_user
+from src.core.cached import cached
+from src.events.core.event import EventType
 
 logger = logging.getLogger(__name__)
 
@@ -141,5 +143,29 @@ async def uninstall_event_plugin(
     return {
         "message": f"Plugin '{plugin_name}' disinstallato e rimosso definitivamente",
         "config": config.model_dump(mode="json"),
+    }
+
+
+@router.get(
+    "/list",
+    summary="Lista eventi disponibili",
+    response_description="Lista di tutti gli eventi disponibili nell'applicazione",
+)
+@check_authentication
+@authorize(roles_permitted=["ADMIN"], permissions_required=["R"])
+@cached(preset="events_list", key="events:list")
+async def get_events_list(
+    user: dict = Depends(get_current_user)
+):
+    """
+    Restituisce lista di tutti gli eventi disponibili nell'applicazione.
+    
+    Utile per configurare i trigger di sincronizzazione stati.
+    Cache mensile (30 giorni).
+    """
+    events = EventType.get_all_events()
+    return {
+        "events": events,
+        "total": len(events)
     }
 

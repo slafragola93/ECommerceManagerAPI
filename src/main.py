@@ -21,7 +21,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, events, csv_import
+    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, events, csv_import, platform_state_trigger
 from src.database import Base, engine
 
 # Import new cache system
@@ -395,6 +395,7 @@ app.include_router(order_detail.router)
 app.include_router(sync.router)
 app.include_router(preventivi.router)
 app.include_router(fiscal_documents.router)
+app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
 app.include_router(dhl_shipment.router)

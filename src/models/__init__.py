@@ -34,3 +34,4 @@ from .dhl_configuration import DhlConfiguration
 from .fedex_configuration import FedexConfiguration
 from .shipment_document import ShipmentDocument
 from .shipments_history import ShipmentsHistory
+from .platform_state_trigger import PlatformStateTrigger

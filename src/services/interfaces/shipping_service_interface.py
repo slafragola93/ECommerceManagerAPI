@@ -2,7 +2,7 @@
 Interfaccia per Shipping Service seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Dict, Any
 from src.core.interfaces import IBaseService
 from src.schemas.shipping_schema import ShippingSchema, ShippingResponseSchema
 from src.models.shipping import Shipping
@@ -16,8 +16,8 @@ class IShippingService(IBaseService):
         pass
     
     @abstractmethod
-    async def update_shipping(self, shipping_id: int, shipping_data: ShippingSchema) -> Shipping:
-        """Aggiorna un shipping esistente"""
+    async def update_shipping(self, shipping_id: int, shipping_data: ShippingSchema) -> Dict[str, Any]:
+        """Aggiorna un shipping esistente. Restituisce dict con shipping e dati evento se stato cambia."""
         pass
     
     @abstractmethod

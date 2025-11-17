@@ -111,4 +111,7 @@ TTL_PRESETS = {
     "init_static": 604800,      # 7 giorni (platforms, languages, countries, taxes)
     "init_dynamic": 86400,      # 1 giorno (sectionals, order_states, shipping_states)
     "init_full": 1800,          # 30 minuti (endpoint completo)
+    
+    # Events
+    "events_list": 2592000,     # 30 giorni (mensile) - lista eventi disponibili
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Mapping, MutableMapping
+from typing import Any, Dict, List, Mapping, MutableMapping
 
 
 class EventType(str, Enum):
@@ -13,6 +13,7 @@ class EventType(str, Enum):
 
     # Eventi esistenti
     ORDER_STATUS_CHANGED = "order_status_changed"
+    SHIPPING_STATUS_CHANGED = "shipping_status_changed"
 
     # ===== DOCUMENTI (OrderDocument + FiscalDocument unificati) =====
     # Distinguere tramite document_source ("order_document" o "fiscal_document")
@@ -65,6 +66,14 @@ class EventType(str, Enum):
         except ValueError:
             return False
         return True
+    
+    @classmethod
+    def get_all_events(cls) -> List[Dict[str, str]]:
+        """Restituisce lista di tutti gli eventi disponibili nell'applicazione."""
+        return [
+            {"value": event.value, "name": event.name}
+            for event in cls
+        ]
 
 
 MetadataMapping = Mapping[str, Any]

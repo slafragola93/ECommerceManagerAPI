@@ -127,7 +127,10 @@ async def update_shipping(
 
     - **shipping_id**: Identificativo del shipping da aggiornare.
     """
-    shipping = await shipping_service.update_shipping(shipping_id, shipping_data)
+    result = await shipping_service.update_shipping(shipping_id, shipping_data)
+    
+    # Estrai shipping dal risultato (può essere dict o Shipping)
+    shipping = result.get("shipping") if isinstance(result, dict) else result
 
     # Ricalcolo totali ordine/documento collegati a questa spedizione
 

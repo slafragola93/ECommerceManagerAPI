@@ -3,11 +3,13 @@ PrestaShop synchronization service
 """
 
 from typing import Dict, List, Any, Optional
+import aiohttp
 from fastapi.datastructures import Address
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import base64
 import asyncio
+import logging
 from datetime import datetime
 import os
 from src.schemas.order_schema import OrderUpdateSchema
@@ -18,6 +20,8 @@ from src.services.media.image_cache_service import get_image_cache_service
 from src.repository.customer_repository import CustomerRepository
 from src.schemas.customer_schema import CustomerSchema
 from .base_ecommerce_service import BaseEcommerceService
+
+logger = logging.getLogger(__name__)
 
 
 class PrestaShopService(BaseEcommerceService):
@@ -3987,3 +3991,92 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             print(f"DEBUG: Error in carrier assignment logic: {str(e)}")
             return None  # Nessuna assegnazione in caso di errore
+    
+    async def sync_order_state_to_platform(self, order_id: int, platform_state_id: int) -> bool:
+        """
+        Sincronizza lo stato di un ordine con la piattaforma PrestaShop.
+        
+        Args:
+            order_id: ID ordine locale
+            platform_state_id: ID stato sulla piattaforma PrestaShop
+        
+        Returns:
+            True se sincronizzazione riuscita, False altrimenti
+        """
+        try:
+            # Recupera Order.id_origin (ID PrestaShop) dal database
+            from sqlalchemy import text
+            from src.models.order import Order
+            
+            order = self.db.query(Order).filter(Order.id_order == order_id).first()
+            if not order or not order.id_origin:
+                logger.warning(f"Ordine {order_id} non trovato o senza id_origin")
+                return False
+            
+            order_id_origin = order.id_origin
+            
+            # Genera XML hardcoded
+            xml_body = f'''<?xml version="1.0" encoding="UTF-8"?>
+<prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
+  <order_history>
+    <id_order>{order_id_origin}</id_order>
+    <id_order_state>{platform_state_id}</id_order_state>
+  </order_history>
+</prestashop>'''
+            
+            # POST a PrestaShop API
+            endpoint = "api/order_histories"
+            url = f"{self.base_url}/{endpoint.lstrip('/')}"
+            headers = self._get_auth_headers()
+            headers['Content-Type'] = 'text/xml'
+            
+            # Retry con backoff esponenziale (3 tentativi: 1s, 2s, 4s)
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+                    async with self.session.post(url, headers=headers, data=xml_body, timeout=timeout) as response:
+                        if response.status >= 400:
+                            error_text = await response.text()
+                            if attempt < max_retries - 1:
+                                wait_time = 2 ** attempt  # 1s, 2s, 4s
+                                logger.warning(
+                                    f"Tentativo {attempt + 1}/{max_retries} fallito per ordine {order_id}: "
+                                    f"HTTP {response.status}. Retry in {wait_time}s..."
+                                )
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                logger.error(
+                                    f"Errore sincronizzazione stato ordine {order_id} a PrestaShop: "
+                                    f"HTTP {response.status}: {error_text}"
+                                )
+                                return False
+                        
+                        # Successo
+                        logger.info(
+                            f"Stato ordine {order_id} sincronizzato con successo a PrestaShop "
+                            f"(order_id_origin={order_id_origin}, platform_state_id={platform_state_id})"
+                        )
+                        return True
+                        
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    if attempt < max_retries - 1:
+                        wait_time = 2 ** attempt
+                        logger.warning(
+                            f"Errore connessione tentativo {attempt + 1}/{max_retries} per ordine {order_id}: "
+                            f"{str(e)}. Retry in {wait_time}s..."
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(
+                            f"Errore sincronizzazione stato ordine {order_id} a PrestaShop dopo {max_retries} tentativi: {str(e)}"
+                        )
+                        return False
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Errore imprevisto sincronizzazione stato ordine {order_id} a PrestaShop: {str(e)}")
+            return False

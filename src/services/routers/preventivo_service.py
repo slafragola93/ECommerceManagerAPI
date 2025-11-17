@@ -270,7 +270,8 @@ class PreventivoService:
             if getattr(order_document, "payment", None) and order_document.payment:
                 payment_obj = PaymentPreventivoSchema(
                     id_payment=order_document.payment.id_payment,
-                    name=order_document.payment.name
+                    name=order_document.payment.name,
+                    is_complete_payment=order_document.payment.is_complete_payment
                 )
             elif getattr(order_document, "id_payment", None) and order_document.id_payment:
                 # Se la relazione non è caricata, recupera direttamente
@@ -278,7 +279,8 @@ class PreventivoService:
                 if payment:
                     payment_obj = PaymentPreventivoSchema(
                         id_payment=payment.id_payment,
-                        name=payment.name
+                        name=payment.name,
+                        is_complete_payment=payment.is_complete_payment
                     )
         except Exception:
             payment_obj = None
@@ -477,7 +479,8 @@ class PreventivoService:
             if getattr(order_document, "payment", None) and order_document.payment:
                 payment_obj = PaymentPreventivoSchema(
                     id_payment=order_document.payment.id_payment,
-                    name=order_document.payment.name
+                    name=order_document.payment.name,
+                    is_complete_payment=order_document.payment.is_complete_payment
                 )
             elif getattr(order_document, "id_payment", None) and order_document.id_payment:
                 # Se la relazione non è caricata, recupera direttamente
@@ -485,7 +488,8 @@ class PreventivoService:
                 if payment:
                     payment_obj = PaymentPreventivoSchema(
                         id_payment=payment.id_payment,
-                        name=payment.name
+                        name=payment.name,
+                        is_complete_payment=payment.is_complete_payment
                     )
         except Exception:
             payment_obj = None
@@ -640,7 +644,8 @@ class PreventivoService:
                 if getattr(order_document, "payment", None) and order_document.payment:
                     payment_obj = PaymentPreventivoSchema(
                         id_payment=order_document.payment.id_payment,
-                        name=order_document.payment.name
+                        name=order_document.payment.name,
+                        is_complete_payment=order_document.payment.is_complete_payment
                     )
                 elif getattr(order_document, "id_payment", None) and order_document.id_payment:
                     # Se la relazione non è caricata, recupera direttamente
@@ -648,7 +653,8 @@ class PreventivoService:
                     if payment:
                         payment_obj = PaymentPreventivoSchema(
                             id_payment=payment.id_payment,
-                            name=payment.name
+                            name=payment.name,
+                            is_complete_payment=payment.is_complete_payment
                         )
             except Exception:
                 payment_obj = None
@@ -1249,14 +1255,16 @@ class PreventivoService:
             if getattr(order_document, "payment", None) and order_document.payment:
                 payment_obj = PaymentPreventivoSchema(
                     id_payment=order_document.payment.id_payment,
-                    name=order_document.payment.name
+                    name=order_document.payment.name,
+                    is_complete_payment=order_document.payment.is_complete_payment
                 )
             elif getattr(order_document, "id_payment", None) and order_document.id_payment:
                 payment = self.payment_repo.get_by_id(order_document.id_payment)
                 if payment:
                     payment_obj = PaymentPreventivoSchema(
                         id_payment=payment.id_payment,
-                        name=payment.name
+                        name=payment.name,
+                        is_complete_payment=payment.is_complete_payment
                     )
         except Exception:
             payment_obj = None

@@ -275,6 +275,7 @@ class PaymentPreventivoSchema(BaseModel):
     """Schema per metodo di pagamento nei preventivi"""
     id_payment: int = Field(..., description="ID del metodo di pagamento")
     name: str = Field(..., description="Nome del metodo di pagamento")
+    is_complete_payment: bool = Field(..., description="Indica se è un pagamento completo")
 
 
 class PreventivoResponseSchema(BaseModel):

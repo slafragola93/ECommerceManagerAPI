@@ -1,7 +1,7 @@
 """
 Shipping Service rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from src.services.interfaces.shipping_service_interface import IShippingService
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.schemas.shipping_schema import ShippingSchema
@@ -13,6 +13,9 @@ from src.core.exceptions import (
     ExceptionFactory,
     ErrorCode
 )
+from src.events.decorators import emit_event_on_success
+from src.events.core.event import EventType
+from src.events.extractors import extract_shipping_status_changed_data
 
 class ShippingService(IShippingService):
     """Shipping Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
@@ -41,11 +44,38 @@ class ShippingService(IShippingService):
         except Exception as e:
             raise ValidationException(f"Error creating shipping: {str(e)}")
     
-    async def update_shipping(self, shipping_id: int, shipping_data: ShippingSchema) -> Shipping:
+    def _should_emit_shipping_status_event(*args, result=None, **kwargs) -> bool:
+        """Verifica se l'evento di cambio stato shipping deve essere emesso."""
+        if not isinstance(result, dict):
+            return False
+        old_state_id = result.get("old_state_id")
+        new_state_id = result.get("new_state_id")
+        return old_state_id is not None and new_state_id is not None and old_state_id != new_state_id
+    
+    def _extract_shipping_update_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+        """Estrae i dati dell'evento di cambio stato shipping da update_shipping."""
+        if not isinstance(result, dict):
+            return None
+        return {
+            "id_shipping": result.get("id_shipping"),
+            "old_state_id": result.get("old_state_id"),
+            "new_state_id": result.get("new_state_id"),
+        }
+    
+    @emit_event_on_success(
+        event_type=EventType.SHIPPING_STATUS_CHANGED,
+        data_extractor=extract_shipping_status_changed_data,
+        condition=_should_emit_shipping_status_event,
+        source="shipping_service.update_shipping",
+    )
+    async def update_shipping(self, shipping_id: int, shipping_data: ShippingSchema) -> Dict[str, Any]:
         """Aggiorna un shipping esistente"""
         
         # Verifica esistenza
         shipping = self._shipping_repository.get_by_id_or_raise(shipping_id)
+        
+        # Salva vecchio stato prima dell'aggiornamento
+        old_state_id = shipping.id_shipping_state
         
         # Business Rule: Se nome cambia, deve essere unico
         if hasattr(shipping_data, 'name') and shipping_data.name != shipping.name:
@@ -65,7 +95,21 @@ class ShippingService(IShippingService):
                     setattr(shipping, field_name, value)
             
             updated_shipping = self._shipping_repository.update(shipping)
-            return updated_shipping
+            
+            # Restituisce dict per evento se stato è cambiato
+            new_state_id = updated_shipping.id_shipping_state
+            if old_state_id != new_state_id:
+                return {
+                    "id_shipping": shipping_id,
+                    "old_state_id": old_state_id,
+                    "new_state_id": new_state_id,
+                    "shipping": updated_shipping
+                }
+            
+            return {
+                "id_shipping": shipping_id,
+                "shipping": updated_shipping
+            }
         except Exception as e:
             raise ValidationException(f"Error updating shipping: {str(e)}")
     
