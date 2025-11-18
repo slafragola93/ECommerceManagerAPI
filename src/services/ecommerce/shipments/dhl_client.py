@@ -9,6 +9,7 @@ from sqlalchemy.engine import Row
 import logging
 
 from src.core.settings import get_cache_settings
+from src.services.core.tool import convert_decimals_to_float
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,12 @@ class DhlClient:
         url = f"{self._get_base_url(credentials.use_sandbox)}/shipments"
         headers = self._get_headers(credentials, dhl_config, message_ref)
         
+        # Convert Decimal objects to float for JSON serialization
+        payload_serializable = convert_decimals_to_float(payload)
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await self._make_request_with_retry(
-                client, "POST", url, headers=headers, json=payload
+                client, "POST", url, headers=headers, json=payload_serializable
             )
             
         # Debug: Log response

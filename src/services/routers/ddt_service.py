@@ -218,7 +218,6 @@ class DDTService:
             total_weight=ddt.total_weight,
             total_price_with_tax=ddt.total_price_with_tax,
             total_discount=ddt.total_discount,
-            apply_discount_to_tax_included=ddt.apply_discount_to_tax_included,
             id_order=ddt.id_order or 0,
             customer=customer_data,
             address_delivery=address_delivery_data,

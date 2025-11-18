@@ -13,3 +13,13 @@ class IPaymentRepository(IRepository[Payment, int]):
     def get_by_name(self, name: str) -> Optional[Payment]:
         """Ottiene un payment per nome"""
         pass
+    
+    @abstractmethod
+    def is_complete_payment(self, id_payment: int) -> Optional[bool]:
+        """
+        Query idratata: recupera solo is_complete_payment per un payment.
+        
+        Returns:
+            True se is_complete_payment=True, False se is_complete_payment=False, None se payment non esiste
+        """
+        pass

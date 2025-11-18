@@ -6,8 +6,9 @@ Follows Single Responsibility and Open/Closed principles.
 """
 from __future__ import annotations
 
-from typing import Dict, Any, Type, Optional
+from typing import Dict, Any, Type, Optional, List
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from src.schemas.product_schema import ProductSchema
 from src.schemas.customer_schema import CustomerSchema
@@ -59,7 +60,7 @@ class EntityMapper:
         'languages': ['id_origin', 'name', 'iso_code'],
         'payments': ['name'],
         'orders': ['id_origin', 'id_customer', 'id_address_delivery', 'id_address_invoice'],
-        'order_details': ['id_order', 'id_product', 'product_name', 'product_qty', 'id_tax']
+        'order_details': ['id_order', 'id_origin', 'id_platform', 'product_name', 'product_qty', 'product_price', 'product_weight', 'tax_percentage']
     }
     
     # Campi con default se non forniti
@@ -109,7 +110,8 @@ class EntityMapper:
     def map_to_schema(
         row: Dict[str, Any],
         entity_type: str,
-        id_platform: int = 1
+        id_platform: int = 1,
+        db: Optional[Session] = None
     ) -> BaseModel:
         """
         Map CSV row to Pydantic schema instance.
@@ -118,6 +120,7 @@ class EntityMapper:
             row: Riga CSV come dizionario
             entity_type: Tipo entità
             id_platform: ID platform (viene iniettato se entity è platform-aware)
+            db: Database session per lookup (necessario per order_details)
             
         Returns:
             Istanza schema Pydantic validato
@@ -129,7 +132,7 @@ class EntityMapper:
         schema_class = EntityMapper.get_schema(entity_type)
         
         # Transform fields
-        transformed = EntityMapper.transform_fields(row, entity_type, id_platform)
+        transformed = EntityMapper.transform_fields(row, entity_type, id_platform, db)
         
         # Create and validate schema
         return schema_class(**transformed)
@@ -138,7 +141,8 @@ class EntityMapper:
     def transform_fields(
         row: Dict[str, Any],
         entity_type: str,
-        id_platform: int = 1
+        id_platform: int = 1,
+        db: Optional[Session] = None
     ) -> Dict[str, Any]:
         """
         Transform and clean CSV row fields.
@@ -147,11 +151,13 @@ class EntityMapper:
         - Aggiunge defaults
         - Inietta id_platform se necessario
         - Rimuove campi extra (es. _row_number)
+        - Per order_details: converte id_origin->id_product e Tax->id_tax
         
         Args:
             row: Riga CSV raw
             entity_type: Tipo entità
             id_platform: ID platform
+            db: Database session per lookup (necessario per order_details)
             
         Returns:
             Dizionario pulito per schema
@@ -168,7 +174,51 @@ class EntityMapper:
         if entity_type in EntityMapper.PLATFORM_AWARE_ENTITIES:
             cleaned['id_platform'] = id_platform
         
-        # Applica defaults
+        # Per order_details: gestisci id_platform, id_origin->id_product e Tax->id_tax
+        if entity_type == 'order_details':
+            # Inietta id_platform se presente nel CSV, altrimenti usa quello passato come parametro
+            if 'id_platform' in cleaned and cleaned['id_platform'] is not None:
+                # Usa id_platform dal CSV
+                pass
+            else:
+                # Usa id_platform dal parametro
+                cleaned['id_platform'] = id_platform
+            
+            # Converti id_origin (prodotto) in id_product
+            if 'id_origin' in cleaned and cleaned['id_origin'] is not None and db is not None:
+                from src.models.product import Product
+                from sqlalchemy.orm import load_only
+                product_origin = int(cleaned['id_origin'])
+                product = db.query(Product).options(
+                    load_only(Product.id_product)
+                ).filter(
+                    Product.id_origin == product_origin,
+                    Product.id_platform == cleaned.get('id_platform', id_platform)
+                ).first()
+                if product:
+                    cleaned['id_product'] = product.id_product
+                else:
+                    raise ValueError(f"Prodotto con id_origin={product_origin} e id_platform={cleaned.get('id_platform', id_platform)} non trovato")
+                # Rimuovi id_origin dal dizionario (non fa parte dello schema OrderDetailSchema)
+                cleaned.pop('id_origin', None)
+            
+            # Converti tax_percentage (percentuale) in id_tax
+            if 'tax_percentage' in cleaned and cleaned['tax_percentage'] is not None and db is not None:
+                from src.models.tax import Tax
+                from sqlalchemy.orm import load_only
+                tax_percentage = float(cleaned['tax_percentage'])
+                # Cerca la tassa con questa percentuale (query idratata)
+                tax = db.query(Tax).options(
+                    load_only(Tax.id_tax)
+                ).filter(Tax.percentage == tax_percentage).first()
+                if tax:
+                    cleaned['id_tax'] = tax.id_tax
+                else:
+                    raise ValueError(f"Tax con percentuale {tax_percentage} non trovata")
+                # Rimuovi il campo 'tax_percentage' dal dizionario
+                cleaned.pop('tax_percentage', None)
+        
+          # Applica defaults
         defaults = EntityMapper.DEFAULT_VALUES.get(entity_type, {})
         for key, default_value in defaults.items():
             if key not in cleaned or cleaned[key] is None:
@@ -195,14 +245,15 @@ class EntityMapper:
         int_fields = ['id_origin', 'id_customer', 'id_country', 'id_category', 'id_brand', 
                       'id_lang', 'id_product', 'id_order', 'id_tax', 'id_payment',
                       'id_address_delivery', 'id_address_invoice', 'id_carrier',
-                      'id_shipping', 'id_sectional', 'id_order_state', 'product_qty', 'quantity']
+                      'id_shipping', 'id_sectional', 'id_order_state', 'product_qty', 'quantity',
+                      'id_platform']
         
         float_fields = ['weight', 'depth', 'height', 'width', 'price_without_tax',
                        'purchase_price', 'product_price', 'product_weight',
                        'unit_price_tax_incl', 'unit_price_tax_excl',
                        'reduction_percent', 'reduction_amount',
                        'total_price_tax_excl', 'total_paid', 'total_discounts', 'total_weight',
-                       'price_tax_incl', 'price_tax_excl']
+                       'price_tax_incl', 'price_tax_excl', 'tax_percentage']
         
         bool_fields = ['is_active', 'is_default', 'is_invoice_requested', 'is_payed']
         

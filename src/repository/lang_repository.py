@@ -48,6 +48,15 @@ class LangRepository(BaseRepository[Lang, int], ILangRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving lang by name: {str(e)}")
     
+    def get_by_iso_code(self, iso_code: str) -> Optional[Lang]:
+        """Ottiene un lang per codice ISO (case insensitive)"""
+        try:
+            return self._session.query(Lang).filter(
+                func.lower(Lang.iso_code) == func.lower(iso_code)
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving lang by iso_code: {str(e)}")
+    
     def bulk_create_csv_import(self, data_list: List[LangSchema], batch_size: int = 1000) -> int:
         """
         Bulk insert languages da CSV import.
@@ -90,3 +99,31 @@ class LangRepository(BaseRepository[Lang, int], ILangRepository):
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Database error bulk creating languages: {str(e)}")
+    
+    def get_all_for_init(self) -> List[dict]:
+        """
+        Query idratata: recupera solo id_lang, name, iso_code per tutte le lingue.
+        Utilizzato per endpoint init.
+        
+        Returns:
+            Lista di dict con id_lang, name, iso_code
+        """
+        try:
+            from sqlalchemy import text
+            result = self._session.execute(
+                text("""
+                    SELECT id_lang, name, iso_code 
+                    FROM languages 
+                    ORDER BY id_lang
+                """)
+            ).fetchall()
+            return [
+                {
+                    "id_lang": row.id_lang,
+                    "name": row.name,
+                    "iso_code": row.iso_code
+                }
+                for row in result
+            ]
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving languages for init: {str(e)}")

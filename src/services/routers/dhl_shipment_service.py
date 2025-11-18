@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from pathlib import Path
 import logging
-from fastapi import HTTPException
 
 from src.core.settings import get_cache_settings
+from src.core.exceptions import InfrastructureException, NotFoundException, ValidationException
 from src.services.interfaces.dhl_shipment_service_interface import IDhlShipmentService
 from src.repository.interfaces.order_repository_interface import IOrderRepository
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
@@ -71,7 +71,7 @@ class DhlShipmentService(IDhlShipmentService):
             # 3. Recupero la configurazione DHL
             dhl_config = self.dhl_config_repository.get_by_carrier_api_id(carrier_api_id)
             if not dhl_config:
-                raise ValueError(f"DHL configuration not found for carrier_api_id {carrier_api_id}")
+                raise NotFoundException("DhlConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
             
             # 4. Recupero credenziali DHL
             credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
@@ -111,23 +111,23 @@ class DhlShipmentService(IDhlShipmentService):
             except ValueError as e:
                 # Handle DHL validation errors (400, 422)
                 logger.error(f"❌ DHL Validation Error for order {order_id}: {str(e)}")
-                raise HTTPException(
-                    status_code=400, 
-                    detail=str(e)
+                raise ValidationException(
+                    f"DHL validation error: {str(e)}",
+                    details={"order_id": order_id, "error": str(e)}
                 )
             except RuntimeError as e:
                 # Handle DHL server errors (500)
                 logger.error(f"❌ DHL Server Error for order {order_id}: {str(e)}")
-                raise HTTPException(
-                    status_code=500, 
-                    detail=str(e)
+                raise InfrastructureException(
+                    f"DHL server error: {str(e)}",
+                    details={"order_id": order_id, "error": str(e)}
                 )
             except Exception as e:
                 # Handle other DHL API errors
                 logger.error(f"❌ DHL API Error for order {order_id}: {str(e)}")
-                raise HTTPException(
-                    status_code=500, 
-                    detail=str(e)
+                raise InfrastructureException(
+                    f"DHL API error: {str(e)}",
+                    details={"order_id": order_id, "error": str(e)}
                 )
             
             # 11. Estrazione AWB e documenti

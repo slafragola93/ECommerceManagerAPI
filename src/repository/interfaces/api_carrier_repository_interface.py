@@ -2,7 +2,7 @@
 Interfaccia per API Carrier Repository seguendo ISP
 """
 from abc import abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from sqlalchemy.engine import Row
 from src.core.interfaces import IRepository
 from src.models.carrier_api import CarrierApi
@@ -23,4 +23,12 @@ class IApiCarrierRepository(IRepository[CarrierApi, int]):
     @abstractmethod
     def get_auth_credentials(self, id_carrier_api: int) -> Row:
         """Get username, password, use_sandbox for auth"""
+        pass
+    
+    @abstractmethod
+    def get_active_carriers_for_init(self) -> List[Dict[str, Any]]:
+        """
+        Query idratata: recupera solo id_carrier_api e name per carrier attivi.
+        Utilizzato per endpoint init.
+        """
         pass

@@ -10,6 +10,7 @@ class BrtConfigurationSchema(BaseModel):
     departure_line: int = Field(..., gt=0)
     client_code: int = Field(..., gt=0)
     departure_branch: int = Field(..., gt=0)
+    departure_depot: int = Field(..., gt=0)
     rate_code: int = Field(..., gt=0)
     service_type: str = Field(..., max_length=100)
     default_weight: int = Field(..., gt=0)
@@ -32,6 +33,7 @@ class BrtConfigurationResponseSchema(BaseModel):
     departure_line: int
     client_code: int
     departure_branch: int
+    departure_depot: int
     rate_code: int
     service_type: str
     default_weight: int
@@ -53,6 +55,7 @@ class BrtConfigurationUpdateSchema(BaseModel):
     departure_line: Optional[int] = Field(None, gt=0)
     client_code: Optional[int] = Field(None, gt=0)
     departure_branch: Optional[int] = Field(None, gt=0)
+    departure_depot: Optional[int] = Field(None, gt=0)
     rate_code: Optional[int] = Field(None, gt=0)
     service_type: Optional[str] = Field(None, max_length=100)
     default_weight: Optional[int] = Field(None, gt=0)

@@ -2,6 +2,7 @@
 Observability and metrics for cache operations
 """
 
+import json
 import time
 import logging
 from typing import Dict, Any, Optional, Callable

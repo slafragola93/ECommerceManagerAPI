@@ -19,6 +19,7 @@ from src.schemas.preventivo_schema import (
 from src.schemas.address_schema import AddressSchema
 from src.services.core.tool import generate_preventivo_reference, calculate_order_totals
 from .order_repository import OrderRepository
+from .payment_repository import PaymentRepository
 from src.schemas.order_schema import OrderSchema
 from datetime import datetime
 
@@ -29,6 +30,7 @@ class PreventivoRepository:
     def __init__(self, db: Session):
         self.db = db
         self.order_repository = OrderRepository(db)
+        self.payment_repository = PaymentRepository(db)
     
     def get_next_document_number(self, type_document: str = "preventivo") -> int:
         """Genera il prossimo numero documento sequenziale"""
@@ -66,6 +68,17 @@ class PreventivoRepository:
         if invoice_address_id is None:
             invoice_address_id = delivery_address_id
         
+        # Logica per is_payed
+        is_payed_value = None
+        if preventivo_data.is_payed is not None:
+            # Se esplicitamente passato, usa quel valore
+            is_payed_value = preventivo_data.is_payed
+        elif preventivo_data.id_payment:
+            # Se non passato ma c'è id_payment, verifica is_complete_payment
+            is_complete = self.payment_repository.is_complete_payment(preventivo_data.id_payment)
+            if is_complete:
+                is_payed_value = True
+        
         # Crea OrderDocument per preventivo
         order_document = OrderDocument(
             type_document="preventivo",
@@ -76,9 +89,9 @@ class PreventivoRepository:
             id_sectional=sectional_id,
             id_payment=preventivo_data.id_payment if preventivo_data.id_payment else None,
             is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
+            is_payed=is_payed_value,
             note=preventivo_data.note,
             total_discount=preventivo_data.total_discount if preventivo_data.total_discount is not None else 0.0,
-            apply_discount_to_tax_included=preventivo_data.apply_discount_to_tax_included if preventivo_data.apply_discount_to_tax_included is not None else False,
             total_weight=0.0,  # Verrà calcolato da update_document_totals
             total_price_with_tax=0.0  # Verrà calcolato da update_document_totals
         )
@@ -235,10 +248,9 @@ class PreventivoRepository:
         if not preventivo:
             return None
         
-        # Traccia se total_discount o apply_discount_to_tax_included sono stati modificati
+        # Traccia se total_discount è stato modificato
         discount_changed = False
         previous_total_discount = preventivo.total_discount if hasattr(preventivo, 'total_discount') else 0.0
-        previous_apply_discount_to_tax_included = preventivo.apply_discount_to_tax_included if hasattr(preventivo, 'apply_discount_to_tax_included') else False
         
         # 2. Gestisci customer (se fornito)
         if preventivo_data.customer is not None:
@@ -280,15 +292,13 @@ class PreventivoRepository:
             preventivo.id_payment = preventivo_data.id_payment
         if preventivo_data.is_invoice_requested is not None:
             preventivo.is_invoice_requested = preventivo_data.is_invoice_requested
+        if preventivo_data.is_payed is not None:
+            preventivo.is_payed = preventivo_data.is_payed
         if preventivo_data.note is not None:
             preventivo.note = preventivo_data.note
         if preventivo_data.total_discount is not None:
             preventivo.total_discount = preventivo_data.total_discount
             if preventivo.total_discount != previous_total_discount:
-                discount_changed = True
-        if preventivo_data.apply_discount_to_tax_included is not None:
-            preventivo.apply_discount_to_tax_included = preventivo_data.apply_discount_to_tax_included
-            if preventivo.apply_discount_to_tax_included != previous_apply_discount_to_tax_included:
                 discount_changed = True
         
         # Aggiorna timestamp
@@ -351,12 +361,12 @@ class PreventivoRepository:
             address_delivery=preventivo.id_address_delivery or 0,  # Default 0 se None
             address_invoice=preventivo.id_address_invoice or 0,  # Default 0 se None
             reference=generate_preventivo_reference(preventivo.document_number),
-            id_platform=1,  # Default 1
+            id_platform=0,  # Ordine creato dall'app, non da piattaforma esterna
             shipping=preventivo.id_shipping or 0,  # Usa spedizione del preventivo, altrimenti 0
             sectional=preventivo.id_sectional or 0,  # Usa sectional del preventivo, altrimenti 0
             id_order_state=1,  # Default 1 (pending)
             is_invoice_requested=preventivo.is_invoice_requested,
-            is_payed=0,
+            is_payed=preventivo.is_payed if preventivo.is_payed is not None else False,
             payment_date=None,
             total_weight=preventivo.total_weight or 0.0,
             total_price_tax_excl=total_price_tax_excl,  # Include prodotti + spedizione senza IVA

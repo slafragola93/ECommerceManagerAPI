@@ -21,6 +21,12 @@ class PaymentInitSchema(BaseModel):
     name: str = Field(..., description="Nome del metodo di pagamento")
 
 
+class ApiCarrierInitSchema(BaseModel):
+    """Schema per gli API carrier nei dati di inizializzazione"""
+    id_carrier_api: int = Field(..., description="ID dell'API carrier")
+    name: str = Field(..., description="Nome dell'API carrier")
+
+
 class InitDataSchema(BaseModel):
     """
     Schema per i dati di inizializzazione del frontend
@@ -32,6 +38,7 @@ class InitDataSchema(BaseModel):
     countries: List[CountryResponseSchema] = Field(..., description="Lista dei paesi")
     taxes: List[TaxResponseSchema] = Field(..., description="Lista delle tasse")
     payments: List[PaymentInitSchema] = Field(..., description="Lista dei metodi di pagamento")
+    carriers: List[ApiCarrierInitSchema] = Field(..., description="Lista degli API carrier attivi")
     
     # Dati dinamici (cache giornaliera)
     sectionals: List[SectionalResponseSchema] = Field(..., description="Lista delle sezioni/aree geografiche")

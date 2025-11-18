@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any
+from decimal import Decimal
 
 from fastapi import HTTPException
 
@@ -279,3 +280,15 @@ def generate_internal_reference(country_iso_code: str, app_config_repository) ->
         import time
         timestamp = int(time.time())
         return f"{iso_code}{timestamp % 10000:04d}"
+
+
+def convert_decimals_to_float(obj: Any) -> Any:
+    """Recursively convert Decimal objects to float for JSON serialization"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_decimals_to_float(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals_to_float(item) for item in obj]
+    else:
+        return obj

@@ -35,7 +35,10 @@ async def create_shipment(
     dhl_service: IDhlShipmentService = Depends(get_dhl_shipment_service)
 ):
     """
-    Crea un nuova spedizione DHL per un ordine
+    [DEPRECATED] Crea un nuova spedizione DHL per un ordine
+    
+    DEPRECATED: Use /api/v1/shippings/{order_id}/create instead.
+    This endpoint is kept for backward compatibility only.
     
     Args:
         order_id: ID dell'ordine per cui creare la spedizione
@@ -68,7 +71,10 @@ async def get_tracking(
     db: Session = Depends(get_db)
 ):
     """
-    Recupera informazioni di tracciamento per le spedizioni DHL
+    [DEPRECATED] Recupera informazioni di tracciamento per le spedizioni DHL
+    
+    DEPRECATED: Use /api/v1/shippings/tracking instead.
+    This endpoint is kept for backward compatibility only.
     
     Args:
         tracking: Numero di tracciamento separato da virgole

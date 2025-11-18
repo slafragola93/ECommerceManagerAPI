@@ -70,3 +70,36 @@ class ApiCarrierRepository(BaseRepository[CarrierApi, int], IApiCarrierRepositor
             return result
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving carrier auth credentials: {str(e)}")
+    
+    def get_active_carriers_for_init(self) -> List[dict]:
+        """
+        Query idratata: recupera solo id_carrier_api e name per carrier attivi.
+        Utilizzato per endpoint init.
+        
+        Returns:
+            Lista di dict con id_carrier_api e name
+        """
+        try:
+            from sqlalchemy import text
+            result = self._session.execute(
+                text("""
+                    SELECT id_carrier_api, name 
+                    FROM carriers_api 
+                    WHERE is_active = 1
+                    ORDER BY id_carrier_api
+                """)
+            ).fetchall()
+            carriers = [
+                {
+                    "id_carrier_api": int(row.id_carrier_api),
+                    "name": str(row.name)
+                }
+                for row in result
+            ]
+            print(f"[DEBUG] Carriers recuperati dalla query: {len(carriers)}")
+            return carriers
+        except Exception as e:
+            print(f"[ERROR] Errore query carriers: {e}")
+            import traceback
+            traceback.print_exc()
+            raise InfrastructureException(f"Database error retrieving active carriers for init: {str(e)}")

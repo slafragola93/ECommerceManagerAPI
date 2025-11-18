@@ -48,6 +48,28 @@ class PaymentRepository(BaseRepository[Payment, int], IPaymentRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving payment by name: {str(e)}")
     
+    def is_complete_payment(self, id_payment: int) -> Optional[bool]:
+        """
+        Query idratata: recupera solo is_complete_payment per un payment.
+        
+        Args:
+            id_payment: ID del payment
+            
+        Returns:
+            True se is_complete_payment=True, False se is_complete_payment=False, None se payment non esiste
+        """
+        try:
+            from sqlalchemy import text
+            result = self._session.execute(
+                text("SELECT is_complete_payment FROM payments WHERE id_payment = :id_payment"),
+                {"id_payment": id_payment}
+            ).first()
+            if result:
+                return bool(result[0])
+            return None
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving is_complete_payment for payment {id_payment}: {str(e)}")
+    
     def bulk_create_csv_import(self, data_list: List[PaymentSchema], batch_size: int = 1000) -> int:
         """
         Bulk insert payments da CSV import.

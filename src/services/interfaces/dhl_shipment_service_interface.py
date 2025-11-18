@@ -1,16 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
+from src.services.interfaces.shipment_service_interface import IShipmentService
 
-class IDhlShipmentService(ABC):
-    """Interface for DHL Shipment service operations"""
+
+class IDhlShipmentService(IShipmentService, ABC):
+    """Interface for DHL Shipment service operations
     
-    @abstractmethod
-    async def create_shipment(self, order_id: int) -> Dict[str, Any]:
-        """Create DHL shipment for order"""
-        pass
-    
-    @abstractmethod
-    async def get_label_file_path(self, awb: str) -> Optional[str]:
-        """Get label file path for AWB"""
-        pass
+    Extends IShipmentService to provide DHL-specific functionality.
+    All DHL shipment services must implement both interfaces.
+    """
+    pass

@@ -70,6 +70,7 @@ class NormalizedTrackingResponseSchema(BaseModel):
     status: str = Field(..., description="Current status")
     events: List[NormalizedTrackingEventSchema] = Field(..., description="Tracking events")
     estimated_delivery_date: Optional[str] = Field(None, description="Estimated delivery date")
+    current_internal_state_id: int = Field(..., description="Internal shipping state ID")
 
 
 # Request/Response schemas for API endpoints

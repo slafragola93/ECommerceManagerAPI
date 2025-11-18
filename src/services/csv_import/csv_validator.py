@@ -165,63 +165,195 @@ class CSVValidator:
         """Valida che foreign keys esistano nel DB"""
         errors = []
         
-        # Define FK fields per entity
-        fk_checks = self._get_fk_checks(entity_type)
-        
-        if not fk_checks:
-            return errors
-        
-        # Pre-fetch existing IDs for validation
-        for fk_field, (table, id_field, platform_aware) in fk_checks.items():
-            # Collect unique values da CSV
+        # Caso speciale per order_details: gestisci id_origin->id_product e Tax->id_tax
+        if entity_type == 'order_details':
+            # Valida id_order
             values_to_check = set()
             for row in rows:
-                value = row.get(fk_field)
+                value = row.get('id_order')
                 if value and value != '' and value != '0' and value != 0:
                     try:
                         values_to_check.add(int(value))
                     except (ValueError, TypeError):
                         pass
             
-            if not values_to_check:
-                continue
-            
-            # Check existence in DB
-            try:
-                placeholders = ','.join([f':val_{i}' for i in range(len(values_to_check))])
-                params = {f'val_{i}': val for i, val in enumerate(values_to_check)}
-                
-                if platform_aware:
-                    query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders}) AND id_platform = :id_platform")
+            if values_to_check:
+                try:
+                    placeholders = ','.join([f':val_{i}' for i in range(len(values_to_check))])
+                    params = {f'val_{i}': val for i, val in enumerate(values_to_check)}
                     params['id_platform'] = id_platform
-                else:
-                    query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders})")
-                
-                result = self.db.execute(query, params)
-                existing = {row[0] for row in result}
-                
-                missing = values_to_check - existing
-                
-                # Trova righe con FK invalidi
+                    
+                    query = text(f"SELECT id_order FROM orders WHERE id_order IN ({placeholders}) AND id_platform = :id_platform")
+                    result = self.db.execute(query, params)
+                    existing = {row[0] for row in result}
+                    missing = values_to_check - existing
+                    
+                    for row in rows:
+                        row_num = row.get('_row_number', 0)
+                        value = row.get('id_order')
+                        if value:
+                            try:
+                                val_int = int(value)
+                                if val_int in missing:
+                                    errors.append(ImportValidationError(
+                                        row_number=row_num,
+                                        field_name='id_order',
+                                        error_type='fk_violation',
+                                        message=f"Foreign key id_order={val_int} not found in orders",
+                                        value=val_int
+                                    ))
+                            except (ValueError, TypeError):
+                                pass
+                except Exception as e:
+                    print(f"WARNING: FK validation error for id_order: {str(e)}")
+            
+            # Valida id_origin (prodotto) -> id_product
+            product_origins_to_check = set()
+            row_platform_map = {}  # Mappa row_num -> id_platform per quel row
+            for row in rows:
+                row_num = row.get('_row_number', 0)
+                id_origin = row.get('id_origin')
+                row_id_platform = row.get('id_platform', id_platform)
+                row_platform_map[row_num] = row_id_platform
+                if id_origin and id_origin != '' and id_origin != '0' and id_origin != 0:
+                    try:
+                        product_origins_to_check.add(int(id_origin))
+                    except (ValueError, TypeError):
+                        pass
+            
+            if product_origins_to_check:
+                try:
+                    platforms_in_csv = set(row_platform_map.values())
+                    
+                    for platform in platforms_in_csv:
+                        placeholders = ','.join([f':origin_{i}' for i in range(len(product_origins_to_check))])
+                        params = {f'origin_{i}': origin for i, origin in enumerate(product_origins_to_check)}
+                        params['id_platform'] = platform
+                        
+                        query = text(f"SELECT id_origin FROM products WHERE id_origin IN ({placeholders}) AND id_platform = :id_platform")
+                        result = self.db.execute(query, params)
+                        existing_origins = {row[0] for row in result}
+                        missing_origins = product_origins_to_check - existing_origins
+                        
+                        for row in rows:
+                            row_num = row.get('_row_number', 0)
+                            row_id_platform = row_platform_map.get(row_num, id_platform)
+                            if row_id_platform != platform:
+                                continue
+                            
+                            id_origin = row.get('id_origin')
+                            if id_origin:
+                                try:
+                                    origin_int = int(id_origin)
+                                    if origin_int in missing_origins:
+                                        errors.append(ImportValidationError(
+                                            row_number=row_num,
+                                            field_name='id_origin',
+                                            error_type='fk_violation',
+                                            message=f"Product with id_origin={origin_int} and id_platform={row_id_platform} not found",
+                                            value=origin_int
+                                        ))
+                                except (ValueError, TypeError):
+                                    pass
+                except Exception as e:
+                    print(f"WARNING: FK validation error for id_origin (product): {str(e)}")
+            
+            # Valida tax_percentage (percentuale) -> id_tax
+            tax_percentages_to_check = set()
+            for row in rows:
+                tax_percentage = row.get('tax_percentage')
+                if tax_percentage and tax_percentage != '':
+                    try:
+                        tax_percentages_to_check.add(float(tax_percentage))
+                    except (ValueError, TypeError):
+                        pass
+            
+            if tax_percentages_to_check:
+                try:
+                    placeholders = ','.join([f':tax_{i}' for i in range(len(tax_percentages_to_check))])
+                    params = {f'tax_{i}': tax_val for i, tax_val in enumerate(tax_percentages_to_check)}
+                    
+                    query = text(f"SELECT percentage FROM taxes WHERE percentage IN ({placeholders})")
+                    result = self.db.execute(query, params)
+                    existing_percentages = {float(row[0]) for row in result}
+                    missing_percentages = tax_percentages_to_check - existing_percentages
+                    
+                    for row in rows:
+                        row_num = row.get('_row_number', 0)
+                        tax_percentage = row.get('tax_percentage')
+                        if tax_percentage:
+                            try:
+                                tax_float = float(tax_percentage)
+                                if tax_float in missing_percentages:
+                                    errors.append(ImportValidationError(
+                                        row_number=row_num,
+                                        field_name='tax_percentage',
+                                        error_type='fk_violation',
+                                        message=f"Tax with percentage {tax_float} not found",
+                                        value=tax_float
+                                    ))
+                            except (ValueError, TypeError):
+                                pass
+                except Exception as e:
+                    print(f"WARNING: FK validation error for tax_percentage: {str(e)}")
+        else:
+            # Validazione standard per altre entità
+            fk_checks = self._get_fk_checks(entity_type)
+            
+            if not fk_checks:
+                return errors
+            
+            # Pre-fetch existing IDs for validation
+            for fk_field, (table, id_field, platform_aware) in fk_checks.items():
+                # Collect unique values da CSV
+                values_to_check = set()
                 for row in rows:
-                    row_num = row.get('_row_number', 0)
                     value = row.get(fk_field)
-                    if value:
+                    if value and value != '' and value != '0' and value != 0:
                         try:
-                            val_int = int(value)
-                            if val_int in missing:
-                                errors.append(ImportValidationError(
-                                    row_number=row_num,
-                                    field_name=fk_field,
-                                    error_type='fk_violation',
-                                    message=f"Foreign key {fk_field}={val_int} not found in {table}",
-                                    value=val_int
-                                ))
+                            values_to_check.add(int(value))
                         except (ValueError, TypeError):
                             pass
-                            
-            except Exception as e:
-                print(f"WARNING: FK validation error for {fk_field}: {str(e)}")
+                
+                if not values_to_check:
+                    continue
+                
+                # Check existence in DB
+                try:
+                    placeholders = ','.join([f':val_{i}' for i in range(len(values_to_check))])
+                    params = {f'val_{i}': val for i, val in enumerate(values_to_check)}
+                    
+                    if platform_aware:
+                        query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders}) AND id_platform = :id_platform")
+                        params['id_platform'] = id_platform
+                    else:
+                        query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders})")
+                    
+                    result = self.db.execute(query, params)
+                    existing = {row[0] for row in result}
+                    
+                    missing = values_to_check - existing
+                    
+                    # Trova righe con FK invalidi
+                    for row in rows:
+                        row_num = row.get('_row_number', 0)
+                        value = row.get(fk_field)
+                        if value:
+                            try:
+                                val_int = int(value)
+                                if val_int in missing:
+                                    errors.append(ImportValidationError(
+                                        row_number=row_num,
+                                        field_name=fk_field,
+                                        error_type='fk_violation',
+                                        message=f"Foreign key {fk_field}={val_int} not found in {table}",
+                                        value=val_int
+                                    ))
+                            except (ValueError, TypeError):
+                                pass
+                                
+                except Exception as e:
+                    print(f"WARNING: FK validation error for {fk_field}: {str(e)}")
         
         return errors
     

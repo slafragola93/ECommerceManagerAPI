@@ -17,6 +17,7 @@ class BrtConfiguration(Base):
     departure_line = Column(Integer)
     client_code = Column(Integer)
     departure_branch = Column(Integer)
+    departure_depot = Column(Integer)
     rate_code = Column(Integer)
     service_type = Column(String(100))
     default_weight = Column(Integer)

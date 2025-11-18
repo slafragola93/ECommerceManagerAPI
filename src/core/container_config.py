@@ -221,6 +221,20 @@ def configure_container():
     container.register_transient(IDhlShipmentService, DhlShipmentService)
     container.register_transient(IDhlTrackingService, DhlTrackingService)
     
+    # BRT Shipment Services
+    from src.services.interfaces.brt_shipment_service_interface import IBrtShipmentService
+    from src.services.routers.brt_shipment_service import BrtShipmentService
+    from src.services.interfaces.brt_tracking_service_interface import IBrtTrackingService
+    from src.services.routers.brt_tracking_service import BrtTrackingService
+    from src.services.ecommerce.shipments.brt_client import BrtClient
+    from src.services.ecommerce.shipments.brt_mapper import BrtMapper
+    
+    # Register BRT services (singleton for client, transient for others)
+    container.register_singleton(BrtClient, BrtClient)
+    container.register_transient(BrtMapper, BrtMapper)
+    container.register_transient(IBrtShipmentService, BrtShipmentService)
+    container.register_transient(IBrtTrackingService, BrtTrackingService)
+    
 
 def get_configured_container():
     """Ottiene il container configurato"""

@@ -58,7 +58,8 @@ async def get_init_data(
                         "total_items": len(static_data.get("platforms", [])) + 
                                       len(static_data.get("languages", [])) + 
                                       len(static_data.get("countries", [])) + 
-                                      len(static_data.get("taxes", []))
+                                      len(static_data.get("taxes", [])) +
+                                      len(static_data.get("carriers", []))
                     }
                 }
             )

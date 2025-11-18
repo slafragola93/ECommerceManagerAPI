@@ -289,11 +289,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                #("Languages", self.sync_languages),
+                ("Languages", self.sync_languages),
                 #("Countries", self.sync_countries),
                 #("Brands", self.sync_brands),
                 #("Categories", self.sync_categories),
-                ("Carriers", self.sync_carriers),  # REQUIRED: Must sync carriers before orders
+                #("Carriers", self.sync_carriers),  # REQUIRED: Must sync carriers before orders
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -310,7 +310,7 @@ class PrestaShopService(BaseEcommerceService):
             phase2_functions = [
                 #("Products", self.sync_products),
                 #("Customers", self.sync_customers),
-                ("Addresses", self.sync_addresses),
+                #("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -333,7 +333,7 @@ class PrestaShopService(BaseEcommerceService):
                 phase3_functions.append(("Product Images", self.sync_product_images))
             
             # Aggiungi sempre Orders
-            phase3_functions.append(("Orders", self.sync_orders))
+            #phase3_functions.append(("Orders", self.sync_orders))
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
             sync_results['phases'].append(phase3_results)
@@ -466,7 +466,6 @@ class PrestaShopService(BaseEcommerceService):
         try:
             # Get languages from PrestaShop API
             response = await self._make_request_with_rate_limit('/api/languages', params={'display': '[id,name,iso_code]'})
-            
             # Extract languages from response
             languages = self._extract_items_from_response(response, 'languages')
             # Prepare all language data

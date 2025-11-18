@@ -17,6 +17,7 @@ from src.repository.sectional_repository import SectionalRepository
 from src.repository.order_state_repository import OrderStateRepository
 from src.repository.shipping_state_repository import ShippingStateRepository
 from src.repository.payment_repository import PaymentRepository
+from src.repository.api_carrier_repository import ApiCarrierRepository
 
 
 class InitService:
@@ -34,6 +35,7 @@ class InitService:
         self.order_state_repo = OrderStateRepository(db)
         self.shipping_state_repo = ShippingStateRepository(db)
         self.payment_repo = PaymentRepository(db)
+        self.api_carrier_repo = ApiCarrierRepository(db)
     
     @cached(
         ttl=TTL_PRESETS.get("init_static", 604800),  # 7 giorni per dati statici
@@ -53,13 +55,15 @@ class InitService:
         countries = self._get_countries()
         taxes = self._get_taxes()
         payments = self._get_payments()
+        carriers = self._get_api_carriers()
         
         return {
             "platforms": platforms,
             "languages": languages,
             "countries": countries,
             "taxes": taxes,
-            "payments": payments
+            "payments": payments,
+            "carriers": carriers
         }
     
     @cached(
@@ -107,6 +111,7 @@ class InitService:
             len(static_data.get("countries", [])) +
             len(static_data.get("taxes", [])) +
             len(static_data.get("payments", [])) +
+            len(static_data.get("carriers", [])) +
             len(dynamic_data.get("sectionals", [])) +
             len(dynamic_data.get("order_states", [])) +
             len(dynamic_data.get("shipping_states", []))
@@ -128,6 +133,7 @@ class InitService:
             countries=static_data.get("countries", []),
             taxes=static_data.get("taxes", []),
             payments=static_data.get("payments", []),
+            carriers=static_data.get("carriers", []),
             sectionals=dynamic_data.get("sectionals", []),
             order_states=dynamic_data.get("order_states", []),
             shipping_states=dynamic_data.get("shipping_states", []),
@@ -153,19 +159,13 @@ class InitService:
             return []
     
     def _get_languages(self) -> List[Dict[str, Any]]:
-        """Ottiene le lingue"""
+        """Ottiene le lingue """
         try:
-            languages = self.lang_repo.get_all(limit=10000)
-            return [
-                {
-                    "id_lang": l.id_lang,
-                    "name": l.name,
-                    "iso_code": l.iso_code
-                }
-                for l in languages
-            ]
+            return self.lang_repo.get_all_for_init()
         except Exception as e:
             print(f"[ERROR] Errore caricamento languages: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _get_countries(self) -> List[Dict[str, Any]]:
@@ -264,4 +264,16 @@ class InitService:
             ]
         except Exception as e:
             print(f"[ERROR] Errore caricamento metodi di pagamento: {e}")
+            return []
+    
+    def _get_api_carriers(self) -> List[Dict[str, Any]]:
+        """Ottiene gli API carrier attivi (solo id_carrier_api e name)"""
+        try:
+            result = self.api_carrier_repo.get_active_carriers_for_init()
+            print(f"[DEBUG] API carriers recuperati: {len(result)}")
+            return result
+        except Exception as e:
+            print(f"[ERROR] Errore caricamento API carriers: {e}")
+            import traceback
+            traceback.print_exc()
             return []

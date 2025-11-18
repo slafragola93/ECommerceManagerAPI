@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 
+from src.services.interfaces.tracking_service_interface import ITrackingService
 
-class IDhlTrackingService(ABC):
-    """Interface for DHL Tracking service operations"""
+
+class IDhlTrackingService(ITrackingService, ABC):
+    """Interface for DHL Tracking service operations
     
-    @abstractmethod
-    async def get_tracking(self, tracking_numbers: List[str], carrier_api_id: int) -> List[Dict[str, Any]]:
-        """Get normalized tracking info"""
-        pass
+    Extends ITrackingService to provide DHL-specific functionality.
+    All DHL tracking services must implement both interfaces.
+    """
+    pass

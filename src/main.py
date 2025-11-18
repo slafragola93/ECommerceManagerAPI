@@ -21,7 +21,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, events, csv_import, platform_state_trigger
+    order_state, order, order_package, order_detail, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, shipments, events, csv_import, platform_state_trigger
 from src.database import Base, engine
 
 # Import new cache system
@@ -30,6 +30,7 @@ from src.middleware.conditional import setup_conditional_middleware
 from src.middleware.error_logging import ErrorLoggingMiddleware, PerformanceLoggingMiddleware, SecurityLoggingMiddleware
 from src.core.settings import get_cache_settings
 from src.core.container_config import get_configured_container
+from src.core.static_files import CachedStaticFiles
 from src.core.exceptions import (
     BaseApplicationException,
     ValidationException,
@@ -74,7 +75,6 @@ EVENT_CONFIG_PATH = Path("config/event_handlers.yaml")
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Initialize new cache system
     try:
-        cache_manager = await get_cache_manager()
         settings = get_cache_settings()
         print(f"Cache system initialized: {settings.cache_backend} backend, enabled: {settings.cache_enabled}")
     except Exception as e:
@@ -366,6 +366,24 @@ async def general_exception_handler(request: Request, exc: Exception):
         }
     )
 
+# ============================================================================
+# STATIC FILES MOUNT (must be before routers)
+# ============================================================================
+# Mount static files directory for media
+try:
+    media_path = Path("media")
+    if media_path.exists():
+        app.mount("/media", CachedStaticFiles(directory="media"), name="media")
+        logger.info(f"Media files mounted at /media from directory: {media_path.absolute()}")
+    else:
+        logger.warning(f"Media directory not found: {media_path.absolute()}")
+except Exception as e:
+    logger.warning(f"Failed to mount media directory: {str(e)}")
+
+# ============================================================================
+# ROUTERS
+# ============================================================================
+
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(role.router)
@@ -398,6 +416,11 @@ app.include_router(fiscal_documents.router)
 app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
+# Unified shipments router (supports all carriers: DHL, BRT, FedEx)
+app.include_router(shipments.router)
+
+# Deprecated: DHL-specific router (kept for backward compatibility)
+# Use /api/v1/shippings/* endpoints instead
 app.include_router(dhl_shipment.router)
 app.include_router(events.router)
 app.include_router(csv_import.router)

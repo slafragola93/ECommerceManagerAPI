@@ -192,7 +192,7 @@ class OrderDocumentService:
         
         articoli = self.get_articoli_order_document(id_order_document, document_type)
         
-        # Recupera il documento per ottenere total_discount e apply_discount_to_tax_included
+        # Recupera il documento per ottenere total_discount
         document = self.db.query(OrderDocument).filter(
             OrderDocument.id_order_document == id_order_document
         ).first()
@@ -228,36 +228,22 @@ class OrderDocumentService:
         total_iva_base = totals['total_price_with_tax'] - totals['total_price']
         total_articoli_base = totals['total_price_with_tax']
         
-        # Recupera total_discount e apply_discount_to_tax_included dal documento
+        # Recupera total_discount dal documento
         total_discount = float(document.total_discount) if document and document.total_discount else 0.0
-        apply_discount_to_tax_included = document.apply_discount_to_tax_included if document and document.apply_discount_to_tax_included else False
         
-        # Applica lo sconto in base al flag
+        # Applica lo sconto al totale senza IVA (comportamento standard)
         if total_discount > 0:
-            if apply_discount_to_tax_included:
-                # Applica lo sconto al totale con IVA
-                total_articoli_dopo_sconto = max(0.0, total_articoli_base - total_discount)
-                
-                # Ricalcola proporzionalmente total_imponibile e total_iva
-                if total_articoli_base > 0:
-                    ratio = total_articoli_dopo_sconto / total_articoli_base
-                    total_imponibile_dopo_sconto = total_imponibile_base * ratio
-                    total_iva_dopo_sconto = total_articoli_dopo_sconto - total_imponibile_dopo_sconto
-                else:
-                    total_imponibile_dopo_sconto = 0.0
-                    total_iva_dopo_sconto = 0.0
+            # Applica lo sconto al totale senza IVA
+            total_imponibile_dopo_sconto = max(0.0, total_imponibile_base - total_discount)
+            
+            # Ricalcola total_iva proporzionalmente
+            if total_imponibile_base > 0:
+                ratio = total_imponibile_dopo_sconto / total_imponibile_base
+                total_iva_dopo_sconto = total_iva_base * ratio
             else:
-                # Applica lo sconto al totale senza IVA
-                total_imponibile_dopo_sconto = max(0.0, total_imponibile_base - total_discount)
-                
-                # Ricalcola total_iva proporzionalmente
-                if total_imponibile_base > 0:
-                    ratio = total_imponibile_dopo_sconto / total_imponibile_base
-                    total_iva_dopo_sconto = total_iva_base * ratio
-                else:
-                    total_iva_dopo_sconto = 0.0
-                
-                total_articoli_dopo_sconto = total_imponibile_dopo_sconto + total_iva_dopo_sconto
+                total_iva_dopo_sconto = 0.0
+            
+            total_articoli_dopo_sconto = total_imponibile_dopo_sconto + total_iva_dopo_sconto
         else:
             # Nessuno sconto
             total_imponibile_dopo_sconto = total_imponibile_base

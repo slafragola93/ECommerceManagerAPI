@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 import json
+from decimal import Decimal
 from sqlalchemy.engine import Row
 from src.models.dhl_configuration import DhlConfiguration
 from src.services.ecommerce.shipments.dhl_client import format_planned_shipping_date
@@ -7,6 +8,14 @@ from src.services.ecommerce.shipments.dhl_client import format_planned_shipping_
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """JSON encoder that handles Decimal objects"""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 
 class DhlMapper:
@@ -212,8 +221,8 @@ class DhlMapper:
         payload["accounts"] = accounts
         
         # Debug: Log complete payload
-        logger.info(f"🏗️ Built DHL payload for order {order_data.id_order}, international: {is_international}")
-        logger.info(f"🏗️ DHL Mapper Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        logger.info(f"Built DHL payload for order {order_data.id_order}, international: {is_international}")
+        logger.info(f"DHL Mapper Payload: {json.dumps(payload, indent=2, ensure_ascii=False, cls=DecimalEncoder)}")
         
         return payload
     
@@ -251,7 +260,7 @@ class DhlMapper:
                 "countryCode": country_iso
             },
             "contactInformation": {
-                "companyName": address.company   or "",
+                "companyName": address.company   or f"{address.firstname or ''} {address.lastname or ''}".strip(),
                 "fullName": f"{address.firstname or ''} {address.lastname or ''}".strip(),
                 "phone": address.phone or "0000000000",
                 "email": address.email or "noreply@example.com"

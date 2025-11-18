@@ -141,8 +141,6 @@ example={
                     # TOTAL_DISCOUNT (opzionale - sconto totale documento)
                     "total_discount": 50.00,                   # Sconto totale sul documento (oltre agli sconti articoli)
                     
-                    # APPLY_DISCOUNT_TO_TAX_INCLUDED (opzionale)
-                    "apply_discount_to_tax_included": False,   # True=sconto su totale IVA inclusa, False=su IVA esclusa
                     
                     # ARTICOLI* (obbligatorio - almeno un articolo)
                     "articoli": [

@@ -95,6 +95,7 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
                 Address.address1,
                 Address.postcode,
                 Address.city,
+                Address.state,
                 Address.firstname,
                 Address.lastname,
                 Address.company,

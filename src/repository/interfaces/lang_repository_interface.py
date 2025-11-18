@@ -13,3 +13,8 @@ class ILangRepository(IRepository[Lang, int]):
     def get_by_name(self, name: str) -> Optional[Lang]:
         """Ottiene un lang per nome"""
         pass
+    
+    @abstractmethod
+    def get_by_iso_code(self, iso_code: str) -> Optional[Lang]:
+        """Ottiene un lang per codice ISO"""
+        pass

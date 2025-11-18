@@ -300,15 +300,15 @@ class PreventivoService:
             shipping=shipment_obj,
             payment=payment_obj,
             customer_name=customer_name,
+            is_invoice_requested=order_document.is_invoice_requested,
+            is_payed=order_document.is_payed,
             note=order_document.note,
             type_document=order_document.type_document,
-            is_invoice_requested=order_document.is_invoice_requested,
             total_imponibile=totals["total_imponibile"],
             total_iva=totals["total_iva"],
             total_finale=totals["total_finale"],
             total_price_with_tax=totals["total_finale"],
             total_discount=order_document.total_discount,
-            apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
             date_add=order_document.date_add,
             updated_at=order_document.updated_at,
             articoli=articoli_data
@@ -535,12 +535,12 @@ class PreventivoService:
             customer_name=customer_name,
             note=order_document.note,
             is_invoice_requested=order_document.is_invoice_requested,
+            is_payed=order_document.is_payed,
             type_document=order_document.type_document,
             total_imponibile=totals["total_imponibile"],
             total_iva=totals["total_iva"],
             total_finale=order_document.total_price_with_tax,
             total_discount=order_document.total_discount,
-            apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
             total_discounts_applied=totals.get("total_discounts_applicati", 0.0),
             articoli=articoli_data,
             order_packages=order_packages_data,
@@ -551,7 +551,7 @@ class PreventivoService:
     @cached(
         preset="preventivo",
         key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivo_detail_static(args, kwargs),
-        tenant_from_user=True
+        tenant_from_user=False
     )
     async def get_preventivo(self, id_order_document: int, user=None) -> Optional[PreventivoDetailResponseSchema]:
         """Recupera preventivo per ID con indirizzi completi (con caching)"""
@@ -671,6 +671,7 @@ class PreventivoService:
                 payment=payment_obj,
                 customer_name=customer_name,
                 is_invoice_requested=order_document.is_invoice_requested,
+                is_payed=order_document.is_payed,
                 reference=None,  # OrderDocument non ha campo reference
                 note=order_document.note,
                 status=None,  # OrderDocument non ha campo status
@@ -679,7 +680,6 @@ class PreventivoService:
                 total_iva=totals["total_iva"],
                 total_finale=order_document.total_price_with_tax,
                 total_discount=order_document.total_discount,
-                apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
                 articoli=articoli_data,
                 order_packages=order_packages_data,
                 date_add=order_document.date_add,
@@ -690,12 +690,8 @@ class PreventivoService:
     
     def _get_cache_key_preventivo_detail(self, id_order_document: int, user=None, **kwargs) -> str:
         """Genera chiave cache per dettaglio preventivo con versione"""
-        # Estrai tenant da user
+        # Tenant comune per tutti gli utenti (preventivi condivisi)
         tenant = "default"
-        if user and hasattr(user, 'id'):
-            tenant = f"user_{user.id}"
-        elif user and isinstance(user, dict) and 'id' in user:
-            tenant = f"user_{user['id']}"
         
         # Recupera updated_at dal database per la versione
         order_document = self.preventivo_repo.get_preventivo_by_id(id_order_document)
@@ -724,12 +720,8 @@ class PreventivoService:
         # user è sempre in kwargs se specificato
         user = kwargs.get('user')
         
-        # Estrai tenant da user
+        # Tenant comune per tutti gli utenti (preventivi condivisi)
         tenant = "default"
-        if user and hasattr(user, 'id'):
-            tenant = f"user_{user.id}"
-        elif user and isinstance(user, dict) and 'id' in user:
-            tenant = f"user_{user['id']}"
         
         # Recupera updated_at dal database per la versione
         order_document = self.preventivo_repo.get_preventivo_by_id(id_order_document)
@@ -746,12 +738,8 @@ class PreventivoService:
     
     def _get_cache_key_preventivi_list(self, skip: int, limit: int, search: Optional[str], show_details: bool, user=None, **kwargs) -> str:
         """Genera chiave cache per lista preventivi con params_hash"""
-        # Estrai tenant da user
+        # Tenant comune per tutti gli utenti (preventivi condivisi)
         tenant = "default"
-        if user and hasattr(user, 'id'):
-            tenant = f"user_{user.id}"
-        elif user and isinstance(user, dict) and 'id' in user:
-            tenant = f"user_{user['id']}"
         
         # Calcola page da skip e limit
         page = (skip // limit) + 1 if limit > 0 else 1
@@ -783,12 +771,8 @@ class PreventivoService:
         show_details = args[4] if len(args) > 4 else kwargs.get('show_details', False)
         user = kwargs.get('user')
         
-        # Estrai tenant da user
+        # Tenant comune per tutti gli utenti (preventivi condivisi)
         tenant = "default"
-        if user and hasattr(user, 'id'):
-            tenant = f"user_{user.id}"
-        elif user and isinstance(user, dict) and 'id' in user:
-            tenant = f"user_{user['id']}"
         
         # Calcola page da skip e limit
         page = (skip // limit) + 1 if limit > 0 else 1
@@ -810,7 +794,7 @@ class PreventivoService:
     @cached(
         preset="preventivi_list",
         key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivi_list_static(args, kwargs),
-        tenant_from_user=True
+        tenant_from_user=False
     )
     async def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False, user=None) -> List[PreventivoResponseSchema]:
         """Recupera lista preventivi (con caching)"""
@@ -1281,6 +1265,7 @@ class PreventivoService:
             payment=payment_obj,
             customer_name=customer_name,
             is_invoice_requested=order_document.is_invoice_requested,
+            is_payed=order_document.is_payed,
             reference=None,
             note=order_document.note,
             type_document=order_document.type_document,
@@ -1289,7 +1274,6 @@ class PreventivoService:
             total_finale=totals["total_finale"],
             total_price_with_tax=totals["total_finale"],
             total_discount=order_document.total_discount,
-            apply_discount_to_tax_included=order_document.apply_discount_to_tax_included,
             articoli=articoli_data,
             order_packages=order_packages_data,
             date_add=order_document.date_add,

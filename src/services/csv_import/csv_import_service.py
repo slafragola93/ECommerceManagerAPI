@@ -99,7 +99,9 @@ class CSVImportService:
             for row in rows:
                 row_num = row.get('_row_number', 0)
                 try:
-                    schema_instance = EntityMapper.map_to_schema(row, entity_type, id_platform)
+                    # Passa db session per order_details (necessario per lookup id_origin->id_product e Tax->id_tax)
+                    db_session = self.db if entity_type == 'order_details' else None
+                    schema_instance = EntityMapper.map_to_schema(row, entity_type, id_platform, db_session)
                     mapped_data.append(schema_instance)
                 except Exception as e:
                     mapping_errors.append(ValidationError(
