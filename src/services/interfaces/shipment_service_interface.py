@@ -30,4 +30,17 @@ class IShipmentService(ABC):
             File path to label PDF or None if not found
         """
         pass
+    
+    @abstractmethod
+    async def cancel_shipment(self, order_id: int) -> Dict[str, Any]:
+        """
+        Cancel shipment for order
+        
+        Args:
+            order_id: Order ID to cancel shipment for
+            
+        Returns:
+            Dict with cancellation result
+        """
+        pass
 

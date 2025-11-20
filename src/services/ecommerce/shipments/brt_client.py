@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy.engine import Row
 import logging
 
-from src.core.settings import get_cache_settings
+from src.core.settings import get_carrier_integration_settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class BrtClient:
     """BRT REST API HTTP client with authentication support"""
     
     def __init__(self):
-        self.settings = get_cache_settings()
+        self.settings = get_carrier_integration_settings()
         self.base_url_prod = self.settings.brt_base_url_prod
         self.base_url_sandbox = self.settings.brt_base_url_sandbox
     
@@ -83,7 +83,12 @@ class BrtClient:
                 client, "POST", url, headers=headers, json=payload
             )
         
-        response_data = response.json()
+        # Parse JSON response
+        try:
+            response_data = response.json()
+        except Exception as e:
+            logger.error(f"BRT Create Shipment Response is not valid JSON: {e}")
+            raise ValueError(f"BRT API returned invalid JSON response: {e}")
         
         # Check for HTTP errors
         if response.status_code >= 400:

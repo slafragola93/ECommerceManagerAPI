@@ -3,7 +3,7 @@ import hashlib
 import base64
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 import logging
 
@@ -67,6 +67,9 @@ class BrtShipmentService(IBrtShipmentService):
         shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
         carrier_api_id = shipping_info.id_carrier_api
         
+        # 2.1. Recupero shipping_message dalla spedizione
+        shipping_message = self.shipping_repository.get_message_shipping(order_data.id_shipping) or ""
+        
         # 3. Recupero la configurazione BRT
         brt_config = self.brt_config_repository.get_by_carrier_api_id(carrier_api_id)
         if not brt_config:
@@ -83,8 +86,21 @@ class BrtShipmentService(IBrtShipmentService):
         print(f"id country: {receiver_address.id_country}")
         receiver_country_iso = self.country_repository.get_iso_code(receiver_address.id_country)
         print(f"Receiver country ISO: {receiver_country_iso}")
+        
+        # 6.1. Validazione: BRT supporta solo spedizioni in Italia
+        if receiver_country_iso.upper() != "IT":
+            raise BusinessRuleException(
+                f"BRT supports only shipments to Italy. Destination country: {receiver_country_iso}",
+                details={
+                    "destination_country_iso": receiver_country_iso,
+                    "supported_country": "IT"
+                }
+            )
         # 7. Recupero dimensioni dei colli
         packages = self.order_package_repository.get_dimensions_by_order(order_id)
+        
+        # 7.1. Conta il numero di order_package collegate all'ordine
+        number_of_parcels = len(packages) if packages else 0
         
         # 8. Recupero internal_reference dell'ordine
         internal_reference = order_data.internal_reference or str(order_id)
@@ -95,7 +111,8 @@ class BrtShipmentService(IBrtShipmentService):
             brt_config=brt_config,
             receiver_address=receiver_address,
             packages=packages,
-            receiver_country_iso=receiver_country_iso
+            receiver_country_iso=receiver_country_iso,
+            number_of_parcels=number_of_parcels
         )
         
         routing_response = await self.brt_client.routing(
@@ -114,7 +131,10 @@ class BrtShipmentService(IBrtShipmentService):
             packages=packages,
             reference=internal_reference,
             receiver_country_iso=receiver_country_iso,
-            normalized_address=normalized_address
+            normalized_address=normalized_address,
+            number_of_parcels=number_of_parcels,
+            shipping_message=shipping_message,
+            order_id=order_id
         )
         
         create_response = await self.brt_client.create_shipment(
@@ -126,8 +146,33 @@ class BrtShipmentService(IBrtShipmentService):
         # 11. Estrazione tracking e label
         tracking = self.brt_mapper.extract_tracking_from_response(create_response)
         logger.info(f"Extracted tracking for order {order_id}: {tracking}")
-        label_b64 = self.brt_mapper.extract_label_from_response(create_response)
-        logger.info(f"Extracted label (base64 length) for order {order_id}: {len(label_b64) if label_b64 else 0}")
+        
+        # Estrai tutte le label dalla risposta
+        all_labels_b64 = self.brt_mapper.extract_all_labels_from_response(create_response)
+        
+        # Se ci sono multiple label e numberOfParcels > 1, uniscile
+        if number_of_parcels > 1 and len(all_labels_b64) > 1:
+            # Decodifica tutte le label da base64 a bytes
+            pdf_bytes_list = []
+            for label_b64 in all_labels_b64:
+                try:
+                    pdf_bytes = base64.b64decode(label_b64)
+                    pdf_bytes_list.append(pdf_bytes)
+                except Exception as e:
+                    logger.error(f"Error decoding label base64: {str(e)}")
+                    raise ValueError(f"Invalid base64 PDF label: {str(e)}")
+            
+            # Unisci i PDF
+            merged_pdf_bytes = self._merge_pdf_labels(pdf_bytes_list)
+            
+            # Codifica il risultato in base64
+            label_b64 = base64.b64encode(merged_pdf_bytes).decode('utf-8')
+            logger.info(f"Merged {len(all_labels_b64)} labels into single PDF for order {order_id}")
+        elif all_labels_b64:
+            # Usa la prima label se c'è solo una o numberOfParcels == 1
+            label_b64 = all_labels_b64[0]
+        else:
+            label_b64 = None
         
         if not label_b64:
             # Try to get label from confirm response if autoconfirm is enabled
@@ -135,12 +180,7 @@ class BrtShipmentService(IBrtShipmentService):
             # Note: BRT config doesn't have autoconfirm field yet, so we skip for now
             pass
         
-        # 12. STEP 3: Confirm shipment if needed (autoconfirm)
-        # Note: BRT config doesn't have autoconfirm field in model yet
-        # For now, we'll skip auto-confirm. Can be added later.
-        confirm_response = None
-        numeric_ref = create_payload["createData"]["numericSenderReference"]
-        alphanumeric_ref = create_payload["createData"]["alphanumericSenderReference"]
+
         
         # 13. Salva PDF label
         if label_b64:
@@ -158,6 +198,54 @@ class BrtShipmentService(IBrtShipmentService):
         return {
             "awb": tracking or ""
         }
+    
+    def _merge_pdf_labels(self, pdf_bytes_list: List[bytes]) -> bytes:
+        """
+        Unisce multiple label PDF in un unico PDF
+        
+        Args:
+            pdf_bytes_list: Lista di bytes di PDF da unire
+            
+        Returns:
+            bytes del PDF unito
+            
+        Raises:
+            ValueError: Se un PDF non è valido o l'unione fallisce
+        """
+        try:
+            from pypdf import PdfWriter, PdfReader
+            from io import BytesIO
+        except ImportError:
+            raise ImportError("pypdf library is required. Install with: pip install pypdf")
+        
+        if not pdf_bytes_list:
+            raise ValueError("Cannot merge empty list of PDFs")
+        
+        if len(pdf_bytes_list) == 1:
+            return pdf_bytes_list[0]
+        
+        try:
+            writer = PdfWriter()
+            
+            for pdf_bytes in pdf_bytes_list:
+                try:
+                    pdf_reader = PdfReader(BytesIO(pdf_bytes))
+                    # Aggiungi tutte le pagine del PDF al writer
+                    for page in pdf_reader.pages:
+                        writer.add_page(page)
+                except Exception as e:
+                    raise ValueError(f"Invalid PDF in merge operation: {str(e)}")
+            
+            # Crea il PDF unito
+            output_buffer = BytesIO()
+            writer.write(output_buffer)
+            output_buffer.seek(0)
+            
+            return output_buffer.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error merging PDF labels: {str(e)}")
+            raise ValueError(f"Failed to merge PDF labels: {str(e)}")
             
     
     async def _save_documents(
@@ -330,4 +418,90 @@ class BrtShipmentService(IBrtShipmentService):
         except Exception as e:
             logger.error(f"Errore nel recuperare il percorso del file per AWB {awb}: {str(e)}")
             return None
+    
+    async def cancel_shipment(self, order_id: int) -> Dict[str, Any]:
+        """
+        Cancella una spedizione BRT per ordine
+        
+        Args:
+            order_id: ID ordine per cancellare spedizione
+            
+        Returns:
+            Dict con risultato cancellazione
+        """
+        # 1. Recupero informazioni Ordine
+        order_data = self.order_repository.get_shipment_data(order_id)
+        
+        # 2. Recupero info di spedizione per poi recuperare id_carrier_api
+        shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+        carrier_api_id = shipping_info.id_carrier_api
+        
+        # 3. Recupero la configurazione BRT
+        brt_config = self.brt_config_repository.get_by_carrier_api_id(carrier_api_id)
+        if not brt_config:
+            raise NotFoundException("BrtConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+        
+        # 4. Recupero credenziali
+        credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
+        
+        # 5. Recupero internal_reference dell'ordine per generare i riferimenti
+        internal_reference = order_data.internal_reference or str(order_id)
+        
+        # 6. Genera numeric e alphanumeric reference (stessa logica della creazione)
+        # Usa order_id come fallback invece di timestamp per garantire consistenza
+        try:
+            numeric_ref = int(internal_reference) if internal_reference and internal_reference.isdigit() else None
+        except (ValueError, AttributeError):
+            numeric_ref = None
+        
+        if numeric_ref is None:
+            # Use order_id as fallback for consistency with creation
+            numeric_ref = order_id
+        
+        alphanumeric_ref = internal_reference or str(numeric_ref)
+        
+        # 7. Costruisci payload di cancellazione
+        delete_payload = self.brt_mapper.build_delete_request(
+            brt_config=brt_config,
+            numeric_reference=numeric_ref,
+            alphanumeric_reference=alphanumeric_ref
+        )
+        
+        # 8. Esegui cancellazione
+        logger.info(f"Cancelling BRT shipment for order {order_id}")
+        delete_response = await self.brt_client.cancel_shipment(
+            payload=delete_payload,
+            credentials=credentials,
+            brt_config=brt_config
+        )
+        
+        # 9. Verifica risultato dalla risposta
+        delete_result = delete_response.get("deleteResponse", {})
+        execution_message = delete_result.get("executionMessage", {})
+        code = execution_message.get("code", -1)
+        severity = execution_message.get("severity", "ERROR")
+        message = execution_message.get("message", "Unknown error")
+        
+        # Se code < 0, è un errore
+        if code < 0:
+            raise BusinessRuleException(
+                f"BRT cancellation failed: {message}",
+                details={
+                    "brt_error_code": code,
+                    "severity": severity,
+                    "message": message
+                }
+            )
+        
+        # 10. Aggiorna lo stato della shipping a 11 (Annullato)
+        self.shipping_repository.update_shipping_to_cancelled_state(order_data.id_shipping)
+        
+        logger.info(f"BRT shipment cancelled successfully for order {order_id}. Code: {code}, Message: {message}")
+        
+        return {
+            "success": True,
+            "code": code,
+            "message": message,
+            "severity": severity
+        }
 

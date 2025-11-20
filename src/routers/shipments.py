@@ -196,3 +196,54 @@ async def download_shipment_label(
         media_type="application/pdf"
     )
 
+
+@router.delete("/{order_id}/cancel", response_model=dict)
+async def cancel_shipment(
+    order_id: int,
+    user: dict = Depends(get_current_user),
+    factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
+    db: Session = Depends(get_db)
+):
+    """
+    Cancella una spedizione per un ordine (unificato per tutti i corrieri)
+    
+    Il sistema determina automaticamente quale corriere usare in base a
+    Shipping.id_carrier_api associato all'ordine.
+    
+    Args:
+        order_id: ID dell'ordine per cui cancellare la spedizione
+        factory: Factory per selezionare il service corretto
+        db: Database session
+        
+    Returns:
+        Dict con risultato cancellazione
+    """
+    # 1. Recupera id_carrier_api da Shipping tramite Order
+    from src.models.order import Order
+    
+    stmt = select(Order.id_shipping).where(Order.id_order == order_id)
+    result = db.execute(stmt)
+    id_shipping = result.scalar_one_or_none()
+    
+    if not id_shipping:
+        raise NotFoundException("Order", order_id, {"order_id": order_id, "reason": "Order has no shipping"})
+    
+    # 2. Recupera Shipping per ottenere id_carrier_api
+    shipping_repo = ShippingRepository(db)
+    shipping_info = shipping_repo.get_carrier_info(id_shipping)
+    carrier_api_id = shipping_info.id_carrier_api
+    
+    if not carrier_api_id:
+        raise BusinessRuleException(
+            f"Order {order_id} has no carrier_api assigned. Cannot cancel shipment.",
+            details={"order_id": order_id}
+        )
+    
+    # 3. Usa factory per ottenere il service corretto
+    shipment_service = factory.get_shipment_service(carrier_api_id, db)
+    
+    # 4. Cancella spedizione
+    logger.info(f"Cancelling shipment for order {order_id} with carrier_api_id {carrier_api_id}")
+    result = await shipment_service.cancel_shipment(order_id)
+    
+    return result

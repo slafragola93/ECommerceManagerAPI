@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func, and_, or_
 from src.models.order_document import OrderDocument
@@ -10,6 +11,7 @@ from src.models.tax import Tax
 from src.models.shipping import Shipping
 from src.models.sectional import Sectional
 from src.models.product import Product
+from src.services.core.query_utils import QueryUtils
 from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.preventivo_schema import (
     PreventivoCreateSchema, 
@@ -100,13 +102,15 @@ class PreventivoRepository:
         # Crea Shipping se presente (i totali verranno calcolati dopo)
         shipping_id = None
         if preventivo_data.shipping:
+            # Recupera il peso passato (se None, usa 0.0)
+            weight = preventivo_data.shipping.weight
             # Crea oggetto Shipping
             shipping = Shipping(
-                id_carrier_api=preventivo_data.shipping.id_carrier_api,  # Non necessario per preventivi
+                id_carrier_api=preventivo_data.shipping.id_carrier_api,
                 id_shipping_state=1, 
                 id_tax=preventivo_data.shipping.id_tax,
                 tracking=None,
-                weight=0.0,  # Verrà calcolato automaticamente dopo
+                weight=float(weight),  # Forza conversione a float
                 price_tax_incl=preventivo_data.shipping.price_tax_incl,
                 price_tax_excl=preventivo_data.shipping.price_tax_excl,
                 shipping_message=preventivo_data.shipping.shipping_message
@@ -114,7 +118,7 @@ class PreventivoRepository:
             self.db.add(shipping)
             self.db.flush()  # Per ottenere l'ID
             shipping_id = shipping.id_shipping
-        
+
         order_document.id_shipping = shipping_id
         
         self.db.add(order_document)
@@ -143,19 +147,14 @@ class PreventivoRepository:
                 self.db.add(order_package)
         
         self.db.commit()
-        
+
         # Ricalcola i totali usando il metodo centralizzato che include lo sconto totale
         from src.services.routers.order_document_service import OrderDocumentService
         order_doc_service = OrderDocumentService(self.db)
-        order_doc_service.update_document_totals(order_document.id_order_document, "preventivo")
-        
-        # Aggiorna il peso della spedizione se presente
-        if shipping_id:
-            from src.repository.shipping_repository import ShippingRepository
-            shipping_repo = ShippingRepository(self.db)
-            # Ricarica il documento per avere il peso aggiornato
-            self.db.refresh(order_document)
-            shipping_repo.update_weight(shipping_id, order_document.total_weight)
+        # Se il peso è stato passato (anche se è 0), non aggiornare il peso della shipping
+        skip_shipping_weight_update = (preventivo_data.shipping and preventivo_data.shipping.weight is not None)
+        order_doc_service.update_document_totals(order_document.id_order_document, "preventivo", skip_shipping_weight_update=skip_shipping_weight_update)
+    
         
         return order_document
     
@@ -220,19 +219,46 @@ class PreventivoRepository:
         if result.id_order != 0 and result.id_order is not None:
             raise ValueError("Il preventivo è stato già convertito in ordine. Per tanto, non è possibile effettuare modifiche.")
     
-    def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None) -> List[OrderDocument]:
+    def get_preventivi(
+        self, 
+        skip: int = 0, 
+        limit: int = 100, 
+        search: Optional[str] = None,
+        sectionals_ids: Optional[str] = None,
+        payments_ids: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None
+    ) -> List[OrderDocument]:
         """Recupera lista preventivi con filtri"""
+        
         query = self.db.query(OrderDocument).filter(
             OrderDocument.type_document == "preventivo"
         )
         
-        if search:
-            query = query.filter(
-                or_(
-                    OrderDocument.document_number.ilike(f"%{search}%"),
-                    OrderDocument.note.ilike(f"%{search}%")
+        try:
+            # Filtro per ricerca testuale
+            if search:
+                query = query.filter(
+                    or_(
+                        OrderDocument.document_number.ilike(f"%{search}%"),
+                        OrderDocument.note.ilike(f"%{search}%")
+                    )
                 )
-            )
+            
+            # Filtri per ID
+            if sectionals_ids:
+                query = QueryUtils.filter_by_id(query, OrderDocument, 'id_sectional', sectionals_ids)
+            if payments_ids:
+                query = QueryUtils.filter_by_id(query, OrderDocument, 'id_payment', payments_ids)
+            
+            # Filtri per data
+            if date_from:
+                query = query.filter(OrderDocument.date_add >= date_from)
+            if date_to:
+                query = query.filter(OrderDocument.date_add <= date_to)
+                
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
         
         return query.order_by(OrderDocument.id_order_document.desc()).offset(skip).limit(limit).all()
     
@@ -318,7 +344,8 @@ class PreventivoRepository:
         if preventivo_data.articoli is not None or discount_changed:
             from src.services.routers.order_document_service import OrderDocumentService
             order_doc_service = OrderDocumentService(self.db)
-            order_doc_service.update_document_totals(id_order_document, "preventivo")
+            # IMPORTANTE: skip_shipping_weight_update=True per preservare il peso dello shipping passato esplicitamente
+            order_doc_service.update_document_totals(id_order_document, "preventivo", skip_shipping_weight_update=True)
         
         return preventivo
     
@@ -1182,7 +1209,7 @@ class PreventivoRepository:
                     price_tax_incl=original_shipping.price_tax_incl,
                     price_tax_excl=original_shipping.price_tax_excl,
                     shipping_message=original_shipping.shipping_message,
-                    date_add=datetime.now().date()
+                    date_add=datetime.now()
                 )
                 self.db.add(new_shipping)
                 self.db.flush()  # Per ottenere l'ID

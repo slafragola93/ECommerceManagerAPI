@@ -1,0 +1,637 @@
+import os
+import hashlib
+import base64
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List
+from pathlib import Path
+import logging
+
+from src.core.settings import get_cache_settings
+from src.core.exceptions import NotFoundException, BusinessRuleException, InfrastructureException, ValidationException
+from src.services.interfaces.fedex_shipment_service_interface import IFedexShipmentService
+from src.repository.interfaces.order_repository_interface import IOrderRepository
+from src.repository.interfaces.shipping_repository_interface import IShippingRepository
+from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
+from src.repository.interfaces.fedex_configuration_repository_interface import IFedexConfigurationRepository
+from src.repository.interfaces.address_repository_interface import IAddressRepository
+from src.repository.interfaces.country_repository_interface import ICountryRepository
+from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
+from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
+from src.services.ecommerce.shipments.fedex_client import FedexClient
+from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
+from src.models.shipment_document import ShipmentDocument
+
+logger = logging.getLogger(__name__)
+
+
+class FedexShipmentService(IFedexShipmentService):
+    """FedEx Shipment service for creating shipments and managing documents"""
+    
+    def __init__(
+        self,
+        order_repository: IOrderRepository,
+        shipping_repository: IShippingRepository,
+        carrier_api_repository: IApiCarrierRepository,
+        fedex_config_repository: IFedexConfigurationRepository,
+        address_repository: IAddressRepository,
+        country_repository: ICountryRepository,
+        order_package_repository: IOrderPackageRepository,
+        order_detail_repository: IOrderDetailRepository,
+        fedex_client: FedexClient,
+        fedex_mapper: FedexMapper
+    ):
+        self.order_repository = order_repository
+        self.shipping_repository = shipping_repository
+        self.carrier_api_repository = carrier_api_repository
+        self.fedex_config_repository = fedex_config_repository
+        self.address_repository = address_repository
+        self.country_repository = country_repository
+        self.order_package_repository = order_package_repository
+        self.order_detail_repository = order_detail_repository
+        self.fedex_client = fedex_client
+        self.fedex_mapper = fedex_mapper
+        self.settings = get_cache_settings()
+    
+    async def create_shipment(self, order_id: int) -> Dict[str, Any]:
+        """
+        Creazione spedizione FedEx per ordine
+        
+        Args:
+            order_id: ID ordine per creare spedizione
+            
+        Returns:
+            Dict con dettagli spedizione (awb, tracking_numbers, etc.)
+        """
+        try:
+            # 1. Recupero informazioni Ordine
+            order_data = self.order_repository.get_shipment_data(order_id)
+            
+            # 2. Recupero info di spedizione per poi recuperare id_carrier_api
+            shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+            carrier_api_id = shipping_info.id_carrier_api
+            
+            # 2.1. Recupero price_tax_incl dalla spedizione per totalCustomsValue
+            shipping = self.shipping_repository.get_by_id(order_data.id_shipping)
+            shipping_price_tax_incl = float(shipping.price_tax_incl or 0.0) if shipping else 0.0
+            
+            # 3. Recupero la configurazione FedEx
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            if not fedex_config:
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+            
+            # 4. Recupero credenziali FedEx
+            credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
+            
+            # 5. Recupero indirizzo di consegna e paese
+            receiver_address = self.address_repository.get_delivery_data(order_data.id_address_delivery)
+            receiver_country_iso = self.country_repository.get_iso_code(receiver_address.id_country)
+            
+            # 6. Recupero dimensioni dei colli
+            packages = self.order_package_repository.get_dimensions_by_order(order_id)
+            
+            # 7. Recupero dettagli ordine per commodities
+            order_details = self.order_detail_repository.get_by_order_id(order_id)
+            
+            # 8. Recupero internal_reference dell'ordine
+            internal_reference = order_data.internal_reference or str(order_id)
+            
+            # 9. Costruzione FedEx payload
+            fedex_payload = self.fedex_mapper.build_shipment_request(
+                order_data=order_data,
+                fedex_config=fedex_config,
+                receiver_address=receiver_address,
+                receiver_country_iso=receiver_country_iso,
+                packages=packages,
+                reference=internal_reference,
+                shipping_price_tax_incl=shipping_price_tax_incl,
+                order_details=order_details
+            )
+            
+            # 10. Chiama a API FedEx
+            logger.info(f"Creating FedEx shipment for order {order_id}")
+            try:
+                fedex_response = await self.fedex_client.create_shipment(
+                    payload=fedex_payload,
+                    credentials=credentials,
+                    fedex_config=fedex_config
+                )
+            except ValueError as e:
+                # Handle FedEx validation errors (400, 422)
+                logger.error(f"FedEx Validation Error for order {order_id}: {str(e)}")
+                raise ValidationException(
+                    f"FedEx validation error: {str(e)}",
+                    details={"order_id": order_id, "error": str(e)}
+                )
+            except RuntimeError as e:
+                # Handle FedEx server errors (500, 503)
+                logger.error(f"FedEx Server Error for order {order_id}: {str(e)}")
+                raise InfrastructureException(
+                    f"FedEx server error: {str(e)}",
+                    details={"order_id": order_id, "error": str(e)}
+                )
+            except Exception as e:
+                # Handle other FedEx API errors
+                logger.error(f"FedEx API Error for order {order_id}: {str(e)}")
+                raise InfrastructureException(
+                    f"FedEx API error: {str(e)}",
+                    details={"order_id": order_id, "error": str(e)}
+                )
+            
+            # 11. Estrazione tracking numbers e label
+            tracking_numbers = self.fedex_mapper.extract_tracking_from_response(fedex_response)
+            master_tracking = None
+            
+            # Get master tracking number
+            output = fedex_response.get("output", {})
+            transaction_shipments = output.get("transactionShipments", [])
+            if transaction_shipments:
+                master_tracking = transaction_shipments[0].get("masterTrackingNumber")
+            
+            # Use master tracking as primary AWB, fallback to first tracking number
+            awb = master_tracking or (tracking_numbers[0] if tracking_numbers else None)
+            
+            # Extract label
+            label_b64 = self.fedex_mapper.extract_label_from_response(fedex_response)
+            logger.info(f"FedEx label extracted: {label_b64 is not None}, AWB: {awb}")
+            
+            # 12. Salva PDF label e documenti
+            if awb:
+                if label_b64:
+                    try:
+                        await self._save_documents(
+                            awb=awb,
+                            label_b64=label_b64,
+                            order_id=order_id,
+                            carrier_api_id=carrier_api_id
+                        )
+                        logger.info(f"FedEx document saved successfully for AWB {awb}")
+                    except Exception as e:
+                        logger.error(f"Error saving FedEx document for AWB {awb}: {str(e)}")
+                        # Continue even if document save fails
+                else:
+                    logger.warning(f"No label found in FedEx response for AWB {awb}, saving document without label")
+                    # Save document record even without label (for tracking purposes)
+                    try:
+                        await self._save_document_record(
+                            awb=awb,
+                            order_id=order_id,
+                            carrier_api_id=carrier_api_id
+                        )
+                        logger.info(f"FedEx document record saved successfully for AWB {awb}")
+                    except Exception as e:
+                        logger.error(f"Error saving FedEx document record for AWB {awb}: {str(e)}")
+                        # Continue even if document record save fails
+            
+            # 12. Aggiornamento tracking e stato (2 = Tracking Assegnato)
+            if awb:
+                try:
+                    self.shipping_repository.update_tracking_and_state(order_data.id_shipping, awb, 2)
+                except Exception:
+                    # fallback: almeno salva il tracking
+                    self.shipping_repository.update_tracking(order_data.id_shipping, awb)
+            
+            # Get transaction ID
+            transaction_id = fedex_response.get("transactionId")
+            
+            return {
+                "awb": awb or "",
+                "tracking_numbers": tracking_numbers,
+                "master_tracking_number": master_tracking,
+                "transaction_id": transaction_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating FedEx shipment for order {order_id}: {str(e)}")
+            raise
+    
+    async def validate_shipment(self, order_id: int) -> Dict[str, Any]:
+        """
+        Valida spedizione FedEx prima della creazione
+        
+        Args:
+            order_id: ID ordine per validare spedizione
+            
+        Returns:
+            Dict con risultato validazione
+        """
+        try:
+            # 1. Recupero informazioni Ordine
+            order_data = self.order_repository.get_shipment_data(order_id)
+            
+            # 2. Recupero info di spedizione
+            shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+            carrier_api_id = shipping_info.id_carrier_api
+            
+            # 3. Recupero la configurazione FedEx
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            if not fedex_config:
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+            
+            # 4. Recupero credenziali FedEx
+            credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
+            
+            # 5. Recupero indirizzo di consegna e paese
+            receiver_address = self.address_repository.get_delivery_data(order_data.id_address_delivery)
+            receiver_country_iso = self.country_repository.get_iso_code(receiver_address.id_country)
+            
+            # 6. Recupero dimensioni dei colli
+            packages = self.order_package_repository.get_dimensions_by_order(order_id)
+            
+            # 7. Recupero internal_reference dell'ordine
+            internal_reference = order_data.internal_reference or str(order_id)
+            
+            # 8. Costruzione FedEx validation payload
+            validation_payload = self.fedex_mapper.build_validate_request(
+                order_data=order_data,
+                fedex_config=fedex_config,
+                receiver_address=receiver_address,
+                receiver_country_iso=receiver_country_iso,
+                packages=packages,
+                reference=internal_reference
+            )
+            
+            # 9. Chiama a API FedEx per validazione
+            logger.info(f"Validating FedEx shipment for order {order_id}")
+            try:
+                validation_response = await self.fedex_client.validate_shipment(
+                    payload=validation_payload,
+                    credentials=credentials,
+                    fedex_config=fedex_config
+                )
+                
+                # Check for validation errors/warnings in response
+                errors = validation_response.get("errors", [])
+                warnings = validation_response.get("warnings", [])
+                
+                return {
+                    "valid": len(errors) == 0,
+                    "errors": errors,
+                    "warnings": warnings,
+                    "transaction_id": validation_response.get("transactionId")
+                }
+                
+            except ValueError as e:
+                # Validation failed
+                return {
+                    "valid": False,
+                    "errors": [{"message": str(e)}],
+                    "warnings": []
+                }
+            except Exception as e:
+                logger.error(f"Error validating FedEx shipment for order {order_id}: {str(e)}")
+                raise
+                
+        except Exception as e:
+            logger.error(f"Error validating FedEx shipment for order {order_id}: {str(e)}")
+            raise
+    
+    async def get_label_file_path(self, awb: str) -> Optional[str]:
+        """
+        Recupera il percorso del file PDF della label per un AWB
+        
+        Args:
+            awb: Air Waybill number o tracking number FedEx
+            
+        Returns:
+            Percorso del file PDF o None se non trovato
+        """
+        try:
+            from src.repository.shipment_document_repository import ShipmentDocumentRepository
+            
+            # Cerca il documento per AWB
+            document_repo = ShipmentDocumentRepository(self.order_repository.session)
+            documents = document_repo.get_by_awb(awb)
+            
+            if documents:
+                # Restituisce il percorso del primo documento trovato
+                return documents[0].file_path
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error retrieving label file path for AWB {awb}: {str(e)}")
+            return None
+    
+    async def cancel_shipment(self, order_id: int) -> Dict[str, Any]:
+        """
+        Cancella spedizione FedEx per ordine
+        
+        Args:
+            order_id: ID ordine per cancellare spedizione
+            
+        Returns:
+            Dict con risultato cancellazione
+        """
+        try:
+            # 1. Recupero informazioni Ordine
+            order_data = self.order_repository.get_shipment_data(order_id)
+            
+            # 2. Recupero info di spedizione
+            shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+            carrier_api_id = shipping_info.id_carrier_api
+            
+            # 3. Recupero tracking number dalla spedizione
+            tracking_number = shipping_info.tracking
+            if not tracking_number:
+                raise BusinessRuleException(
+                    f"No tracking number found for order {order_id}",
+                    details={"order_id": order_id}
+                )
+            
+            # 4. Recupero la configurazione FedEx
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            if not fedex_config:
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+            
+            # 5. Recupero credenziali FedEx
+            credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
+            
+            # 6. Costruzione payload cancellazione
+            account_number = str(fedex_config.account_number) if fedex_config.account_number else ""
+            cancel_payload = self.fedex_mapper.build_cancel_request(
+                tracking_number=tracking_number,
+                account_number=account_number,
+                deletion_control=None  # FedEx will determine based on shipment type
+            )
+            
+            # 7. Esegui cancellazione
+            logger.info(f"Cancelling FedEx shipment for order {order_id} with tracking {tracking_number}")
+            try:
+                cancel_response = await self.fedex_client.cancel_shipment(
+                    payload=cancel_payload,
+                    credentials=credentials,
+                    fedex_config=fedex_config
+                )
+                
+                # Check response for success
+                # FedEx cancel response structure may vary
+                success = True
+                message = "Shipment cancelled successfully"
+                
+                # Try to extract message from response
+                if "output" in cancel_response:
+                    output = cancel_response["output"]
+                    alerts = output.get("alerts", [])
+                    if alerts:
+                        message = alerts[0].get("message", message)
+                
+                # 8. Aggiorna lo stato della shipping a 11 (Annullato)
+                self.shipping_repository.update_shipping_to_cancelled_state(order_data.id_shipping)
+                logger.info(f"Updated shipping state to 11 (Annullato) for shipping {order_data.id_shipping}")
+                
+                transaction_id = cancel_response.get("transactionId")
+                
+                return {
+                    "success": success,
+                    "message": message,
+                    "transaction_id": transaction_id
+                }
+                
+            except ValueError as e:
+                raise BusinessRuleException(
+                    f"FedEx cancellation failed: {str(e)}",
+                    details={"order_id": order_id, "tracking_number": tracking_number, "error": str(e)}
+                )
+            except RuntimeError as e:
+                raise InfrastructureException(
+                    f"FedEx cancellation server error: {str(e)}",
+                    details={"order_id": order_id, "tracking_number": tracking_number, "error": str(e)}
+                )
+                
+        except Exception as e:
+            logger.error(f"Error cancelling FedEx shipment for order {order_id}: {str(e)}")
+            raise
+    
+    async def get_async_results(
+        self,
+        job_id: str,
+        account_number: str,
+        carrier_api_id: int
+    ) -> Dict[str, Any]:
+        """
+        Recupera risultati asincroni di una spedizione FedEx
+        
+        Args:
+            job_id: Job ID dalla creazione asincrona
+            account_number: Numero account FedEx
+            carrier_api_id: Carrier API ID
+            
+        Returns:
+            Dict con risultati asincroni
+        """
+        try:
+            # 1. Recupero la configurazione FedEx
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            if not fedex_config:
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+            
+            # 2. Recupero credenziali FedEx
+            credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
+            
+            # 3. Chiama API per risultati asincroni
+            logger.info(f"Getting FedEx async results for job {job_id}")
+            try:
+                results = await self.fedex_client.get_async_results(
+                    job_id=job_id,
+                    account_number=account_number,
+                    credentials=credentials,
+                    fedex_config=fedex_config
+                )
+                
+                return results
+                
+            except Exception as e:
+                logger.error(f"Error getting FedEx async results for job {job_id}: {str(e)}")
+                raise
+                
+        except Exception as e:
+            logger.error(f"Error getting FedEx async results: {str(e)}")
+            raise
+    
+    async def _save_documents(
+        self,
+        awb: str,
+        label_b64: str,
+        order_id: int,
+        carrier_api_id: int
+    ) -> Dict[str, Any]:
+        """
+        Salva documenti FedEx (PDF) sul filesystem e nel database
+        
+        Args:
+            awb: Numero tracking FedEx
+            label_b64: Base64 encoded PDF label
+            order_id: Order ID
+            carrier_api_id: Carrier API ID
+            
+        Returns:
+            Dict con metadati documento salvato
+        """
+        try:
+            # Cleanup documenti esistenti
+            self._cleanup_old_documents(order_id)
+            
+            # Decodifica base64
+            try:
+                content_bytes = base64.b64decode(label_b64)
+            except Exception as e:
+                logger.error(f"Error decoding FedEx label base64: {str(e)}")
+                return {}
+            
+            # Genero file path con struttura anno/mese
+            now = datetime.now()
+            year = now.year
+            month = now.month
+            
+            # Creazione directory: /media/shipments/{year}/{month}/{id_order}/
+            base_dir = Path("media") / "shipments" / str(year) / str(month).zfill(2) / str(order_id)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Genero nome file con AWB incluso
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            filename = f"label_{awb}_{timestamp}.pdf"
+            file_path = base_dir / filename
+            
+            # Salvo file
+            with open(file_path, "wb") as f:
+                f.write(content_bytes)
+            
+            # Calcolo metadati file
+            file_size = len(content_bytes)
+            sha256_hash = hashlib.sha256(content_bytes).hexdigest()
+            
+            # Salvo a database
+            document = ShipmentDocument(
+                awb=awb,
+                order_id=order_id,
+                carrier_api_id=carrier_api_id,
+                type_code="label",
+                file_path=str(file_path),
+                mime_type="application/pdf",
+                sha256_hash=sha256_hash,
+                size_bytes=file_size,
+                created_at=now,
+                expires_at=now + timedelta(days=365)  # 1 year TTL
+            )
+            
+            # Aggiungo a sessione e salvo
+            self.order_repository.session.add(document)
+            self.order_repository.session.commit()
+            
+            logger.info(f"Saved FedEx document label for AWB {awb}: {file_path}")
+            
+            return {
+                "type_code": "label",
+                "file_path": str(file_path),
+                "size_bytes": file_size,
+                "sha256_hash": sha256_hash,
+                "order_id": order_id,
+                "carrier_api_id": carrier_api_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error saving FedEx document for AWB {awb}: {str(e)}")
+            raise
+    
+    async def _save_document_record(
+        self,
+        awb: str,
+        order_id: int,
+        carrier_api_id: int
+    ) -> Dict[str, Any]:
+        """
+        Salva solo il record del documento nel database senza file (quando label non disponibile)
+        
+        Args:
+            awb: Numero tracking FedEx
+            order_id: Order ID
+            carrier_api_id: Carrier API ID
+            
+        Returns:
+            Dict con metadati documento salvato
+        """
+        try:
+            now = datetime.now()
+            
+            # Genero un file_path placeholder anche se non c'è il file
+            # Questo è necessario perché file_path è NOT NULL nel database
+            file_path_placeholder = f"media/shipments/placeholder/{order_id}/label_{awb}_no_file.pdf"
+            
+            # Salvo a database con file_path placeholder
+            document = ShipmentDocument(
+                awb=awb,
+                order_id=order_id,
+                carrier_api_id=carrier_api_id,
+                type_code="label",
+                file_path=file_path_placeholder,
+                mime_type="application/pdf",
+                sha256_hash="",  # No hash available
+                size_bytes=0,
+                created_at=now,
+                expires_at=now + timedelta(days=365)  # 1 year TTL
+            )
+            
+            # Aggiungo a sessione e salvo
+            self.order_repository.session.add(document)
+            self.order_repository.session.commit()
+            
+            logger.info(f"Saved FedEx document record (no file) for AWB {awb}")
+            
+            return {
+                "type_code": "label",
+                "awb": awb,
+                "order_id": order_id,
+                "carrier_api_id": carrier_api_id
+            }
+            
+        except Exception as e:
+            logger.error(f"Error saving FedEx document record for AWB {awb}: {str(e)}")
+            raise
+    
+    def _cleanup_old_documents(self, order_id: int) -> None:
+        """
+        Elimina documenti esistenti per un ordine prima di salvare nuovi documenti
+        
+        Args:
+            order_id: ID dell'ordine
+        """
+        try:
+            from src.repository.shipment_document_repository import ShipmentDocumentRepository
+            import shutil
+            
+            # Recupera tutti i documenti esistenti per l'ordine
+            document_repo = ShipmentDocumentRepository(self.order_repository.session)
+            existing_documents = document_repo.get_by_order_id(order_id)
+            
+            if not existing_documents:
+                return
+            
+            # Raggruppa documenti per cartella per eliminare una volta sola
+            folders_to_delete = set()
+            
+            for doc in existing_documents:
+                if doc.file_path:
+                    try:
+                        # Estrai la cartella dell'ordine dal file_path
+                        file_path = Path(doc.file_path)
+                        order_folder = file_path.parent  # cartella {id_order}
+                        folders_to_delete.add(str(order_folder))
+                        
+                        # Elimina il record dal database
+                        document_repo.delete_by_id(doc.id)
+                        
+                    except Exception as e:
+                        logger.warning(f"Errore nel processare il documento {doc.id}: {str(e)}")
+            
+            # Elimina le cartelle fisiche
+            for folder_path in folders_to_delete:
+                try:
+                    if Path(folder_path).exists():
+                        shutil.rmtree(folder_path)
+                except Exception as e:
+                    logger.error(f"Errore nell'eliminare la cartella {folder_path}: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Errore durante la pulizia per l'ordine {order_id}: {str(e)}")
+            # Non sollevo eccezione per non bloccare la creazione spedizione
+

@@ -16,7 +16,7 @@ class FedexConfigurationRepository(BaseRepository[FedexConfiguration, int], IFed
                 FedexConfiguration.id_carrier_api == id_carrier_api
             ).first()
         except Exception as e:
-            raise InfrastructureException(f"Error retrieving Fedex configuration: {str(e)}")
+            raise InfrastructureException(f"Error retrieving FedEx configuration: {str(e)}")
     
     def get_all(self, **filters):
         query = self._session.query(FedexConfiguration)

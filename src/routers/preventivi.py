@@ -229,6 +229,7 @@ example={
     **Esempi**: Vedi esempi JSON in Swagger per scenari specifici.
     """
     service = get_preventivo_service(db)
+    print(preventivo_data)
     return service.create_preventivo(preventivo_data, user["id"])
 
 
@@ -242,6 +243,10 @@ async def get_preventivi(
     limit: int = Query(100, ge=1, le=1000, description="Elementi per pagina (max: 1000)"),
     search: Optional[str] = Query(None, description="Ricerca per document_number o note"),
     show_details: bool = Query(False, description="Include articoli per ogni preventivo (default: false)"),
+    sectionals_ids: Optional[str] = Query(None, description="ID sezionali separati da virgole (es: 1,2,3)"),
+    payments_ids: Optional[str] = Query(None, description="ID pagamenti separati da virgole (es: 1,2,3)"),
+    date_from: Optional[str] = Query(None, description="Data inizio filtro (formato: YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Data fine filtro (formato: YYYY-MM-DD)"),
     user: User = user_dependency,
     db: Session = db_dependency
 ):
@@ -253,13 +258,24 @@ async def get_preventivi(
     - `limit`: Elementi per pagina (default: 100, max: 1000)
     - `search`: Cerca in document_number o note (opzionale)
     - `show_details`: Se true, include articoli (default: false, più performante)
+    - `sectionals_ids`: ID sezionali separati da virgole (es: 1,2,3)
+    - `payments_ids`: ID pagamenti separati da virgole (es: 1,2,3)
+    - `date_from`: Data inizio filtro (formato: YYYY-MM-DD)
+    - `date_to`: Data fine filtro (formato: YYYY-MM-DD)
     
     **Risposta**: Lista preventivi con total, page, limit per paginazione.
     """
     service = get_preventivo_service(db)
     skip = (page - 1) * limit
     
-    preventivi = await service.get_preventivi(skip, limit, search, show_details, user=user)
+    preventivi = await service.get_preventivi(
+        skip, limit, search, show_details, 
+        sectionals_ids=sectionals_ids,
+        payments_ids=payments_ids,
+        date_from=date_from,
+        date_to=date_to,
+        user=user
+    )
     
     return PreventivoListResponseSchema(
         preventivi=preventivi,

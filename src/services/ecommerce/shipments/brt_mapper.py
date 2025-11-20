@@ -24,7 +24,8 @@ class BrtMapper:
         receiver_address: Row,
         packages: List[Row],
         receiver_country_iso: str,
-        service_type: Optional[str] = None
+        service_type: Optional[str] = None,
+        number_of_parcels: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Build BRT routing request payload to normalize recipient address
@@ -46,11 +47,8 @@ class BrtMapper:
         
         # Get province abbreviation using ProvinceService
         province = ""
-        print(f"1 Receiver address: {receiver_address.state}")
         if hasattr(receiver_address, 'state') and receiver_address.state:
-            print(f"Receiver address state: {receiver_address.state}")
             province = province_service.get_province_abbreviation(receiver_address.state)
-            print(f"Province: {province}")
             if not province:
                 # Fallback: use first 2 uppercase letters if service doesn't find it
                 province = str(receiver_address.state).upper()[:2]
@@ -60,6 +58,12 @@ class BrtMapper:
         
         # Get country code from parameter
         country = receiver_country_iso.upper() if receiver_country_iso else "IT"
+        
+        # Calculate number of parcels: use explicit count if provided, otherwise use len(packages)
+        if number_of_parcels is not None:
+            parcels_count = number_of_parcels
+        else:
+            parcels_count = len(packages) if packages else 1
         
         payload = {
             "account": {
@@ -78,7 +82,7 @@ class BrtMapper:
                 "consigneeProvinceAbbreviation": province,
                 "consigneeCountryAbbreviationISOAlpha2": country,
                 "serviceType": service,
-                "numberOfParcels": len(packages) if packages else 1,
+                "numberOfParcels": parcels_count,
                 "weightKG": round(total_weight, 3),
                 "volumeM3": 0.0,
                 "variousParticularitiesManagementCode": "",
@@ -98,7 +102,10 @@ class BrtMapper:
         reference: str,
         receiver_country_iso: str,
         normalized_address: Optional[Dict[str, Any]] = None,
-        service_type: Optional[str] = None
+        service_type: Optional[str] = None,
+        number_of_parcels: Optional[int] = None,
+        shipping_message: Optional[str] = None,
+        order_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Build BRT create shipment request payload
@@ -132,7 +139,6 @@ class BrtMapper:
                 province = str(receiver_address.province_code).upper()[:2]
         
         # Get country code from parameter or normalized address
-        print(f"ISO CODE RECEIVER: {receiver_country_iso}")
         if normalized_address and normalized_address.get("consigneeCountryAbbreviationISOAlpha2"):
             country = normalized_address["consigneeCountryAbbreviationISOAlpha2"]
         elif receiver_country_iso:
@@ -165,17 +171,28 @@ class BrtMapper:
         if hasattr(receiver_address, 'email') and receiver_address.email:
             email = str(receiver_address.email)
         
-        # Numeric reference (use order ID if reference is numeric, otherwise timestamp)
+        # Numeric reference (use reference if numeric, otherwise use order_id as fallback)
         try:
             numeric_ref = int(reference) if reference and reference.isdigit() else None
         except (ValueError, AttributeError):
             numeric_ref = None
         
         if numeric_ref is None:
-            import time
-            numeric_ref = int(time.time())
+            # Use order_id as fallback instead of timestamp for consistency
+            if order_id:
+                numeric_ref = order_id
+            else:
+                # Last resort: use timestamp only if order_id is not available
+                import time
+                numeric_ref = int(time.time())
         
         alphanumeric_ref = reference or str(numeric_ref)
+        
+        # Calculate number of parcels: use explicit count if provided, otherwise use len(packages)
+        if number_of_parcels is not None:
+            parcels_count = number_of_parcels
+        else:
+            parcels_count = len(packages) if packages else 1
         
         # Build createData
         create_data = {
@@ -195,9 +212,9 @@ class BrtMapper:
             "isAlertRequired": "1" if email else "0",
             "serviceType": service,
             "insuranceAmount": 0.0,
-            "insuranceAmountCurrency": "",
+            "insuranceAmountCurrency": "EUR",
             "senderParcelType": "",
-            "numberOfParcels": len(packages) if packages else 1,
+            "numberOfParcels": parcels_count,
             "weightKG": round(total_weight, 3),
             "volumeM3": 0.0,
             "quantityToBeInvoiced": 0,
@@ -205,7 +222,7 @@ class BrtMapper:
             "isCODMandatory": "0",
             "numericSenderReference": numeric_ref,
             "alphanumericSenderReference": alphanumeric_ref,
-            "notes": brt_config.notes or "",
+            "notes": str(shipping_message) if shipping_message else (str(brt_config.notes) if brt_config.notes else ""),
             "parcelsHandlingCode": "2"
         }
         
@@ -262,6 +279,38 @@ class BrtMapper:
         logger.debug(f"BRT Confirm Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
         return payload
     
+    def build_delete_request(
+        self,
+        brt_config: BrtConfiguration,
+        numeric_reference: int,
+        alphanumeric_reference: str
+    ) -> Dict[str, Any]:
+        """
+        Build BRT delete shipment request payload
+        
+        Args:
+            brt_config: BRT configuration
+            numeric_reference: Numeric sender reference
+            alphanumeric_reference: Alphanumeric sender reference
+            
+        Returns:
+            BRT delete payload dict
+        """
+        payload = {
+            "account": {
+                "userID": str(brt_config.api_user),
+                "password": str(brt_config.api_password)
+            },
+            "deleteData": {
+                "senderCustomerCode": int(brt_config.client_code),
+                "numericSenderReference": numeric_reference,
+                "alphanumericSenderReference": alphanumeric_reference
+            }
+        }
+        
+        logger.debug(f"BRT Delete Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        return payload
+    
     def _calculate_total_weight(self, packages: List[Row], default_weight: Optional[int]) -> float:
         """Calculate total weight from packages or use default"""
         if packages:
@@ -295,12 +344,15 @@ class BrtMapper:
             
             # Check for label array
             label_list = labels.get("label", [])
+            
             if isinstance(label_list, list) and len(label_list) > 0:
                 first_label = label_list[0]
+                
                 # Try trackingByParcelID first
                 tracking = first_label.get("trackingByParcelID")
                 if tracking:
                     return str(tracking)
+                
                 # Fallback to parcelID
                 parcel_id = first_label.get("parcelID")
                 if parcel_id:
@@ -318,7 +370,7 @@ class BrtMapper:
     
     def extract_label_from_response(self, response: Dict[str, Any]) -> Optional[str]:
         """
-        Extract base64 PDF label from BRT create/confirm response
+        Extract base64 PDF label from BRT create/confirm response (returns first label only)
         
         Args:
             response: BRT API response
@@ -326,39 +378,55 @@ class BrtMapper:
         Returns:
             Base64 encoded PDF string or None
         """
+        all_labels = self.extract_all_labels_from_response(response)
+        return all_labels[0] if all_labels else None
+    
+    def extract_all_labels_from_response(self, response: Dict[str, Any]) -> List[str]:
+        """
+        Extract all base64 PDF labels from BRT create/confirm response
+        
+        Args:
+            response: BRT API response
+            
+        Returns:
+            List of base64 encoded PDF strings (one for each label)
+        """
+        labels_b64 = []
+        
         try:
             create_response = response.get("createResponse", {})
             labels = create_response.get("labels", {})
             
             # Check for label array
             label_list = labels.get("label", [])
+            
             if isinstance(label_list, list):
-                # If multiple labels, return the first one
-                # (In future, could combine multiple PDFs)
                 for label in label_list:
                     stream = label.get("stream")
                     if stream:
-                        return str(stream)
+                        labels_b64.append(str(stream))
             
-            # Try other paths
-            paths = [
-                ["createResponse", "labelPDF"],
-                ["label", "content"],
-                ["labelPDF"],
-            ]
-            
-            for path in paths:
-                value = response
-                try:
-                    for key in path:
-                        value = value[key]
-                    if isinstance(value, str) and value:
-                        return value
-                except (KeyError, TypeError):
-                    continue
+            # Try other paths if no labels found
+            if not labels_b64:
+                paths = [
+                    ["createResponse", "labelPDF"],
+                    ["label", "content"],
+                    ["labelPDF"],
+                ]
+                
+                for path in paths:
+                    value = response
+                    try:
+                        for key in path:
+                            value = value[key]
+                        if isinstance(value, str) and value:
+                            labels_b64.append(value)
+                            break
+                    except (KeyError, TypeError):
+                        continue
             
         except (KeyError, AttributeError, TypeError) as e:
-            logger.warning(f"Error extracting label from BRT response: {e}")
+            logger.warning(f"Error extracting labels from BRT response: {e}")
         
-        return None
+        return labels_b64
 

@@ -1,45 +1,57 @@
 from typing import Optional
+from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
 class FedexConfigurationSchema(BaseModel):
+    """FedEx Configuration schema for Ship API"""
     description: str = Field(..., max_length=255)
+    
+    # OAuth 2.0 Authentication fields
     client_id: str = Field(..., max_length=255)
     client_secret: str = Field(..., max_length=255)
-    account_number: int = Field(..., gt=0)
+    
+    # Account information
+    account_number: str = Field(..., max_length=50)
+    
+    # Shipper contact information
     person_name: str = Field(..., max_length=255)
     company_name: str = Field(..., max_length=255)
-    phone_number: str = Field(..., max_length=50, pattern=r'^\+?[0-9]{10,15}$')
+    phone_number: str = Field(..., max_length=50)
+    contact_email: Optional[str] = Field(None, max_length=255)
+    
+    # Shipper address
     address: str = Field(..., max_length=255)
     city: str = Field(..., max_length=100)
-    state_or_province_code: str = Field(..., max_length=10, pattern=r'^[A-Z]{2,3}$')
+    state_or_province_code: str = Field(..., max_length=10)
     postal_code: str = Field(..., max_length=20)
-    country_code: str = Field(..., max_length=3, pattern=r'^[A-Z]{2,3}$')
+    country_code: str = Field(..., max_length=3)
+    
+    # Package defaults
     package_height: int = Field(..., gt=0)
     package_width: int = Field(..., gt=0)
     package_depth: int = Field(..., gt=0)
-    default_weight: int = Field(..., gt=0)
+    default_weight: Decimal = Field(..., gt=0)
     
-    # Select values (salvano solo il valore scelto come stringa)
-    sandbox: str = Field(..., max_length=10)
+    # Shipment configuration
     service_type: str = Field(..., max_length=100)
     packaging_type: str = Field(..., max_length=100)
     pickup_type: str = Field(..., max_length=100)
-    customs_charges: str = Field(..., max_length=50)
-    format: str = Field(..., max_length=20)
-    notes_field: str = Field(..., max_length=10)
+    customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType (SENDER, RECIPIENT, THIRD_PARTY, ACCOUNT)
 
 
 class FedexConfigurationResponseSchema(BaseModel):
+    """FedEx Configuration response schema"""
     id_fedex_config: int
     id_carrier_api: int
     description: str
     client_id: str
     client_secret: str
-    account_number: int
+    account_number: str
     person_name: str
     company_name: str
     phone_number: str
+    contact_email: Optional[str]
     address: str
     city: str
     state_or_province_code: str
@@ -48,39 +60,35 @@ class FedexConfigurationResponseSchema(BaseModel):
     package_height: int
     package_width: int
     package_depth: int
-    default_weight: int
-    sandbox: str
+    default_weight: Decimal
     service_type: str
     packaging_type: str
     pickup_type: str
-    customs_charges: str
-    format: str
-    notes_field: str
+    customs_charges: Optional[str]
     
     model_config = {"from_attributes": True}
 
 
 class FedexConfigurationUpdateSchema(BaseModel):
+    """FedEx Configuration update schema"""
     description: Optional[str] = Field(None, max_length=255)
     client_id: Optional[str] = Field(None, max_length=255)
     client_secret: Optional[str] = Field(None, max_length=255)
-    account_number: Optional[int] = Field(None, gt=0)
+    account_number: Optional[str] = Field(None, max_length=50)
     person_name: Optional[str] = Field(None, max_length=255)
     company_name: Optional[str] = Field(None, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=50, pattern=r'^\+?[0-9]{10,15}$')
+    phone_number: Optional[str] = Field(None, max_length=50)
+    contact_email: Optional[str] = Field(None, max_length=255)
     address: Optional[str] = Field(None, max_length=255)
     city: Optional[str] = Field(None, max_length=100)
-    state_or_province_code: Optional[str] = Field(None, max_length=10, pattern=r'^[A-Z]{2,3}$')
+    state_or_province_code: Optional[str] = Field(None, max_length=10)
     postal_code: Optional[str] = Field(None, max_length=20)
-    country_code: Optional[str] = Field(None, max_length=3, pattern=r'^[A-Z]{2,3}$')
+    country_code: Optional[str] = Field(None, max_length=3)
     package_height: Optional[int] = Field(None, gt=0)
     package_width: Optional[int] = Field(None, gt=0)
     package_depth: Optional[int] = Field(None, gt=0)
-    default_weight: Optional[int] = Field(None, gt=0)
-    sandbox: Optional[str] = Field(None, max_length=10)
+    default_weight: Optional[Decimal] = Field(None, gt=0)
     service_type: Optional[str] = Field(None, max_length=100)
     packaging_type: Optional[str] = Field(None, max_length=100)
     pickup_type: Optional[str] = Field(None, max_length=100)
-    customs_charges: Optional[str] = Field(None, max_length=50)
-    format: Optional[str] = Field(None, max_length=20)
-    notes_field: Optional[str] = Field(None, max_length=10)
+    customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType

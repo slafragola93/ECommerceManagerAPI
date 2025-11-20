@@ -7,7 +7,7 @@ from pathlib import Path
 import logging
 
 from src.core.settings import get_cache_settings
-from src.core.exceptions import InfrastructureException, NotFoundException, ValidationException
+from src.core.exceptions import BusinessRuleException, InfrastructureException, NotFoundException, ValidationException
 from src.services.interfaces.dhl_shipment_service_interface import IDhlShipmentService
 from src.repository.interfaces.order_repository_interface import IOrderRepository
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
@@ -394,6 +394,26 @@ class DhlShipmentService(IDhlShipmentService):
         except Exception as e:
             logger.error(f"Errore durante la pulizia per l'ordine {order_id}: {str(e)}")
             # Non sollevo eccezione per non bloccare la creazione spedizione
+    
+    async def cancel_shipment(self, order_id: int) -> Dict[str, Any]:
+        """
+        Cancella una spedizione DHL per ordine
+        
+        Nota: La cancellazione DHL non è ancora implementata.
+        
+        Args:
+            order_id: ID ordine per cancellare spedizione
+            
+        Returns:
+            Dict con risultato cancellazione
+            
+        Raises:
+            BusinessRuleException: Se la cancellazione non è supportata
+        """
+        raise BusinessRuleException(
+            "DHL shipment cancellation is not yet implemented",
+            details={"order_id": order_id, "carrier": "DHL"}
+        )
     
     async def get_label_file_path(self, awb: str) -> Optional[str]:
         """

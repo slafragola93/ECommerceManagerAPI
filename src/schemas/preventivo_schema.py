@@ -55,6 +55,7 @@ class ShippingField(BaseModel):
     price_tax_incl: float = Field(..., ge=0, description="Prezzo spedizione con IVA")
     id_carrier_api: int = Field(..., gt=0, description="ID carrier API")
     id_tax: int = Field(..., gt=0, description="ID aliquota IVA per spedizione")
+    weight: Optional[float] = Field(None, ge=0, description="Peso spedizione in kg (opzionale, se non specificato viene calcolato automaticamente)")
     shipping_message: Optional[str] = Field(None, max_length=200)
 
 

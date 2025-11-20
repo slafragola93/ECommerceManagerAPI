@@ -211,7 +211,7 @@ class PreventivoService:
         """
         # Valida articoli
         self._validate_articoli(preventivo_data.articoli)
-        
+        print(preventivo_data)
         # Valida id_payment se fornito
         if preventivo_data.id_payment is not None:
             payment = self.payment_repo.get_by_id(preventivo_data.id_payment)
@@ -224,6 +224,17 @@ class PreventivoService:
         
         # Crea preventivo (il repository gestisce customer e address)
         order_document = self.preventivo_repo.create_preventivo(preventivo_data, user_id)
+        
+        # Ricarica order_document con le relazioni necessarie (shipping, payment, etc.)
+        # Carica esplicitamente la relazione shipping se presente
+        if order_document.id_shipping:
+            from sqlalchemy.orm import joinedload
+            from src.models.order_document import OrderDocument
+            order_document = self.db.query(OrderDocument).options(
+                joinedload(OrderDocument.shipping)
+            ).filter(OrderDocument.id_order_document == order_document.id_order_document).first()
+        else:
+            self.db.refresh(order_document)
         
         # Recupera customer per nome
         customer = self.customer_repo.get_by_id(order_document.id_customer)
@@ -249,6 +260,7 @@ class PreventivoService:
             sectional_obj = None
 
         shipment_obj = None
+        print(order_document.shipping)
         try:
             if getattr(order_document, "shipping", None):
                 s = order_document.shipping
@@ -256,6 +268,8 @@ class PreventivoService:
                 if getattr(s, 'id_tax', None):
                     tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
                 shipment_obj = PreventivoShipmentSchema(
+                    id_shipping=s.id_shipping,
+                    id_carrier_api=s.id_carrier_api,
                     tax_rate=tax_rate,
                     weight=float(s.weight or 0.0),
                     price_tax_incl=float(s.price_tax_incl or 0.0),
@@ -288,7 +302,7 @@ class PreventivoService:
         # Invalidazione cache: invalidare liste (create sempre modifica le liste)
         tenant = f"user_{user_id}"  # Usa user_id come tenant
         self._invalidate_preventivo_cache(order_document.id_order_document, tenant, invalidate_lists=True)
-        
+        print(shipment_obj)
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
             id_order=order_document.id_order,
@@ -344,7 +358,8 @@ class PreventivoService:
         totals = self.order_doc_service.calculate_totals(id_order_document, "preventivo")
         
         # Aggiorna i totali nel database per assicurarsi che siano sempre sincronizzati
-        self.order_doc_service.update_document_totals(id_order_document, "preventivo")
+        # IMPORTANTE: skip_shipping_weight_update=True per preservare il peso dello shipping passato esplicitamente
+        self.order_doc_service.update_document_totals(id_order_document, "preventivo", skip_shipping_weight_update=True)
         
         # Ricarica il documento dal database per avere i valori aggiornati
         self.db.refresh(order_document)
@@ -461,6 +476,7 @@ class PreventivoService:
                 tax_rate = 0.0
                 if getattr(s, 'id_tax', None):
                     tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
+                    print(f"shipping weight: {s.weight}")
                 shipment_obj = PreventivoShipmentSchema(
                     id_shipping=s.id_shipping,
                     id_carrier_api=s.id_carrier_api,
@@ -473,7 +489,10 @@ class PreventivoService:
                 )
         except Exception:
             shipment_obj = None
-
+        print(order_document.shipping)
+        print(shipment_obj)
+        print(order_document.shipping.weight)
+        print(shipment_obj.weight)
         payment_obj = None
         try:
             if getattr(order_document, "payment", None) and order_document.payment:
@@ -548,11 +567,12 @@ class PreventivoService:
             updated_at=order_document.updated_at,
         )
     
-    @cached(
-        preset="preventivo",
-        key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivo_detail_static(args, kwargs),
-        tenant_from_user=False
-    )
+    # Cache temporaneamente disabilitata per debug
+    # @cached(
+    #     preset="preventivo",
+    #     key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivo_detail_static(args, kwargs),
+    #     tenant_from_user=False
+    # )
     async def get_preventivo(self, id_order_document: int, user=None) -> Optional[PreventivoDetailResponseSchema]:
         """Recupera preventivo per ID con indirizzi completi (con caching)"""
         # Esegui il metodo sincrono in un thread
@@ -560,9 +580,25 @@ class PreventivoService:
         result = await loop.run_in_executor(None, self._get_preventivo_sync, id_order_document)
         return result
     
-    def _get_preventivi_sync(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False) -> List[PreventivoResponseSchema]:
+    def _get_preventivi_sync(
+        self, 
+        skip: int = 0, 
+        limit: int = 100, 
+        search: Optional[str] = None, 
+        show_details: bool = False,
+        sectionals_ids: Optional[str] = None,
+        payments_ids: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None
+    ) -> List[PreventivoResponseSchema]:
         """Recupera lista preventivi (metodo sincrono interno)"""
-        order_documents = self.preventivo_repo.get_preventivi(skip, limit, search)
+        order_documents = self.preventivo_repo.get_preventivi(
+            skip, limit, search,
+            sectionals_ids=sectionals_ids,
+            payments_ids=payments_ids,
+            date_from=date_from,
+            date_to=date_to
+        )
         
         result = []
         for order_document in order_documents:
@@ -736,7 +772,19 @@ class PreventivoService:
         
         return f"{cache_salt}:preventivo:detail:{tenant}:{id_order_document}:{version}"
     
-    def _get_cache_key_preventivi_list(self, skip: int, limit: int, search: Optional[str], show_details: bool, user=None, **kwargs) -> str:
+    def _get_cache_key_preventivi_list(
+        self, 
+        skip: int, 
+        limit: int, 
+        search: Optional[str], 
+        show_details: bool, 
+        user=None, 
+        sectionals_ids: Optional[str] = None,
+        payments_ids: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        **kwargs
+    ) -> str:
         """Genera chiave cache per lista preventivi con params_hash"""
         # Tenant comune per tutti gli utenti (preventivi condivisi)
         tenant = "default"
@@ -747,7 +795,11 @@ class PreventivoService:
         # Crea params_hash da tutti i parametri
         params = {
             "search": search or "",
-            "show_details": show_details
+            "show_details": show_details,
+            "sectionals_ids": sectionals_ids or "",
+            "payments_ids": payments_ids or "",
+            "date_from": date_from or "",
+            "date_to": date_to or ""
         }
         params_hash = self._create_params_hash(**params)
         
@@ -769,6 +821,10 @@ class PreventivoService:
         limit = args[2] if len(args) > 2 else kwargs.get('limit', 100)
         search = args[3] if len(args) > 3 else kwargs.get('search')
         show_details = args[4] if len(args) > 4 else kwargs.get('show_details', False)
+        sectionals_ids = args[5] if len(args) > 5 else kwargs.get('sectionals_ids')
+        payments_ids = args[6] if len(args) > 6 else kwargs.get('payments_ids')
+        date_from = args[7] if len(args) > 7 else kwargs.get('date_from')
+        date_to = args[8] if len(args) > 8 else kwargs.get('date_to')
         user = kwargs.get('user')
         
         # Tenant comune per tutti gli utenti (preventivi condivisi)
@@ -780,7 +836,11 @@ class PreventivoService:
         # Crea params_hash da tutti i parametri
         params = {
             "search": search or "",
-            "show_details": show_details
+            "show_details": show_details,
+            "sectionals_ids": sectionals_ids or "",
+            "payments_ids": payments_ids or "",
+            "date_from": date_from or "",
+            "date_to": date_to or ""
         }
         params_hash = PreventivoService._create_params_hash(**params)
         
@@ -791,16 +851,33 @@ class PreventivoService:
         
         return f"{cache_salt}:preventivo:list:{tenant}:{page}:{limit}:{params_hash}"
     
-    @cached(
-        preset="preventivi_list",
-        key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivi_list_static(args, kwargs),
-        tenant_from_user=False
-    )
-    async def get_preventivi(self, skip: int = 0, limit: int = 100, search: Optional[str] = None, show_details: bool = False, user=None) -> List[PreventivoResponseSchema]:
+    # Cache temporaneamente disabilitata per debug
+    # @cached(
+    #     preset="preventivi_list",
+    #     key=lambda *args, **kwargs: PreventivoService._get_cache_key_preventivi_list_static(args, kwargs),
+    #     tenant_from_user=False
+    # )
+    async def get_preventivi(
+        self, 
+        skip: int = 0, 
+        limit: int = 100, 
+        search: Optional[str] = None, 
+        show_details: bool = False,
+        sectionals_ids: Optional[str] = None,
+        payments_ids: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        user=None
+    ) -> List[PreventivoResponseSchema]:
         """Recupera lista preventivi (con caching)"""
         # Esegui il metodo sincrono in un thread
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, self._get_preventivi_sync, skip, limit, search, show_details)
+        result = await loop.run_in_executor(
+            None, 
+            self._get_preventivi_sync, 
+            skip, limit, search, show_details,
+            sectionals_ids, payments_ids, date_from, date_to
+        )
         return result
     
     @emit_event_on_success(

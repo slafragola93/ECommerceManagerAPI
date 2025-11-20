@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, Date, Numeric, Text
+from sqlalchemy import Column, Integer, String, DateTime, Numeric, Text
 
 from ..database import Base
 
@@ -18,6 +18,6 @@ class Shipping(Base):
     price_tax_incl = Column(Numeric(10, 5), default=0)
     price_tax_excl = Column(Numeric(10, 5), default=0)
     shipping_message = Column(Text)
-    date_add = Column(Date, default=datetime.today)
+    date_add = Column(DateTime, default=datetime.now)
 
     orders = relationship("Order", back_populates="shipments")

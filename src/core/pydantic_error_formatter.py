@@ -291,10 +291,13 @@ class PydanticErrorFormatter:
         # Format message
         message = PydanticErrorFormatter.format_message(error_data)
         
+        # Format details with structured error information
+        details = PydanticErrorFormatter.format_details(error_data)
+        
         return {
             "error_code": error_code,
             "message": message,
-            "details": {},
+            "details": details,
             "status_code": 422
         }
 

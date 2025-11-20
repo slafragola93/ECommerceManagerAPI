@@ -125,6 +125,18 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Errore aggiornamento stato spedizione: {str(e)}")
+    
+    def update_shipping_to_cancelled_state(self, id_shipping: int) -> None:
+        """Imposta lo stato della shipping a 11 (Annullato)"""
+        try:
+            stmt = update(Shipping).where(
+                Shipping.id_shipping == id_shipping
+            ).values(id_shipping_state=11)
+            self._session.execute(stmt)
+            self._session.commit()
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error updating shipping to cancelled state: {str(e)}")
 
     def update_weight(self, id_shipping: int, weight: float) -> None:
         """Aggiorna il peso della spedizione, degli ordini e dei preventivi associati"""
@@ -152,4 +164,17 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             self._session.rollback()
             raise InfrastructureException(f"Errore aggiornamento peso spedizione: {str(e)}")
+    
+    def get_message_shipping(self, id_shipping: int) -> Optional[str]:
+        """Recupera shipping_message dalla spedizione"""
+        try:
+            result = self._session.query(Shipping.shipping_message).filter(
+                Shipping.id_shipping == id_shipping
+            ).first()
+            if result:
+                # result è una tupla (shipping_message,), estraiamo il primo elemento
+                return result[0] if isinstance(result, tuple) else result
+            return None
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving shipping message: {str(e)}")
     

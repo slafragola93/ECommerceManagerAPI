@@ -275,13 +275,14 @@ class OrderDocumentService:
             "total_discounts_applicati": round(total_discounts_applicati, 2)
         }
     
-    def update_document_totals(self, id_order_document: int, document_type: str) -> None:
+    def update_document_totals(self, id_order_document: int, document_type: str, skip_shipping_weight_update: bool = False) -> None:
         """
         Aggiorna i totali del documento nel database
         
         Args:
             id_order_document: ID del documento
             document_type: Tipo documento ("preventivo" o "DDT")
+            skip_shipping_weight_update: Se True, non aggiorna il peso della shipping (utile quando il peso è stato passato esplicitamente)
         """
         totals = self.calculate_totals(id_order_document, document_type)
         
@@ -304,8 +305,9 @@ class OrderDocumentService:
             
             self.db.commit()
             
-            # Aggiorna peso spedizione automaticamente
-            self.update_shipping_weight_from_articles(id_order_document=id_order_document)
+            # Aggiorna peso spedizione automaticamente solo se non è stato passato esplicitamente
+            if not skip_shipping_weight_update:
+                self.update_shipping_weight_from_articles(id_order_document=id_order_document)
 
     # ----------------- Nuovi metodi di ricalcolo leggeri -----------------
     def recalculate_totals_for_order_document(self, id_order_document: int, document_type: str) -> None:

@@ -122,7 +122,9 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                     height=data.height,
                     width=data.width,
                     price_without_tax=data.price_without_tax if data.price_without_tax is not None else 0.0,
-                    quantity=data.quantity if data.quantity is not None else 0
+                    quantity=data.quantity if data.quantity is not None else 0,
+                    purchase_price=data.purchase_price if data.purchase_price is not None else 0.0,
+                    minimal_quantity=data.minimal_quantity if data.minimal_quantity is not None else 0
                 )
                 products.append(product)
             

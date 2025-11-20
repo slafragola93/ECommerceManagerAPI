@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy.engine import Row
 import logging
 
-from src.core.settings import get_cache_settings
+from src.core.settings import get_carrier_integration_settings
 from src.services.core.tool import convert_decimals_to_float
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class DhlClient:
     """DHL MyDHL API HTTP client with Basic Auth and idempotency support"""
     
     def __init__(self):
-        self.settings = get_cache_settings()
+        self.settings = get_carrier_integration_settings()
         self.base_url_prod = self.settings.dhl_base_url_prod
         self.base_url_sandbox = self.settings.dhl_base_url_sandbox
     

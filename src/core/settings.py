@@ -47,16 +47,10 @@ class CacheSettings(BaseSettings):
     cache_customers_enabled: bool = Field(default=True, env="CACHE_CUSTOMERS_ENABLED")
     cache_external_apis_enabled: bool = Field(default=True, env="CACHE_EXTERNAL_APIS_ENABLED")
     
-    # DHL Integration settings
+    # Shipment audit settings
     shipment_audit_enabled: bool = Field(default=False, env="SHIPMENT_AUDIT_ENABLED")
     shipment_audit_ttl_days: int = Field(default=90, env="SHIPMENT_AUDIT_TTL_DAYS")
     shipment_audit_max_json_size_kb: int = Field(default=500, env="SHIPMENT_AUDIT_MAX_JSON_SIZE_KB")
-    dhl_base_url_prod: str = Field(default="https://express.api.dhl.com/mydhlapi")
-    dhl_base_url_sandbox: str = Field(default="https://express.api.dhl.com/mydhlapi/test")
-    
-    # BRT Integration settings
-    brt_base_url_prod: str = Field(default="https://api.brt.it", env="BRT_BASE_URL_PROD")
-    brt_base_url_sandbox: str = Field(default="https://api.brt.it", env="BRT_BASE_URL_SANDBOX")
     
     # Circuit breaker
     cache_error_threshold: float = Field(default=0.5, env="CACHE_ERROR_THRESHOLD")
@@ -72,6 +66,33 @@ class CacheSettings(BaseSettings):
 def get_cache_settings() -> CacheSettings:
     """Get cached cache settings instance"""
     return CacheSettings()
+
+
+class CarrierIntegrationSettings(BaseSettings):
+    """Carrier integration configuration settings"""
+    
+    # DHL Integration settings
+    dhl_base_url_prod: str = Field(default="https://express.api.dhl.com/mydhlapi", env="DHL_BASE_URL_PROD")
+    dhl_base_url_sandbox: str = Field(default="https://express.api.dhl.com/mydhlapi/test", env="DHL_BASE_URL_SANDBOX")
+    
+    # BRT Integration settings
+    brt_base_url_prod: str = Field(default="https://api.brt.it", env="BRT_BASE_URL_PROD")
+    brt_base_url_sandbox: str = Field(default="https://api.brt.it", env="BRT_BASE_URL_SANDBOX")
+    
+    # FEDEX Integration settings
+    fedex_base_url_prod: str = Field(default="https://apis.fedex.com", env="FEDEX_BASE_URL_PROD")
+    fedex_base_url_sandbox: str = Field(default="https://apis-sandbox.fedex.com", env="FEDEX_BASE_URL_SANDBOX")
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+        extra = "ignore"
+
+
+@lru_cache()
+def get_carrier_integration_settings() -> CarrierIntegrationSettings:
+    """Get cached carrier integration settings instance"""
+    return CarrierIntegrationSettings()
 
 
 # TTL presets for different data types

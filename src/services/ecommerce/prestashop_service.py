@@ -289,7 +289,7 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages),
+                #("Languages", self.sync_languages),
                 #("Countries", self.sync_countries),
                 #("Brands", self.sync_brands),
                 #("Categories", self.sync_categories),
@@ -308,7 +308,7 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                #("Products", self.sync_products),
+                ("Products", self.sync_products),
                 #("Customers", self.sync_customers),
                 #("Addresses", self.sync_addresses),
             ]
@@ -778,7 +778,7 @@ class PrestaShopService(BaseEcommerceService):
             limit = 1000  # Batch size
             offset = 0
             params = {
-                'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image]',  # Only necessary fields
+                'display': '[id,id_manufacturer,id_category_default,name,reference,ean13,weight,depth,height,width,id_default_image,wholesale_price,price,minimal_quantity]',  # Only necessary fields
             }
             last_id = None
             if self.new_elements:
@@ -788,7 +788,6 @@ class PrestaShopService(BaseEcommerceService):
             
             while True:
                 try:
-                    print(f"DEBUG: Starting products loop - offset: {offset}, limit: {limit}")
                     # Include only necessary fields to reduce response size
                     # Use PrestaShop format: limit=[offset,]limit
 
@@ -800,9 +799,9 @@ class PrestaShopService(BaseEcommerceService):
                     response = await self._make_request_with_rate_limit('/api/products', params)
 
                     products = self._extract_items_from_response(response, 'products')
+                    print(f"DEBUG: Products: {products}")
                     print(f"DEBUG: Extracted {len(products)} products from response")
                     if not products:
-                        print("DEBUG: No products found, breaking loop")
                         break
                         
                     all_products.extend(products)
@@ -878,18 +877,21 @@ class PrestaShopService(BaseEcommerceService):
                         # Se non c'è immagine, usa l'immagine di fallback
                         img_url = "media/fallback/product_not_found.jpg"
                     # Extract price without tax (PrestaShop 'price' field is without tax)
-                    price_without_tax = float(product.get('price', 0.0)) if product.get('price') else 0.0
+                    price_without_tax = float(product.get('weight'))
                     
                     # Extract purchase_price from wholesale_price
-                    purchase_price = float(product.get('wholesale_price', 0.0)) if product.get('wholesale_price') else 0.0
+                    purchase_price = float(product.get('wholesale_price'))
                     
                     # Extract quantity - try different possible fields
                     # PrestaShop might have quantity in different places
                     quantity = 0
                     
                     # Extract minimal_quantity
-                    minimal_quantity = int(product.get('minimal_quantity', 0)) if product.get('minimal_quantity') else 0
-                    
+                    minimal_quantity = int(product.get('minimal_quantity'))
+                    print(f"DEBUG: Minimal quantity: {minimal_quantity}")
+                    print(f"DEBUG: Purchase price: {purchase_price}")
+                    print(f"DEBUG: Price without tax: {price_without_tax}")
+                    print(product)
                     return ProductSchema(
                         id_origin=int(product.get('id', 0)),
                         id_category=int(category_id) if category_id else 0,

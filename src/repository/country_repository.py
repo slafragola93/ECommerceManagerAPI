@@ -3,7 +3,7 @@ Country Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List, Dict
 from sqlalchemy.orm import Session, noload
-from sqlalchemy import func, desc
+from sqlalchemy import func, nullslast
 from src.models.country import Country
 from src.repository.interfaces.country_repository_interface import ICountryRepository
 from src.core.base_repository import BaseRepository
@@ -12,15 +12,14 @@ from src.services import QueryUtils
 from src.schemas.country_schema import CountrySchema
 
 class CountryRepository(BaseRepository[Country, int], ICountryRepository):
-    """Country Repository rifattorizzato seguendo SOLID"""
     
     def __init__(self, session: Session):
         super().__init__(session, Country)
     
     def get_all(self, **filters) -> List[Country]:
-        """Ottiene tutte le entità con filtri opzionali"""
+        """Ottiene tutte le entità con filtri opzionali, ordinate alfabeticamente per nome"""
         try:
-            query = self._session.query(self._model_class).order_by(desc(Country.id_country))
+            query = self._session.query(self._model_class).order_by(Country.name.asc())
             
             # Paginazione
             page = filters.get('page', 1)

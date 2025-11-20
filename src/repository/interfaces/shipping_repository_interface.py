@@ -51,3 +51,13 @@ class IShippingRepository(IRepository[Shipping, int]):
         """Aggiorna il peso della spedizione."""
         pass
     
+    @abstractmethod
+    def get_message_shipping(self, id_shipping: int) -> Optional[str]:
+        """Recupera shipping_message dalla spedizione"""
+        pass
+    
+    @abstractmethod
+    def update_shipping_to_cancelled_state(self, id_shipping: int) -> None:
+        """Imposta lo stato della shipping a 11 (Annullato)"""
+        pass
+    

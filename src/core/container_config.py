@@ -235,6 +235,18 @@ def configure_container():
     container.register_transient(IBrtShipmentService, BrtShipmentService)
     container.register_transient(IBrtTrackingService, BrtTrackingService)
     
+    # FedEx Shipment Services
+    from src.services.interfaces.fedex_shipment_service_interface import IFedexShipmentService
+    from src.services.routers.fedex_shipment_service import FedexShipmentService
+    from src.services.ecommerce.shipments.fedex_client import FedexClient
+    from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
+    
+    # Register FedEx services (singleton for client, transient for others)
+    container.register_singleton(FedexClient, FedexClient)
+    container.register_transient(FedexMapper, FedexMapper)
+    container.register_transient(IFedexShipmentService, FedexShipmentService)
+    # Note: FedEx tracking service will be added in Phase 2
+    
 
 def get_configured_container():
     """Ottiene il container configurato"""
