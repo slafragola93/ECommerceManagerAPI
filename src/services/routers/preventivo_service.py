@@ -1357,7 +1357,7 @@ class PreventivoService:
             updated_at=order_document.updated_at
         )
     
-    def generate_preventivo_pdf(self, id_order_document: int) -> bytes:
+    async def generate_preventivo_pdf(self, id_order_document: int) -> bytes:
         """
         Genera il PDF del preventivo
         
@@ -1369,7 +1369,7 @@ class PreventivoService:
         """
         try:            
             # Recupera i dati del preventivo
-            preventivo_data = self.get_preventivo(id_order_document)
+            preventivo_data = await self.get_preventivo(id_order_document)
             if not preventivo_data:
                 raise NotFoundException("Preventivo", id_order_document)
             

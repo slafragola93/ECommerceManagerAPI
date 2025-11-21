@@ -178,3 +178,32 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving shipping message: {str(e)}")
     
+    def update_customs_value_from_order(self, id_shipping: int) -> None:
+        """Aggiorna customs_value della spedizione basandosi sul totale dell'ordine associato"""
+        try:
+            # Recupera lo shipping
+            shipping = self._session.query(Shipping).filter(
+                Shipping.id_shipping == id_shipping
+            ).first()
+            
+            if not shipping:
+                return
+            
+            # Se customs_value è già impostato, non fare nulla
+            if shipping.customs_value is not None:
+                return
+            
+            # Recupera l'ordine associato a questa spedizione
+            order = self._session.query(Order).filter(
+                Order.id_shipping == id_shipping
+            ).first()
+            
+            if order and order.total_paid:
+                # Imposta customs_value al totale dell'ordine
+                shipping.customs_value = order.total_paid
+                self._session.commit()
+        except Exception as e:
+            self._session.rollback()
+            # Non sollevare eccezione per non bloccare il flusso
+            pass
+    

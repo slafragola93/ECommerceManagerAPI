@@ -114,25 +114,25 @@ class PreventivoPDFService(BasePDFService):
                 for articolo in preventivo_data.articoli:
                     code = (articolo.product_reference or '')[:15]
                     description = (articolo.product_name or '')[:30]
-                    quantity = articolo.product_qty or 0
-                    unit_price = articolo.product_price or 0.0
+                    quantity = float(articolo.product_qty or 0)
+                    unit_price = float(articolo.product_price or 0.0)
                     
                     # Recupera percentuale IVA
-                    vat_rate = 0
+                    vat_rate = 0.0
                     if articolo.id_tax and self.tax_repo:
                         vat_rate = float(self.tax_repo.get_percentage_by_id(int(articolo.id_tax)))
                     
                     # Calcola sconto
                     reduction = 0.0
                     if articolo.reduction_percent and articolo.reduction_percent > 0:
-                        reduction = (unit_price * quantity) * (articolo.reduction_percent / 100.0)
+                        reduction = float((unit_price * quantity) * (float(articolo.reduction_percent) / 100.0))
                     elif articolo.reduction_amount and articolo.reduction_amount > 0:
-                        reduction = articolo.reduction_amount
+                        reduction = float(articolo.reduction_amount)
                     
                     # Calcola totale riga
-                    total_amount = (unit_price * quantity) - reduction
+                    total_amount = float((unit_price * quantity) - reduction)
                     vat_multiplier = 1 + (vat_rate / 100.0) if vat_rate else 1.0
-                    total_with_vat = total_amount * vat_multiplier
+                    total_with_vat = float(total_amount * vat_multiplier)
                     
                     self.add_items_table_row(
                         pdf=pdf,
@@ -146,9 +146,9 @@ class PreventivoPDFService(BasePDFService):
                     
                     subtotal += total_amount
                     total_with_vat_sum += total_with_vat
-                    total_quantity += quantity
+                    total_quantity += int(quantity)
                     if articolo.product_weight:
-                        total_weight += (articolo.product_weight or 0.0) * quantity
+                        total_weight += float(articolo.product_weight or 0.0) * quantity
             
             # Sezione Info Spedizione e Riepilogo
             self.create_section_title(pdf, 'INFORMAZIONI SPEDIZIONE E RIEPILOGO', spacing_after=2.0)
@@ -176,12 +176,12 @@ class PreventivoPDFService(BasePDFService):
             self.create_section_title(pdf, 'RIEPILOGO IVA E TOTALI', spacing_after=1.0)
             
             # Calcolo spese trasporto
-            shipping_cost = shipping_data.get('price_tax_excl', 0.0) if shipping_data else 0.0
-            shipping_cost_with_vat = shipping_data.get('price_tax_incl', 0.0) if shipping_data else 0.0
+            shipping_cost = float(shipping_data.get('price_tax_excl', 0.0)) if shipping_data else 0.0
+            shipping_cost_with_vat = float(shipping_data.get('price_tax_incl', 0.0)) if shipping_data else 0.0
             
             # Calcola totali
-            total_doc = preventivo_data.total_finale or 0.0
-            total_vat = preventivo_data.total_iva or 0.0
+            total_doc = float(preventivo_data.total_finale or 0.0)
+            total_vat = float(preventivo_data.total_iva or 0.0)
             
             # Preparazione label spese trasporto
             shipping_label = 'Spese trasporto'

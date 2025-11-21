@@ -346,6 +346,10 @@ class OrderRepository:
             # Salva i totali calcolati
             self.session.add(order)
             self.session.commit()
+            
+            # Aggiorna customs_value della spedizione se None
+            if order.id_shipping:
+                self.shipping_repository.update_customs_value_from_order(order.id_shipping)
         
         # Creazione di Order Package
         order_package_data = OrderPackageSchema(

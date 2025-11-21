@@ -113,6 +113,7 @@ class PreventivoRepository:
                 weight=float(weight),  # Forza conversione a float
                 price_tax_incl=preventivo_data.shipping.price_tax_incl,
                 price_tax_excl=preventivo_data.shipping.price_tax_excl,
+                customs_value=preventivo_data.shipping.customs_value if hasattr(preventivo_data.shipping, 'customs_value') else None,
                 shipping_message=preventivo_data.shipping.shipping_message
             )
             self.db.add(shipping)
@@ -154,6 +155,12 @@ class PreventivoRepository:
         # Se il peso è stato passato (anche se è 0), non aggiornare il peso della shipping
         skip_shipping_weight_update = (preventivo_data.shipping and preventivo_data.shipping.weight is not None)
         order_doc_service.update_document_totals(order_document.id_order_document, "preventivo", skip_shipping_weight_update=skip_shipping_weight_update)
+        
+        # Aggiorna customs_value se None basandosi sull'ordine associato
+        if shipping_id:
+            from src.repository.shipping_repository import ShippingRepository
+            shipping_repo = ShippingRepository(self.db)
+            shipping_repo.update_customs_value_from_order(shipping_id)
     
         
         return order_document
@@ -312,6 +319,12 @@ class PreventivoRepository:
         if preventivo_data.shipping is not None:
             shipping_id = self._handle_shipping_update(preventivo_data.shipping, preventivo.id_shipping)
             preventivo.id_shipping = shipping_id
+            
+            # Aggiorna customs_value se None basandosi sull'ordine associato
+            if shipping_id:
+                from src.repository.shipping_repository import ShippingRepository
+                shipping_repo = ShippingRepository(self.db)
+                shipping_repo.update_customs_value_from_order(shipping_id)
         
         # 7. Aggiorna campi semplici (codice esistente)
         if preventivo_data.id_payment is not None:
@@ -1041,10 +1054,12 @@ class PreventivoRepository:
                 weight=0.0,
                 price_tax_excl=shipping_field.price_tax_excl,
                 price_tax_incl=shipping_field.price_tax_incl,
+                customs_value=shipping_field.customs_value if hasattr(shipping_field, 'customs_value') else None,
                 shipping_message=shipping_field.shipping_message
             )
             self.db.add(shipping)
             self.db.flush()
+            
             return shipping.id_shipping
     
     def _handle_articoli_smart_merge(self, id_order_document: int, articoli: List) -> None:
@@ -1208,6 +1223,7 @@ class PreventivoRepository:
                     weight=original_shipping.weight,
                     price_tax_incl=original_shipping.price_tax_incl,
                     price_tax_excl=original_shipping.price_tax_excl,
+                    customs_value=None,  # Verrà aggiornato dopo la creazione dell'ordine
                     shipping_message=original_shipping.shipping_message,
                     date_add=datetime.now()
                 )
@@ -1264,5 +1280,11 @@ class PreventivoRepository:
         
         # I totali del preventivo sono già stati copiati dall'originale
         # Non è necessario ricalcolarli perché sono identici all'originale
+        
+        # Aggiorna customs_value se None basandosi sull'ordine associato
+        if new_shipping_id:
+            from src.repository.shipping_repository import ShippingRepository
+            shipping_repo = ShippingRepository(self.db)
+            shipping_repo.update_customs_value_from_order(new_shipping_id)
         
         return new_preventivo

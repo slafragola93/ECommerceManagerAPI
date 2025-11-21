@@ -10,6 +10,7 @@ class ShippingSchema(BaseModel):
     weight: Optional[float] = Field(default=0.0, ge=0)
     price_tax_incl: float
     price_tax_excl: float
+    customs_value: Optional[float] = Field(default=None, ge=0)
     shipping_message: Optional[str] = None
 
 
@@ -21,9 +22,10 @@ class ShippingResponseSchema(BaseModel):
     weight: float
     price_tax_incl: float
     price_tax_excl: float
+    customs_value: Optional[float] = None
     shipping_message: Optional[str] = None
     
-    @validator('weight', 'price_tax_incl', 'price_tax_excl', pre=True, allow_reuse=True)
+    @validator('weight', 'price_tax_incl', 'price_tax_excl', 'customs_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

@@ -902,7 +902,7 @@ async def download_preventivo_pdf(
     service = get_preventivo_service(db)
     
     # Verifica che il preventivo esista
-    preventivo = service.get_preventivo(id_order_document)
+    preventivo = await service.get_preventivo(id_order_document)
     if not preventivo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -911,7 +911,7 @@ async def download_preventivo_pdf(
     
     # Genera il PDF
     try:
-        pdf_content = service.generate_preventivo_pdf(id_order_document)
+        pdf_content = await service.generate_preventivo_pdf(id_order_document)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
