@@ -112,7 +112,7 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
         """
         # Fallback image se non fornita
         if img_url is None:
-            img_url = "media/fallback/product_not_found.jpg"
+            img_url = "media/product_images/fallback/product_not_found.jpg"
         
         return {
             "id_order_detail": order_detail.id_order_detail,
@@ -124,11 +124,16 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
             "product_name": order_detail.product_name,
             "product_reference": order_detail.product_reference,
             "product_qty": order_detail.product_qty,
-            "product_price": order_detail.product_price,
+            "unit_price_net": order_detail.unit_price_net,
+            "unit_price_with_tax": order_detail.unit_price_with_tax,
+            "total_price_net": order_detail.total_price_net,
+            "total_price_with_tax": order_detail.total_price_with_tax,
             "product_weight": order_detail.product_weight,
             "reduction_percent": order_detail.reduction_percent,
             "reduction_amount": order_detail.reduction_amount,
-            "img_url": img_url
+            "img_url": img_url,
+            # Backward compatibility
+            "product_price": order_detail.unit_price_net
         }
     
     def bulk_create_csv_import(self, data_list: List[OrderDetailSchema], batch_size: int = 1000) -> int:

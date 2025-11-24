@@ -21,11 +21,15 @@ class FiscalDocumentDetailResponseSchema(BaseModel):
     id_fiscal_document: int
     id_order_detail: int
     quantity: float
-    unit_price: float
-    total_amount: float
+    unit_price_net: Optional[float] = None
+    unit_price_with_tax: float
+    total_price_net: float
+    total_price_with_tax: float
+    total_amount: float  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
     id_tax: Optional[int] = None
     
-    @validator('quantity', 'unit_price', 'total_amount', pre=True, allow_reuse=True)
+    @validator('quantity', 'unit_price_net', 'unit_price_with_tax', 'total_price_net', 
+               'total_price_with_tax', 'total_amount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -33,6 +37,15 @@ class FiscalDocumentDetailResponseSchema(BaseModel):
     
     class Config:
         from_attributes = True
+    
+    # Backward compatibility: unit_price come alias per unit_price_net
+    @property
+    def unit_price(self):
+        return self.unit_price_net
+    
+    @unit_price.setter
+    def unit_price(self, value):
+        self.unit_price_net = value
 
 
 class FiscalDocumentDetailWithProductSchema(BaseModel):
@@ -41,8 +54,11 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
     id_fiscal_document: int
     id_order_detail: int
     quantity: float
-    unit_price: float
-    total_amount: float
+    unit_price_net: Optional[float] = None
+    unit_price_with_tax: float
+    total_price_net: float
+    total_price_with_tax: float
+    total_amount: float  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
     id_tax: Optional[int] = None
     
     # Info prodotto
@@ -51,6 +67,15 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
     
     class Config:
         from_attributes = True
+    
+    # Backward compatibility: unit_price come alias per unit_price_net
+    @property
+    def unit_price(self):
+        return self.unit_price_net
+    
+    @unit_price.setter
+    def unit_price(self, value):
+        self.unit_price_net = value
 
 
 # ==================== SCHEMAS PER FATTURE ====================

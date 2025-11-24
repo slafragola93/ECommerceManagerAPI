@@ -13,7 +13,11 @@ from src.models.address import Address
 from src.models.country import Country
 from src.models.shipping import Shipping
 from src.models.tax import Tax
-from src.services.core.tool import calculate_amount_with_percentage
+from src.services.core.tool import (
+    calculate_amount_with_percentage,
+    calculate_price_with_tax,
+    calculate_price_without_tax
+)
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
@@ -86,32 +90,56 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         ).all()
                 
         for od in order_details:
-            # unit_price: prezzo unitario originale senza alterazioni
-            unit_price = od.product_price or 0.0
+            # Usa i nuovi campi se disponibili, altrimenti calcola da product_price per retrocompatibilità
+            unit_price_net = od.unit_price_net or od.product_price or 0.0
+            unit_price_with_tax = od.unit_price_with_tax or 0.0
             quantity = od.product_qty or 0
             
-            # Calcola total_amount applicando gli sconti
-            total_base = unit_price * quantity
+            # Se unit_price_with_tax non è disponibile, calcolalo da unit_price_net usando id_tax
+            if unit_price_with_tax == 0.0 and unit_price_net > 0 and od.id_tax:
+                tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == od.id_tax).scalar()
+                if tax_percentage is not None:
+                    tax_percentage = float(tax_percentage)
+                    unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
+                else:
+                    unit_price_with_tax = unit_price_net  # Fallback se tax non trovata
             
-            # Applica sconti a total_amount
+            # Calcola total_price_net applicando gli sconti
+            total_base = unit_price_net * quantity
+            
+            # Applica sconti
             if od.reduction_percent and od.reduction_percent > 0:
                 sconto = calculate_amount_with_percentage(total_base, od.reduction_percent)
-                total_amount = total_base - sconto
+                total_price_net = total_base - sconto
             elif od.reduction_amount and od.reduction_amount > 0:
-                total_amount = total_base - od.reduction_amount
+                total_price_net = total_base - od.reduction_amount
             else:
-                total_amount = total_base
+                total_price_net = total_base
+            
+            # Calcola total_price_with_tax usando la percentuale di id_tax
+            total_price_with_tax = total_price_net
+            if od.id_tax:
+                tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == od.id_tax).scalar()
+                if tax_percentage is not None:
+                    tax_percentage = float(tax_percentage)
+                    total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
             
             # IMPORTANTE:
-            # - unit_price: prezzo unitario ORIGINALE (no sconto)
-            # - total_amount: totale riga SCONTATO (unit_price × qty - sconto), SENZA IVA
+            # - unit_price_net: prezzo unitario ORIGINALE (no sconto, senza IVA)
+            # - unit_price_with_tax: prezzo unitario ORIGINALE (no sconto, con IVA)
+            # - total_price_net: totale riga SCONTATO (unit_price_net × qty - sconto), SENZA IVA
+            # - total_price_with_tax: totale riga SCONTATO con IVA = total_price_net × (1 + tax_percentage/100)
             
             detail = FiscalDocumentDetail(
                 id_fiscal_document=invoice.id_fiscal_document,
                 id_order_detail=od.id_order_detail,
                 quantity=quantity,
-                unit_price=unit_price,  # Prezzo originale senza sconto
-                total_amount=total_amount  # Totale con sconto applicato (SENZA IVA)
+                unit_price_net=unit_price_net,  # Prezzo originale senza sconto, senza IVA
+                unit_price_with_tax=unit_price_with_tax,  # Prezzo originale senza sconto, con IVA
+                total_price_net=total_price_net,  # Totale con sconto applicato, senza IVA
+                total_price_with_tax=total_price_with_tax,  # Totale con sconto applicato, con IVA
+                total_amount=total_price_with_tax,  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
+                id_tax=od.id_tax
             )
             
             self._session.add(detail)
@@ -324,21 +352,30 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     raise ValueError(f"Quantità da stornare ({quantity_to_refund}) superiore a quella fatturata ({invoice_detail.quantity})")
                 
                 # USA i valori dalla fattura (già contengono sconti applicati)
-                unit_price = invoice_detail.unit_price  # Prezzo unitario originale
+                unit_price_net = invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
+                unit_price_with_tax = invoice_detail.unit_price_with_tax or 0.0
                 
-                # Calcola total_amount proporzionale
-                # invoice_detail.total_amount è già scontato per invoice_detail.quantity
+                # Calcola totali proporzionali
+                # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.quantity
                 # Calcolo proporzionale: (total_fatturato / qty_fatturata) × qty_da_stornare
                 if invoice_detail.quantity > 0:
-                    total_amount = (invoice_detail.total_amount / invoice_detail.quantity) * quantity_to_refund
+                    total_price_net = (invoice_detail.total_price_net / invoice_detail.quantity) * quantity_to_refund
+                    total_price_with_tax = (invoice_detail.total_price_with_tax / invoice_detail.quantity) * quantity_to_refund
+                    total_amount = total_price_with_tax  # Per retrocompatibilità
                 else:
+                    total_price_net = 0.0
+                    total_price_with_tax = 0.0
                     total_amount = 0.0
                 
                 credit_note_details_data.append({
                     'id_order_detail': id_order_detail,
                     'quantity': quantity_to_refund,
-                    'unit_price': unit_price,
-                    'total_amount': total_amount  # Imponibile proporzionale (già scontato)
+                    'unit_price_net': unit_price_net,
+                    'unit_price_with_tax': unit_price_with_tax,
+                    'total_price_net': total_price_net,
+                    'total_price_with_tax': total_price_with_tax,
+                    'total_amount': total_amount,  # Per retrocompatibilità
+                    'id_tax': invoice_detail.id_tax
                 })
         else:
             # NOTA TOTALE: Prepara dettagli SOLO degli articoli NON ancora stornati completamente
@@ -374,21 +411,30 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 # Includi solo se c'è quantità residua
                 if remaining_quantity > 0:
                     # USA i valori dalla fattura (già contengono sconti applicati)
-                    unit_price = invoice_detail.unit_price  # Prezzo unitario originale
+                    unit_price_net = invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
+                    unit_price_with_tax = invoice_detail.unit_price_with_tax or 0.0
                     
-                    # Calcola total_amount proporzionale
-                    # invoice_detail.total_amount è già scontato per invoice_detail.quantity
+                    # Calcola totali proporzionali
+                    # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.quantity
                     # Calcolo proporzionale: (total_fatturato / qty_fatturata) × qty_residua
                     if original_quantity > 0:
-                        total_amount = (invoice_detail.total_amount / original_quantity) * remaining_quantity
+                        total_price_net = (invoice_detail.total_price_net / original_quantity) * remaining_quantity
+                        total_price_with_tax = (invoice_detail.total_price_with_tax / original_quantity) * remaining_quantity
+                        total_amount = total_price_with_tax  # Per retrocompatibilità
                     else:
+                        total_price_net = 0.0
+                        total_price_with_tax = 0.0
                         total_amount = 0.0
                     
                     credit_note_details_data.append({
                         'id_order_detail': id_order_detail,
                         'quantity': remaining_quantity,  # Quantità residua
-                        'unit_price': unit_price,
-                        'total_amount': total_amount  # Imponibile proporzionale (già scontato)
+                        'unit_price_net': unit_price_net,
+                        'unit_price_with_tax': unit_price_with_tax,
+                        'total_price_net': total_price_net,
+                        'total_price_with_tax': total_price_with_tax,
+                        'total_amount': total_amount,  # Per retrocompatibilità
+                        'id_tax': invoice_detail.id_tax
                     })
         
         # Verifica che ci siano articoli da stornare
@@ -465,8 +511,12 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 id_fiscal_document=credit_note.id_fiscal_document,
                 id_order_detail=detail_data['id_order_detail'],
                 quantity=detail_data['quantity'],
-                unit_price=detail_data['unit_price'],
-                total_amount=detail_data['total_amount']  # Imponibile (senza IVA)
+                unit_price_net=detail_data.get('unit_price_net', 0.0),
+                unit_price_with_tax=detail_data.get('unit_price_with_tax', 0.0),
+                total_price_net=detail_data.get('total_price_net', 0.0),
+                total_price_with_tax=detail_data.get('total_price_with_tax', 0.0),
+                total_amount=detail_data.get('total_amount', detail_data.get('total_price_with_tax', 0.0)),  # Per retrocompatibilità
+                id_tax=detail_data.get('id_tax')
             )
             self._session.add(detail)
         
@@ -511,10 +561,10 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         # Recupera la percentuale dalla tabella Tax
         from src.models.tax import Tax
-        tax = self._session.query(Tax).filter(Tax.id_tax == first_tax_id).first()
+        tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == first_tax_id).scalar()
         
-        if tax and tax.percentage:
-            return float(tax.percentage)
+        if tax_percentage is not None:
+            return float(tax_percentage)
         
         return 22.0  # Default 22%
     
@@ -533,10 +583,10 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         # Recupera la percentuale dalla tabella Tax
         from src.models.tax import Tax
-        tax = self._session.query(Tax).filter(Tax.id_tax == shipping.id_tax).first()
+        tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == shipping.id_tax).scalar()
         
-        if tax and tax.percentage:
-            return float(tax.percentage)
+        if tax_percentage is not None:
+            return float(tax_percentage)
         
         return 22.0  # Default 22%
     
@@ -733,17 +783,37 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         for item in order_details:            
             # Usa l'id_tax fornito o quello dell'ordine originale
             id_tax = item.get('id_tax')
-            unit_price = item.get('unit_price')
+            unit_price_net = item.get('unit_price_net', item.get('unit_price', 0.0))
+            unit_price_with_tax = item.get('unit_price_with_tax', 0.0)
+            quantity = item['quantity']
             
-            # Calcola il totale senza IVA per il dettaglio
-            total_without_tax = item['quantity'] * unit_price
+            # Calcola totali
+            total_price_net = quantity * unit_price_net
+            
+            # Calcola total_price_with_tax usando la percentuale di id_tax
+            total_price_with_tax = total_price_net
+            if id_tax:
+                tax = self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
+                if tax and tax.percentage is not None:
+                    tax_percentage = float(tax.percentage)
+                    total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+            
+            # Se unit_price_with_tax non è fornito, calcolalo
+            if unit_price_with_tax == 0.0 and unit_price_net > 0 and id_tax:
+                tax = self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
+                if tax and tax.percentage is not None:
+                    tax_percentage = float(tax.percentage)
+                    unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
 
             detail = FiscalDocumentDetail(
                 id_fiscal_document=return_doc.id_fiscal_document,
                 id_order_detail=item['id_order_detail'],
-                quantity=item['quantity'],
-                unit_price=unit_price,
-                total_amount=total_without_tax,  # Totale dettaglio senza IVA
+                quantity=quantity,
+                unit_price_net=unit_price_net,
+                unit_price_with_tax=unit_price_with_tax,
+                total_price_net=total_price_net,
+                total_price_with_tax=total_price_with_tax,
+                total_amount=total_price_with_tax,  # Per retrocompatibilità
                 id_tax=id_tax
             )
             self._session.add(detail)
@@ -766,12 +836,24 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if quantity is not None:
             detail.quantity = quantity
         if unit_price is not None:
-            detail.unit_price = unit_price
+            detail.unit_price_net = unit_price
         if id_tax is not None:
             detail.id_tax = id_tax
         
-        # Ricalcola il total_amount senza IVA
-        detail.total_amount = detail.quantity * detail.unit_price
+        # Ricalcola i totali
+        unit_price_net = detail.unit_price_net or 0.0
+        detail.total_price_net = detail.quantity * unit_price_net
+        
+        # Calcola total_price_with_tax usando la percentuale di id_tax
+        detail.total_price_with_tax = detail.total_price_net
+        if detail.id_tax:
+            tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).scalar()
+            if tax_percentage is not None:
+                tax_percentage = float(tax_percentage)
+                detail.total_price_with_tax = calculate_price_with_tax(detail.total_price_net, tax_percentage, quantity=1)
+        
+        # Aggiorna total_amount per retrocompatibilità
+        detail.total_amount = detail.total_price_with_tax
         
         # Ricalcola il totale del documento fiscale
         self.recalculate_fiscal_document_total(detail.id_fiscal_document)
@@ -816,14 +898,26 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
 
         total_products = 0.0
         for detail in details:
-            tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).first()[0]
-            total_amount = float(detail.total_amount) if detail.total_amount is not None else 0.0
-            total_products += total_amount * (1 + tax_percentage / 100)
+            # Usa total_price_with_tax se disponibile, altrimenti calcola da total_amount
+            if detail.total_price_with_tax is not None:
+                total_products += float(detail.total_price_with_tax)
+            elif detail.total_amount is not None:
+                # Retrocompatibilità: se total_amount è senza IVA, calcola con IVA
+                total_amount = float(detail.total_amount)
+                if detail.id_tax:
+                    tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).scalar()
+                    if tax_percentage is not None:
+                        tax_percentage = float(tax_percentage)
+                        total_products += calculate_price_with_tax(total_amount, tax_percentage, quantity=1)
+                    else:
+                        total_products += total_amount
+                else:
+                    total_products += total_amount
 
         
         # Aggiungi spese di spedizione se incluse
         if fiscal_doc.includes_shipping:
-            order_id_shipping = self._session.query(Order.id_shipping).filter(Order.id_order == fiscal_doc.id_order).first()[0]
+            order_id_shipping = self._session.query(Order.id_shipping).filter(Order.id_order == fiscal_doc.id_order).scalar()
             if order_id_shipping:
                 shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order_id_shipping).first()
                 if shipping and shipping.price_tax_incl:
@@ -946,27 +1040,31 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         # Calcola il totale dei prodotti
         for item in order_details:
             quantity = item['quantity']
-            unit_price = item.get('unit_price', 0.0)
+            unit_price_net = item.get('unit_price_net', item.get('unit_price', 0.0))
             id_tax = item.get('id_tax')
             
-            # Se unit_price non è specificato, recupera dall'order_detail
-            if unit_price == 0.0:
+            # Se unit_price_net non è specificato, recupera dall'order_detail
+            if unit_price_net == 0.0:
                 order_detail = self._session.query(OrderDetail).filter(
                     OrderDetail.id_order_detail == item['id_order_detail']
                 ).first()
                 if order_detail:
-                    unit_price = order_detail.product_price or 0.0
+                    unit_price_net = order_detail.unit_price_net or order_detail.product_price or 0.0
+                    if not id_tax:
+                        id_tax = order_detail.id_tax
             
-            # Calcola il totale della riga
-            line_total = quantity * unit_price
+            # Calcola il totale della riga senza IVA
+            line_total_net = quantity * unit_price_net
             
             # Applica l'IVA se presente (per il totale del documento fiscale)
+            line_total_with_tax = line_total_net
             if id_tax:
-                tax = self._session.query(Tax.percentage).filter(Tax.id_tax == id_tax).first()[0]
-                vat_amount = line_total * (tax / 100)
-                line_total += vat_amount
+                tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == id_tax).scalar()
+                if tax_percentage is not None:
+                    tax_percentage = float(tax_percentage)
+                    line_total_with_tax = calculate_price_with_tax(line_total_net, tax_percentage, quantity=1)
             
-            total_amount += line_total
+            total_amount += line_total_with_tax
         
         # Aggiungi spese di spedizione se richieste
         if includes_shipping:

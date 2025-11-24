@@ -1083,9 +1083,9 @@ class PreventivoService:
         if img_url is None and order_detail.id_product:
             # Usa ProductService per recuperare immagine (DIP - Dependency Inversion)
             images_map = self.product_service.get_product_images_map([order_detail.id_product], self.db)
-            img_url = images_map.get(order_detail.id_product, "media/fallback/product_not_found.jpg")
+            img_url = images_map.get(order_detail.id_product, "media/product_images/fallback/product_not_found.jpg")
         elif img_url is None:
-            img_url = "media/fallback/product_not_found.jpg"
+            img_url = "media/product_images/fallback/product_not_found.jpg"
         
         return ArticoloPreventivoSchema(
             id_order_detail=order_detail.id_order_detail,

@@ -875,7 +875,7 @@ class PrestaShopService(BaseEcommerceService):
                         
                     else:
                         # Se non c'è immagine, usa l'immagine di fallback
-                        img_url = "media/fallback/product_not_found.jpg"
+                        img_url = "media/product_images/fallback/product_not_found.jpg"
                     # Extract price without tax (PrestaShop 'price' field is without tax)
                     price_without_tax = float(product.get('weight'))
                     
@@ -1400,13 +1400,13 @@ class PrestaShopService(BaseEcommerceService):
                 else:
                     print(f"DEBUG: Failed to download image for product {id_product}, using fallback image")
                     # Usa l'immagine di fallback quando il download fallisce
-                    fallback_img_url = "media/fallback/product_not_found.jpg"
+                    fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
                     return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
                     
             except Exception as e:
                 print(f"DEBUG: Error downloading image for product {product_data.id_origin}: {str(e)}, using fallback image")
                 # Usa l'immagine di fallback quando c'è un errore
-                fallback_img_url = "media/fallback/product_not_found.jpg"
+                fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
                 return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
 
     async def _download_product_images(self, product_data_list: list, original_products_data: list):
@@ -1522,7 +1522,7 @@ class PrestaShopService(BaseEcommerceService):
                     failed_count += 1
             
             # Processa prodotti senza immagini per impostare il fallback se necessario
-            fallback_img_url = "media/fallback/product_not_found.jpg"
+            fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
             for product_data in products_without_images:
                 product_info = products_dict.get(str(product_data.id_origin))
                 if product_info:
@@ -3460,16 +3460,19 @@ class PrestaShopService(BaseEcommerceService):
                     total_paid = safe_float(order.get('total_paid', 0))
                     
                     # Extract shipping data
-                    total_shipping_tax_escl = safe_float(order.get('total_shipping_tax_excl', 0))
-                    shipping_tax_rate = safe_float(order.get('carrier_tax_rate', 0))
-        
+                    # Usa total_shipping_tax_incl direttamente da PrestaShop
+                    total_shipping_tax_incl = safe_float(order.get('total_shipping_tax_incl', 0))
                     
-                    # Calculate total shipping price with tax included
-                    # total_shipping_price deve essere il prezzo finale comprensivo di tassa
-                    # Formula: price_tax_incl = total_shipping_tax_escl + (total_shipping_tax_escl * shipping_tax_rate / 100)
-                    # Simplified: price_tax_incl = total_shipping_tax_escl * (1 + shipping_tax_rate / 100)
-                    # Esempio: 10€ senza tassa + 22% tassa = 10 * (1 + 22/100) = 10 * 1.22 = 12.20€
-                    total_shipping_price = total_shipping_tax_escl * (1 + shipping_tax_rate / 100)
+                    # Se total_shipping_tax_incl non è disponibile, calcolalo da total_shipping_tax_excl
+                    if total_shipping_tax_incl == 0.0:
+                        total_shipping_tax_escl = safe_float(order.get('total_shipping_tax_excl', 0))
+                        shipping_tax_rate = safe_float(order.get('carrier_tax_rate', 0))
+                        total_shipping_tax_incl = total_shipping_tax_escl * (1 + shipping_tax_rate / 100)
+                    
+                    # Calcola price_tax_excl usando get_tax_percentage_by_country
+                    from src.services.core.tool import get_tax_percentage_by_country, calculate_price_without_tax
+                    shipping_tax_percentage = get_tax_percentage_by_country(self.db, id_country, default=22.0)
+                    total_shipping_tax_excl = calculate_price_without_tax(total_shipping_tax_incl, shipping_tax_percentage)
                     if not customer_id:
                         total_errors += 1
                         continue
@@ -3549,8 +3552,21 @@ class PrestaShopService(BaseEcommerceService):
                                 id_tax = 1  # Fallback
                             
                             # Recupera prezzi da order_rows
-                            # product_price: prezzo unitario ORIGINALE (no sconto, no IVA)
-                            # unit_price_tax_excl: prezzo unitario SCONTATO (con sconto, no IVA)
+                            # unit_price_with_tax: prezzo unitario con IVA da PrestaShop
+                            unit_price_with_tax = safe_float(detail.get('unit_price_tax_incl', 0.0))
+                            
+                            # Calcola total_price_with_tax
+                            total_price_with_tax = unit_price_with_tax * product_quantity
+                            
+                            # Recupera tax_percentage usando get_tax_percentage_by_country
+                            from src.services.core.tool import get_tax_percentage_by_country, calculate_price_without_tax
+                            tax_percentage = get_tax_percentage_by_country(self.db, id_country, default=22.0)
+                            
+                            # Calcola unit_price_net e total_price_net
+                            unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+                            total_price_net = calculate_price_without_tax(total_price_with_tax, tax_percentage)
+                            
+                            # Recupera product_price_original per calcolo sconti (retrocompatibilità)
                             product_price_original = safe_float(detail.get('product_price', 0.0))
                             unit_price_tax_excl = safe_float(detail.get('unit_price_tax_excl', 0.0))
                             price_difference = product_price_original - unit_price_tax_excl
@@ -3575,8 +3591,7 @@ class PrestaShopService(BaseEcommerceService):
                                 except Exception as e:
                                     print(f"⚠️ Errore nel recupero sconti per ordine {order_id_origin}: {e}")
                             
-                            # Prepare complete order detail data
-                            # IMPORTANTE: product_price deve essere il prezzo ORIGINALE senza sconto
+                            # Prepare complete order detail data con nuovi campi
                             order_detail_data = {
                                 'id_origin': detail.get('id', 0),
                                 'id_order': None,  # Will be set after order insert
@@ -3586,11 +3601,16 @@ class PrestaShopService(BaseEcommerceService):
                                 'product_reference': detail.get('product_reference', 'ND'),
                                 'product_qty': product_quantity,
                                 'product_weight': product_weight,
-                                'product_price': product_price_original,  # Prezzo ORIGINALE senza sconto
+                                'unit_price_net': unit_price_net,
+                                'unit_price_with_tax': unit_price_with_tax,
+                                'total_price_net': total_price_net,
+                                'total_price_with_tax': total_price_with_tax,
                                 'id_tax': id_tax,
                                 'reduction_percent': reduction_percent,
                                 'reduction_amount': reduction_amount,
-                                'rda': None
+                                'rda': None,
+                                # Backward compatibility
+                                'product_price': unit_price_net
                             }
 
                             valid_order_detail_data.append(order_detail_data)
@@ -3615,8 +3635,8 @@ class PrestaShopService(BaseEcommerceService):
                         id_tax=default_tax_id,
                         tracking=None,
                         weight=order_total_weight,
-                        price_tax_incl=total_shipping_price, 
-                        price_tax_excl=safe_float(order.get('total_shipping_tax_excl', 0))
+                        price_tax_incl=total_shipping_tax_incl, 
+                        price_tax_excl=total_shipping_tax_excl
                     ))
                     valid_order_data.append(order_data)
                                         
@@ -3678,12 +3698,12 @@ class PrestaShopService(BaseEcommerceService):
                 details_sql_file = "temp_order_details_insert.sql"
                 with open(details_sql_file, 'w', encoding='utf-8') as f:
                     f.write("-- Order details bulk insert\n")
-                    f.write("INSERT INTO order_details (id_origin, id_order, id_order_document, id_product, product_name, product_reference, product_qty, product_weight, product_price, id_tax, reduction_percent, reduction_amount, rda) VALUES\n")
+                    f.write("INSERT INTO order_details (id_origin, id_order, id_order_document, id_product, product_name, product_reference, product_qty, product_weight, unit_price_net, unit_price_with_tax, total_price_net, total_price_with_tax, id_tax, reduction_percent, reduction_amount, rda) VALUES\n")
                     
                     for i, detail_data in enumerate(valid_order_detail_data):
                         if detail_data['id_order']:  # Only include details with valid order IDs
                             comma = "," if i < len(valid_order_detail_data) - 1 else ";"
-                            f.write(f"({detail_data['id_origin']}, {detail_data['id_order']}, {sql_value(detail_data['id_order_document'])}, {detail_data['id_product']}, {sql_value(detail_data['product_name'])}, {sql_value(detail_data['product_reference'])}, {detail_data['product_qty']}, {detail_data['product_weight']}, {detail_data['product_price']}, {sql_value(detail_data['id_tax'])}, {detail_data['reduction_percent']}, {detail_data['reduction_amount']}, {sql_value(detail_data['rda'])}){comma}\n")
+                            f.write(f"({detail_data['id_origin']}, {detail_data['id_order']}, {sql_value(detail_data['id_order_document'])}, {detail_data['id_product']}, {sql_value(detail_data['product_name'])}, {sql_value(detail_data['product_reference'])}, {detail_data['product_qty']}, {detail_data['product_weight']}, {detail_data.get('unit_price_net', 0.0)}, {detail_data.get('unit_price_with_tax', 0.0)}, {detail_data.get('total_price_net', 0.0)}, {detail_data.get('total_price_with_tax', 0.0)}, {sql_value(detail_data['id_tax'])}, {detail_data['reduction_percent']}, {detail_data['reduction_amount']}, {sql_value(detail_data['rda'])}){comma}\n")
                 
                 # Execute order details SQL file
                 with open(details_sql_file, 'r', encoding='utf-8') as f:

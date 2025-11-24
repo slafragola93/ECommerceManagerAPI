@@ -192,7 +192,7 @@ class ProductService(IProductService):
             ).all()
             
             # Fallback image URL
-            fallback_img_url = "media/fallback/product_not_found.jpg"
+            fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
             
             # Crea mapping con fallback per img_url mancanti
             return {

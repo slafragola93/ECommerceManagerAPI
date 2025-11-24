@@ -12,11 +12,23 @@ class OrderDetailSchema(BaseModel):
     product_name: str = Field(..., max_length=100)
     product_reference: str = Field(..., max_length=100)
     product_qty: int = Field(..., ge=0)
-    product_price: Optional[float] = 0.0
+    unit_price_net: Optional[float] = Field(None, ge=0, description="Prezzo unitario senza IVA")
+    unit_price_with_tax: float = Field(..., ge=0, description="Prezzo unitario con IVA (obbligatorio)")
+    total_price_net: float = Field(..., ge=0, description="Totale senza IVA (obbligatorio)")
+    total_price_with_tax: float = Field(..., ge=0, description="Totale con IVA (obbligatorio)")
     product_weight: Optional[float] = 0.0
     reduction_percent: Optional[float] = 0.0
     reduction_amount: Optional[float] = 0.0
     note: Optional[str] = Field(None, max_length=200)
+    
+    # Backward compatibility: product_price come alias per unit_price_net
+    @property
+    def product_price(self):
+        return self.unit_price_net
+    
+    @product_price.setter
+    def product_price(self, value):
+        self.unit_price_net = value
 
 
 class OrderDetailResponseSchema(BaseModel):
@@ -29,18 +41,31 @@ class OrderDetailResponseSchema(BaseModel):
     product_name: str
     product_reference: str
     product_qty: int
-    product_price: float
+    unit_price_net: Optional[float] = None
+    unit_price_with_tax: float
+    total_price_net: float
+    total_price_with_tax: float
     product_weight: float
     reduction_percent: float
     reduction_amount: float
     note: Optional[str] = None
     img_url: Optional[str] = None  
     
-    @validator('product_price', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    @validator('unit_price_net', 'unit_price_with_tax', 'total_price_net', 'total_price_with_tax', 
+               'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
         return round(float(v), 2)
+    
+    # Backward compatibility: product_price come alias per unit_price_net
+    @property
+    def product_price(self):
+        return self.unit_price_net
+    
+    @product_price.setter
+    def product_price(self, value):
+        self.unit_price_net = value
 
 
 class AllOrderDetailsResponseSchema(BaseModel):

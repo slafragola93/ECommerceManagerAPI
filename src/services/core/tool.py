@@ -212,6 +212,80 @@ def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
     return amount * (percentage / 100)
 
 
+def calculate_price_without_tax(price_with_tax: float, tax_percentage: float) -> float:
+    """
+    Calcola il prezzo senza IVA partendo da un prezzo con IVA
+    
+    Args:
+        price_with_tax: Prezzo con IVA incluso
+        tax_percentage: Percentuale della tassa (es. 22 per 22%)
+    
+    Returns:
+        float: Prezzo senza IVA
+    
+    Esempio:
+        calculate_price_without_tax(122.0, 22) → 100.0
+        calculate_price_without_tax(50.0, 10) → 45.45
+    """
+    if price_with_tax is None or price_with_tax < 0:
+        return 0.0
+    
+    if tax_percentage is None or tax_percentage < 0:
+        tax_percentage = 0.0
+    
+    if tax_percentage == 0:
+        return round(price_with_tax, 2)
+    
+    # Calcola prezzo senza IVA: price_with_tax / (1 + tax_percentage/100)
+    price_without_tax = price_with_tax / (1 + tax_percentage / 100)
+    
+    return round(price_without_tax, 2)
+
+
+def get_tax_percentage_by_country(db, id_country: int, default: float = 22.0) -> float:
+    """
+    Recupera la percentuale IVA da id_country con fallback a default
+    
+    Args:
+        db: Database session
+        id_country: ID del paese
+        default: Percentuale di default se non trovata (default: 22.0)
+    
+    Returns:
+        float: Percentuale IVA trovata o default
+    
+    Esempio:
+        get_tax_percentage_by_country(db, 1, 22.0) → 22.0 (se trovata) o 22.0 (default)
+    """
+    if id_country is None:
+        return default
+    
+    try:
+        from src.models.tax import Tax
+        
+        # Cerca tax per id_country
+        tax = db.query(Tax).filter(
+            Tax.id_country == id_country
+        ).first()
+        
+        if tax and tax.percentage is not None:
+            return float(tax.percentage)
+        
+        # Se non trovata, cerca tax di default
+        default_tax = db.query(Tax).filter(
+            Tax.is_default == 1
+        ).first()
+        
+        if default_tax and default_tax.percentage is not None:
+            return float(default_tax.percentage)
+        
+        return default
+        
+    except Exception:
+        # In caso di errore, ritorna default
+        return default
+
+
 def format_datetime_ddmmyyyy_hhmm(dt: datetime | None) -> str | None:
     """Formatta una datetime in 'DD-MM-YYYY HH:mm'. Ritorna None se dt è None."""
     if dt is None:

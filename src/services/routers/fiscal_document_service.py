@@ -83,7 +83,8 @@ class FiscalDocumentService(IFiscalDocumentService):
                 order_details.append({
                     'id_order_detail': item.id_order_detail,
                     'quantity': item.quantity,
-                    'unit_price': item.unit_price,
+                    'unit_price_net': getattr(item, 'unit_price_net', getattr(item, 'unit_price', 0.0)),
+                    'unit_price_with_tax': getattr(item, 'unit_price_with_tax', 0.0),
                     'id_tax': item.id_tax
                 })
             

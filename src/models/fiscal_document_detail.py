@@ -22,11 +22,23 @@ class FiscalDocumentDetail(Base):
     quantity = Column(Numeric(10, 5), nullable=False)
     
     # Importo da stornare (può essere diverso dal prezzo originale)
-    unit_price = Column(Numeric(10, 5), nullable=False)
-    total_amount = Column(Numeric(10, 5), nullable=False)
+    unit_price_net = Column(Numeric(10, 5))  # Prezzo unitario senza IVA (rinominato da unit_price)
+    unit_price_with_tax = Column(Numeric(10, 5), nullable=False)  # Prezzo unitario con IVA (obbligatorio)
+    total_price_net = Column(Numeric(10, 5), nullable=False)  # Totale senza IVA (obbligatorio)
+    total_price_with_tax = Column(Numeric(10, 5), nullable=False)  # Totale con IVA (obbligatorio, corrisponde a total_amount)
+    total_amount = Column(Numeric(10, 5), nullable=False)  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
     
     # Tassa applicata (riferimento all'order detail originale)
     id_tax = Column(Integer, ForeignKey("taxes.id_tax"), nullable=True, index=True)
+    
+    # Backward compatibility: unit_price come alias per unit_price_net
+    @property
+    def unit_price(self):
+        return self.unit_price_net
+    
+    @unit_price.setter
+    def unit_price(self, value):
+        self.unit_price_net = value
     
     # Relationships
     fiscal_document = relationship("FiscalDocument", back_populates="details")
