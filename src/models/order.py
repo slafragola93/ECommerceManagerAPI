@@ -33,8 +33,8 @@ class Order(Base):
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
     total_weight = Column(Numeric(10, 5), default=0)
-    total_price_tax_excl = Column(Numeric(10, 5), default=0)
-    total_paid = Column(Numeric(10, 5), default=0)
+    total_price_with_tax = Column(Numeric(10, 5), nullable=False, default=0)  # ex total_with_tax, ex total_paid
+    total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # ex total_without_tax
     total_discounts = Column(Numeric(10, 5), default=0.0)
     cash_on_delivery = Column(Numeric(10, 5), default=0)
     insured_value = Column(Numeric(10, 5), default=0)

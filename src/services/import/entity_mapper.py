@@ -71,7 +71,7 @@ class EntityMapper:
             'depth': 0.0,
             'height': 0.0,
             'width': 0.0,
-            'price_without_tax': 0.0,
+            'price': 0.0,  # Campo price (rinominato da price_without_tax)
             'quantity': 0,
             'id_category': 0,
             'id_brand': 0
@@ -197,11 +197,11 @@ class EntityMapper:
                       'id_address_delivery', 'id_address_invoice', 'id_carrier',
                       'id_shipping', 'id_sectional', 'id_order_state', 'product_qty', 'quantity']
         
-        float_fields = ['weight', 'depth', 'height', 'width', 'price_without_tax',
+        float_fields = ['weight', 'depth', 'height', 'width', 'price',
                        'purchase_price', 'product_price', 'product_weight',
                        'unit_price_tax_incl', 'unit_price_tax_excl',
                        'reduction_percent', 'reduction_amount',
-                       'total_price_tax_excl', 'total_paid', 'total_discounts', 'total_weight',
+                       'total_price_with_tax', 'total_price_net', 'total_discounts', 'total_weight',
                        'price_tax_incl', 'price_tax_excl']
         
         bool_fields = ['is_active', 'is_default', 'is_invoice_requested', 'is_payed']

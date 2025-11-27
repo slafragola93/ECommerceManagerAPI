@@ -78,7 +78,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             is_electronic=is_electronic,
             status=initial_status,
             includes_shipping=True,  # Le fatture includono sempre le spese di spedizione
-            total_amount=order.total_paid  # Verrà aggiornato dopo aver creato i dettagli
+            total_amount=order.total_price_with_tax  # Verrà aggiornato dopo aver creato i dettagli (total_amount corrisponde a total_price_with_tax)
         )
         
         self._session.add(invoice)

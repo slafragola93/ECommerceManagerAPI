@@ -11,6 +11,7 @@ from src.models.tax import Tax
 from src.models.shipping import Shipping
 from src.models.sectional import Sectional
 from src.models.product import Product
+from src.repository.shipping_repository import ShippingRepository
 from src.services.core.query_utils import QueryUtils
 from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.preventivo_schema import (
@@ -33,6 +34,7 @@ class PreventivoRepository:
         self.db = db
         self.order_repository = OrderRepository(db)
         self.payment_repository = PaymentRepository(db)
+        self.shipping_repository = ShippingRepository(db)
     
     def get_next_document_number(self, type_document: str = "preventivo") -> int:
         """Genera il prossimo numero documento sequenziale"""
@@ -95,7 +97,8 @@ class PreventivoRepository:
             note=preventivo_data.note,
             total_discount=preventivo_data.total_discount if preventivo_data.total_discount is not None else 0.0,
             total_weight=0.0,  # Verrà calcolato da update_document_totals
-            total_price_with_tax=0.0  # Verrà calcolato da update_document_totals
+            total_price_with_tax=0.0,  # Verrà calcolato da update_document_totals
+            total_price_net=preventivo_data.total_price_net if preventivo_data.total_price_net is not None else 0.0  # Se None verrà calcolato da update_document_totals
         )
         
         
@@ -158,9 +161,7 @@ class PreventivoRepository:
         
         # Aggiorna customs_value se None basandosi sull'ordine associato
         if shipping_id:
-            from src.repository.shipping_repository import ShippingRepository
-            shipping_repo = ShippingRepository(self.db)
-            shipping_repo.update_customs_value_from_order(shipping_id)
+            self.shipping_repository.update_customs_value_from_order(shipping_id)
     
         
         return order_document
@@ -322,9 +323,7 @@ class PreventivoRepository:
             
             # Aggiorna customs_value se None basandosi sull'ordine associato
             if shipping_id:
-                from src.repository.shipping_repository import ShippingRepository
-                shipping_repo = ShippingRepository(self.db)
-                shipping_repo.update_customs_value_from_order(shipping_id)
+                self.shipping_repository.update_customs_value_from_order(shipping_id)
         
         # 7. Aggiorna campi semplici (codice esistente)
         if preventivo_data.id_payment is not None:
@@ -391,9 +390,6 @@ class PreventivoRepository:
                 detail=f"Impossibile convertire il preventivo: campi obbligatori mancanti: {', '.join(missing_fields)}"
             )
         
-        # Calcola total_price_tax_excl corretto (prodotti + spedizione senza IVA)
-        total_price_tax_excl = self._calculate_total_tax_excl_for_order(preventivo)
-
         # Crea ordine utilizzando OrderRepository per sfruttare tutte le funzioni collegate
         order_data = OrderSchema(
             id_origin=0,  # Ordine creato dall'app
@@ -409,8 +405,7 @@ class PreventivoRepository:
             is_payed=preventivo.is_payed if preventivo.is_payed is not None else False,
             payment_date=None,
             total_weight=preventivo.total_weight or 0.0,
-            total_price_tax_excl=total_price_tax_excl,  # Include prodotti + spedizione senza IVA
-            total_paid=preventivo.total_price_with_tax,  # total_paid = total_price_with_tax del preventivo
+            total_price_with_tax=preventivo.total_price_with_tax,  # total_price_with_tax = total_price_with_tax del preventivo
             total_discounts=preventivo.total_discount,  # Porta lo sconto totale dal preventivo
             cash_on_delivery=0.0
         )
@@ -458,8 +453,7 @@ class PreventivoRepository:
             self.db.commit()
         # Se non ci sono package, OrderRepository avrà già creato un package di default
         
-        # Imposta il total_price_tax_excl corretto dopo aver creato tutti gli articoli
-        order.total_price_tax_excl = total_price_tax_excl
+        # total_price_tax_excl rimosso - il total_price_net verrà calcolato automaticamente da OrderRepository se necessario
         self.db.flush()
 
         # Ricalcola i totali ordine con il servizio dedicato per garantire coerenza
@@ -1283,8 +1277,6 @@ class PreventivoRepository:
         
         # Aggiorna customs_value se None basandosi sull'ordine associato
         if new_shipping_id:
-            from src.repository.shipping_repository import ShippingRepository
-            shipping_repo = ShippingRepository(self.db)
-            shipping_repo.update_customs_value_from_order(new_shipping_id)
+            self.shipping_repository.update_customs_value_from_order(new_shipping_id)
         
         return new_preventivo

@@ -74,7 +74,7 @@ def extract_product_created_data(*args, result=None, **kwargs) -> Optional[Dict[
             "sku": product.sku,
             "reference": product.reference,
             "type": product.type,
-            "price_without_tax": float(product.price_without_tax or 0),
+            "price": float(product.price or 0),  # Campo price (rinominato da price_without_tax)
             "quantity": product.quantity or 0,
             "created_by": kwargs.get('user', {}).get('id')
         }
@@ -110,7 +110,7 @@ def extract_product_updated_data(*args, result=None, **kwargs) -> Optional[Dict[
             "sku": product.sku,
             "reference": product.reference,
             "type": product.type,
-            "price_without_tax": float(product.price_without_tax or 0),
+            "price": float(product.price or 0),  # Campo price (rinominato da price_without_tax)
             "quantity": product.quantity or 0,
             "updated_by": kwargs.get('user', {}).get('id')
         }
@@ -618,7 +618,7 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
             "id_carrier": order.id_carrier,
             "id_order_state": order.id_order_state,
             "reference": order.reference,
-            "total_paid": order.total_paid,
+            "total_price_with_tax": order.total_price_with_tax,  # ex total_with_tax, ex total_paid
             "total_weight": order.total_weight,
             "order_details": order_details_data,
             "created_by": kwargs.get('user', {}).get('id')

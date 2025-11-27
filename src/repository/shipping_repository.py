@@ -50,7 +50,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving shipping by name: {str(e)}")
     
-    def create_and_get_id(self, data: Union[ShippingSchema, dict]) -> int:
+    def create_and_get_id(self, data: Union[ShippingSchema, dict], id_order: int = None) -> int:
         """Crea un shipping e restituisce l'ID"""
         try:
             # Converti ShippingSchema in dict se necessario
@@ -58,6 +58,26 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
                 shipping_data = data.model_dump()
             else:
                 shipping_data = data
+            
+            # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
+            if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
+                from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
+                from src.repository.tax_repository import TaxRepository
+                
+                tax_percentage = None
+                # Se shipping è collegato a un ordine, recupera id_country da address_delivery dell'ordine
+                if id_order:
+                    from src.models.order import Order
+                    id_address_delivery = self._session.query(Order.id_address_delivery).filter(Order.id_order == id_order).scalar()
+                    if id_address_delivery:
+                        tax_percentage = get_tax_percentage_by_address_delivery_id(self._session, id_address_delivery, default=None)
+                
+                # Se non trovato, usa percentuale default da app_configuration
+                if tax_percentage is None:
+                    tax_repo = TaxRepository(self._session)
+                    tax_percentage = tax_repo.get_default_tax_percentage_from_app_config(default=22.0)
+                
+                shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
             
             # Crea l'istanza del modello
             shipping = Shipping(**shipping_data)
@@ -198,9 +218,9 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
                 Order.id_shipping == id_shipping
             ).first()
             
-            if order and order.total_paid:
-                # Imposta customs_value al totale dell'ordine
-                shipping.customs_value = order.total_paid
+            if order and order.total_price_with_tax:
+                # Imposta customs_value al totale dell'ordine (con IVA)
+                shipping.customs_value = order.total_price_with_tax
                 self._session.commit()
         except Exception as e:
             self._session.rollback()

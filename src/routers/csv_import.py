@@ -66,7 +66,7 @@ async def import_csv(
     
     **Example**: products.csv with id_platform=1
     ```csv
-    id_origin,name,sku,reference,id_category,id_brand,price_without_tax,weight,quantity
+    id_origin,name,sku,reference,id_category,id_brand,price,weight,quantity
     12345,Product Name,SKU123,REF001,5,3,99.99,1.5,100
     ```
     

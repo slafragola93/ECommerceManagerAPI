@@ -121,7 +121,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                     depth=data.depth,
                     height=data.height,
                     width=data.width,
-                    price_without_tax=data.price_without_tax if data.price_without_tax is not None else 0.0,
+                    price=data.price if data.price is not None else 0.0,
                     quantity=data.quantity if data.quantity is not None else 0,
                     purchase_price=data.purchase_price if data.purchase_price is not None else 0.0,
                     minimal_quantity=data.minimal_quantity if data.minimal_quantity is not None else 0
@@ -156,7 +156,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             depth=data.depth,
             height=data.height,
             width=data.width,
-            price_without_tax=data.price_without_tax if data.price_without_tax is not None else 0.0,
+            price=data.price if data.price is not None else 0.0,
             quantity=data.quantity if data.quantity is not None else 0
         )
 
@@ -255,7 +255,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         Aggiorna i prezzi dei prodotti in batch utilizzando SQL diretto per performance.
         
         Args:
-            price_map: Dizionario {id_origin: price} mappando id_origin a nuovo prezzo (price -> price_without_tax)
+            price_map: Dizionario {id_origin: price} mappando id_origin a nuovo prezzo
             id_platform: ID della piattaforma per filtrare i prodotti
             batch_size: Dimensione del batch per l'aggiornamento (default: 1000)
             
@@ -273,7 +273,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             # SQL statement per l'update
             stmt = text("""
                 UPDATE products 
-                SET price_without_tax = :price 
+                SET price = :price 
                 WHERE id_origin = :id_origin AND id_platform = :id_platform
             """)
             
@@ -313,7 +313,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         Aggiorna i dettagli dei prodotti in batch utilizzando SQL diretto per performance ottimizzata.
         
         Aggiorna: sku, reference, weight, depth, height, width, purchase_price, 
-        minimal_quantity, price_without_tax, quantity.
+        minimal_quantity, price, quantity.
         
         Usa batch processing con commit ogni N batch per ridurre I/O.
         
@@ -345,7 +345,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                     width = :width,
                     purchase_price = :purchase_price,
                     minimal_quantity = :minimal_quantity,
-                    price_without_tax = :price_without_tax,
+                    price = :price,
                     quantity = :quantity
                 WHERE id_origin = :id_origin AND id_platform = :id_platform
             """)
@@ -373,7 +373,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                             'width': float(details.get('width', 0.0) or 0.0),
                             'purchase_price': float(details.get('purchase_price', 0.0) or 0.0),
                             'minimal_quantity': int(details.get('minimal_quantity', 0) or 0),
-                            'price_without_tax': float(details.get('price_without_tax', 0.0) or 0.0),
+                            'price': float(details.get('price', 0.0) or 0.0),
                             'quantity': int(details.get('quantity', 0) or 0),
                             'id_platform': id_platform
                         })

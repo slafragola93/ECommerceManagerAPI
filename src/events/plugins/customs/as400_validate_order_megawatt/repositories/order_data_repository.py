@@ -56,8 +56,8 @@ class OrderDataRepository:
                     Order.id_customer,
                     Order.id_payment,
                     Order.id_shipping,
-                    Order.total_price_tax_excl,
-                    Order.total_paid,
+                    Order.total_price_with_tax,
+                    Order.total_price_net,
                     Order.id_order_state
                 )
             )

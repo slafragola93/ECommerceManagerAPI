@@ -74,3 +74,90 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
             return 22.0
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving tax percentage: {str(e)}")
+    
+    def get_default_tax_percentage_from_app_config(self, default: float = 22.0) -> float:
+        """
+        Recupera la percentuale IVA di default da app_configuration.name = "default_tav"
+        
+        Args:
+            default: Percentuale di default se non trovata (default: 22.0)
+        
+        Returns:
+            float: Percentuale IVA trovata o default
+        """
+        try:
+            from src.models.app_configuration import AppConfiguration
+            
+            # Cerca app_configuration con name = "default_tav" o "default_tax"
+            app_config = self._session.query(AppConfiguration).filter(
+                AppConfiguration.name.in_(["default_tav", "default_tax"])
+            ).first()
+            
+            if app_config and app_config.value:
+                try:
+                    return float(app_config.value)
+                except (ValueError, TypeError):
+                    pass
+            
+            return default
+            
+        except Exception:
+            return default
+    
+    def get_tax_info_by_country(self, id_country: Optional[int]) -> Optional[dict]:
+        """
+        Recupera informazioni sulla tassa (percentage e id_tax) basata su id_country.
+        
+        Logica di fallback:
+        1. Cerca tax per id_country specifico
+        2. Se non trovata, cerca tax default (is_default == 1)
+        3. Se non trovata, recupera percentage da app_configuration.default_tax
+        4. Fallback finale: 22% e id_tax=1
+        
+        Args:
+            id_country: ID del paese (opzionale)
+        
+        Returns:
+            dict con {"percentage": float, "id_tax": int} o None se id_country non fornito
+        """
+        if id_country is None:
+            return None
+        
+        try:
+            # 1. Cerca tax per id_country specifico
+            tax = self._session.query(Tax).filter(
+                Tax.id_country == id_country
+            ).first()
+            
+            if tax and tax.percentage is not None:
+                return {
+                    "percentage": float(tax.percentage),
+                    "id_tax": tax.id_tax
+                }
+            
+            # 2. Se non trovata, cerca tax default
+            default_tax = self._session.query(Tax).filter(
+                Tax.is_default == 1
+            ).first()
+            
+            if default_tax and default_tax.percentage is not None:
+                return {
+                    "percentage": float(default_tax.percentage),
+                    "id_tax": default_tax.id_tax
+                }
+            
+            # 3. Se non trovata, recupera percentage da app_configuration
+            default_percentage = self.get_default_tax_percentage_from_app_config(22.0)
+            
+            # 4. Fallback finale: usa 22% e id_tax=1
+            return {
+                "percentage": default_percentage,
+                "id_tax": 1
+            }
+            
+        except Exception as e:
+            # In caso di errore, ritorna fallback
+            return {
+                "percentage": 22.0,
+                "id_tax": 1
+            }

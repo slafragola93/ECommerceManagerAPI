@@ -213,7 +213,7 @@ class OrderXMLBuilder:
         self._safe_set_text(parent, "totaleIVA", f"{totale_iva:.2f}")
         
         # Totale ordine
-        totale_ordine = order.total_paid or 0.0
+        totale_ordine = order.total_price_with_tax or 0.0  # ex total_paid
         self._safe_set_text(parent, "totaleOrdine", f"{totale_ordine:.2f}")
 
     def _safe_set_text(self, parent: ET.Element, tag: str, value: Optional[str]) -> None:

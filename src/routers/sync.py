@@ -407,7 +407,7 @@ async def sync_products_price(
     Questo endpoint avvia un processo asincrono che:
     1. Seleziona il service corretto in base alla piattaforma (PrestaShop, etc.)
     2. Chiama l'API della piattaforma per recuperare i prezzi aggiornati (price)
-    3. Aggiorna i prodotti nel database con i nuovi prezzi (price_without_tax)
+    3. Aggiorna i prodotti nel database con i nuovi prezzi (price)
     
     Returns:
         202 Accepted: Sincronizzazione prezzi avviata con successo

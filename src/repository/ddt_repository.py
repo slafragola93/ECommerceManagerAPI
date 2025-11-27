@@ -63,7 +63,7 @@ class DDTRepository:
             is_invoice_requested=original_order.is_invoice_requested,
             note=f"DDT generato da ordine {original_order.reference}",
             total_weight=original_order.total_weight,
-            total_price_with_tax=original_order.total_paid,  # Usa total_paid invece di total_price_tax_excl
+            total_price_with_tax=original_order.total_price_with_tax,  # ex total_paid
             id_order=id_order,  # Collegamento all'ordine originale
             date_add=datetime.now(),
             updated_at=datetime.now()

@@ -16,7 +16,6 @@ from src.services.core.wrap import check_authentication
 from src.services.media.image_service import ImageService
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
-from src.database import get_db
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -50,7 +49,8 @@ async def get_all_products(
     product_service: IProductService = Depends(get_product_service),
     page: int = Query(1, gt=0),
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
-    product_name: Optional[str] = Query(None, description="Filtra prodotti per nome (ricerca parziale)")
+    product_name: Optional[str] = Query(None, description="Filtra prodotti per nome (ricerca parziale)"),
+    id_country: Optional[int] = Query(None, description="ID del paese per calcolare IVA e prezzo netto")
 ):
     """
     Restituisce tutti i product con supporto alla paginazione e filtro per nome.
@@ -58,12 +58,13 @@ async def get_all_products(
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     - **product_name**: Filtra i prodotti che contengono questa stringa in name, sku o reference (minimo 4 caratteri, ricerca parziale, case-insensitive).
+    - **id_country**: ID del paese (opzionale) per calcolare IVA e prezzo netto.
     """
     filters = {}
     if product_name and len(product_name.strip()) >= 4:
         filters['product_name'] = product_name.strip()
     
-    products = await product_service.get_products(page=page, limit=limit, **filters)
+    products = await product_service.get_products(page=page, limit=limit, id_country=id_country, **filters)
     if not products:
         raise NotFoundException("Products", None)
 
@@ -77,14 +78,16 @@ async def get_all_products(
 async def get_product_by_id(
     user: dict = Depends(get_current_user),
     product_service: IProductService = Depends(get_product_service),
-    product_id: int = Path(gt=0)
+    product_id: int = Path(gt=0),
+    id_country: Optional[int] = Query(None, description="ID del paese per calcolare IVA e prezzo netto")
 ):
     """
     Restituisce un singolo product basato sull'ID specificato.
 
     - **product_id**: Identificativo del product da ricercare.
+    - **id_country**: ID del paese (opzionale) per calcolare IVA e prezzo netto.
     """
-    return await product_service.get_product(product_id)
+    return await product_service.get_product(product_id, id_country=id_country)
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Product creato correttamente")
 @check_authentication
@@ -203,12 +206,12 @@ async def delete_product_image(
     if not product:
         raise HTTPException(status_code=404, detail="Product non trovato")
     
-    if not product.img_url:
+    if not product.get("img_url"):
         raise HTTPException(status_code=404, detail="Il prodotto non ha un'immagine")
     
     # Elimina il file dal filesystem
     image_service = ImageService()
-    deleted = image_service.delete_image(product.img_url)
+    deleted = image_service.delete_image(product["img_url"])
     
     if deleted:
         # Aggiorna il prodotto rimuovendo l'URL dell'immagine

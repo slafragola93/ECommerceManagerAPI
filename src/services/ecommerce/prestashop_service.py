@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 import os
 from src.schemas.order_schema import OrderUpdateSchema
-from src.services.core.tool import safe_int, safe_float, sql_value
+from src.services.core.tool import safe_int, safe_float, sql_value,get_tax_percentage_by_country, calculate_price_without_tax, calculate_price_with_tax,get_tax_percentage_by_address_delivery_id
 from src.services.external.province_service import province_service
 from src.services.media.image_service import ImageService
 from src.services.media.image_cache_service import get_image_cache_service
@@ -289,11 +289,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                #("Languages", self.sync_languages),
-                #("Countries", self.sync_countries),
-                #("Brands", self.sync_brands),
-                #("Categories", self.sync_categories),
-                #("Carriers", self.sync_carriers),  # REQUIRED: Must sync carriers before orders
+                ("Languages", self.sync_languages),
+                ("Countries", self.sync_countries),
+                ("Brands", self.sync_brands),
+                ("Categories", self.sync_categories),
+                ("Carriers", self.sync_carriers), 
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -309,8 +309,8 @@ class PrestaShopService(BaseEcommerceService):
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
                 ("Products", self.sync_products),
-                #("Customers", self.sync_customers),
-                #("Addresses", self.sync_addresses),
+                ("Customers", self.sync_customers),
+                ("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -333,7 +333,7 @@ class PrestaShopService(BaseEcommerceService):
                 phase3_functions.append(("Product Images", self.sync_product_images))
             
             # Aggiungi sempre Orders
-            #phase3_functions.append(("Orders", self.sync_orders))
+            phase3_functions.append(("Orders", self.sync_orders))
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
             sync_results['phases'].append(phase3_results)
@@ -840,6 +840,11 @@ class PrestaShopService(BaseEcommerceService):
             
             products = list(unique_products.values())
 
+            # Recupera percentuale IVA da app_configuration.default_tav (una volta all'inizio)
+            from src.repository.tax_repository import TaxRepository
+            tax_repo = TaxRepository(self.db)
+            default_tax_percentage = tax_repo.get_default_tax_percentage_from_app_config(default=22.0)
+
             # Prepare all product data with async lookups
             from src.schemas.product_schema import ProductSchema
             
@@ -877,7 +882,10 @@ class PrestaShopService(BaseEcommerceService):
                         # Se non c'è immagine, usa l'immagine di fallback
                         img_url = "media/product_images/fallback/product_not_found.jpg"
                     # Extract price without tax (PrestaShop 'price' field is without tax)
-                    price_without_tax = float(product.get('weight'))
+                    price_without_tax = float(product.get('price'))
+                    
+                    # Calcola price_with_tax usando percentuale IVA da app_configuration.default_tav
+                    price_with_tax = calculate_price_with_tax(price_without_tax, default_tax_percentage, quantity=1)
                     
                     # Extract purchase_price from wholesale_price
                     purchase_price = float(product.get('wholesale_price'))
@@ -888,28 +896,30 @@ class PrestaShopService(BaseEcommerceService):
                     
                     # Extract minimal_quantity
                     minimal_quantity = int(product.get('minimal_quantity'))
-                    print(f"DEBUG: Minimal quantity: {minimal_quantity}")
-                    print(f"DEBUG: Purchase price: {purchase_price}")
-                    print(f"DEBUG: Price without tax: {price_without_tax}")
-                    print(product)
+                    if int(product.get('id')) == 35:
+                        print(f"DEBUG: Minimal quantity: {minimal_quantity}")
+                        print(f"DEBUG: Purchase price: {purchase_price}")
+                        print(f"DEBUG: Price without tax: {price_without_tax}")
+                        print(f"DEBUG: Price with tax: {price_with_tax}")
+                        print(product)
                     return ProductSchema(
-                        id_origin=int(product.get('id', 0)),
-                        id_category=int(category_id) if category_id else 0,
-                        id_brand=int(brand_id) if brand_id else 0,
-                        id_platform=self.platform_id,
-                        img_url=img_url,
-                        name=product['name'],
-                        sku=product.get('ean13', ''),
-                        reference=product.get('reference', 'ND'),
-                        weight=float(product.get('weight', 0.0)) if product.get('weight') else 0.0,
-                        depth=float(product.get('depth', 0.0)) if product.get('depth') else 0.0,
-                        height=float(product.get('height', 0.0)) if product.get('height') else 0.0,
-                        width=float(product.get('width', 0.0)) if product.get('width') else 0.0,
-                        price_without_tax=price_without_tax,
-                        quantity=quantity,
-                        purchase_price=purchase_price,
-                        minimal_quantity=minimal_quantity,
-                        type=product_type
+                    id_origin=int(product.get('id', 0)),
+                    id_category=int(category_id) if category_id else 0,
+                    id_brand=int(brand_id) if brand_id else 0,
+                    id_platform=self.platform_id,
+                    img_url=img_url,
+                    name=product['name'],
+                    sku=product.get('ean13', ''),
+                    reference=product.get('reference', 'ND'),
+                    weight=float(product.get('weight', 0.0)) if product.get('weight') else 0.0,
+                    depth=float(product.get('depth', 0.0)) if product.get('depth') else 0.0,
+                    height=float(product.get('height', 0.0)) if product.get('height') else 0.0,
+                    width=float(product.get('width', 0.0)) if product.get('width') else 0.0,
+                    price=price_with_tax,  # Campo Product.price è con IVA (calcolato da price_without_tax)
+                    quantity=quantity,
+                    purchase_price=purchase_price,
+                    minimal_quantity=minimal_quantity,
+                    type=product_type
                     )
                 except Exception as e:
                     print(f"DEBUG: Error in prepare_product_data for product {product.get('id', 'unknown')}: {str(e)}")
@@ -1247,7 +1257,7 @@ class PrestaShopService(BaseEcommerceService):
                         'width': float(width),
                         'purchase_price': float(purchase_price),
                         'minimal_quantity': int(minimal_quantity),
-                        'price_without_tax': float(price_without_tax)
+                        'price': float(price_without_tax)  # Variabile locale price_without_tax mappata a campo price
                     }
                 except Exception as e:
                     error_msg = f"Error processing product {product.get('id', 'unknown')}: {str(e)}"
@@ -2833,7 +2843,7 @@ class PrestaShopService(BaseEcommerceService):
                         depth=10.0,
                         length=10.0,
                         weight=1.0,
-                        value=order_data['total_paid']
+                        value=order_data.get('total_price_with_tax', 0.0)  # ex total_paid
                     )
                     order_package_repo.create(order_package_schema)
                     
@@ -3304,10 +3314,12 @@ class PrestaShopService(BaseEcommerceService):
             
             from datetime import date
             from src.repository.shipping_repository import ShippingRepository
+            from src.repository.tax_repository import TaxRepository
             from src.schemas.shipping_schema import ShippingSchema
             
-            # Initialize shipping repository
+            # Initialize repositories (una volta all'inizio)
             shipping_repo = ShippingRepository(self.db)
+            tax_repo = TaxRepository(self.db)
             
             # OPTIMIZATION: Two-pass approach for maximum performance
             # Pass 1: Collect all unique IDs from orders (no database queries)
@@ -3410,12 +3422,34 @@ class PrestaShopService(BaseEcommerceService):
             # Pre-fetch all taxes using raw SQL
             all_taxes = {}
             default_tax_id = self._get_default_tax_id()
-            query = text("SELECT id_tax, id_country, is_default FROM taxes")
+            query = text("SELECT id_tax, id_country, percentage, is_default FROM taxes")
             result = self.db.execute(query)
+            country_to_tax_percentage = {}  # Dict per lookup veloce: id_country -> tax_percentage
             for row in result:
                 if row.id_country is not None:
                     all_taxes[row.id_country] = row.id_tax
+                    if row.percentage is not None:
+                        country_to_tax_percentage[row.id_country] = float(row.percentage)
             print(f"DEBUG: Default tax ID: {default_tax_id}")
+            
+            # Pre-fetch default tax percentage from app_configuration (una volta)
+            default_tax_percentage = tax_repo.get_default_tax_percentage_from_app_config(default=22.0)
+            print(f"DEBUG: Default tax percentage: {default_tax_percentage}")
+            
+            # Pre-fetch address to country mapping (query idratata: id_address -> id_country)
+            address_to_country = {}  # Dict per lookup veloce: id_address -> id_country
+            if all_addresses:
+                # Recupera tutti gli id_address unici
+                address_ids = list(set(all_addresses.values()))
+                if address_ids:
+                    placeholders = ','.join([':id_address_' + str(i) for i in range(len(address_ids))])
+                    params = {f'id_address_{i}': addr_id for i, addr_id in enumerate(address_ids)}
+                    query = text(f"SELECT id_address, id_country FROM addresses WHERE id_address IN ({placeholders})")
+                    result = self.db.execute(query, params)
+                    for row in result:
+                        if row.id_country is not None:
+                            address_to_country[row.id_address] = row.id_country
+            print(f"DEBUG: Pre-fetched {len(address_to_country)} address->country mappings")
 
             # Pre-fetch product weights using raw SQL
             product_weight_mapping = {}
@@ -3456,8 +3490,28 @@ class PrestaShopService(BaseEcommerceService):
                     delivery_address_id = all_addresses.get(delivery_address_origin)
                     invoice_address_id = all_addresses.get(invoice_address_origin)
                     payment_id = await self._get_or_create_payment_id(payment_name, payment_repo)
+                    
+                    # Recupera total_paid_tax_incl da PrestaShop API
+                    total_paid_tax_incl = safe_float(order.get('total_paid_tax_incl', 0))
+                    # Se non disponibile, usa total_paid come fallback
+                    if total_paid_tax_incl == 0.0:
+                        total_paid_tax_incl = safe_float(order.get('total_paid', 0))
+                    
                     total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
-                    total_paid = safe_float(order.get('total_paid', 0))
+                    
+                    # Calcola total_without_tax usando calculate_price_without_tax con dict pre-calcolati
+                    tax_percentage = get_tax_percentage_by_address_delivery_id(
+                        self.db, 
+                        delivery_address_id, 
+                        default=22.0,
+                        address_to_country_dict=address_to_country,
+                        country_to_tax_percentage_dict=country_to_tax_percentage,
+                        default_tax_percentage=default_tax_percentage
+                    )
+                    total_without_tax = calculate_price_without_tax(total_paid_tax_incl, tax_percentage) if total_paid_tax_incl > 0 else 0.0
+                    
+                    # Get country ID from delivery address for tax calculation (usando dict)
+                    id_country = address_to_country.get(delivery_address_id) if delivery_address_id else None
                     
                     # Extract shipping data
                     # Usa total_shipping_tax_incl direttamente da PrestaShop
@@ -3469,16 +3523,12 @@ class PrestaShopService(BaseEcommerceService):
                         shipping_tax_rate = safe_float(order.get('carrier_tax_rate', 0))
                         total_shipping_tax_incl = total_shipping_tax_escl * (1 + shipping_tax_rate / 100)
                     
-                    # Calcola price_tax_excl usando get_tax_percentage_by_country
-                    from src.services.core.tool import get_tax_percentage_by_country, calculate_price_without_tax
-                    shipping_tax_percentage = get_tax_percentage_by_country(self.db, id_country, default=22.0)
-                    total_shipping_tax_excl = calculate_price_without_tax(total_shipping_tax_incl, shipping_tax_percentage)
+                    # Calcola price_tax_excl usando stessa percentuale IVA dell'ordine
+                    total_shipping_tax_excl = calculate_price_without_tax(total_shipping_tax_incl, tax_percentage) if total_shipping_tax_incl > 0 else 0.0
+                    
                     if not customer_id:
                         total_errors += 1
                         continue
-                    
-                    # Get country ID from delivery address for tax calculation
-                    id_country = self._get_country_id_by_address_id(delivery_address_id) if delivery_address_id else None
                     is_payed = self._get_payment_complete_status(payment_name)
                     # Get tax ID: first try country-specific, then default
                     if id_country and id_country in all_taxes:
@@ -3514,8 +3564,8 @@ class PrestaShopService(BaseEcommerceService):
                         'is_invoice_requested': order.get('fattura', 0),
                         'payed': is_payed,
                         'date_payment': None,  # Default
-                        'total_price_tax_excl': total_paid_tax_excl,
-                        'total_paid': total_paid,
+                        'total_price_with_tax': total_paid_tax_incl,  # ex total_with_tax, ex total_paid
+                        'total_price_net': total_without_tax,  # ex total_without_tax
                         'total_discounts': safe_float(order.get('total_discounts', 0.0)),
                         'cash_on_delivery': 0,  #TODO: controllare
                         'insured_value': 0,  # Default
@@ -3559,7 +3609,6 @@ class PrestaShopService(BaseEcommerceService):
                             total_price_with_tax = unit_price_with_tax * product_quantity
                             
                             # Recupera tax_percentage usando get_tax_percentage_by_country
-                            from src.services.core.tool import get_tax_percentage_by_country, calculate_price_without_tax
                             tax_percentage = get_tax_percentage_by_country(self.db, id_country, default=22.0)
                             
                             # Calcola unit_price_net e total_price_net
@@ -3653,11 +3702,11 @@ class PrestaShopService(BaseEcommerceService):
             orders_sql_file = "temp_orders_insert.sql"
             with open(orders_sql_file, 'w', encoding='utf-8') as f:
                 f.write("-- Orders bulk insert\n")
-                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_tax_excl, total_paid, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
+                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_platform, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_with_tax, total_price_net, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
                 
                 for i, order_data in enumerate(valid_order_data):
                     comma = "," if i < len(valid_order_data) - 1 else ";"
-                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_tax_excl']}, {order_data['total_paid']}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data['id_platform']}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_with_tax']}, {sql_value(order_data.get('total_price_net', 0))}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
             with open(orders_sql_file, 'r', encoding='utf-8') as f:

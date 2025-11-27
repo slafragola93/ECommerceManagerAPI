@@ -201,6 +201,7 @@ class OrderDocumentService:
             total_discount = float(document.total_discount) if document and document.total_discount else 0.0
             return {
                 "total_imponibile": 0.0,
+                "total_price_net": 0.0,
                 "total_iva": 0.0,
                 "total_articoli": 0.0,
                 "shipping_cost": 0.0,
@@ -223,6 +224,12 @@ class OrderDocumentService:
         # Usa la funzione standard per calcolare i totali (include sconti)
         totals = calculate_order_totals(articoli, tax_percentages)
         
+        # Calcola total_price_net sommando i total_price_net degli articoli
+        total_price_net_base = sum(
+            float(articolo.total_price_net) if hasattr(articolo, 'total_price_net') and articolo.total_price_net is not None else 0.0
+            for articolo in articoli
+        )
+        
         # Totali base (prima dello sconto totale)
         total_imponibile_base = totals['total_price']
         total_iva_base = totals['total_price_with_tax'] - totals['total_price']
@@ -235,6 +242,8 @@ class OrderDocumentService:
         if total_discount > 0:
             # Applica lo sconto al totale senza IVA
             total_imponibile_dopo_sconto = max(0.0, total_imponibile_base - total_discount)
+            # Applica lo sconto anche al total_price_net
+            total_price_net_dopo_sconto = max(0.0, total_price_net_base - total_discount)
             
             # Ricalcola total_iva proporzionalmente
             if total_imponibile_base > 0:
@@ -247,6 +256,7 @@ class OrderDocumentService:
         else:
             # Nessuno sconto
             total_imponibile_dopo_sconto = total_imponibile_base
+            total_price_net_dopo_sconto = total_price_net_base
             total_iva_dopo_sconto = total_iva_base
             total_articoli_dopo_sconto = total_articoli_base
         
@@ -267,6 +277,7 @@ class OrderDocumentService:
         
         return {
             "total_imponibile": round(total_imponibile_dopo_sconto, 2),
+            "total_price_net": round(total_price_net_dopo_sconto, 2),
             "total_iva": round(total_iva_dopo_sconto, 2),
             "total_articoli": round(total_articoli_dopo_sconto, 2),
             "shipping_cost": round(shipping_cost, 2),
@@ -294,6 +305,7 @@ class OrderDocumentService:
         if document:
             # Aggiorna i totali
             document.total_price_with_tax = totals["total_finale"]
+            document.total_price_net = totals["total_price_net"]
             
             # Calcola peso totale
             articoli = self.get_articoli_order_document(id_order_document, document_type)

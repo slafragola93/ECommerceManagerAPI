@@ -16,6 +16,7 @@ class OrderDocumentSchema(BaseModel):
     type_document: str = Field(..., max_length=32)
     total_weight: Optional[float] = 0.0
     total_price_with_tax: Optional[float] = 0.0
+    total_price_net: Optional[float] = 0.0
     total_discount: Optional[float] = 0.0
     is_invoice_requested: Optional[bool] = False
     note: Optional[str] = None
@@ -32,11 +33,12 @@ class OrderDocumentResponseSchema(BaseModel):
     type_document: str
     total_weight: float
     total_price_with_tax: float
+    total_price_net: float
     total_discount: float
     is_invoice_requested: bool
     note: str | None
     
-    @validator('total_weight', 'total_price_with_tax', 'total_discount', pre=True, allow_reuse=True)
+    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'total_discount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

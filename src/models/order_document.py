@@ -20,6 +20,7 @@ class OrderDocument(Base):
     type_document = Column(String(32))
     total_weight = Column(Numeric(10, 5))
     total_price_with_tax = Column(Numeric(10, 5))
+    total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)
     total_discount = Column(Numeric(10, 5), default=0.0)
     is_invoice_requested = Column(Boolean, default=False)
     is_payed = Column(Boolean, nullable=True, default=None)

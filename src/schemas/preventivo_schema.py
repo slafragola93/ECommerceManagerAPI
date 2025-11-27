@@ -116,6 +116,7 @@ class PreventivoCreateSchema(BaseModel):
     is_payed: Optional[bool] = Field(None, description="Indica se il preventivo è pagato. Se non specificato, viene impostato automaticamente a True se il metodo di pagamento ha is_complete_payment=True")
     note: Optional[str] = None
     total_discount: Optional[float] = Field(0.0, ge=0, description="Sconto totale applicato al documento")
+    total_price_net: Optional[float] = Field(None, ge=0, description="Totale imponibile (opzionale, se None viene calcolato)")
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackagePreventivoSchema] = Field(default_factory=list, description="Lista dei package del preventivo (opzionale)")
     

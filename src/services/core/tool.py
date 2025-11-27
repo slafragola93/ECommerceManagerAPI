@@ -286,6 +286,76 @@ def get_tax_percentage_by_country(db, id_country: int, default: float = 22.0) ->
         return default
 
 
+def get_tax_percentage_by_address_delivery_id(db, id_address_delivery: int, default: float = 22.0, 
+                                               address_to_country_dict: dict = None, 
+                                               country_to_tax_percentage_dict: dict = None,
+                                               default_tax_percentage: float = None) -> float:
+    """
+    Recupera la percentuale IVA da id_address_delivery con fallback a app_configuration e default
+    
+    Args:
+        db: Database session
+        id_address_delivery: ID dell'indirizzo di delivery
+        default: Percentuale di default se non trovata (default: 22.0)
+        address_to_country_dict: Dict opzionale {id_address: id_country} per lookup veloce
+        country_to_tax_percentage_dict: Dict opzionale {id_country: tax_percentage} per lookup veloce
+        default_tax_percentage: Percentuale IVA default pre-calcolata (opzionale)
+    
+    Returns:
+        float: Percentuale IVA trovata o default
+    
+    Esempio:
+        get_tax_percentage_by_address_delivery_id(db, 1, 22.0) → 22.0 (se trovata) o 22.0 (default)
+    """
+    if id_address_delivery is None or id_address_delivery == 0:
+        # Se non c'è address, usa default_tax_percentage o recupera da app_configuration
+        if default_tax_percentage is not None:
+            return default_tax_percentage
+        from src.repository.tax_repository import TaxRepository
+        tax_repo = TaxRepository(db)
+        return tax_repo.get_default_tax_percentage_from_app_config(default)
+    
+    try:
+        # Usa dict se fornito per lookup veloce
+        if address_to_country_dict is not None:
+            id_country = address_to_country_dict.get(id_address_delivery)
+        else:
+            # Fallback a query se dict non fornito
+            from src.models.address import Address
+            id_country = db.query(Address.id_country).filter(
+                Address.id_address == id_address_delivery
+            ).scalar()
+        
+        if id_country:
+            # Usa dict se fornito per lookup veloce
+            if country_to_tax_percentage_dict is not None:
+                tax_percentage = country_to_tax_percentage_dict.get(id_country)
+                if tax_percentage is not None:
+                    return tax_percentage
+            else:
+                # Fallback a get_tax_percentage_by_country se dict non fornito
+                tax_percentage = get_tax_percentage_by_country(db, id_country, default=None)
+                if tax_percentage is not None:
+                    return tax_percentage
+        
+        # Se non trovato, usa default_tax_percentage o recupera da app_configuration
+        if default_tax_percentage is not None:
+            return default_tax_percentage
+        from src.repository.tax_repository import TaxRepository
+        tax_repo = TaxRepository(db)
+        return tax_repo.get_default_tax_percentage_from_app_config(default)
+        
+    except Exception as e:
+        # In caso di errore, usa default_tax_percentage o recupera da app_configuration
+        if default_tax_percentage is not None:
+            return default_tax_percentage
+        from src.repository.tax_repository import TaxRepository
+        tax_repo = TaxRepository(db)
+        return tax_repo.get_default_tax_percentage_from_app_config(default)
+
+
+
+
 def format_datetime_ddmmyyyy_hhmm(dt: datetime | None) -> str | None:
     """Formatta una datetime in 'DD-MM-YYYY HH:mm'. Ritorna None se dt è None."""
     if dt is None:

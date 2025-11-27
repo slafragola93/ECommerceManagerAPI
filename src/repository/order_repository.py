@@ -237,7 +237,18 @@ class OrderRepository:
 
         if data.shipping:
             if isinstance(data.shipping, ShippingSchema):
-                order.id_shipping = self.shipping_repository.create_and_get_id(data=data.shipping)
+                # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
+                shipping_data = data.shipping.model_dump()
+                if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
+                    from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
+                    if order.id_address_delivery:
+                        tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
+                        shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
+                    else:
+                        # Se non c'è address_delivery ancora, usa default
+                        tax_percentage = self.tax_repository.get_default_tax_percentage_from_app_config(default=22.0)
+                        shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
+                order.id_shipping = self.shipping_repository.create_and_get_id(data=shipping_data)
             elif isinstance(data.shipping, int):
                 # Se è un ID, usa la spedizione esistente
                 order.id_shipping = data.shipping
@@ -325,11 +336,7 @@ class OrderRepository:
             if not order.total_weight or order.total_weight == 0:
                 order.total_weight = totals['total_weight']
             
-            if not order.total_price_tax_excl or order.total_price_tax_excl == 0:
-                # Somma solo dei prodotti, senza spedizione
-                order.total_price_tax_excl = totals['total_price']
-            
-            if not order.total_paid or order.total_paid == 0:
+            if not order.total_price_with_tax or order.total_price_with_tax == 0:
                 # Aggiungi il costo della spedizione con tasse
                 shipping_cost_with_tax = 0.0
                 if order.id_shipping:
@@ -341,7 +348,16 @@ class OrderRepository:
                 
                 # Sottrai gli sconti se presenti
                 discount = order.total_discounts if order.total_discounts else 0.0
-                order.total_paid = total_with_shipping - discount
+                order.total_price_with_tax = total_with_shipping - discount
+            
+            # Calcola total_price_net se non fornito
+            if order.total_price_net is None or order.total_price_net == 0:
+                from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
+                if order.id_address_delivery:
+                    tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
+                    order.total_price_net = calculate_price_without_tax(order.total_price_with_tax, tax_percentage) if order.total_price_with_tax > 0 else 0.0
+                else:
+                    order.total_price_net = 0.0
             
             # Salva i totali calcolati
             self.session.add(order)
@@ -433,8 +449,13 @@ class OrderRepository:
 
         # Calcola i totali usando le funzioni pure
         totals = calculate_order_totals(order_details, tax_percentages)
-        order.total_price_tax_excl = totals['total_price']
-        order.total_paid = totals['total_price_with_tax']
+        order.total_price_with_tax = totals['total_price_with_tax']
+        # Calcola total_price_net se necessario
+        if order.total_price_net is None or order.total_price_net == 0:
+            from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
+            if order.id_address_delivery:
+                tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
+                order.total_price_net = calculate_price_without_tax(order.total_price_with_tax, tax_percentage) if order.total_price_with_tax > 0 else 0.0
 
         self.session.add(order)
         self.session.commit()
@@ -744,8 +765,8 @@ class OrderRepository:
             "is_payed": order.is_payed,
             "payment_date": order.payment_date,
             "total_weight": order.total_weight,
-            "total_price_tax_excl": order.total_price_tax_excl,
-            "total_paid": order.total_paid,
+            "total_price_with_tax": order.total_price_with_tax,
+            "total_price_net": order.total_price_net,
             "total_discounts": order.total_discounts,
             "cash_on_delivery": order.cash_on_delivery,
             "insured_value": order.insured_value,
@@ -804,7 +825,8 @@ class OrderRepository:
             Order.id_address_delivery,
             Order.id_shipping,
             Order.total_weight,
-            Order.total_price_tax_excl,
+            Order.total_price_with_tax,
+            Order.total_price_net,
             Order.cash_on_delivery,
             Order.insured_value
         ).where(Order.id_order == order_id)

@@ -36,8 +36,8 @@ class OrderSchema(BaseModel):
     is_payed: Optional[int] = 0
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
-    total_price_tax_excl: Optional[float] = None
-    total_paid: Optional[float] = None
+    total_price_with_tax: float  # Required (ex total_with_tax, ex total_paid)
+    total_price_net: Optional[float] = None  # ex total_without_tax
     total_discounts: Optional[float] = 0.0
     cash_on_delivery: Optional[float] = None
     order_details: Optional[list[OrderDetailSchema]] = None
@@ -62,8 +62,8 @@ class OrderUpdateSchema(BaseModel):
     is_payed: Optional[int] = None
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
-    total_price_tax_excl: Optional[float] = None
-    total_paid: Optional[float] = None
+    total_price_with_tax: Optional[float] = None  # ex total_with_tax, ex total_paid
+    total_price_net: Optional[float] = None  # ex total_without_tax
     total_discounts: Optional[float] = None
     cash_on_delivery: Optional[float] = None
     insured_value: Optional[float] = None
@@ -92,8 +92,8 @@ class OrderSimpleResponseSchema(BaseModel):
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
-    total_price_tax_excl: Optional[float]
-    total_paid: Optional[float]
+    total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
+    total_price_net: Optional[float]  # ex total_without_tax
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -102,7 +102,7 @@ class OrderSimpleResponseSchema(BaseModel):
     delivery_date: Optional[datetime]
     date_add: Optional[datetime] = None
 
-    @validator('total_weight', 'total_price_tax_excl', 'total_paid', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
+    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -129,8 +129,8 @@ class OrderResponseSchema(BaseModel):
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
-    total_price_tax_excl: Optional[float]
-    total_paid: Optional[float]
+    total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
+    total_price_net: Optional[float]  # ex total_without_tax
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -149,7 +149,7 @@ class OrderResponseSchema(BaseModel):
     order_details: Optional[list] = None 
     order_history: Optional[list[OrderHistorySchema]] = None
 
-    @validator('total_weight', 'total_price_tax_excl', 'total_paid', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
+    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -168,8 +168,8 @@ class OrderIdSchema(BaseModel):
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
-    total_price_tax_excl: Optional[float]
-    total_paid: Optional[float]
+    total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
+    total_price_net: Optional[float]  # ex total_without_tax
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]

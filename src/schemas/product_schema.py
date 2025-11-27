@@ -44,7 +44,7 @@ class ProductSchema(BaseModel):
     depth: float = Field(default=0.0, ge=0)
     height: float = Field(default=0.0, ge=0)
     width: float = Field(default=0.0, ge=0)
-    price_without_tax: Optional[float] = Field(default=0.0, ge=0)
+    price: Optional[float] = Field(default=0.0, ge=0)  # Prezzo con IVA (rinominato da price_without_tax)
     quantity: Optional[int] = Field(default=0, ge=0)
     purchase_price: Optional[float] = Field(default=0.0, ge=0)
     minimal_quantity: Optional[int] = Field(default=0, ge=0)
@@ -65,14 +65,16 @@ class ProductResponseSchema(BaseModel):
     depth: float
     height: float
     width: float
-    price_without_tax: float | None
+    price_with_tax: float | None  # Prezzo con IVA (product.price)
+    price_net: Optional[float]  # Prezzo senza IVA (calcolato)
+    id_tax: Optional[int]  # ID della tassa basata su id_country
     quantity: int | None
     purchase_price: float | None
     minimal_quantity: int | None
     category: CategoryResponseSchema | None
     brand: BrandResponseSchema | None
     
-    @validator('weight', 'depth', 'height', 'width', 'price_without_tax', 'purchase_price', pre=True, allow_reuse=True)
+    @validator('weight', 'depth', 'height', 'width', 'price_with_tax', 'price_net', 'purchase_price', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -100,7 +102,7 @@ class ProductUpdateSchema(BaseModel):
     depth: Optional[float] = Field(None, ge=0)
     height: Optional[float] = Field(None, ge=0)
     width: Optional[float] = Field(None, ge=0)
-    price_without_tax: Optional[float] = Field(None, ge=0)
+    price: Optional[float] = Field(None, ge=0)  # Prezzo con IVA (rinominato da price_without_tax)
     quantity: Optional[int] = Field(None, ge=0)
     purchase_price: Optional[float] = Field(None, ge=0)
     minimal_quantity: Optional[int] = Field(None, ge=0)

@@ -289,8 +289,8 @@ class OrderService(IOrderService):
 
         if not order_details:
             order.total_weight = 0.0
-            order.total_price_tax_excl = 0.0
-            order.total_paid = 0.0
+            order.total_price_with_tax = 0.0
+            order.total_price_net = 0.0
 
             shipping: Optional[Shipping] = None
             if order.id_shipping:
@@ -327,8 +327,37 @@ class OrderService(IOrderService):
 
         discount = float(getattr(order, "total_discounts", 0.0) or 0.0)
 
-        order.total_price_tax_excl = totals["total_price"] + shipping_cost_excl
-        order.total_paid = totals["total_price_with_tax"] + shipping_cost_incl - discount
+        order.total_price_with_tax = totals["total_price_with_tax"] + shipping_cost_incl - discount
+        
+        # Calcola total_price_net sommando i total_price_net degli order_detail
+        total_price_net = sum(
+            float(od.total_price_net) if hasattr(od, 'total_price_net') and od.total_price_net is not None else 0.0
+            for od in order_details
+        )
+        order.total_price_net = total_price_net - discount if discount > 0 else total_price_net
+        
+        # Aggiorna total_price_net dell'order_document se presente
+        from src.models.order_document import OrderDocument
+        order_document = session.query(OrderDocument).filter(
+            OrderDocument.id_order == order_id
+        ).first()
+        
+        if order_document:
+            # Calcola total_price_net per order_document sommando i total_price_net degli order_detail associati
+            order_detail_docs = session.query(OrderDetail).filter(
+                OrderDetail.id_order_document == order_document.id_order_document
+            ).all()
+            
+            if order_detail_docs:
+                total_price_net_doc = sum(
+                    float(od.total_price_net) if hasattr(od, 'total_price_net') and od.total_price_net is not None else 0.0
+                    for od in order_detail_docs
+                )
+                # Applica total_discount se presente
+                doc_discount = float(order_document.total_discount) if order_document.total_discount else 0.0
+                order_document.total_price_net = max(0.0, total_price_net_doc - doc_discount)
+            else:
+                order_document.total_price_net = 0.0
 
         if shipping:
             shipping.weight = order.total_weight

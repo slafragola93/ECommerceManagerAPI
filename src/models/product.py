@@ -35,7 +35,7 @@ class Product(Base):
     depth = Column(Numeric(10, 5), default=0.0)
     height = Column(Numeric(10, 5), default=0.0)
     width = Column(Numeric(10, 5), default=0.0)
-    price_without_tax = Column(Numeric(10, 5), default=0.0, nullable=True)
+    price = Column(Numeric(10, 5), default=0.0, nullable=True)  # Prezzo con IVA (rinominato da price_without_tax)
     quantity = Column(Integer, default=0, nullable=True)
     purchase_price = Column(Numeric(10, 5), default=0.0, nullable=True)
     minimal_quantity = Column(Integer, default=0, nullable=True)

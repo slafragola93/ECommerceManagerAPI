@@ -8,9 +8,13 @@ from sqlalchemy.orm import Session
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.repository.interfaces.platform_repository_interface import IPlatformRepository
+from src.repository.tax_repository import TaxRepository
 from src.schemas.product_schema import ProductSchema
+from src.schemas.category_schema import CategoryResponseSchema
+from src.schemas.brand_schema import BrandResponseSchema
 from src.models.product import Product
 from src.services.ecommerce.service_factory import create_ecommerce_service
+from src.services.core.tool import calculate_price_without_tax, calculate_price_with_tax
 from src.core.exceptions import (
     ValidationException,
     NotFoundException,
@@ -117,14 +121,104 @@ class ProductService(IProductService):
         except Exception as e:
             raise ValidationException(f"Errore nell'aggiornamento del prodotto: {str(e)}")
     
-    async def get_product(self, product_id: int) -> Product:
-        """Ottiene un product per ID"""
-        product = self._product_repository.get_by_id_or_raise(product_id)
-        return product
+    def _enrich_product_with_tax_info(self, product: Product, id_country: Optional[int], db: Session) -> dict:
+        """
+        Arricchisce un prodotto con informazioni IVA (price_with_tax, price_net, id_tax).
+        
+        Args:
+            product: Prodotto da arricchire
+            id_country: ID del paese (opzionale) per calcolare IVA
+            db: Database session per accedere a TaxRepository
+        
+        Returns:
+            dict con i dati del prodotto arricchiti
+        """
+        # Prepara i dati base del prodotto
+        # Converti category e brand in dict se presenti
+        category_dict = None
+        if product.category is not None:
+            category_schema = CategoryResponseSchema.model_validate(product.category)
+            category_dict = category_schema.model_dump()
+        
+        brand_dict = None
+        if product.brand is not None:
+            brand_schema = BrandResponseSchema.model_validate(product.brand)
+            brand_dict = brand_schema.model_dump()
+        
+        product_dict = {
+            "id_product": product.id_product,
+            "id_origin": product.id_origin,
+            "id_platform": product.id_platform,
+            "img_url": product.img_url,
+            "name": product.name,
+            "sku": product.sku,
+            "reference": product.reference,
+            "type": product.type,
+            "weight": float(product.weight) if product.weight is not None else 0.0,
+            "depth": float(product.depth) if product.depth is not None else 0.0,
+            "height": float(product.height) if product.height is not None else 0.0,
+            "width": float(product.width) if product.width is not None else 0.0,
+            "price_with_tax": float(product.price) if product.price is not None else None,
+            "quantity": product.quantity,
+            "purchase_price": float(product.purchase_price) if product.purchase_price is not None else None,
+            "minimal_quantity": product.minimal_quantity,
+            "category": category_dict,
+            "brand": brand_dict,
+        }
+        
+        # Se id_country è fornito, calcola price_net e id_tax
+        if id_country is not None:
+            tax_repo = TaxRepository(db)
+            tax_info = tax_repo.get_tax_info_by_country(id_country)
+            
+            if tax_info and product.price is not None:
+                tax_percentage = tax_info.get("percentage", 22.0)
+                product_dict["price_net"] = calculate_price_without_tax(    
+                    float(product.price),
+                    tax_percentage
+                )
+                product_dict["id_tax"] = tax_info.get("id_tax")
+            else:
+                product_dict["price_net"] = None
+                product_dict["id_tax"] = None
+        else:
+            product_dict["price_net"] = None
+            product_dict["id_tax"] = None
+        
+        return product_dict
     
-    async def get_products(self, page: int = 1, limit: int = 10, **filters) -> List[Product]:
-        """Ottiene la lista dei product con filtri"""
+    async def get_product(self, product_id: int, id_country: Optional[int] = None) -> dict:
+        """
+        Ottiene un product per ID con informazioni IVA opzionali.
+        
+        Args:
+            product_id: ID del prodotto
+            id_country: ID del paese (opzionale) per calcolare IVA
+        
+        Returns:
+            dict con i dati del prodotto arricchiti
+        """
+        self._ensure_dependencies_configured()
+        product = self._product_repository.get_by_id_or_raise(product_id)
+        
+        return self._enrich_product_with_tax_info(product, id_country, self._db)
+    
+    async def get_products(self, page: int = 1, limit: int = 10, id_country: Optional[int] = None, **filters) -> List[dict]:
+        """
+        Ottiene la lista dei product con filtri e informazioni IVA opzionali.
+        
+        Args:
+            page: Numero di pagina
+            limit: Limite di risultati per pagina
+            id_country: ID del paese (opzionale) per calcolare IVA
+            **filters: Filtri aggiuntivi
+        
+        Returns:
+            Lista di dict con i dati dei prodotti arricchiti
+        """
         try:
+            self._ensure_dependencies_configured()
+            
             # Validazione parametri
             if page < 1:
                 page = 1
@@ -138,7 +232,13 @@ class ProductService(IProductService):
             # Usa il repository con i filtri
             products = self._product_repository.get_all(**filters)
             
-            return products
+            # Arricchisci ogni prodotto con informazioni IVA
+            enriched_products = [
+                self._enrich_product_with_tax_info(product, id_country, self._db)
+                for product in products
+            ]
+            
+            return enriched_products
         except Exception as e:
             raise ValidationException(f"Errore nel recupero dei prodotti: {str(e)}")
     
@@ -207,6 +307,15 @@ class ProductService(IProductService):
             )
     
     async def get_live_price(self, id_origin: int) -> Optional[float]:
+        """
+        Recupera il prezzo live di un prodotto dall'ecommerce e lo restituisce con IVA applicata.
+        
+        Args:
+            id_origin: ID origin del prodotto nell'ecommerce
+        
+        Returns:
+            Prezzo con IVA applicata usando la percentuale di default da app_configuration
+        """
         self._ensure_dependencies_configured()
 
         product = self._product_repository.get_by_origin_id(str(id_origin))
@@ -235,7 +344,20 @@ class ProductService(IProductService):
 
         try:
             async with ecommerce_service as service:
-                return await service.get_live_price(id_origin)
+                # Recupera il prezzo senza IVA dall'ecommerce
+                price_without_tax = await service.get_live_price(id_origin)
+                
+                if price_without_tax is None or price_without_tax <= 0:
+                    return price_without_tax
+                
+                # Recupera la percentuale IVA di default da app_configuration
+                tax_repo = TaxRepository(self._db)
+                default_tax_percentage = tax_repo.get_default_tax_percentage_from_app_config(22.0)
+                
+                # Calcola il prezzo con IVA
+                price_with_tax = calculate_price_with_tax(price_without_tax, default_tax_percentage, quantity=1)
+                
+                return price_with_tax
         except (InfrastructureException, BusinessRuleException, NotFoundException):
             raise
         except Exception as exc:

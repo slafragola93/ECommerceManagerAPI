@@ -233,7 +233,7 @@ async def create_order(
         "message": "Ordine creato con successo",
         "id_order": created_order.id_order,
         "reference": created_order.reference,
-        "total_paid": float(created_order.total_paid or 0)
+        "total_price_with_tax": float(created_order.total_price_with_tax or 0)
     }
 
 
