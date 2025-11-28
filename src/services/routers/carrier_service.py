@@ -116,3 +116,48 @@ class CarrierService(ICarrierService):
         """Valida le regole business per Carrier"""
         # Validazioni specifiche per Carrier se necessarie
         pass
+    
+    async def get_carrier_price(self, id_carrier_api: int, id_country: int, weight: float, postcode: Optional[str] = None) -> float:
+        """
+        Recupera il prezzo del corriere basato sui criteri specificati.
+        
+        Logica:
+        - Se postcode è fornito, cerca prima con postcode
+        - Se non trova con postcode, cerca senza postcode (solo country e weight)
+        
+        Args:
+            id_carrier_api: ID del carrier API (obbligatorio)
+            id_country: ID del paese (obbligatorio)
+            weight: Peso del pacco (obbligatorio)
+            postcode: Codice postale (opzionale)
+            
+        Returns:
+            float: Prezzo con IVA del corriere
+            
+        Raises:
+            NotFoundException: Se non viene trovato un carrier price che corrisponde ai criteri
+        """
+        try:
+            # Recupera il prezzo del carrier price che corrisponde ai criteri
+            price = self._carrier_repository.get_price_by_criteria(
+                id_carrier_api=id_carrier_api,
+                id_country=id_country,
+                weight=weight,
+                postcode=postcode
+            )
+            
+            # Se non trovato o prezzo None, solleva NotFoundException
+            if price is None:
+                raise NotFoundException(
+                    "CarrierPrice",
+                    None,
+                    {"id_carrier_api": id_carrier_api, "id_country": id_country, "postcode": postcode, "weight": weight}
+                )
+            
+            # Restituisce il prezzo (già arrotondato dal repository)
+            return price
+            
+        except NotFoundException:
+            raise
+        except Exception as e:
+            raise ValidationException(f"Error retrieving carrier price: {str(e)}")

@@ -75,7 +75,9 @@ class ArticoloPreventivoSchema(BaseModel):
     id_product: Optional[int] = None  # Se articolo esistente
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
-    product_price: Optional[float] = Field(0.0, ge=0)
+    unit_price_with_tax: Optional[float] = Field(None, ge=0, description="Prezzo unitario con IVA (opzionale, calcolato se non fornito)")
+    total_price_net: Optional[float] = Field(None, ge=0, description="Totale imponibile senza IVA (opzionale, calcolato se non fornito)")
+    total_price_with_tax: float = Field(..., ge=0, description="Totale con IVA (obbligatorio)")
     product_weight: Optional[float] = Field(0.0, ge=0)
     product_qty: int = Field(1, gt=0)  # Integer come nel modello
     id_tax: int = Field(..., gt=0)  # Sempre obbligatorio
@@ -85,19 +87,18 @@ class ArticoloPreventivoSchema(BaseModel):
     img_url: Optional[str] = None  # Image URL from product
     rda: Optional[str] = Field(None, max_length=10, description="RDA")
     
-    @validator('product_name', 'product_reference', 'product_price', 'product_qty')
+    @validator('product_name', 'product_reference', 'product_qty')
     def validate_fields_when_no_product(cls, v, values):
         """Valida che i campi siano presenti quando non c'è id_product"""
-        # Per product_price, 0.0 è un valore valido, quindi controlliamo solo None
         if not values.get('id_product'):
             if v is None:
-                raise ValueError('I campi product_name, product_reference, product_price e product_qty sono obbligatori quando non viene specificato id_product')
+                raise ValueError('I campi product_name, product_reference e product_qty sono obbligatori quando non viene specificato id_product')
             # Per product_name e product_reference, controlla anche stringa vuota
             if isinstance(v, str) and not v.strip():
-                raise ValueError('I campi product_name, product_reference, product_price e product_qty sono obbligatori quando non viene specificato id_product')
+                raise ValueError('I campi product_name, product_reference e product_qty sono obbligatori quando non viene specificato id_product')
         return v
     
-    @validator('product_price', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    @validator('unit_price_with_tax', 'total_price_net', 'total_price_with_tax', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

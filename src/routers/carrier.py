@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, F
 from src.services.interfaces.carrier_service_interface import ICarrierService
 from src.repository.interfaces.carrier_repository_interface import ICarrierRepository
 from src.schemas.carrier_schema import CarrierSchema, CarrierResponseSchema, AllCarriersResponseSchema
+from src.schemas.carrier_assignment_schema import CarrierPriceResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
     BaseApplicationException,
@@ -37,6 +38,7 @@ def get_carrier_service(db: db_dependency) -> ICarrierService:
     
     return carrier_service
 
+
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCarriersResponseSchema)
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
@@ -59,6 +61,42 @@ async def get_all_carriers(
     total_count = await carrier_service.get_carriers_count()
 
     return {"carriers": carriers, "total": total_count, "page": page, "limit": limit}
+
+@router.get("/price", status_code=status.HTTP_200_OK, response_model=CarrierPriceResponseSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'PREVENTIVI'], permissions_required=['R'])
+async def get_carrier_price(
+    id_carrier_api: int = Query(..., gt=0, description="ID del carrier API"),
+    id_country: int = Query(..., gt=0, description="ID del paese"),
+    weight: float = Query(..., ge=0, description="Peso del pacco in kg"),
+    postcode: Optional[str] = Query(None, description="Codice postale (opzionale)"),
+    user: dict = Depends(get_current_user),
+    carrier_service: ICarrierService = Depends(get_carrier_service)
+):
+    """
+    Recupera il prezzo del corriere basato sui criteri specificati.
+    
+    Logica di ricerca:
+    - Se postcode è fornito, cerca prima con postcode specifico
+    - Se non trova con postcode, cerca senza postcode (solo country e weight)
+    
+    - **id_carrier_api**: ID del carrier API (obbligatorio)
+    - **id_country**: ID del paese (obbligatorio)
+    - **weight**: Peso del pacco in kg (obbligatorio)
+    - **postcode**: Codice postale (opzionale)
+    
+    Restituisce il prezzo con IVA del corriere che corrisponde ai criteri specificati.
+    """
+    # Tratta stringhe vuote come None
+    postcode_value = postcode if postcode and postcode.strip() else None
+    
+    price = await carrier_service.get_carrier_price(
+        id_carrier_api=id_carrier_api,
+        id_country=id_country,
+        weight=weight,
+        postcode=postcode_value
+    )
+    return {"price_with_tax": price}
 
 @router.get("/{carrier_id}", status_code=status.HTTP_200_OK, response_model=CarrierResponseSchema)
 @check_authentication
@@ -88,7 +126,7 @@ async def create_carrier(
     Crea un nuovo carrier con i dati forniti.
     """
     return await carrier_service.create_carrier(carrier_data)
-
+    
 @router.put("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Carrier aggiornato correttamente")
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
@@ -119,3 +157,4 @@ async def delete_carrier(
     - **carrier_id**: Identificativo del carrier da eliminare.
     """
     await carrier_service.delete_carrier(carrier_id)
+

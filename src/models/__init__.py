@@ -9,6 +9,7 @@ from .address import Address
 from .carrier import Carrier
 from .carrier_api import CarrierApi
 from .carrier_assignment import CarrierAssignment
+from .carrier_price import CarrierPrice
 from .platform import Platform
 from .lang import Lang
 from .sectional import Sectional

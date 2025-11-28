@@ -132,6 +132,12 @@ def configure_container():
     
     container.register_transient(ICarrierAssignmentRepository, CarrierAssignmentRepository)
     
+    # Registra Carrier Price Repository (solo repository, il service è accorpato in CarrierService)
+    from src.repository.interfaces.carrier_price_repository_interface import ICarrierPriceRepository
+    from src.repository.carrier_price_repository import CarrierPriceRepository
+    
+    container.register_transient(ICarrierPriceRepository, CarrierPriceRepository)
+    
     # Registra Order Detail
     from src.services.interfaces.order_detail_service_interface import IOrderDetailService
     from src.services.routers.order_detail_service import OrderDetailService

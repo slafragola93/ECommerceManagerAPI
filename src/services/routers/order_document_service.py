@@ -10,7 +10,7 @@ from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
 from src.models.order import Order
 from src.schemas.preventivo_schema import ArticoloPreventivoSchema, ArticoloPreventivoUpdateSchema
-from src.services.core.tool import calculate_amount_with_percentage
+from src.services.core.tool import calculate_amount_with_percentage, calculate_price_without_tax, calculate_price_with_tax
 
 
 class OrderDocumentService:
@@ -361,6 +361,52 @@ class OrderDocumentService:
         else:
             raise ValueError(f"Tipo documento non supportato: {document_type}")
         
+        # Calcola i campi prezzo mancanti
+        # Recupera tax_percentage se id_tax è fornito
+        tax_percentage = 0.0
+        if articolo.id_tax:
+            tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
+            if tax and tax.percentage is not None:
+                tax_percentage = float(tax.percentage)
+        
+        # total_price_with_tax è OBBLIGATORIO
+        total_price_with_tax = articolo.total_price_with_tax
+        
+        # Calcola total_price_net se non fornito
+        if articolo.total_price_net is not None:
+            total_price_net = articolo.total_price_net
+        else:
+            # Calcola da total_price_with_tax usando la percentuale IVA
+            total_price_net = calculate_price_without_tax(total_price_with_tax, tax_percentage)
+        
+        # Calcola unit_price_with_tax se non fornito
+        if articolo.unit_price_with_tax is not None:
+            unit_price_with_tax = articolo.unit_price_with_tax
+        else:
+            # Calcola da total_price_with_tax diviso per quantità
+            unit_price_with_tax = total_price_with_tax / articolo.product_qty
+        
+        # Calcola unit_price_net
+        unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+        
+        # Applica sconti se presenti (gli sconti vengono applicati al total_price_net)
+        reduction_percent = articolo.reduction_percent or 0.0
+        reduction_amount = articolo.reduction_amount or 0.0
+        
+        if reduction_percent > 0:
+            discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
+            total_price_net = total_price_net - discount
+            # Ricalcola total_price_with_tax dopo lo sconto
+            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+        elif reduction_amount > 0:
+            total_price_net = total_price_net - reduction_amount
+            # Ricalcola total_price_with_tax dopo lo sconto
+            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+        
+        # Ricalcola unit_price_net e unit_price_with_tax dopo gli sconti
+        unit_price_net = total_price_net / articolo.product_qty
+        unit_price_with_tax = total_price_with_tax / articolo.product_qty
+        
         # Crea l'articolo
         order_detail = OrderDetail(
             id_origin=0,
@@ -371,10 +417,14 @@ class OrderDocumentService:
             product_reference=articolo.product_reference or "",
             product_qty=articolo.product_qty,
             product_weight=articolo.product_weight or 0.0,
-            product_price=articolo.product_price or 0.0,
+            product_price=unit_price_net,  # unit_price_net viene mappato a product_price tramite setter
+            unit_price_net=unit_price_net,
+            unit_price_with_tax=unit_price_with_tax,
+            total_price_net=total_price_net,
+            total_price_with_tax=total_price_with_tax,
             id_tax=articolo.id_tax,
-            reduction_percent=articolo.reduction_percent or 0.0,
-            reduction_amount=articolo.reduction_amount or 0.0,
+            reduction_percent=reduction_percent,
+            reduction_amount=reduction_amount,
             note=articolo.note
         )
         

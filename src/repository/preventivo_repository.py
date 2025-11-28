@@ -20,7 +20,7 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoSchema
 )
 from src.schemas.address_schema import AddressSchema
-from src.services.core.tool import generate_preventivo_reference, calculate_order_totals
+from src.services.core.tool import generate_preventivo_reference, calculate_order_totals, calculate_price_without_tax, calculate_price_with_tax, calculate_amount_with_percentage
 from .order_repository import OrderRepository
 from .payment_repository import PaymentRepository
 from src.schemas.order_schema import OrderSchema
@@ -176,14 +176,58 @@ class PreventivoRepository:
             product = self.db.query(Product).filter(Product.id_product == articolo.id_product).first()
             product_name = product.name if product else "Prodotto Sconosciuto"
             product_reference = product.reference if product else None
-            product_price = articolo.product_price or 0.0  # Usa il prezzo fornito nell'articolo
             product_qty = articolo.product_qty or 1.0
         else:
             # Usa i valori forniti per prodotto personalizzato
             product_name = articolo.product_name or "Prodotto Personalizzato"
             product_reference = articolo.product_reference
-            product_price = articolo.product_price or 0.0
             product_qty = articolo.product_qty or 1.0
+        
+        # Calcola i campi prezzo mancanti
+        # Recupera tax_percentage se id_tax è fornito
+        tax_percentage = 0.0
+        if articolo.id_tax:
+            tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
+            if tax and tax.percentage is not None:
+                tax_percentage = float(tax.percentage)
+        
+        # total_price_with_tax è OBBLIGATORIO
+        total_price_with_tax = articolo.total_price_with_tax
+        
+        # Calcola total_price_net se non fornito
+        if articolo.total_price_net is not None:
+            total_price_net = articolo.total_price_net
+        else:
+            # Calcola da total_price_with_tax usando la percentuale IVA
+            total_price_net = calculate_price_without_tax(total_price_with_tax, tax_percentage)
+        
+        # Calcola unit_price_with_tax se non fornito
+        if articolo.unit_price_with_tax is not None:
+            unit_price_with_tax = articolo.unit_price_with_tax
+        else:
+            # Calcola da total_price_with_tax diviso per quantità
+            unit_price_with_tax = total_price_with_tax / product_qty
+        
+        # Calcola unit_price_net
+        unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+        
+        # Applica sconti se presenti (gli sconti vengono applicati al total_price_net)
+        reduction_percent = articolo.reduction_percent or 0.0
+        reduction_amount = articolo.reduction_amount or 0.0
+        
+        if reduction_percent > 0:
+            discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
+            total_price_net = total_price_net - discount
+            # Ricalcola total_price_with_tax dopo lo sconto
+            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+        elif reduction_amount > 0:
+            total_price_net = total_price_net - reduction_amount
+            # Ricalcola total_price_with_tax dopo lo sconto
+            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+        
+        # Ricalcola unit_price_net e unit_price_with_tax dopo gli sconti
+        unit_price_net = total_price_net / product_qty
+        unit_price_with_tax = total_price_with_tax / product_qty
         
         # Crea direttamente l'OrderDetail
         order_detail = OrderDetail(
@@ -195,10 +239,14 @@ class PreventivoRepository:
             product_reference=product_reference,
             product_qty=product_qty,
             product_weight=articolo.product_weight,
-            product_price=product_price,
+            product_price=unit_price_net,  # unit_price_net viene mappato a product_price tramite setter
+            unit_price_net=unit_price_net,
+            unit_price_with_tax=unit_price_with_tax,
+            total_price_net=total_price_net,
+            total_price_with_tax=total_price_with_tax,
             id_tax=articolo.id_tax,
-            reduction_percent=articolo.reduction_percent or 0.0,
-            reduction_amount=articolo.reduction_amount or 0.0,
+            reduction_percent=reduction_percent,
+            reduction_amount=reduction_amount,
             note=articolo.note
         )
         
@@ -677,17 +725,43 @@ class PreventivoRepository:
         if not articoli:
             return 0.0, 0.0
         
+        # Recupera le percentuali delle tasse per tutti gli articoli
+        tax_ids = [a.id_tax for a in articoli if a.id_tax]
+        tax_percentages_map = {}
+        if tax_ids:
+            taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+            tax_percentages_map = {tax.id_tax: float(tax.percentage) if tax.percentage is not None else 0.0 for tax in taxes}
+        
         # Converte ArticoloPreventivoSchema in oggetti simili a OrderDetail
         class MockOrderDetail:
-            def __init__(self, articolo):
-                self.product_price = articolo.product_price
+            def __init__(self, articolo, tax_percentages_map):
+                # total_price_with_tax è obbligatorio
+                total_price_with_tax = articolo.total_price_with_tax
+                
+                # Recupera tax_percentage dalla mappa
+                tax_percentage = tax_percentages_map.get(articolo.id_tax, 0.0)
+                
+                # Calcola total_price_net se non fornito
+                if articolo.total_price_net is not None:
+                    total_price_net = articolo.total_price_net
+                else:
+                    total_price_net = calculate_price_without_tax(total_price_with_tax, tax_percentage)
+                
+                # Calcola unit_price_net
+                if articolo.unit_price_with_tax is not None:
+                    unit_price_with_tax = articolo.unit_price_with_tax
+                    self.product_price = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+                else:
+                    # Calcola da total_price_net diviso per quantità
+                    self.product_price = total_price_net / (articolo.product_qty or 1)
+                
                 self.product_qty = articolo.product_qty
                 self.product_weight = articolo.product_weight
                 self.id_tax = articolo.id_tax
                 self.reduction_percent = articolo.reduction_percent
                 self.reduction_amount = articolo.reduction_amount
         
-        mock_articoli = [MockOrderDetail(articolo) for articolo in articoli]
+        mock_articoli = [MockOrderDetail(articolo, tax_percentages_map) for articolo in articoli]
         
         # Recupera le percentuali delle tasse
         tax_percentages = self._get_tax_percentages_preventivo(mock_articoli)
@@ -850,7 +924,20 @@ class PreventivoRepository:
         total_tax_excl = 0.0
         if articoli:
             for articolo in articoli:
-                total_tax_excl += float(articolo.product_price) * int(articolo.product_qty)
+                # Calcola unit_price_net da unit_price_with_tax o usa total_price_net
+                if articolo.unit_price_with_tax is not None and articolo.unit_price_with_tax > 0:
+                    # Recupera tax_percentage
+                    tax_percentage = 0.0
+                    if articolo.id_tax:
+                        tax = self.db.query(Tax).filter(Tax.id_tax == articolo.id_tax).first()
+                        if tax and tax.percentage is not None:
+                            tax_percentage = float(tax.percentage)
+                    unit_price_net = calculate_price_without_tax(articolo.unit_price_with_tax, tax_percentage)
+                elif articolo.total_price_net is not None and articolo.total_price_net > 0:
+                    unit_price_net = articolo.total_price_net / (articolo.product_qty or 1)
+                else:
+                    unit_price_net = 0.0
+                total_tax_excl += float(unit_price_net) * int(articolo.product_qty)
         
         # Calcola totale spedizione senza IVA
         if preventivo.id_shipping:
@@ -1098,11 +1185,28 @@ class PreventivoRepository:
                 order_doc_service.update_articolo(articolo_data.id_order_detail, update_schema, "preventivo")
             else:
                 # CREATE nuovo (riusa add_articolo)
+                # Calcola total_price_with_tax da product_price se fornito
+                total_price_with_tax = None
+                if articolo_data.product_price is not None and articolo_data.product_price > 0:
+                    # Recupera tax_percentage
+                    tax_percentage = 0.0
+                    if articolo_data.id_tax:
+                        tax = self.db.query(Tax).filter(Tax.id_tax == articolo_data.id_tax).first()
+                        if tax and tax.percentage is not None:
+                            tax_percentage = float(tax.percentage)
+                    # Calcola total_price_with_tax da product_price (unit_price_net) * qty
+                    unit_price_net = articolo_data.product_price
+                    total_price_net = unit_price_net * (articolo_data.product_qty or 1)
+                    total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+                else:
+                    # Se product_price non è fornito, usa un default
+                    total_price_with_tax = 0.0
+                
                 create_schema = ArticoloPreventivoSchema(
                     id_product=articolo_data.id_product,
                     product_name=articolo_data.product_name,
                     product_reference=articolo_data.product_reference,
-                    product_price=articolo_data.product_price or 0.0,
+                    total_price_with_tax=total_price_with_tax,  # Obbligatorio
                     product_qty=articolo_data.product_qty or 1,
                     id_tax=articolo_data.id_tax,
                     product_weight=articolo_data.product_weight or 0.0,

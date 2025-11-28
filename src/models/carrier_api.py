@@ -23,6 +23,7 @@ class CarrierApi(Base):
     use_sandbox = Column(Boolean, default=False, nullable=False)
     # Relationships
     carrier_assignments = relationship("CarrierAssignment", back_populates="carrier_api")
+    carrier_prices = relationship("CarrierPrice", back_populates="carrier_api")
     
     # 1:1 relationships with configurations
     brt_configuration = relationship("BrtConfiguration", back_populates="carrier_api", uselist=False, cascade="all, delete-orphan")

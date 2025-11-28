@@ -2,7 +2,7 @@
 Interfaccia per Carrier Service seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from src.core.interfaces import IBaseService
 from src.schemas.carrier_schema import CarrierSchema, CarrierResponseSchema
 from src.models.carrier import Carrier
@@ -38,4 +38,9 @@ class ICarrierService(IBaseService):
     @abstractmethod
     async def get_carriers_count(self, **filters) -> int:
         """Ottiene il numero totale di carrier con filtri"""
+        pass
+    
+    @abstractmethod
+    async def get_carrier_price(self, id_carrier_api: int, id_country: int, weight: float, postcode: Optional[str] = None) -> float:
+        """Recupera il prezzo del corriere basato sui criteri specificati. Se postcode è fornito ma non trovato, cerca senza postcode"""
         pass
