@@ -880,6 +880,23 @@ class PreventivoService:
         )
         return result
     
+    def get_preventivi_stats(
+        self,
+        search: Optional[str] = None,
+        sectionals_ids: Optional[str] = None,
+        payments_ids: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Calcola statistiche preventivi con filtri applicati"""
+        return self.preventivo_repo.get_preventivi_stats(
+            search=search,
+            sectionals_ids=sectionals_ids,
+            payments_ids=payments_ids,
+            date_from=date_from,
+            date_to=date_to
+        )
+    
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_UPDATED,
         data_extractor=extract_preventivo_updated_data,

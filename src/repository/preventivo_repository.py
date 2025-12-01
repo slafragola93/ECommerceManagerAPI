@@ -318,6 +318,126 @@ class PreventivoRepository:
         
         return query.order_by(OrderDocument.id_order_document.desc()).offset(skip).limit(limit).all()
     
+    def get_preventivi_stats(
+        self,
+        search: Optional[str] = None,
+        sectionals_ids: Optional[str] = None,
+        payments_ids: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Calcola statistiche preventivi con filtri applicati"""
+        from sqlalchemy import text
+        
+        # Query base con join a Shipping per escludere le spese di spedizione
+        # Include tutti i campi potenzialmente necessari per i filtri
+        query = self.db.query(
+            OrderDocument.id_order,
+            OrderDocument.total_price_with_tax,
+            OrderDocument.total_price_net,
+            OrderDocument.document_number,
+            OrderDocument.id_sectional,
+            OrderDocument.id_payment,
+            OrderDocument.date_add
+        ).outerjoin(
+            Shipping, OrderDocument.id_shipping == Shipping.id_shipping
+        ).filter(
+            OrderDocument.type_document == "preventivo"
+        )
+        
+        try:
+            # Applica filtri
+            if search:
+                query = query.filter(
+                    or_(
+                        OrderDocument.document_number.ilike(f"%{search}%"),
+                        OrderDocument.note.ilike(f"%{search}%")
+                    )
+                )
+            
+            if sectionals_ids:
+                query = QueryUtils.filter_by_id(query, OrderDocument, 'id_sectional', sectionals_ids)
+            if payments_ids:
+                query = QueryUtils.filter_by_id(query, OrderDocument, 'id_payment', payments_ids)
+            
+            if date_from:
+                query = query.filter(OrderDocument.date_add >= date_from)
+            if date_to:
+                query = query.filter(OrderDocument.date_add <= date_to)
+                
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
+        
+        # Query per tutti i preventivi (non convertiti)
+        non_converted_query = query.filter(
+            or_(
+                OrderDocument.id_order.is_(None),
+                OrderDocument.id_order == 0
+            )
+        )
+        
+        # Query per preventivi convertiti
+        converted_query = query.filter(
+            OrderDocument.id_order.isnot(None),
+            OrderDocument.id_order > 0
+        )
+        
+        # Calcola statistiche - usa count(1) per contare tutte le righe
+        total_non_converted = non_converted_query.with_entities(
+            func.count(1)
+        ).scalar() or 0
+        
+        total_converted = converted_query.with_entities(
+            func.count(1)
+        ).scalar() or 0
+        
+        # Totali per tutti i preventivi - escludi spese di spedizione usando text() per SQL diretto
+        total_price_with_tax_result = query.with_entities(
+            func.coalesce(
+                func.sum(
+                    text("COALESCE(orders_document.total_price_with_tax, 0) - COALESCE(shipments.price_tax_incl, 0)")
+                ),
+                0
+            )
+        ).scalar() or 0.0
+        
+        total_price_net_result = query.with_entities(
+            func.coalesce(
+                func.sum(
+                    text("COALESCE(orders_document.total_price_net, 0) - COALESCE(shipments.price_tax_excl, 0)")
+                ),
+                0
+            )
+        ).scalar() or 0.0
+        
+        # Totali per preventivi convertiti - escludi spese di spedizione
+        converted_total_price_with_tax_result = converted_query.with_entities(
+            func.coalesce(
+                func.sum(
+                    text("COALESCE(orders_document.total_price_with_tax, 0) - COALESCE(shipments.price_tax_incl, 0)")
+                ),
+                0
+            )
+        ).scalar() or 0.0
+        
+        converted_total_price_net_result = converted_query.with_entities(
+            func.coalesce(
+                func.sum(
+                    text("COALESCE(orders_document.total_price_net, 0) - COALESCE(shipments.price_tax_excl, 0)")
+                ),
+                0
+            )
+        ).scalar() or 0.0
+        
+        return {
+            "total_not_converted": total_non_converted,
+            "total_converted": total_converted,
+            "total_price_with_tax": float(total_price_with_tax_result),
+            "total_price_net": float(total_price_net_result),
+            "converted_total_price_with_tax": float(converted_total_price_with_tax_result),
+            "converted_total_price_net": float(converted_total_price_net_result)
+        }
+    
     def update_preventivo(self, id_order_document: int, preventivo_data: PreventivoUpdateSchema, user_id: int) -> Optional[OrderDocument]:
         """
         Aggiorna preventivo con supporto completo per entità nidificate.
@@ -366,7 +486,7 @@ class PreventivoRepository:
         
         # 6. Gestisci shipping (se fornito)
         if preventivo_data.shipping is not None:
-            shipping_id = self._handle_shipping_update(preventivo_data.shipping, preventivo.id_shipping)
+            shipping_id = self._handle_shipping_update(preventivo_data.shipping)
             preventivo.id_shipping = shipping_id
             
             # Aggiorna customs_value se None basandosi sull'ordine associato
@@ -1100,11 +1220,11 @@ class PreventivoRepository:
             self.db.flush()
             return sectional.id_sectional
     
-    def _handle_shipping_update(self, shipping_field, current_shipping_id: Optional[int]) -> Optional[int]:
+    def _handle_shipping_update(self, shipping_field) -> Optional[int]:
         """
         Gestisce update shipping con struttura unificata.
-        - Se id presente e non null: aggiorna shipping esistente
-        - Se id null: crea nuovo shipping
+        - Se shipping_field.id presente e non null: aggiorna shipping esistente
+        - Se shipping_field.id null: crea nuovo shipping
         """
         if shipping_field.id is not None:
             # UPDATE shipping esistente

@@ -5,6 +5,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
 from src.services.interfaces.order_service_interface import IOrderService
 from src.repository.order_repository import OrderRepository
 from src.models.order_detail import OrderDetail
@@ -295,8 +297,11 @@ class OrderService(IOrderService):
             shipping: Optional[Shipping] = None
             if order.id_shipping:
                 shipping = session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
-                if shipping:
-                    shipping.weight = 0.0
+            if shipping:
+                shipping.weight = 0.0
+
+            # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+            order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
 
             session.commit()
             return
@@ -362,6 +367,9 @@ class OrderService(IOrderService):
         if shipping:
             shipping.weight = order.total_weight
 
+        # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+
         session.commit()
     
     async def validate_business_rules(self, data: Any) -> None:
@@ -410,6 +418,10 @@ class OrderService(IOrderService):
             }
 
         order.id_order_state = new_status_id
+        
+        # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+        
         self._order_repository.session.add(order)
 
         order_history_insert = orders_history.insert().values(

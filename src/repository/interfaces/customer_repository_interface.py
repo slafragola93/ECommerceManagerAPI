@@ -2,9 +2,10 @@
 Interfaccia specifica per Customer Repository seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional, List, Union
 from src.models.customer import Customer
 from src.core.interfaces import IRepository
+from src.schemas.customer_schema import CustomerSchema
 
 class ICustomerRepository(IRepository[Customer, int], ABC):
     """Interfaccia specifica per Customer Repository"""
@@ -27,4 +28,9 @@ class ICustomerRepository(IRepository[Customer, int], ABC):
     @abstractmethod
     def get_customers_with_addresses(self, page: int = 1, limit: int = 10) -> List[Customer]:
         """Ottiene clienti con indirizzi"""
+        pass
+    
+    @abstractmethod
+    def create_and_get_id(self, data: Union[CustomerSchema, dict]) -> int:
+        """Crea un customer e restituisce l'ID. Se esiste già uno con la stessa email, restituisce l'ID esistente."""
         pass

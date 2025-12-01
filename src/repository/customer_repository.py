@@ -1,7 +1,7 @@
 """
 Customer Repository rifattorizzato seguendo i principi SOLID
 """
-from typing import Optional, List
+from typing import Optional, List, Union
 from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc, or_
 from src.models.customer import Customer
@@ -138,6 +138,39 @@ class CustomerRepository(ICustomerRepository, BaseRepository[Customer, int]):
             ).count()
         except Exception as e:
             raise InfrastructureException(f"Database error counting active customers: {str(e)}")
+    
+    def create_and_get_id(self, data: Union[CustomerSchema, dict]) -> int:
+        """
+        Crea un customer e restituisce l'ID.
+        Se esiste già uno con la stessa email (case insensitive), restituisce l'ID esistente.
+        Query idratata: recupera solo id_customer.
+        """
+        try:
+            # Converti CustomerSchema in dict se necessario
+            if isinstance(data, CustomerSchema):
+                customer_data = data.model_dump()
+            else:
+                customer_data = data
+            
+            email = customer_data.get('email')
+            if not email:
+                raise ValueError("Customer email is required")
+            
+            # Cerca customer esistente per email (query idratata - solo id_customer)
+            existing_id = self._session.query(Customer.id_customer).filter(
+                func.lower(Customer.email) == email.lower()
+            ).scalar()
+            
+            if existing_id:
+                return existing_id
+            
+            # Crea nuovo customer
+            customer = Customer(**customer_data)
+            self._session.add(customer)
+            self._session.flush()
+            return customer.id_customer
+        except Exception as e:
+            raise InfrastructureException(f"Database error creating customer: {str(e)}")
     
     def bulk_create_csv_import(self, data_list: List[CustomerSchema], batch_size: int = 1000) -> int:
         """

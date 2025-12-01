@@ -11,6 +11,7 @@ from src.schemas.preventivo_schema import (
     PreventivoResponseSchema,
     PreventivoDetailResponseSchema,
     PreventivoListResponseSchema,
+    PreventivoStatsSchema,
     ArticoloPreventivoSchema,
     ArticoloPreventivoUpdateSchema,
     BulkPreventivoDeleteRequestSchema,
@@ -263,7 +264,18 @@ async def get_preventivi(
     - `date_from`: Data inizio filtro (formato: YYYY-MM-DD)
     - `date_to`: Data fine filtro (formato: YYYY-MM-DD)
     
-    **Risposta**: Lista preventivi con total, page, limit per paginazione.
+    **Risposta**: Lista preventivi con total, page, limit per paginazione e statistiche.
+    
+    **Statistiche (stats)**:
+    Le statistiche vengono calcolate applicando gli stessi filtri della lista e includono:
+    - `total_not_converted`: Numero preventivi non convertiti (id_order null o 0)
+    - `total_converted`: Numero preventivi convertiti in ordine
+    - `total_price_with_tax`: Valore totale con IVA (escluse spese di spedizione)
+    - `total_price_net`: Valore totale senza IVA (escluse spese di spedizione)
+    - `converted_total_price_with_tax`: Valore totale con IVA dei preventivi convertiti
+    - `converted_total_price_net`: Valore totale senza IVA dei preventivi convertiti
+    
+    **Nota**: I totali dei prezzi escludono le spese di spedizione per mostrare solo il valore degli articoli.
     """
     service = get_preventivo_service(db)
     skip = (page - 1) * limit
@@ -277,11 +289,22 @@ async def get_preventivi(
         user=user
     )
     
+    # Calcola statistiche con gli stessi filtri
+    stats_data = service.get_preventivi_stats(
+        search=search,
+        sectionals_ids=sectionals_ids,
+        payments_ids=payments_ids,
+        date_from=date_from,
+        date_to=date_to
+    )
+    stats = PreventivoStatsSchema(**stats_data)
+    
     return PreventivoListResponseSchema(
         preventivi=preventivi,
         total=len(preventivi),
         page=page,
-        limit=limit
+        limit=limit,
+        stats=stats
     )
 
 

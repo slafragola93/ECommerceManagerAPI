@@ -120,7 +120,8 @@ class OrderDataRepository:
                     OrderDetail.id_order,
                     OrderDetail.id_product,
                     OrderDetail.id_tax,
-                    OrderDetail.product_price,
+                    OrderDetail.total_price_net,
+                    OrderDetail.total_price_with_tax,
                     OrderDetail.product_qty
                 )
             )

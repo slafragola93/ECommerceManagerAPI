@@ -588,19 +588,19 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
         try:
             stmt = text("""
                 SELECT id_order_detail, id_product, product_name, 
-                       product_qty, product_price, id_tax
+                       product_qty, price, id_tax
                 FROM order_details 
                 WHERE id_order = :id_order
             """)
             result_details = db.execute(stmt, {"id_order": order.id_order})
-            
             order_details_data = [
                 {
                     'id_order_detail': row.id_order_detail,
                     'id_product': row.id_product,
                     'product_name': row.product_name,
                     'product_qty': row.product_qty,
-                    'product_price': float(row.product_price or 0),
+                    'price_without_tax': float(row.total_price_net),
+                    'price_with_tax': float(row.total_price_with_tax),
                     'id_tax': row.id_tax
                 }
                 for row in result_details

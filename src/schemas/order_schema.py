@@ -138,6 +138,7 @@ class OrderResponseSchema(BaseModel):
     general_note: Optional[str]
     delivery_date: Optional[datetime]
     date_add: Optional[datetime] = None
+    updated_at: Optional[str] = None  # Formato: DD-MM-YYYY hh:mm:ss
     
     # Relazioni popolate
     address_delivery: Optional[AddressResponseSchema] = None

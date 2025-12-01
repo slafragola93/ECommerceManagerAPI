@@ -3,10 +3,11 @@ Carrier Router rifattorizzato seguendo i principi SOLID
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
+from src.repository.tax_repository import TaxRepository
+from src.services.core.tool import calculate_price_without_tax
 from src.services.interfaces.carrier_service_interface import ICarrierService
 from src.repository.interfaces.carrier_repository_interface import ICarrierRepository
-from src.schemas.carrier_schema import CarrierSchema, CarrierResponseSchema, AllCarriersResponseSchema
-from src.schemas.carrier_assignment_schema import CarrierPriceResponseSchema
+from src.schemas.carrier_schema import CarrierSchema, CarrierResponseSchema, AllCarriersResponseSchema, CarrierPriceResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
     BaseApplicationException,
@@ -14,11 +15,9 @@ from src.core.exceptions import (
     NotFoundException,
     BusinessRuleException
 )
-from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import authorize, get_current_user, db_dependency
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/carriers",
@@ -66,6 +65,7 @@ async def get_all_carriers(
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'PREVENTIVI'], permissions_required=['R'])
 async def get_carrier_price(
+    db: db_dependency,
     id_carrier_api: int = Query(..., gt=0, description="ID del carrier API"),
     id_country: int = Query(..., gt=0, description="ID del paese"),
     weight: float = Query(..., ge=0, description="Peso del pacco in kg"),
@@ -85,18 +85,47 @@ async def get_carrier_price(
     - **weight**: Peso del pacco in kg (obbligatorio)
     - **postcode**: Codice postale (opzionale)
     
-    Restituisce il prezzo con IVA del corriere che corrisponde ai criteri specificati.
+    **Calcolo IVA**:
+    - Recupera la percentuale IVA dalla tabella Taxes per il country specificato
+    - Se non presente in Taxes per il country, recupera il valore "default_tav" da app_configuration
+    - Calcola il prezzo senza IVA (price_net) partendo dal prezzo con IVA (price_with_tax)
+    
+    Restituisce sia il prezzo con IVA che il prezzo senza IVA del corriere.
     """
     # Tratta stringhe vuote come None
     postcode_value = postcode if postcode and postcode.strip() else None
     
-    price = await carrier_service.get_carrier_price(
+    price_with_tax = await carrier_service.get_carrier_price(
         id_carrier_api=id_carrier_api,
         id_country=id_country,
         weight=weight,
         postcode=postcode_value
     )
-    return {"price_with_tax": price}
+    
+    # Recupera la percentuale IVA per il country
+
+    
+    tax_repo = TaxRepository(db)
+    
+    # Recupera tax info per il country
+    # Se in Taxes è presente l'id_country, recupera percentage
+    # Se in Taxes non è presente l'id_country, recupera in app_configuration il valore di "default_tav"
+    tax_info = tax_repo.get_tax_info_by_country(id_country)
+    
+    if tax_info and tax_info.get("percentage") is not None:
+        tax_percentage = tax_info["percentage"]
+        id_tax = tax_info["id_tax"]
+    else:
+        # Se non trovata, recupera da app_configuration.default_tav
+        tax_percentage = tax_repo.get_default_tax_percentage_from_app_config(22.0)
+    # Calcola price_net togliendo l'IVA
+    price_net = calculate_price_without_tax(price_with_tax, tax_percentage)
+    
+    return {
+        "price_with_tax": price_with_tax,
+        "price_net": price_net,
+        "id_tax": id_tax
+    }
 
 @router.get("/{carrier_id}", status_code=status.HTTP_200_OK, response_model=CarrierResponseSchema)
 @check_authentication

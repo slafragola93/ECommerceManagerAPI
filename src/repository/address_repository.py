@@ -111,6 +111,60 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving address delivery data: {str(e)}")
     
+    def get_or_create_address(self, address_data: AddressSchema, customer_id: int) -> int:
+        """
+        Crea un nuovo indirizzo o restituisce l'ID se esiste già.
+        Verifica duplicati basandosi su campi chiave.
+        
+        Args:
+            address_data: Dati dell'indirizzo da creare
+            customer_id: ID del customer associato
+            
+        Returns:
+            ID dell'indirizzo (nuovo o esistente)
+        """
+        try:
+            # Cerca indirizzo esistente con stessi dati chiave (query idratata - solo id_address)
+            existing_id = self._session.query(Address.id_address).filter(
+                Address.id_customer == customer_id,
+                Address.firstname == address_data.firstname,
+                Address.lastname == address_data.lastname,
+                Address.address1 == address_data.address1,
+                Address.postcode == address_data.postcode,
+                Address.city == address_data.city
+            ).scalar()
+            
+            if existing_id:
+                return existing_id
+            
+            # Crea nuovo indirizzo
+            address = Address(
+                id_customer=customer_id,
+                id_origin=address_data.id_origin or 0,
+                id_country=address_data.id_country,
+                id_platform=address_data.id_platform or 0,
+                firstname=address_data.firstname,
+                lastname=address_data.lastname,
+                address1=address_data.address1,
+                address2=address_data.address2,
+                city=address_data.city,
+                postcode=address_data.postcode,
+                state=address_data.state,
+                phone=address_data.phone,
+                mobile_phone=address_data.mobile_phone,
+                company=address_data.company,
+                vat=address_data.vat,
+                dni=address_data.dni,
+                pec=address_data.pec,
+                sdi=address_data.sdi,
+                ipa=address_data.ipa
+            )
+            self._session.add(address)
+            self._session.flush()
+            return address.id_address
+        except Exception as e:
+            raise InfrastructureException(f"Database error getting or creating address: {str(e)}")
+    
     def bulk_create_csv_import(self, data_list: List[AddressSchema], id_platform: int = 1, batch_size: int = 1000) -> int:
         """
         Bulk insert addresses da CSV import con gestione id_platform.

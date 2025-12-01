@@ -132,13 +132,3 @@ class CarrierAssignmentIdSchema(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class CarrierPriceResponseSchema(BaseModel):
-    price_with_tax: float
-
-    @validator('price_with_tax', pre=True, allow_reuse=True)
-    def round_decimal(cls, v):
-        if v is None:
-            return None
-        return round(float(v), 2)

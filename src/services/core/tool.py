@@ -366,6 +366,16 @@ def format_datetime_ddmmyyyy_hhmm(dt: datetime | None) -> str | None:
         return None
 
 
+def format_datetime_ddmmyyyy_hhmmss(dt: datetime | None) -> str | None:
+    """Formatta una datetime in 'DD-MM-YYYY HH:mm:ss'. Ritorna None se dt è None."""
+    if dt is None:
+        return None
+    try:
+        return dt.strftime('%d-%m-%Y %H:%M:%S')
+    except Exception:
+        return None
+
+
 def generate_internal_reference(country_iso_code: str, app_config_repository) -> str:
     """
     Genera un reference code sequenziale per ordini con formato: {ISO_CODE}{SEQUENTIAL_NUMBER}

@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, List
-
+from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
+from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy import desc, func, select
 from sqlalchemy.engine import Row
@@ -25,12 +26,13 @@ from ..models.relations.relations import orders_history
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
 from ..services import QueryUtils
+from ..repository.interfaces.order_repository_interface import IOrderRepository
 
 
 logger = logging.getLogger(__name__)
 
 
-class OrderRepository:
+class OrderRepository(IOrderRepository):
     def __init__(self, session: Session):
         """
         Inizializza la repository con la sessione del DB
@@ -170,7 +172,10 @@ class OrderRepository:
             return []
     
     def generate_shipping(self, data: OrderSchema) -> int:
-        """Genera una spedizione di default basata sull'indirizzo di consegna"""
+        """
+        Genera una spedizione di default basata sull'indirizzo di consegna.
+        IMPORTANTE: Questo metodo viene chiamato solo UNA volta durante la creazione dell'ordine.
+        """
         # Debug per capire se è un oggetto o un ID
         if hasattr(data.address_delivery, 'id_country'):
             country_id = data.address_delivery.id_country
@@ -184,10 +189,13 @@ class OrderRepository:
         else:
             country_id = 1  # Default fallback
         
+        id_tax = self.tax_repository.define_tax(country_id)
+        
+        # Crea shipping con parametri di default
         return self.shipping_repository.create_and_get_id(ShippingSchema(
             id_carrier_api=1,
             id_shipping_state=1,
-            id_tax=self.tax_repository.define_tax(country_id),
+            id_tax=id_tax,
             tracking=None,
             weight=0.0,
             price_tax_incl=0.0,
@@ -195,6 +203,7 @@ class OrderRepository:
         ))
 
     def create(self, data: OrderSchema):
+        logger.warning(f"[DEBUG] OrderRepository.create chiamato - inizio creazione ordine")
         
         order = Order(
             **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional', 'order_details']))
@@ -235,26 +244,34 @@ class OrderRepository:
             # Converti 0 a None per foreign key
             order.id_address_invoice = data.address_invoice if data.address_invoice and data.address_invoice > 0 else 0
 
-        if data.shipping:
-            if isinstance(data.shipping, ShippingSchema):
-                # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
-                shipping_data = data.shipping.model_dump()
-                if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
-                    from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
-                    if order.id_address_delivery:
-                        tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
-                        shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
-                    else:
-                        # Se non c'è address_delivery ancora, usa default
-                        tax_percentage = self.tax_repository.get_default_tax_percentage_from_app_config(default=22.0)
-                        shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
-                order.id_shipping = self.shipping_repository.create_and_get_id(data=shipping_data)
-            elif isinstance(data.shipping, int):
-                # Se è un ID, usa la spedizione esistente
-                order.id_shipping = data.shipping
+        # Gestione shipping: distingue tra None/0, int (ID esistente), e ShippingSchema (nuovo)
+        # IMPORTANTE: Verifica esplicita per evitare creazioni multiple
+        logger.warning(f"[DEBUG] create order - data.shipping type: {type(data.shipping)}, value: {data.shipping}")
+        
+        if isinstance(data.shipping, ShippingSchema):
+            # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
+            shipping_data = data.shipping.model_dump()
+            if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
+                from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
+                if order.id_address_delivery:
+                    tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
+                    shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
+                else:
+                    # Se non c'è address_delivery ancora, usa default
+                    tax_percentage = self.tax_repository.get_default_tax_percentage_from_app_config(default=22.0)
+                    shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
+            order.id_shipping = self.shipping_repository.create_and_get_id(data=shipping_data)
+            logger.warning(f"[DEBUG] create order - shipping creato con ID: {order.id_shipping}")
+        elif isinstance(data.shipping, int) and data.shipping > 0:
+            logger.warning(f"[DEBUG] create order - usando shipping esistente con ID: {data.shipping}")
+            # Se è un ID valido, usa la spedizione esistente
+            order.id_shipping = data.shipping
         else:
-            # Genera una spedizione di default
+            logger.warning(f"[DEBUG] create order - shipping None/0, chiamando generate_shipping")
+            # Se shipping è None, 0, o altro valore non valido, genera una spedizione di default
+            # (solo UNA volta)
             order.id_shipping = self.generate_shipping(data)
+            logger.warning(f"[DEBUG] create order - shipping generato con ID: {order.id_shipping}")
 
         if isinstance(data.sectional, SectionalSchema):
             order.id_sectional = QueryUtils.create_and_set_id(repository=self.sectional_repository,
@@ -294,6 +311,10 @@ class OrderRepository:
                 # Genera internal_reference
                 internal_ref = generate_internal_reference(country_iso, self.app_configuration_repository)
                 order.internal_reference = internal_ref
+                
+                # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+                
+                order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
                 
                 # Salva l'aggiornamento
                 self.session.commit()
@@ -359,6 +380,9 @@ class OrderRepository:
                 else:
                     order.total_price_net = 0.0
             
+            # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+            order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+            
             # Salva i totali calcolati
             self.session.add(order)
             self.session.commit()
@@ -381,12 +405,15 @@ class OrderRepository:
         
         # Aggiorna peso spedizione automaticamente (solo se ordine in stato 1)
         if created_order_details:
+            logger.warning(f"[DEBUG] OrderRepository.create - aggiornando peso spedizione per order {order.id_order}")
             from src.services.routers.order_document_service import OrderDocumentService
             order_doc_service = OrderDocumentService(self.session)
             order_doc_service.update_shipping_weight_from_articles(
                 id_order=order.id_order,
                 check_order_state=True
             )
+        
+        logger.warning(f"[DEBUG] OrderRepository.create completato - order.id_order: {order.id_order}, order.id_shipping: {order.id_shipping}")
         
         return order.id_order
 
@@ -418,6 +445,9 @@ class OrderRepository:
 
             if key == 'id_order_state' and value != old_state_id:
                 state_changed = True
+
+        # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+        edited_order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
 
         self.session.add(edited_order)
         self.session.commit()
@@ -457,12 +487,18 @@ class OrderRepository:
                 tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
                 order.total_price_net = calculate_price_without_tax(order.total_price_with_tax, tax_percentage) if order.total_price_with_tax > 0 else 0.0
 
+        # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+
         self.session.add(order)
         self.session.commit()
 
     def set_weight(self, id_order: int, order_details: list[OrderDetail]):
         order = self.get_by_id(_id=id_order)
         order.total_weight = sum(order_detail.product_weight * order_detail.product_qty for order_detail in order_details)
+
+        # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
 
         self.session.add(order)
         self.session.commit()
@@ -813,7 +849,7 @@ class OrderRepository:
     def get_id_by_origin_id(self, id_origin: int) -> Optional[int]:
         """Get order ID by origin ID (PrestaShop ID)"""
         try:
-            return self.session.query(Order.id_order).filter(Order.id_origin == id_origin).first()
+            return self.session.query(Order.id_order).filter(Order.id_origin == id_origin).scalar()
         except Exception as e:
             return None
     

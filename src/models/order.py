@@ -42,6 +42,7 @@ class Order(Base):
     general_note = Column(Text, nullable=True)
     delivery_date = Column(Date, nullable=True)
     date_add = Column(DateTime, default=datetime.now)
+    updated_at = Column(String(19), nullable=True)  # Formato: DD-MM-YYYY hh:mm:ss
 
     # Relazioni
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")

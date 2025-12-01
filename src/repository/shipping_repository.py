@@ -51,7 +51,14 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             raise InfrastructureException(f"Database error retrieving shipping by name: {str(e)}")
     
     def create_and_get_id(self, data: Union[ShippingSchema, dict], id_order: int = None) -> int:
-        """Crea un shipping e restituisce l'ID"""
+        """
+        Crea un shipping e restituisce l'ID.
+        IMPORTANTE: Questo metodo viene chiamato solo quando necessario durante la creazione dell'ordine.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id chiamato - id_order: {id_order}")
+        
         try:
             # Converti ShippingSchema in dict se necessario
             if isinstance(data, ShippingSchema):
@@ -79,6 +86,8 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
                 
                 shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
             
+            logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id - creando shipping con dati: {shipping_data}")
+            
             # Crea l'istanza del modello
             shipping = Shipping(**shipping_data)
             
@@ -87,9 +96,12 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             self._session.commit()
             self._session.refresh(shipping)
             
+            logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id - shipping creato con ID: {shipping.id_shipping}")
+            
             return shipping.id_shipping
         except Exception as e:
             self._session.rollback()
+            logger.error(f"[DEBUG] ShippingRepository.create_and_get_id - ERRORE: {str(e)}")
             raise InfrastructureException(f"Database error creating shipping: {str(e)}")
     
     def get_carrier_info(self, id_shipping: int) -> Row:

@@ -362,12 +362,76 @@ class ConvertiPreventivoSchema(BaseModel):
     note: Optional[str] = None
 
 
+class PreventivoStatsSchema(BaseModel):
+    """Schema per statistiche preventivi"""
+    total_not_converted: int = Field(..., description="Numero totale dei preventivi non convertiti")
+    total_converted: int = Field(..., description="Numero dei preventivi convertiti in ordine")
+    total_price_with_tax: float = Field(..., description="Valore totale con IVA di tutti i preventivi")
+    total_price_net: float = Field(..., description="Valore totale senza IVA di tutti i preventivi")
+    converted_total_price_with_tax: float = Field(..., description="Valore totale con IVA dei preventivi convertiti")
+    converted_total_price_net: float = Field(..., description="Valore totale senza IVA dei preventivi convertiti")
+    
+    @validator('total_price_with_tax', 'total_price_net', 'converted_total_price_with_tax', 'converted_total_price_net', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return 0.0
+        return round(float(v), 2)
+
+
 class PreventivoListResponseSchema(BaseModel):
     """Schema per lista preventivi"""
     preventivi: List[PreventivoResponseSchema]
     total: int
     page: int
     limit: int
+    stats: PreventivoStatsSchema
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "preventivi": [
+                    {
+                        "id_order_document": 1,
+                        "id_order": None,
+                        "document_number": 2024001,
+                        "id_customer": 123,
+                        "id_address_delivery": 456,
+                        "id_address_invoice": 456,
+                        "sectional": {
+                            "id_sectional": 1,
+                            "name": "Preventivi 2024"
+                        },
+                        "shipping": None,
+                        "payment": None,
+                        "is_invoice_requested": False,
+                        "is_payed": None,
+                        "customer_name": "Mario Rossi",
+                        "reference": None,
+                        "note": "Preventivo esempio",
+                        "type_document": "preventivo",
+                        "total_imponibile": 15.0,
+                        "total_iva": 3.3,
+                        "total_finale": 18.3,
+                        "total_discount": 0.0,
+                        "date_add": "2024-01-15T10:30:00",
+                        "updated_at": "2024-01-15T10:30:00",
+                        "articoli": [],
+                        "order_packages": []
+                    }
+                ],
+                "total": 1,
+                "page": 1,
+                "limit": 100,
+                "stats": {
+                    "total_not_converted": 1,
+                    "total_converted": 0,
+                    "total_price_with_tax": 18.3,
+                    "total_price_net": 15.0,
+                    "converted_total_price_with_tax": 0.0,
+                    "converted_total_price_net": 0.0
+                }
+            }
+        }
 
 
 # Schemi per operazioni bulk
