@@ -94,6 +94,8 @@ class OrderSimpleResponseSchema(BaseModel):
     total_weight: Optional[float]
     total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float]  # ex total_without_tax
+    products_total_price_net: Optional[float] = None  # Totale imponibile prodotti (senza shipping)
+    products_total_price_with_tax: Optional[float] = None  # Totale con IVA prodotti (senza shipping)
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -102,7 +104,7 @@ class OrderSimpleResponseSchema(BaseModel):
     delivery_date: Optional[datetime]
     date_add: Optional[datetime] = None
 
-    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
+    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -131,6 +133,8 @@ class OrderResponseSchema(BaseModel):
     total_weight: Optional[float]
     total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float]  # ex total_without_tax
+    products_total_price_net: Optional[float] = None  # Totale imponibile prodotti (senza shipping)
+    products_total_price_with_tax: Optional[float] = None  # Totale con IVA prodotti (senza shipping)
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]
@@ -150,7 +154,7 @@ class OrderResponseSchema(BaseModel):
     order_details: Optional[list] = None 
     order_history: Optional[list[OrderHistorySchema]] = None
 
-    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
+    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

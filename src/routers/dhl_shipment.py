@@ -182,15 +182,53 @@ async def cleanup_expired_documents(db: Session = Depends(get_db)):
         
         logger.info(f"Found {len(expired_documents)} expired documents to cleanup")
         
-        # TODO: Point 2 - Deleting files from filesystem
-        # TODO: Point 3 - Removing database records
-        # TODO: Point 4 - Calculating memory freed
+        if not expired_documents:
+            return {
+                "message": "No expired documents found",
+                "expired_documents_found": 0,
+                "documents_deleted": 0,
+                "files_deleted": 0,
+                "memory_freed_bytes": 0
+            }
         
+        # POINT 2: Deleting files from filesystem
+        import os
+        from pathlib import Path
+        
+        memory_freed = 0
+        files_deleted = 0
+        
+        for doc in expired_documents:
+            if hasattr(doc, 'file_path') and doc.file_path:
+                file_path = Path(doc.file_path)
+                if file_path.exists():
+                    try:
+                        file_size = file_path.stat().st_size
+                        file_path.unlink()
+                        memory_freed += file_size
+                        files_deleted += 1
+                        logger.info(f"Deleted file: {doc.file_path} ({file_size} bytes)")
+                    except Exception as e:
+                        logger.error(f"Error deleting file {doc.file_path}: {str(e)}")
+        
+        # POINT 3: Removing database records
+        records_deleted = 0
+        for doc in expired_documents:
+            try:
+                if document_repo.delete_by_id(doc.id):
+                    records_deleted += 1
+            except Exception as e:
+                logger.error(f"Error deleting document {doc.id}: {str(e)}")
+        
+        db.commit()
+        
+        # POINT 4: Calculating memory freed
         return {
             "message": "Cleanup completed",
             "expired_documents_found": len(expired_documents),
-            "documents_deleted": 0,  # TODO: Implement document cleanup (points 2-4)
-            "memory_freed_bytes": 0  # TODO: Calculate actual memory freed
+            "documents_deleted": records_deleted,
+            "files_deleted": files_deleted,
+            "memory_freed_bytes": memory_freed
         }
         
     except Exception as e:

@@ -260,7 +260,6 @@ class PreventivoService:
             sectional_obj = None
 
         shipment_obj = None
-        print(order_document.shipping)
         try:
             if getattr(order_document, "shipping", None):
                 s = order_document.shipping
@@ -476,7 +475,6 @@ class PreventivoService:
                 tax_rate = 0.0
                 if getattr(s, 'id_tax', None):
                     tax_rate = float(self.tax_repo.get_percentage_by_id(int(s.id_tax)))
-                    print(f"shipping weight: {s.weight}")
                 shipment_obj = PreventivoShipmentSchema(
                     id_shipping=s.id_shipping,
                     id_carrier_api=s.id_carrier_api,
@@ -489,10 +487,6 @@ class PreventivoService:
                 )
         except Exception:
             shipment_obj = None
-        print(order_document.shipping)
-        print(shipment_obj)
-        print(order_document.shipping.weight)
-        print(shipment_obj.weight)
         payment_obj = None
         try:
             if getattr(order_document, "payment", None) and order_document.payment:

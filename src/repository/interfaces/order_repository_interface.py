@@ -81,6 +81,11 @@ class IOrderRepository(ABC):
         pass
     
     @abstractmethod
+    def update_order_status(self, id_order: int, id_order_state: int) -> bool:
+        """Aggiorna lo stato di un ordine e aggiunge alla cronologia"""
+        pass
+    
+    @abstractmethod
     def delete(self, order: Order) -> bool:
         """Elimina un ordine"""
         pass

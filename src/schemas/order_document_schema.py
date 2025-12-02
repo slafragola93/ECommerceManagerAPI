@@ -34,11 +34,13 @@ class OrderDocumentResponseSchema(BaseModel):
     total_weight: float
     total_price_with_tax: float
     total_price_net: float
+    products_total_price_net: Optional[float] = None  # Totale imponibile prodotti (senza shipping)
+    products_total_price_with_tax: Optional[float] = None  # Totale con IVA prodotti (senza shipping)
     total_discount: float
     is_invoice_requested: bool
     note: str | None
     
-    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'total_discount', pre=True, allow_reuse=True)
+    @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

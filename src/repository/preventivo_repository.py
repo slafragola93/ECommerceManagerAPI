@@ -107,13 +107,14 @@ class PreventivoRepository:
         if preventivo_data.shipping:
             # Recupera il peso passato (se None, usa 0.0)
             weight = preventivo_data.shipping.weight
+            weight_value = float(weight) if weight is not None else 0.0
             # Crea oggetto Shipping
             shipping = Shipping(
                 id_carrier_api=preventivo_data.shipping.id_carrier_api,
                 id_shipping_state=1, 
                 id_tax=preventivo_data.shipping.id_tax,
                 tracking=None,
-                weight=float(weight),  # Forza conversione a float
+                weight=weight_value,
                 price_tax_incl=preventivo_data.shipping.price_tax_incl,
                 price_tax_excl=preventivo_data.shipping.price_tax_excl,
                 customs_value=preventivo_data.shipping.customs_value if hasattr(preventivo_data.shipping, 'customs_value') else None,

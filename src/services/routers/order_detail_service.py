@@ -96,20 +96,57 @@ class OrderDetailService(IOrderDetailService):
         order_detail_repository: IOrderDetailRepository,
         db: Session,
         order_service: Optional[IOrderService] = None,
-        product_service: Optional[ProductService] = None
+        product_service: Optional[ProductService] = None,
+        order_document_service: Optional[Any] = None
     ):
         self._order_detail_repository = order_detail_repository
         self._order_service = order_service
         self._db = db
+        self._order_document_service = order_document_service
         # Inizializza ProductService se non fornito (DIP - Dependency Inversion)
         self._product_service = product_service or ProductService(ProductRepository(db))
 
-    def _recalculate_order_totals(self, order_id: Optional[int]) -> None:
-        """Ricalcola i totali dell'ordine se il servizio ordini è disponibile."""
-        if not order_id or order_id <= 0 or self._order_service is None:
+    def _recalculate_order_totals(self, order_id: Optional[int], order_detail: Optional[OrderDetail] = None) -> None:
+        """
+        Ricalcola i totali dell'ordine o dell'order document in base ai collegamenti.
+        
+        Logica:
+        - Se id_order > 0 e (id_order_document IS NULL o = 0): ricalcola Order
+        - Se (id_order IS NULL o = 0) e id_order_document > 0: 
+          - Se OrderDocument ha id_order collegato: ricalcola Order (che gestirà anche OrderDocument)
+          - Altrimenti: ricalcola solo OrderDocument standalone
+        """
+        if order_detail is None:
+            # Fallback: usa order_id se disponibile
+            if order_id and order_id > 0 and self._order_service:
+                self._order_service.recalculate_totals_for_order(order_id)
             return
-
-        self._order_service.recalculate_totals_for_order(order_id)
+        
+        id_order = getattr(order_detail, 'id_order', None)
+        id_order_document = getattr(order_detail, 'id_order_document', None)
+        
+        # Caso 1: OrderDetail collegato a Order (id_order > 0 e id_order_document = 0 o NULL)
+        if id_order and id_order > 0 and (id_order_document is None or id_order_document == 0):
+            if self._order_service:
+                self._order_service.recalculate_totals_for_order(id_order)
+            return
+        
+        # Caso 2: OrderDetail collegato a OrderDocument (id_order = 0 o NULL e id_order_document > 0)
+        if (id_order is None or id_order == 0) and id_order_document and id_order_document > 0:
+            # Verifica se OrderDocument ha un Order collegato
+            from src.models.order_document import OrderDocument
+            order_document = self._db.query(OrderDocument).filter(
+                OrderDocument.id_order_document == id_order_document
+            ).first()
+            
+            if order_document and order_document.id_order and order_document.id_order > 0:
+                # OrderDocument ha Order collegato: ricalcola Order (che gestirà anche OrderDocument)
+                if self._order_service:
+                    self._order_service.recalculate_totals_for_order(order_document.id_order)
+            else:
+                # OrderDocument standalone: ricalcola solo OrderDocument
+                if self._order_document_service:
+                    self._order_document_service.recalculate_products_totals_for_order_document_standalone(id_order_document)
     
     async def create_order_detail(self, order_detail_data: OrderDetailSchema) -> OrderDetail:
         """Crea un nuovo order detail con validazioni business"""
@@ -138,7 +175,7 @@ class OrderDetailService(IOrderDetailService):
             order_detail_dict.update(price_fields)
             order_detail = OrderDetail(**order_detail_dict)
             order_detail = self._order_detail_repository.create(order_detail)
-            self._recalculate_order_totals(order_detail.id_order)
+            self._recalculate_order_totals(order_detail.id_order, order_detail)
             return order_detail
         except Exception as e:
             raise ValidationException(f"Error creating order detail: {str(e)}")
@@ -203,7 +240,7 @@ class OrderDetailService(IOrderDetailService):
                     for field in tracked_fields
                 )
                 if tracked_changed:
-                    self._recalculate_order_totals(updated_order_detail.id_order)
+                    self._recalculate_order_totals(updated_order_detail.id_order, updated_order_detail)
             return updated_order_detail
         except Exception as e:
             raise ValidationException(f"Error updating order detail: {str(e)}")
@@ -271,9 +308,17 @@ class OrderDetailService(IOrderDetailService):
         order_id = getattr(order_detail, "id_order", None)
         
         try:
+            # Salva i dati prima della cancellazione per il ricalcolo
+            id_order = getattr(order_detail, 'id_order', None)
+            id_order_document = getattr(order_detail, 'id_order_document', None)
+            
             result = self._order_detail_repository.delete(order_detail_id)
             if result:
-                self._recalculate_order_totals(order_id)
+                # Crea un OrderDetail temporaneo con i dati salvati per il ricalcolo
+                temp_order_detail = OrderDetail()
+                temp_order_detail.id_order = id_order
+                temp_order_detail.id_order_document = id_order_document
+                self._recalculate_order_totals(id_order, temp_order_detail)
             return result
         except Exception as e:
             raise ValidationException(f"Error deleting order detail: {str(e)}")

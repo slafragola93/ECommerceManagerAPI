@@ -4,8 +4,6 @@ Order Service per gestione logica business ordini seguendo principi SOLID
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-
-from datetime import datetime
 from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
 from src.services.interfaces.order_service_interface import IOrderService
 from src.repository.order_repository import OrderRepository
@@ -26,6 +24,8 @@ from src.events.core.event import EventType
 from src.events.extractors import extract_order_created_data
 from src.services.core.tool import calculate_order_totals
 import logging
+
+from src.models.order_document import OrderDocument
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +293,8 @@ class OrderService(IOrderService):
             order.total_weight = 0.0
             order.total_price_with_tax = 0.0
             order.total_price_net = 0.0
+            order.products_total_price_net = 0.0
+            order.products_total_price_with_tax = 0.0
 
             shipping: Optional[Shipping] = None
             if order.id_shipping:
@@ -341,31 +343,21 @@ class OrderService(IOrderService):
         )
         order.total_price_net = total_price_net - discount if discount > 0 else total_price_net
         
-        # Aggiorna total_price_net dell'order_document se presente
-        from src.models.order_document import OrderDocument
-        order_document = session.query(OrderDocument).filter(
-            OrderDocument.id_order == order_id
-        ).first()
+        # Calcola products_total_price_net e products_total_price_with_tax per Order
+        # Solo OrderDetail collegati direttamente all'Order (id_order_document IS NULL o = 0)
+        order_details_for_products = [
+            od for od in order_details 
+            if od.id_order_document is None or od.id_order_document == 0
+        ]
         
-        if order_document:
-            # Calcola total_price_net per order_document sommando i total_price_net degli order_detail associati
-            order_detail_docs = session.query(OrderDetail).filter(
-                OrderDetail.id_order_document == order_document.id_order_document
-            ).all()
-            
-            if order_detail_docs:
-                total_price_net_doc = sum(
-                    float(od.total_price_net) if hasattr(od, 'total_price_net') and od.total_price_net is not None else 0.0
-                    for od in order_detail_docs
-                )
-                # Applica total_discount se presente
-                doc_discount = float(order_document.total_discount) if order_document.total_discount else 0.0
-                order_document.total_price_net = max(0.0, total_price_net_doc - doc_discount)
-            else:
-                order_document.total_price_net = 0.0
-
-        if shipping:
-            shipping.weight = order.total_weight
+        order.products_total_price_net = sum(
+            float(od.total_price_net) if hasattr(od, 'total_price_net') and od.total_price_net is not None else 0.0
+            for od in order_details_for_products
+        )
+        order.products_total_price_with_tax = sum(
+            float(od.total_price_with_tax) if hasattr(od, 'total_price_with_tax') and od.total_price_with_tax is not None else 0.0
+            for od in order_details_for_products
+        )
 
         # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
         order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())

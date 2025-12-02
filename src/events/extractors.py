@@ -412,7 +412,7 @@ def extract_preventivo_updated_data(*args, result=None, **kwargs) -> Optional[Di
     Estrae dati completi per evento DOCUMENT_UPDATED (preventivo).
     
     Args:
-        result: OrderDocument aggiornato dal service o dict PreventivoDetailResponseSchema
+        result: OrderDocument aggiornato dal service, dict o PreventivoDetailResponseSchema
         kwargs: Contiene 'user' per contesto
     
     Returns:
@@ -422,7 +422,7 @@ def extract_preventivo_updated_data(*args, result=None, **kwargs) -> Optional[Di
         if not result:
             return None
         
-        # Gestisce sia oggetto OrderDocument che dict (PreventivoDetailResponseSchema)
+        # Gestisce dict (PreventivoDetailResponseSchema serializzato)
         if isinstance(result, dict):
             return {
                 "id_order_document": result.get('id_order_document'),
@@ -430,11 +430,32 @@ def extract_preventivo_updated_data(*args, result=None, **kwargs) -> Optional[Di
                 "document_source": "order_document",
                 "number": result.get('document_number'),
                 "id_customer": result.get('customer', {}).get('id_customer') if isinstance(result.get('customer'), dict) else None,
-                "total": float(result.get('total_price_with_tax', 0) or 0),
+                "total": float(result.get('total_finale', result.get('total_price_with_tax', 0)) or 0),
                 "updated_by": kwargs.get('user', {}).get('id')
             }
-        else:
-            # Oggetto OrderDocument
+        
+        # Gestisce PreventivoDetailResponseSchema (oggetto Pydantic)
+        if hasattr(result, 'customer') and hasattr(result, 'id_order_document'):
+            customer_id = None
+            if result.customer:
+                # customer può essere un oggetto CustomerResponseSchema o None
+                if hasattr(result.customer, 'id_customer'):
+                    customer_id = result.customer.id_customer
+                elif isinstance(result.customer, dict):
+                    customer_id = result.customer.get('id_customer')
+            
+            return {
+                "id_order_document": result.id_order_document,
+                "document_type": "preventivo",
+                "document_source": "order_document",
+                "number": getattr(result, 'document_number', None),
+                "id_customer": customer_id,
+                "total": float(getattr(result, 'total_finale', getattr(result, 'total_price_with_tax', 0)) or 0),
+                "updated_by": kwargs.get('user', {}).get('id')
+            }
+        
+        # Gestisce OrderDocument (oggetto SQLAlchemy)
+        if hasattr(result, 'id_order_document') and hasattr(result, 'id_customer'):
             document = result
             return {
                 "id_order_document": document.id_order_document,
@@ -442,9 +463,20 @@ def extract_preventivo_updated_data(*args, result=None, **kwargs) -> Optional[Di
                 "document_source": "order_document",
                 "number": getattr(document, 'number', None),
                 "id_customer": document.id_customer,
-                "total": float(getattr(document, 'total', 0) or 0),
+                "total": float(getattr(document, 'total_price_with_tax', getattr(document, 'total', 0)) or 0),
                 "updated_by": kwargs.get('user', {}).get('id')
             }
+        
+        # Fallback: cerca di estrarre i dati in modo generico
+        return {
+            "id_order_document": getattr(result, 'id_order_document', None),
+            "document_type": "preventivo",
+            "document_source": "order_document",
+            "number": getattr(result, 'document_number', getattr(result, 'number', None)),
+            "id_customer": getattr(result, 'id_customer', None),
+            "total": 0.0,
+            "updated_by": kwargs.get('user', {}).get('id')
+        }
     except Exception as e:
         logger.error(f"Errore estrazione dati preventivo updated: {e}")
         return None
@@ -588,7 +620,8 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
         try:
             stmt = text("""
                 SELECT id_order_detail, id_product, product_name, 
-                       product_qty, price, id_tax
+                       product_qty, unit_price_net, unit_price_with_tax,
+                       total_price_net, total_price_with_tax, id_tax
                 FROM order_details 
                 WHERE id_order = :id_order
             """)
@@ -599,8 +632,10 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
                     'id_product': row.id_product,
                     'product_name': row.product_name,
                     'product_qty': row.product_qty,
-                    'price_without_tax': float(row.total_price_net),
-                    'price_with_tax': float(row.total_price_with_tax),
+                    'unit_price_net': float(row.unit_price_net or 0),
+                    'unit_price_with_tax': float(row.unit_price_with_tax or 0),
+                    'total_price_net': float(row.total_price_net or 0),
+                    'total_price_with_tax': float(row.total_price_with_tax or 0),
                     'id_tax': row.id_tax
                 }
                 for row in result_details

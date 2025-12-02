@@ -207,7 +207,9 @@ class OrderDocumentService:
                 "shipping_cost": 0.0,
                 "total_finale": 0.0,
                 "total_discount": round(total_discount, 2),
-                "total_discounts_applicati": round(total_discount, 2)
+                "total_discounts_applicati": round(total_discount, 2),
+                "products_total_price_net": 0.0,
+                "products_total_price_with_tax": 0.0
             }
         
         # Recupera le percentuali delle tasse
@@ -283,7 +285,9 @@ class OrderDocumentService:
             "shipping_cost": round(shipping_cost, 2),
             "total_finale": round(total_finale, 2),
             "total_discount": round(total_discount, 2),
-            "total_discounts_applicati": round(total_discounts_applicati, 2)
+            "total_discounts_applicati": round(total_discounts_applicati, 2),
+            "products_total_price_net": round(total_price_net_base, 2),  # Totale prodotti senza shipping e senza sconto totale
+            "products_total_price_with_tax": round(total_articoli_base, 2)  # Totale prodotti con IVA senza shipping e senza sconto totale
         }
     
     def update_document_totals(self, id_order_document: int, document_type: str, skip_shipping_weight_update: bool = False) -> None:
@@ -306,6 +310,14 @@ class OrderDocumentService:
             # Aggiorna i totali
             document.total_price_with_tax = totals["total_finale"]
             document.total_price_net = totals["total_price_net"]
+            
+            # Aggiorna i totali prodotti (solo per preventivi)
+            if document_type == "preventivo":
+                document.products_total_price_net = totals["products_total_price_net"]
+                document.products_total_price_with_tax = totals["products_total_price_with_tax"]
+            else:
+                document.products_total_price_net = 0.0
+                document.products_total_price_with_tax = 0.0
             
             # Calcola peso totale
             articoli = self.get_articoli_order_document(id_order_document, document_type)

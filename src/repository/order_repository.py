@@ -417,13 +417,6 @@ class OrderRepository(IOrderRepository):
         
         return order.id_order
 
-    # def update_order_status(self, id_order: int, id_order_state: int):
-    #     order_history = OrderHistory(id_order=id_order, id_order_state=id_order_state)
-    #
-    #     self.session.add(order_history)
-    #     self.session.commit()
-    #     self.session.refresh(order_history)
-
     def update(self, edited_order: Order, data: OrderSchema | OrderUpdateSchema):
 
         entity_updated = data.model_dump(exclude_unset=True)
@@ -513,6 +506,39 @@ class OrderRepository(IOrderRepository):
         except Exception:
             # Non bloccare il flusso per errori non critici di sync peso
             pass
+
+    def update_order_status(self, id_order: int, id_order_state: int) -> bool:
+        """
+        Aggiorna lo stato di un ordine e aggiunge alla cronologia.
+        
+        Args:
+            id_order: ID dell'ordine
+            id_order_state: Nuovo ID stato ordine
+            
+        Returns:
+            bool: True se aggiornato con successo
+        """
+        order = self.get_by_id(id_order)
+        if not order:
+            return False
+        
+        order.id_order_state = id_order_state
+        
+        # Aggiorna updated_at
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+        
+        # Aggiungi nuovo stato alla cronologia
+        order_history_insert = orders_history.insert().values(
+            id_order=id_order,
+            id_order_state=id_order_state,
+            date_add=datetime.now()
+        )
+        self.session.execute(order_history_insert)
+        
+        self.session.add(order)
+        self.session.commit()
+        
+        return True
 
     def delete(self, order: Order) -> bool:
         """
