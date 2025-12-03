@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import logging
+import httpx
 
 from src.core.settings import get_cache_settings
 from src.core.exceptions import NotFoundException, BusinessRuleException, InfrastructureException, ValidationException
@@ -116,25 +117,59 @@ class FedexShipmentService(IFedexShipmentService):
                     fedex_config=fedex_config
                 )
             except ValueError as e:
-                # Handle FedEx validation errors (400, 422)
-                logger.error(f"FedEx Validation Error for order {order_id}: {str(e)}")
-                raise ValidationException(
-                    f"FedEx validation error: {str(e)}",
-                    details={"order_id": order_id, "error": str(e)}
-                )
+                # Handle FedEx client errors (400, 401, 403, 404, 422)
+                error_str = str(e)
+                logger.error(f"FedEx Client Error for order {order_id}: {error_str}")
+                
+                # Check error type for more specific handling
+                if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
+                    # Authentication/Authorization error
+                    raise ValidationException(
+                        f"FedEx authentication error: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "authentication"}
+                    )
+                elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
+                    # Forbidden - permissions issue
+                    raise ValidationException(
+                        f"FedEx access denied: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "forbidden"}
+                    )
+                elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
+                    # Resource not found
+                    raise ValidationException(
+                        f"FedEx resource not found: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "not_found"}
+                    )
+                else:
+                    # Validation errors (400, 422)
+                    raise ValidationException(
+                        f"FedEx validation error: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "validation"}
+                    )
             except RuntimeError as e:
                 # Handle FedEx server errors (500, 503)
-                logger.error(f"FedEx Server Error for order {order_id}: {str(e)}")
-                raise InfrastructureException(
-                    f"FedEx server error: {str(e)}",
-                    details={"order_id": order_id, "error": str(e)}
-                )
+                error_str = str(e)
+                logger.error(f"FedEx Server Error for order {order_id}: {error_str}")
+                
+                # Check if it's a service unavailable error
+                if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
+                    raise InfrastructureException(
+                        f"FedEx service unavailable: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
+                    )
+                else:
+                    # Internal server error (500)
+                    raise InfrastructureException(
+                        f"FedEx server error: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "server_error"}
+                    )
             except Exception as e:
                 # Handle other FedEx API errors
-                logger.error(f"FedEx API Error for order {order_id}: {str(e)}")
+                error_str = str(e)
+                logger.error(f"FedEx API Error for order {order_id}: {error_str}")
                 raise InfrastructureException(
-                    f"FedEx API error: {str(e)}",
-                    details={"order_id": order_id, "error": str(e)}
+                    f"FedEx API error: {error_str}",
+                    details={"order_id": order_id, "error": error_str, "type": "unknown"}
                 )
             
             # 11. Estrazione tracking numbers e label
@@ -150,23 +185,41 @@ class FedexShipmentService(IFedexShipmentService):
             # Use master tracking as primary AWB, fallback to first tracking number
             awb = master_tracking or (tracking_numbers[0] if tracking_numbers else None)
             
-            # Extract label
+            # Extract label - try both base64 content and URL
             label_b64 = self.fedex_mapper.extract_label_from_response(fedex_response)
+            label_url = self.fedex_mapper.extract_label_url_from_response(fedex_response)
+            
+            # If we have URL but no base64, download from URL
+            if label_url and not label_b64:
+                logger.info(f"Downloading label from URL for AWB {awb}")
+                try:
+                    label_b64 = await self._download_label_from_url(label_url)
+                    if label_b64:
+                        logger.info(f"Successfully downloaded label from URL for AWB {awb}")
+                    else:
+                        logger.warning(f"Failed to download label from URL for AWB {awb}")
+                except Exception as e:
+                    logger.error(f"Error downloading label from URL {label_url}: {str(e)}")
+                    label_b64 = None
+            
             logger.info(f"FedEx label extracted: {label_b64 is not None}, AWB: {awb}")
             
             # 12. Salva PDF label e documenti
             if awb:
                 if label_b64:
                     try:
-                        await self._save_documents(
+                        result = await self._save_documents(
                             awb=awb,
                             label_b64=label_b64,
                             order_id=order_id,
                             carrier_api_id=carrier_api_id
                         )
-                        logger.info(f"FedEx document saved successfully for AWB {awb}")
+                        if result:
+                            logger.info(f"FedEx document saved successfully for AWB {awb}, SHA256: {result.get('sha256_hash', 'N/A')}")
+                        else:
+                            logger.warning(f"FedEx document save returned empty result for AWB {awb}")
                     except Exception as e:
-                        logger.error(f"Error saving FedEx document for AWB {awb}: {str(e)}")
+                        logger.error(f"Error saving FedEx document for AWB {awb}: {str(e)}", exc_info=True)
                         # Continue even if document save fails
                 else:
                     logger.warning(f"No label found in FedEx response for AWB {awb}, saving document without label")
@@ -587,6 +640,47 @@ class FedexShipmentService(IFedexShipmentService):
         except Exception as e:
             logger.error(f"Error saving FedEx document record for AWB {awb}: {str(e)}")
             raise
+    
+    async def _download_label_from_url(self, url: str) -> Optional[str]:
+        """
+        Download label PDF from URL and convert to base64
+        
+        Args:
+            url: URL of the label PDF
+            
+        Returns:
+            Base64 encoded label string or None if download fails
+        """
+        try:
+            logger.info(f"Downloading label from URL: {url}")
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                
+                # Get PDF content as bytes
+                pdf_bytes = response.content
+                
+                # Check if it's actually a PDF
+                if not pdf_bytes.startswith(b'%PDF'):
+                    logger.warning(f"Downloaded content from {url} doesn't appear to be a PDF")
+                    return None
+                
+                # Convert to base64
+                label_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                
+                logger.info(f"Successfully downloaded label from URL, size: {len(pdf_bytes)} bytes")
+                return label_b64
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error downloading label from URL {url}: {e.response.status_code} - {e.response.text}")
+            return None
+        except httpx.TimeoutException:
+            logger.error(f"Timeout downloading label from URL {url}")
+            return None
+        except Exception as e:
+            logger.error(f"Error downloading label from URL {url}: {str(e)}")
+            return None
     
     def _cleanup_old_documents(self, order_id: int) -> None:
         """

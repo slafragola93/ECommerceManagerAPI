@@ -285,7 +285,7 @@ def extract_ddt_created_data(*args, result=None, **kwargs) -> Optional[Dict[str,
     Estrae dati completi per evento DOCUMENT_CREATED (ddt).
     
     Args:
-        result: OrderDocument creato dal service
+        result: DDTGenerateResponseSchema o OrderDocument creato dal service
         kwargs: Contiene 'user' per contesto
     
     Returns:
@@ -295,15 +295,30 @@ def extract_ddt_created_data(*args, result=None, **kwargs) -> Optional[Dict[str,
         if not result:
             return None
         
-        document = result
+        # Gestisce DDTGenerateResponseSchema (risultato del metodo generate_ddt_from_order)
+        if hasattr(result, 'ddt') and hasattr(result, 'success'):
+            # Se success=False o ddt è None, non emettere evento
+            if not result.success or not result.ddt:
+                return None
+            document = result.ddt
+        else:
+            # Gestisce OrderDocument diretto
+            document = result
+        
+        # Estrae id_customer dal documento o dal customer nested
+        id_customer = None
+        if hasattr(document, 'id_customer'):
+            id_customer = document.id_customer
+        elif hasattr(document, 'customer') and document.customer:
+            id_customer = document.customer.get('id_customer') if isinstance(document.customer, dict) else getattr(document.customer, 'id_customer', None)
         
         return {
             "id_order_document": document.id_order_document,
             "document_type": "ddt",
             "document_source": "order_document",
-            "number": getattr(document, 'number', None),
-            "id_customer": document.id_customer,
-            "total": float(getattr(document, 'total', 0) or 0),
+            "number": getattr(document, 'document_number', None),
+            "id_customer": id_customer,
+            "total": float(getattr(document, 'total_price_with_tax', 0) or 0),
             "created_by": kwargs.get('user', {}).get('id')
         }
     except Exception as e:
@@ -316,7 +331,8 @@ def extract_ddt_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str,
     Estrae dati completi per evento DOCUMENT_UPDATED (ddt).
     
     Args:
-        result: OrderDocument aggiornato dal service
+        result: DDTDetailSchema aggiornato dal service
+        args: Contiene id_order_detail come primo argomento
         kwargs: Contiene 'user' per contesto
     
     Returns:
@@ -326,17 +342,55 @@ def extract_ddt_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str,
         if not result:
             return None
         
-        document = result
+        # Recupera id_order_detail dagli argomenti
+        id_order_detail = args[0] if args else None
+        if not id_order_detail:
+            return None
         
-        return {
-            "id_order_document": document.id_order_document,
-            "document_type": "ddt",
-            "document_source": "order_document",
-            "number": getattr(document, 'number', None),
-            "id_customer": document.id_customer,
-            "total": float(getattr(document, 'total', 0) or 0),
-            "updated_by": kwargs.get('user', {}).get('id')
-        }
+        # Recupera id_order_document dal database
+        from src.database import get_db
+        from sqlalchemy import text
+        
+        db = next(get_db())
+        
+        try:
+            stmt = text("""
+                SELECT id_order_document 
+                FROM order_details 
+                WHERE id_order_detail = :id_order_detail
+            """)
+            result_query = db.execute(stmt, {"id_order_detail": id_order_detail})
+            row = result_query.fetchone()
+            
+            if not row:
+                return None
+            
+            id_order_document = row[0]
+            
+            # Recupera dati DDT
+            stmt_ddt = text("""
+                SELECT id_order_document, document_number, id_customer, total_price_with_tax
+                FROM orders_document
+                WHERE id_order_document = :id_order_document
+            """)
+            result_ddt = db.execute(stmt_ddt, {"id_order_document": id_order_document})
+            ddt_row = result_ddt.fetchone()
+            
+            if not ddt_row:
+                return None
+            
+            return {
+                "id_order_document": ddt_row[0],
+                "document_type": "ddt",
+                "document_source": "order_document",
+                "number": ddt_row[1],
+                "id_customer": ddt_row[2],
+                "total": float(ddt_row[3] or 0),
+                "updated_by": kwargs.get('user', {}).get('id')
+            }
+        finally:
+            db.close()
+            
     except Exception as e:
         logger.error(f"Errore estrazione dati ddt updated: {e}")
         return None
@@ -347,30 +401,76 @@ def extract_ddt_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str,
     Estrae dati completi per evento DOCUMENT_DELETED (ddt).
     
     Args:
-        result: ID del DDT eliminato o OrderDocument stesso
+        result: bool (True se eliminato con successo)
+        args: Contiene id_order_detail come primo argomento
         kwargs: Contiene 'user' per contesto
     
     Returns:
         Dictionary con dati del DDT eliminato
     """
     try:
-        document_id = None
+        # result è un bool, quindi recuperiamo id_order_detail da args
+        id_order_detail = args[0] if args else None
+        if not id_order_detail:
+            return None
         
-        if result:
-            if isinstance(result, int):
-                document_id = result
-            elif hasattr(result, 'id_order_document'):
-                document_id = result.id_order_document
+        # Recupera id_order_document dal database (il dettaglio potrebbe essere già eliminato)
+        from src.database import get_db
+        from sqlalchemy import text
         
-        if document_id is None:
-            document_id = kwargs.get('document_id') or (args[0] if args else None)
+        db = next(get_db())
         
-        return {
-            "id_order_document": document_id,
-            "document_type": "ddt",
-            "document_source": "order_document",
-            "deleted_by": kwargs.get('user', {}).get('id')
-        }
+        try:
+            # Prova a recuperare id_order_document dal dettaglio (potrebbe essere già eliminato)
+            stmt = text("""
+                SELECT id_order_document 
+                FROM order_details 
+                WHERE id_order_detail = :id_order_detail
+            """)
+            result_query = db.execute(stmt, {"id_order_detail": id_order_detail})
+            row = result_query.fetchone()
+            
+            id_order_document = row[0] if row else None
+            
+            # Se il dettaglio è già stato eliminato, non possiamo recuperare id_order_document
+            # In questo caso, restituiamo solo id_order_detail
+            if not id_order_document:
+                return {
+                    "id_order_detail": id_order_detail,
+                    "document_type": "ddt",
+                    "document_source": "order_document",
+                    "deleted_by": kwargs.get('user', {}).get('id')
+                }
+            
+            # Recupera dati DDT
+            stmt_ddt = text("""
+                SELECT id_order_document, document_number, id_customer
+                FROM orders_document
+                WHERE id_order_document = :id_order_document
+            """)
+            result_ddt = db.execute(stmt_ddt, {"id_order_document": id_order_document})
+            ddt_row = result_ddt.fetchone()
+            
+            if not ddt_row:
+                return {
+                    "id_order_detail": id_order_detail,
+                    "id_order_document": id_order_document,
+                    "document_type": "ddt",
+                    "document_source": "order_document",
+                    "deleted_by": kwargs.get('user', {}).get('id')
+                }
+            
+            return {
+                "id_order_document": ddt_row[0],
+                "document_type": "ddt",
+                "document_source": "order_document",
+                "number": ddt_row[1],
+                "id_customer": ddt_row[2],
+                "deleted_by": kwargs.get('user', {}).get('id')
+            }
+        finally:
+            db.close()
+            
     except Exception as e:
         logger.error(f"Errore estrazione dati ddt deleted: {e}")
         return None

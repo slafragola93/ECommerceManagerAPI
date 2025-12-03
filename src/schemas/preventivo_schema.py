@@ -1,5 +1,5 @@
 from operator import ge
-from typing import Optional, List, Union
+from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from .customer_schema import CustomerSchema, CustomerResponseSchema
@@ -131,7 +131,8 @@ class PreventivoCreateSchema(BaseModel):
                     {
                         "id_product": 123,
                         "product_qty": 2,
-                        "id_tax": 9
+                        "id_tax": 9,
+                        "total_price_with_tax": 244.20
                     }
                 ]
             }

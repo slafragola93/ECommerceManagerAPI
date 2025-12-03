@@ -328,33 +328,94 @@ class FedexClient:
     
     def _check_fedex_errors(self, response_data: Dict[str, Any], status_code: int) -> None:
         """
-        Check for FedEx API errors in response
+        Check for FedEx API errors in response and raise appropriate exceptions
         
         Args:
             response_data: FedEx API response dict
             status_code: HTTP status code
             
         Raises:
-            ValueError: For validation errors (400, 422)
+            ValueError: For client errors (400, 401, 403, 404, 422)
             RuntimeError: For server errors (500, 503)
         """
-        if status_code >= 400:
-            errors = response_data.get("errors", [])
-            if errors:
-                error = errors[0]
-                error_code = error.get("code", "UNKNOWN_ERROR")
-                error_message = error.get("message", "Unknown error")
-                
-                if status_code == 400 or status_code == 422:
-                    raise ValueError(f"FedEx Validation Error ({status_code}): {error_code} - {error_message}")
-                elif status_code == 401:
-                    raise ValueError(f"FedEx Authorization Error (401): {error_code} - {error_message}")
-                elif status_code == 500:
-                    raise RuntimeError(f"FedEx Server Error (500): {error_code} - {error_message}")
-                elif status_code == 503:
-                    raise RuntimeError(f"FedEx Service Unavailable (503): {error_code} - {error_message}")
-                else:
-                    raise RuntimeError(f"FedEx API Error ({status_code}): {error_code} - {error_message}")
+        if status_code < 400:
+            return  # No errors
+        
+        errors = response_data.get("errors", [])
+        transaction_id = response_data.get("transactionId", "N/A")
+        
+        if not errors:
+            # No error details, use generic message
+            if status_code == 400:
+                raise ValueError(f"FedEx Bad Request (400): Invalid request format")
+            elif status_code == 401:
+                raise ValueError(f"FedEx Unauthorized (401): Authentication failed")
+            elif status_code == 403:
+                raise ValueError(f"FedEx Forbidden (403): Access denied")
+            elif status_code == 404:
+                raise ValueError(f"FedEx Not Found (404): Resource not found")
+            elif status_code == 500:
+                raise RuntimeError(f"FedEx Internal Server Error (500): Server error")
+            elif status_code == 503:
+                raise RuntimeError(f"FedEx Service Unavailable (503): Service temporarily unavailable")
+            else:
+                raise RuntimeError(f"FedEx API Error ({status_code}): Unknown error")
+            return
+        
+        # Collect all error messages
+        error_messages = []
+        error_codes = []
+        
+        for error in errors:
+            error_code = error.get("code", "UNKNOWN_ERROR")
+            error_message = error.get("message", "Unknown error")
+            error_codes.append(error_code)
+            error_messages.append(f"{error_code}: {error_message}")
+        
+        # Build combined error message
+        combined_message = " | ".join(error_messages)
+        
+        # Map status codes to appropriate exceptions
+        if status_code == 400:
+            # Bad Request - Validation errors
+            # Common codes: ACCOUNTNUMBER.REGISTRATION.REQUIRED, etc.
+            raise ValueError(f"FedEx Validation Error (400): {combined_message} [TransactionId: {transaction_id}]")
+        
+        elif status_code == 401:
+            # Unauthorized - Authentication failed
+            # Common code: NOT.AUTHORIZED.ERROR
+            raise ValueError(f"FedEx Authorization Error (401): {combined_message} [TransactionId: {transaction_id}]")
+        
+        elif status_code == 403:
+            # Forbidden - Access denied
+            # Common code: FORBIDDEN.ERROR
+            raise ValueError(f"FedEx Forbidden (403): {combined_message} [TransactionId: {transaction_id}]")
+        
+        elif status_code == 404:
+            # Not Found - Resource not available
+            # Common code: NOT.FOUND.ERROR
+            raise ValueError(f"FedEx Not Found (404): {combined_message} [TransactionId: {transaction_id}]")
+        
+        elif status_code == 422:
+            # Unprocessable Entity - Validation errors
+            raise ValueError(f"FedEx Validation Error (422): {combined_message} [TransactionId: {transaction_id}]")
+        
+        elif status_code == 500:
+            # Internal Server Error
+            # Common code: INTERNAL.SERVER.ERROR
+            raise RuntimeError(f"FedEx Internal Server Error (500): {combined_message} [TransactionId: {transaction_id}]")
+        
+        elif status_code == 503:
+            # Service Unavailable
+            # Common code: SERVICE.UNAVAILABLE.ERROR
+            raise RuntimeError(f"FedEx Service Unavailable (503): {combined_message} [TransactionId: {transaction_id}]")
+        
+        else:
+            # Other 4xx/5xx errors
+            if 400 <= status_code < 500:
+                raise ValueError(f"FedEx Client Error ({status_code}): {combined_message} [TransactionId: {transaction_id}]")
+            else:
+                raise RuntimeError(f"FedEx Server Error ({status_code}): {combined_message} [TransactionId: {transaction_id}]")
     
     async def _make_request_with_retry(
         self,

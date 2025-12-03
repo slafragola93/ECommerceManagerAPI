@@ -226,16 +226,14 @@ class OrderDocumentService:
         # Usa la funzione standard per calcolare i totali (include sconti)
         totals = calculate_order_totals(articoli, tax_percentages)
         
-        # Calcola total_price_net sommando i total_price_net degli articoli
-        total_price_net_base = sum(
-            float(articolo.total_price_net) if hasattr(articolo, 'total_price_net') and articolo.total_price_net is not None else 0.0
-            for articolo in articoli
-        )
+        # Totali base (prima dello sconto totale) - SOLO PRODOTTI, senza shipping
+        total_imponibile_base = totals['total_price']  # Prezzo base prodotti dopo sconti articoli
+        total_iva_base = totals['total_price_with_tax'] - totals['total_price']  # IVA prodotti
+        total_articoli_base = totals['total_price_with_tax']  # Totale prodotti con IVA
         
-        # Totali base (prima dello sconto totale)
-        total_imponibile_base = totals['total_price']
-        total_iva_base = totals['total_price_with_tax'] - totals['total_price']
-        total_articoli_base = totals['total_price_with_tax']
+        # Per products_total_price_net, usiamo total_imponibile_base che è già corretto (senza shipping)
+        # Questo è il totale imponibile dei prodotti dopo gli sconti sugli articoli, ma prima dello sconto totale documento
+        total_price_net_base = total_imponibile_base
         
         # Recupera total_discount dal documento
         total_discount = float(document.total_discount) if document and document.total_discount else 0.0

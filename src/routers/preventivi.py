@@ -39,156 +39,141 @@ db_dependency = Depends(get_db)
              response_model=PreventivoResponseSchema, 
              status_code=status.HTTP_201_CREATED,
              summary="Crea nuovo preventivo",
-             description="Crea un preventivo con customer, indirizzi e articoli. Supporta entità esistenti (per ID) o nuova creazione inline.",
-             response_description="Preventivo creato con successo. Restituisce il preventivo completo con calcoli automatici.")
+             description="""
+Crea un preventivo con customer, indirizzi e articoli. Supporta entità esistenti (per ID) o nuova creazione inline.
+
+**Calcoli automatici nella risposta:**
+- `document_number`: numero sequenziale generato automaticamente
+- `total_price_with_tax`: totale con IVA (articoli + shipping)
+- `total_price_net`: totale imponibile (articoli + shipping)
+- `products_total_price_net`: totale imponibile SOLO prodotti (esclude shipping)
+- `products_total_price_with_tax`: totale con IVA SOLO prodotti (esclude shipping)
+- `total_weight`: somma pesi articoli
+- IVA calcolata automaticamente per ogni articolo in base a `id_tax`
+
+**Nota sui totali prodotti:**
+I campi `products_total_price_net` e `products_total_price_with_tax` rappresentano i totali dei soli prodotti, escludendo:
+- Spese di spedizione (`shipping`)
+- Sconto totale del documento (`total_discount`)
+
+Questi totali vengono ricalcolati automaticamente quando si modificano o eliminano articoli.
+             """,
+             response_description="Preventivo creato con successo. Restituisce il preventivo completo con tutti i calcoli automatici inclusi i totali prodotti.")
 async def create_preventivo(
     preventivo_data: PreventivoCreateSchema = Body(
         ...,
-
-example={
-            "esempio_completo": {
-                "summary": "Esempio completo con tutti i campi disponibili (* = obbligatorio)",
-                "description": "Mostra tutti i campi disponibili. I campi contrassegnati con * sono obbligatori, gli altri sono opzionali. Puoi usare id esistente O creare nuove entità inline con 'data'.",
-                "value": {
-                    # CUSTOMER* (obbligatorio - usa 'id' per esistente O 'data' per nuovo)
-                    "customer": {
-                        "data": {
-                            "firstname": "Mario",              # * obbligatorio se nuovo customer
-                            "lastname": "Rossi",               # * obbligatorio se nuovo customer
-                            "email": "mario.rossi@example.com", # * obbligatorio se nuovo customer
-                            "id_lang": 1,                      # * obbligatorio se nuovo customer
-                            "id_origin": 12345,                # ID esterno opzionale (es. PrestaShop)
-                            "company": "Rossi SRL"             # Opzionale
-                        }
-                        # Alternativa: {"id": 294488}  per usare customer esistente
-                    },
-                    
-                    # ADDRESS DELIVERY* (obbligatorio - usa 'id' per esistente O 'data' per nuovo)
-                    "address_delivery": {
-                        "data": {
-                            "firstname": "Mario",              # * obbligatorio se nuovo address
-                            "lastname": "Rossi",               # * obbligatorio se nuovo address
-                            "address1": "Via Roma 123",        # * obbligatorio se nuovo address
-                            "city": "Milano",                  # * obbligatorio se nuovo address
-                            "postcode": "20100",               # * obbligatorio se nuovo address
-                            "state": "MI",                     # * obbligatorio se nuovo address
-                            "phone": "0212345678",             # * obbligatorio se nuovo address
-                            "id_country": 1,                   # ID nazione (1=Italia)
-                            "id_customer": 0,                  # Auto-assegnato
-                            "id_origin": 67890,                # ID esterno opzionale
-                            "id_platform": 1,                  # 0=manuale, 1=PrestaShop
-                            "company": "Rossi SRL",            # Nome azienda
-                            "address2": "Interno 5",           # Secondo indirizzo
-                            "mobile_phone": "3331234567",      # Cellulare
-                            "vat": "IT12345678901",            # Partita IVA
-                            "dni": "RSSMRA80A01F205X",         # Codice fiscale
-                            "pec": "rossi@pec.it",             # Email PEC
-                            "sdi": "ABCDE12",                  # Codice SDI
-                            "ipa": "ABC123"                    # Codice IPA
-                        }
-                        # Alternativa: {"id": 470625}  per usare address esistente
-                    },
-                    
-                    # ADDRESS INVOICE (opzionale - se omesso usa address_delivery)
-                    "address_invoice": {
-                        "data": {
-                            "firstname": "Mario",              # * obbligatorio se nuovo address
-                            "lastname": "Rossi",               # * obbligatorio se nuovo address
-                            "address1": "Via Fatture 456",     # * obbligatorio se nuovo address
-                            "city": "Roma",                    # * obbligatorio se nuovo address
-                            "postcode": "00100",               # * obbligatorio se nuovo address
-                            "state": "RM",                     # * obbligatorio se nuovo address
-                            "phone": "0698765432",             # * obbligatorio se nuovo address
-                            "id_country": 1,
-                            "company": "Rossi SRL Sede Legale",
-                            "address2": "Piano 3",
-                            "mobile_phone": "3339876543",
-                            "vat": "IT12345678901",
-                            "dni": "RSSMRA80A01F205X",
-                            "pec": "amministrazione@pec.it",
-                            "sdi": "ABCDE12",
-                            "ipa": "ABC123"
-                        }
-                        # Alternativa: {"id": 470626} per usare address esistente
-                        # Se omesso: viene usato address_delivery anche per fatturazione
-                    },
-                    
-                    # SECTIONAL (opzionale - sezionale contabile)
-                    "sectional": {
-                        "data": {
-                            "name": "Preventivi 2025"          # Nome sezionale (deduplica automatica)
-                        }
-                        # Alternativa: {"id": 9}  per usare sezionale esistente
-                    },
-                    
-                    # SHIPPING (opzionale - dati spedizione)
-                    "shipping": {
-                        "price_tax_excl": 10.00,               # * obbligatorio se shipping presente
-                        "price_tax_incl": 12.20,               # * obbligatorio se shipping presente
-                        "id_carrier_api": 1,                   # * obbligatorio se shipping presente
-                        "id_tax": 1,                           # * obbligatorio se shipping presente (aliquota IVA)
-                        "shipping_message": "Consegna express 24h"  # Messaggio spedizione (opzionale)
-                    },
-                    
-                    # ID_PAYMENT (opzionale - metodo di pagamento)
-                    "id_payment": 3,                           # ID metodo pagamento (es. bonifico, carta)
-                    
-                    # IS_INVOICE_REQUESTED (opzionale - richiesta fattura)
-                    "is_invoice_requested": True,              # Se richiedere fattura (default: False)
-                    
-                    # NOTE (opzionale - note generali)
-                    "note": "Preventivo per progetto speciale - sconto applicato per cliente fedele",
-                    
-                    # TOTAL_DISCOUNT (opzionale - sconto totale documento)
-                    "total_discount": 50.00,                   # Sconto totale sul documento (oltre agli sconti articoli)
-                    
-                    
-                    # ARTICOLI* (obbligatorio - almeno un articolo)
-                    "articoli": [
-                        # Articolo con prodotto esistente
-                        {
-                            "id_product": 123,                 # ID prodotto esistente (alternativa a campi custom)
-                            "product_qty": 2,                  # Quantità (default: 1)
-                            "id_tax": 9,                       # * SEMPRE obbligatorio - aliquota IVA
-                            "reduction_percent": 10.0,         # Sconto percentuale su articolo
-                            "reduction_amount": 0.0,           # Sconto importo fisso su articolo
-                            "note": "Versione aggiornata"      # Note specifiche articolo
-                        },
-                        # Articolo personalizzato (senza id_product)
-                        {
-                            "product_name": "Servizio installazione",     # * obbligatorio se no id_product
-                            "product_reference": "SERV-INST-2025",        # * obbligatorio se no id_product
-                            "product_price": 150.00,                      # * obbligatorio se no id_product (anche 0.0)
-                            "product_weight": 0.0,                        # Peso articolo
-                            "product_qty": 1,                             # * obbligatorio se no id_product
-                            "id_tax": 9,                                  # * SEMPRE obbligatorio
-                            "reduction_percent": 0.0,                     # Sconto percentuale
-                            "reduction_amount": 25.00,                    # Sconto fisso
-                            "note": "Include configurazione base"         # Note articolo
-                        }
-                    ],
-                    
-                    # ORDER_PACKAGES (opzionale - dimensioni colli)
-                    "order_packages": [
-                        {
-                            "height": 30.0,                    # Altezza pacco (cm)
-                            "width": 40.0,                     # Larghezza pacco (cm)
-                            "depth": 25.0,                     # Profondità pacco (cm)
-                            "length": 50.0,                    # Lunghezza pacco (cm)
-                            "weight": 5.5,                     # Peso pacco (kg)
-                            "value": 500.00                    # Valore dichiarato pacco
-                        },
-                        {
-                            "height": 15.0,
-                            "width": 20.0,
-                            "depth": 10.0,
-                            "length": 25.0,
-                            "weight": 2.0,
-                            "value": 150.00
-                        }
-                    ]
+        example={
+            "customer": {
+                "data": {
+                    "firstname": "Mario",
+                    "lastname": "Rossi",
+                    "email": "mario.rossi@example.com",
+                    "id_lang": 1,
+                    "id_origin": 12345,
+                    "company": "Rossi SRL"
                 }
-            }
+            },
+            "address_delivery": {
+                "data": {
+                    "firstname": "Mario",
+                    "lastname": "Rossi",
+                    "address1": "Via Roma 123",
+                    "city": "Milano",
+                    "postcode": "20100",
+                    "state": "MI",
+                    "phone": "0212345678",
+                    "id_country": 143,
+                    "id_customer": 0,
+                    "id_origin": 67890,
+                    "id_platform": 1,
+                    "company": "Rossi SRL",
+                    "address2": "Interno 5",
+                    "mobile_phone": "3331234567",
+                    "vat": "IT12345678901",
+                    "dni": "RSSMRA80A01F205X",
+                    "pec": "rossi@pec.it",
+                    "sdi": "ABCDE12",
+                    "ipa": "ABC123"
+                }
+            },
+            "address_invoice": {
+                "data": {
+                    "firstname": "Mario",
+                    "lastname": "Rossi",
+                    "address1": "Via Fatture 456",
+                    "city": "Roma",
+                    "postcode": "00100",
+                    "state": "RM",
+                    "phone": "0698765432",
+                    "id_country": 143,
+                    "company": "Rossi SRL Sede Legale",
+                    "address2": "Piano 3",
+                    "mobile_phone": "3339876543",
+                    "vat": "IT12345678901",
+                    "dni": "RSSMRA80A01F205X",
+                    "pec": "amministrazione@pec.it",
+                    "sdi": "ABCDE12",
+                    "ipa": "ABC123"
+                }
+            },
+            "sectional": {
+                "data": {
+                    "name": "Preventivi 2025"
+                }
+            },
+            "shipping": {
+                "price_tax_excl": 10.00,
+                "price_tax_incl": 12.20,
+                "id_carrier_api": 6,
+                "id_tax": 9,
+                "shipping_message": "Consegna express 24h"
+            },
+            "id_payment": 3,
+            "is_invoice_requested": True,
+            "note": "Preventivo per progetto speciale - sconto applicato per cliente fedele",
+            "total_discount": 50.00,
+            "articoli": [
+                {
+                    "id_product": 123,
+                    "product_qty": 2,
+                    "id_tax": 9,
+                    "total_price_with_tax": 244.20,
+                    "product_weight": 10.0,
+                    "reduction_percent": 10.0,
+                    "reduction_amount": 0.0,
+                    "note": "Versione aggiornata"
+                },
+                {
+                    "product_name": "Servizio installazione",
+                    "product_reference": "SERV-INST-2025",
+                    "product_price": 150.00,
+                    "product_weight": 0.0,
+                    "product_qty": 1,
+                    "id_tax": 9,
+                    "total_price_with_tax": 183.00,
+                    "reduction_percent": 0.0,
+                    "reduction_amount": 25.00,
+                    "note": "Include configurazione base"
+                }
+            ],
+            "order_packages": [
+                {
+                    "height": 30.0,
+                    "width": 40.0,
+                    "depth": 25.0,
+                    "length": 50.0,
+                    "weight": 5.5,
+                    "value": 500.00
+                },
+                {
+                    "height": 15.0,
+                    "width": 20.0,
+                    "depth": 10.0,
+                    "length": 25.0,
+                    "weight": 2.0,
+                    "value": 150.00
+                }
+            ]
         }
     ),
     user: User = user_dependency,
@@ -224,13 +209,22 @@ example={
     **Calcoli automatici**:
     - `document_number`: sequenziale
     - `total_price_with_tax`: somma articoli (con IVA) + shipping
+    - `total_price_net`: totale imponibile (articoli + shipping)
+    - `products_total_price_net`: totale imponibile SOLO prodotti (esclude shipping)
+    - `products_total_price_with_tax`: totale con IVA SOLO prodotti (esclude shipping)
     - `total_weight`: somma pesi articoli
     - IVA: calcolata per ogni articolo in base a `id_tax`
+    - I totali prodotti vengono ricalcolati automaticamente quando si modificano/eliminano articoli
+    
+    **Nota sui totali prodotti**:
+    - `products_total_price_net` e `products_total_price_with_tax` rappresentano i totali dei soli prodotti
+    - Non includono le spese di spedizione (`shipping`)
+    - Non includono lo sconto totale del documento (`total_discount`)
+    - Vengono calcolati sommando rispettivamente `total_price_net` e `total_price_with_tax` di tutti gli articoli
     
     **Esempi**: Vedi esempi JSON in Swagger per scenari specifici.
     """
     service = get_preventivo_service(db)
-    print(preventivo_data)
     return service.create_preventivo(preventivo_data, user["id"])
 
 

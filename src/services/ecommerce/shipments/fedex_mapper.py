@@ -248,6 +248,49 @@ class FedexMapper:
             logger.error(f"Error extracting label from FedEx response: {e}")
             return None
     
+    def extract_label_url_from_response(self, response: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract label URL from FedEx API response
+        
+        Args:
+            response: FedEx API response dict
+            
+        Returns:
+            URL string or None
+        """
+        try:
+            output = response.get("output", {})
+            transaction_shipments = output.get("transactionShipments", [])
+            
+            if not transaction_shipments:
+                return None
+            
+            # Get first shipment
+            shipment = transaction_shipments[0]
+            shipment_documents = shipment.get("shipmentDocuments", [])
+            
+            if not shipment_documents:
+                return None
+            
+            # Find document with URL (FedEx uses contentType and docType)
+            # Accept any document with URL and docType="PDF" or contentType containing "LABEL"
+            for doc in shipment_documents:
+                url = doc.get("url")
+                if url:
+                    # Check if it's a PDF document (label)
+                    doc_type = doc.get("docType", "").upper()
+                    content_type = doc.get("contentType", "").upper()
+                    # Accept PDF documents or any document with LABEL in contentType
+                    if doc_type == "PDF" or "LABEL" in content_type:
+                        logger.info(f"Found label URL in shipmentDocuments: {url} (docType: {doc_type}, contentType: {content_type})")
+                        return str(url)
+            
+            return None
+            
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Error extracting label URL from FedEx response: {e}")
+            return None
+    
     def extract_tracking_from_response(self, response: Dict[str, Any]) -> List[str]:
         """
         Extract tracking numbers from FedEx API response
