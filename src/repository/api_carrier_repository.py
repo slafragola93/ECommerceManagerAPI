@@ -96,7 +96,6 @@ class ApiCarrierRepository(BaseRepository[CarrierApi, int], IApiCarrierRepositor
                 }
                 for row in result
             ]
-            print(f"[DEBUG] Carriers recuperati dalla query: {len(carriers)}")
             return carriers
         except Exception as e:
             print(f"[ERROR] Errore query carriers: {e}")

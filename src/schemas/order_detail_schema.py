@@ -19,7 +19,16 @@ class OrderDetailSchema(BaseModel):
     product_weight: Optional[float] = 0.0
     reduction_percent: Optional[float] = 0.0
     reduction_amount: Optional[float] = 0.0
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
     note: Optional[str] = Field(None, max_length=200)
+    
+    @validator('rda_quantity')
+    def validate_rda_quantity(cls, v, values):
+        """Valida che rda_quantity non superi product_qty"""
+        if v is not None and 'product_qty' in values:
+            if v > values.get('product_qty', 0):
+                raise ValueError('rda_quantity non può superare product_qty')
+        return v
     
     # Backward compatibility: product_price come alias per unit_price_net
     @property
@@ -48,6 +57,7 @@ class OrderDetailResponseSchema(BaseModel):
     product_weight: float
     reduction_percent: float
     reduction_amount: float
+    rda_quantity: Optional[int] = None
     note: Optional[str] = None
     img_url: Optional[str] = None  
     

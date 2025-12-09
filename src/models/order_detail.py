@@ -22,6 +22,7 @@ class OrderDetail(Base):
     reduction_percent = Column(Numeric(10, 5), default=0.0)
     reduction_amount = Column(Numeric(10, 5), default=0.0)
     rda = Column(String(10))
+    rda_quantity = Column(Integer, default=None)
     note = Column(String(200))
     
     # Backward compatibility: product_price come alias per unit_price_net

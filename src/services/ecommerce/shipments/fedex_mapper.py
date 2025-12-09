@@ -780,4 +780,168 @@ class FedexMapper:
                 f"Missing required fields in FedEx payload: {', '.join(errors)}",
                 details={"missing_fields": errors}
             )
+    
+    def build_tracking_request(self, tracking_numbers: List[str]) -> Dict[str, Any]:
+        """
+        Build FedEx tracking request payload
+        
+        Args:
+            tracking_numbers: List of tracking numbers to track
+            
+        Returns:
+            FedEx tracking request payload dict
+        """
+        tracking_info = []
+        for tracking_number in tracking_numbers:
+            tracking_info.append({
+                "trackingNumberInfo": {
+                    "trackingNumber": tracking_number
+                }
+            })
+        
+        return {
+            "includeDetailedScans": False,
+            "trackingInfo": tracking_info
+        }
+    
+    def normalize_tracking_response(self, fedex_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Normalize FedEx tracking response to standard format
+        
+        Args:
+            fedex_response: Raw FedEx API tracking response
+            
+        Returns:
+            List of normalized tracking responses
+        """
+        from src.services.ecommerce.shipments.fedex_status_mapping import (
+            map_fedex_status_to_internal,
+            DEFAULT_STATE_ID
+        )
+        
+        normalized: List[Dict[str, Any]] = []
+        
+        try:
+            output = fedex_response.get("output", {})
+            complete_track_results = output.get("completeTrackResults", [])
+            
+            for complete_result in complete_track_results:
+                track_results = complete_result.get("trackResults", [])
+                
+                for track_result in track_results:
+                    try:
+                        # Extract tracking number
+                        tracking_number_info = track_result.get("trackingNumberInfo", {})
+                        tracking_number = tracking_number_info.get("trackingNumber", "")
+                        
+                        if not tracking_number:
+                            continue
+                        
+                        # Extract latest status
+                        latest_status_detail = track_result.get("latestStatusDetail", {})
+                        status_code = latest_status_detail.get("code", "")
+                        status_description = latest_status_detail.get("description", "")
+                        status_by_locale = latest_status_detail.get("statusByLocale", "")
+                        
+                        # Determine status text (priority: statusByLocale > description)
+                        status_text = status_by_locale if status_by_locale else status_description
+                        if not status_text:
+                            status_text = status_code
+                        
+                        # Map status to internal state
+                        internal_state_id = DEFAULT_STATE_ID
+                        if status_text:
+                            mapped = map_fedex_status_to_internal(status_text)
+                            if mapped is not None:
+                                internal_state_id = mapped
+                        
+                        # Extract events from scanEvents
+                        events: List[Dict[str, Any]] = []
+                        scan_events = track_result.get("scanEvents", [])
+                        
+                        for scan_event in scan_events:
+                            event_date = scan_event.get("date", "")
+                            event_description = scan_event.get("eventDescription", "")
+                            event_type = scan_event.get("eventType", "")
+                            derived_status_code = scan_event.get("derivedStatusCode", "")
+                            
+                            # Extract location
+                            scan_location = scan_event.get("scanLocation", {})
+                            location_parts = []
+                            if scan_location:
+                                city = scan_location.get("city", "")
+                                state = scan_location.get("stateOrProvinceCode", "")
+                                country = scan_location.get("countryCode", "")
+                                if city:
+                                    location_parts.append(city)
+                                if state:
+                                    location_parts.append(state)
+                                if country:
+                                    location_parts.append(country)
+                            location = ", ".join(location_parts) if location_parts else ""
+                            
+                            # Map event status
+                            event_status_text = event_description or event_type or derived_status_code
+                            event_internal_state_id = DEFAULT_STATE_ID
+                            if event_status_text:
+                                mapped = map_fedex_status_to_internal(event_status_text)
+                                if mapped is not None:
+                                    event_internal_state_id = mapped
+                            
+                            events.append({
+                                "date": event_date,
+                                "description": event_description or event_type or "",
+                                "location": location,
+                                "code": event_type or derived_status_code or "",
+                                "internal_state_id": event_internal_state_id
+                            })
+                        
+                        # Sort events by date (oldest first)
+                        events.sort(key=lambda x: x.get("date", ""))
+                        
+                        # Extract estimated delivery date
+                        estimated_delivery_date = None
+                        
+                        # Try dateAndTimes first
+                        date_and_times = track_result.get("dateAndTimes", [])
+                        for date_time in date_and_times:
+                            if date_time.get("type") == "ESTIMATED_DELIVERY" or date_time.get("type") == "ACTUAL_DELIVERY":
+                                estimated_delivery_date = date_time.get("dateTime")
+                                if estimated_delivery_date:
+                                    break
+                        
+                        # Fallback to estimatedDeliveryTimeWindow
+                        if not estimated_delivery_date:
+                            estimated_delivery_window = track_result.get("estimatedDeliveryTimeWindow", {})
+                            if estimated_delivery_window:
+                                window = estimated_delivery_window.get("window", {})
+                                if window:
+                                    estimated_delivery_date = window.get("begins") or window.get("ends")
+                        
+                        # Derive current internal state from last event (if any) or latest status
+                        current_internal_state_id = internal_state_id
+                        if events:
+                            # Use the last event's internal state if available
+                            last_event_state = events[-1].get("internal_state_id")
+                            if last_event_state and last_event_state != DEFAULT_STATE_ID:
+                                current_internal_state_id = last_event_state
+                        
+                        normalized_shipment = {
+                            "tracking_number": tracking_number,
+                            "status": status_text or "Unknown",
+                            "events": events,
+                            "estimated_delivery_date": estimated_delivery_date,
+                            "current_internal_state_id": current_internal_state_id
+                        }
+                        
+                        normalized.append(normalized_shipment)
+                        
+                    except Exception as e:
+                        logger.error(f"Error normalizing tracking data for shipment: {str(e)}")
+                        continue
+            
+        except Exception as e:
+            logger.error(f"Error normalizing FedEx tracking response: {str(e)}")
+        
+        return normalized
 

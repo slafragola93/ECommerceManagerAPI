@@ -1,8 +1,9 @@
 import httpx
 import asyncio
 import json
+import uuid
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sqlalchemy.engine import Row
 import logging
 
@@ -54,13 +55,27 @@ class FedexClient:
         
         # Get new token
         url = f"{self._get_base_url(credentials.use_sandbox)}/oauth/token"
+
         
-        # Use client_credentials grant type (simplified)
+        # Use client_credentials grant type for REST API
+        # IMPORTANT: For FedEx REST API, use:
+        # - client_id = API Key from the project (REST API credentials)
+        # - client_secret = Secret from the project (REST API credentials)
+        # DO NOT use SOAP API credentials or other legacy credentials
         client_id = getattr(fedex_config, 'client_id', None)
         client_secret = getattr(fedex_config, 'client_secret', None)
         
+        print(f"client_id: {client_id}")
+        print(f"client_secret: {client_secret}")
+        print(f"url: {url}")
         if not client_id or not client_secret:
-            raise ValueError("Missing client_id or client_secret in FedexConfiguration")
+            raise ValueError(
+                "Missing client_id or client_secret in FedexConfiguration. "
+                "For REST API, client_id must be the API Key and client_secret must be the Secret from your FedEx project."
+            )
+        
+        # Log credential presence (without exposing values)
+        logger.info(f"FedEx OAuth using REST API credentials (client_id present: {bool(client_id)}, client_secret present: {bool(client_secret)})")
         
         # Build form data for client_credentials grant type
         form_data = {
@@ -298,6 +313,67 @@ class FedexClient:
         
         return response_data
     
+    async def get_tracking(
+        self,
+        tracking_numbers: List[str],
+        credentials: Row,
+        fedex_config: Row
+    ) -> Dict[str, Any]:
+        """
+        Get tracking information for one or more FedEx shipments
+        
+        Args:
+            tracking_numbers: List of tracking numbers to track
+            credentials: CarrierApi row with use_sandbox flag
+            fedex_config: FedexConfiguration row
+            
+        Returns:
+            FedEx API tracking response as dict
+        """
+        # Get access token
+        access_token = await self.get_access_token(credentials, fedex_config)
+        
+        url = f"{self._get_base_url(credentials.use_sandbox)}/track/v1/trackingnumbers"
+        print(f"url tracking: {url}")
+        # Generate unique customer transaction ID for this request
+        customer_transaction_id = str(uuid.uuid4())
+        
+        # Get headers with tracking-specific headers (x-customer-transaction-id and x-locale)
+        headers = self._get_headers(access_token, locale="it_IT")
+        print(f"headers tracking: {headers}")
+        # Build tracking request payload
+        tracking_info = []
+        for tracking_number in tracking_numbers:
+            tracking_info.append({
+                "trackingNumberInfo": {
+                    "trackingNumber": tracking_number
+                }
+            })
+        
+        payload = {
+            "includeDetailedScans": False,
+            "trackingInfo": tracking_info
+        }
+        
+        logger.info(f"FedEx Get Tracking Request URL: {url}")
+        logger.info(f"FedEx Get Tracking Request Method: POST")
+        logger.info(f"FedEx Get Tracking Request Headers: {json.dumps({k: v if k != 'Authorization' else 'Bearer ***' for k, v in headers.items()}, indent=2)}")
+        logger.info(f"FedEx Get Tracking Request Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await self._make_request_with_retry(
+                client, "POST", url, headers=headers, json=payload
+            )
+        
+        response_data = response.json()
+        logger.info(f"FedEx Get Tracking Response Status: {response.status_code}")
+        logger.info(f"FedEx Get Tracking Response JSON: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
+        
+        # Check for errors
+        self._check_fedex_errors(response_data, response.status_code)
+        
+        return response_data
+    
     def _get_base_url(self, use_sandbox: bool) -> str:
         """
         Get base URL based on environment
@@ -310,21 +386,31 @@ class FedexClient:
         """
         return self.base_url_sandbox if use_sandbox else self.base_url_prod
     
-    def _get_headers(self, access_token: str) -> Dict[str, str]:
+    def _get_headers(self, access_token: str, customer_transaction_id: Optional[str] = None, locale: str = "en_US") -> Dict[str, str]:
         """
         Generate HTTP headers for FedEx API requests
         
         Args:
             access_token: OAuth 2.0 access token
+            customer_transaction_id: Optional customer transaction ID for tracking requests
+            locale: Locale string (default: en_US)
             
         Returns:
             Headers dict
         """
-        return {
+        headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
+        
+        # Add optional headers for tracking API
+        if customer_transaction_id:
+            headers["x-customer-transaction-id"] = customer_transaction_id
+        
+        headers["x-locale"] = locale
+        
+        return headers
     
     def _check_fedex_errors(self, response_data: Dict[str, Any], status_code: int) -> None:
         """

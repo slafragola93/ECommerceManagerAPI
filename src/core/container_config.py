@@ -218,6 +218,22 @@ def configure_container():
     from src.services.ecommerce.shipments.dhl_client import DhlClient
     from src.services.ecommerce.shipments.dhl_mapper import DhlMapper
     
+    # BRT Shipment Services
+    from src.services.interfaces.brt_shipment_service_interface import IBrtShipmentService
+    from src.services.routers.brt_shipment_service import BrtShipmentService
+    from src.services.interfaces.brt_tracking_service_interface import IBrtTrackingService
+    from src.services.routers.brt_tracking_service import BrtTrackingService
+    from src.services.ecommerce.shipments.brt_client import BrtClient
+    from src.services.ecommerce.shipments.brt_mapper import BrtMapper
+
+    # FedEx Shipment Services
+    from src.services.interfaces.fedex_shipment_service_interface import IFedexShipmentService
+    from src.services.routers.fedex_shipment_service import FedexShipmentService
+    from src.services.interfaces.fedex_tracking_service_interface import IFedexTrackingService
+    from src.services.routers.fedex_tracking_service import FedexTrackingService
+    from src.services.ecommerce.shipments.fedex_client import FedexClient
+    from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
+    
     # Register DHL repositories
     container.register_transient(IShipmentDocumentRepository, ShipmentDocumentRepository)
     
@@ -226,32 +242,18 @@ def configure_container():
     container.register_transient(DhlMapper, DhlMapper)
     container.register_transient(IDhlShipmentService, DhlShipmentService)
     container.register_transient(IDhlTrackingService, DhlTrackingService)
-    
-    # BRT Shipment Services
-    from src.services.interfaces.brt_shipment_service_interface import IBrtShipmentService
-    from src.services.routers.brt_shipment_service import BrtShipmentService
-    from src.services.interfaces.brt_tracking_service_interface import IBrtTrackingService
-    from src.services.routers.brt_tracking_service import BrtTrackingService
-    from src.services.ecommerce.shipments.brt_client import BrtClient
-    from src.services.ecommerce.shipments.brt_mapper import BrtMapper
-    
+
     # Register BRT services (singleton for client, transient for others)
     container.register_singleton(BrtClient, BrtClient)
     container.register_transient(BrtMapper, BrtMapper)
     container.register_transient(IBrtShipmentService, BrtShipmentService)
     container.register_transient(IBrtTrackingService, BrtTrackingService)
     
-    # FedEx Shipment Services
-    from src.services.interfaces.fedex_shipment_service_interface import IFedexShipmentService
-    from src.services.routers.fedex_shipment_service import FedexShipmentService
-    from src.services.ecommerce.shipments.fedex_client import FedexClient
-    from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
-    
     # Register FedEx services (singleton for client, transient for others)
     container.register_singleton(FedexClient, FedexClient)
     container.register_transient(FedexMapper, FedexMapper)
     container.register_transient(IFedexShipmentService, FedexShipmentService)
-    # Note: FedEx tracking service will be added in Phase 2
+    container.register_transient(IFedexTrackingService, FedexTrackingService)
     
 
 def get_configured_container():

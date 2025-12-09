@@ -270,7 +270,6 @@ class InitService:
         """Ottiene gli API carrier attivi (solo id_carrier_api e name)"""
         try:
             result = self.api_carrier_repo.get_active_carriers_for_init()
-            print(f"[DEBUG] API carriers recuperati: {len(result)}")
             return result
         except Exception as e:
             print(f"[ERROR] Errore caricamento API carriers: {e}")

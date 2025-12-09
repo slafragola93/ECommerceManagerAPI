@@ -1681,16 +1681,18 @@ class PreventivoService:
             id_order_detail = articolo_item.id_order_detail
             try:
                 # Crea ArticoloPreventivoUpdateSchema dai dati dell'item (escludendo id_order_detail)
+                # Usa total_price_with_tax direttamente se fornito
                 articolo_data = ArticoloPreventivoUpdateSchema(
                     product_name=articolo_item.product_name,
                     product_reference=articolo_item.product_reference,
-                    product_price=articolo_item.product_price,
+                    total_price_with_tax=articolo_item.total_price_with_tax,
                     product_weight=articolo_item.product_weight,
                     product_qty=articolo_item.product_qty,
                     id_tax=articolo_item.id_tax,
                     reduction_percent=articolo_item.reduction_percent,
                     reduction_amount=articolo_item.reduction_amount,
                     rda=articolo_item.rda,
+                    rda_quantity=articolo_item.rda_quantity,
                     note=articolo_item.note
                 )
                 

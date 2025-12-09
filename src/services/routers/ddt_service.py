@@ -9,7 +9,16 @@ from src.schemas.ddt_schema import (
     DDTDetailSchema, 
     DDTPackageSchema, 
     DDTSenderSchema,
-    DDTGenerateResponseSchema
+    DDTGenerateResponseSchema,
+    DDTCreatePartialRequestSchema,
+    DDTCreatePartialItemSchema,
+    DDTCreatePartialResponseSchema,
+    DDTListResponseSchema,
+    DDTListItemSchema,
+    DDTCreateRequestSchema,
+    DDTCreateResponseSchema,
+    DDTMergeRequestSchema,
+    DDTMergeResponseSchema
 )
 from src.models.customer import Customer
 from src.models.address import Address
@@ -319,3 +328,242 @@ class DDTService:
             raise e
         except Exception as e:
             raise Exception(f"Errore durante l'eliminazione del dettaglio: {str(e)}")
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_ddt_created_data,
+        source="ddt_service.create_ddt_partial_from_order_detail"
+    )
+    def create_ddt_partial_from_order_detail(self, id_order_detail: int, quantity: int, user_id: int, user: dict = None) -> DDTCreatePartialResponseSchema:
+        """
+        Crea un DDT parziale a partire da un singolo articolo ordine
+        
+        Args:
+            id_order_detail: ID dell'articolo ordine
+            quantity: Quantità da includere nel DDT
+            user_id: ID dell'utente
+            user: Contesto utente per eventi
+            
+        Returns:
+            DDTCreatePartialResponseSchema: Risposta con DDT creato
+        """
+        try:
+            ddt = self.ddt_repo.create_ddt_partial_from_order_detail(id_order_detail, quantity, user_id)
+            
+            if not ddt:
+                return DDTCreatePartialResponseSchema(
+                    success=False,
+                    message="Articolo ordine non trovato"
+                )
+            
+            ddt_complete = self.get_ddt_complete(ddt.id_order_document)
+            
+            return DDTCreatePartialResponseSchema(
+                success=True,
+                message=f"DDT {ddt.document_number} creato con successo",
+                ddt=ddt_complete
+            )
+        except ValueError as e:
+            return DDTCreatePartialResponseSchema(
+                success=False,
+                message=str(e)
+            )
+        except Exception as e:
+            return DDTCreatePartialResponseSchema(
+                success=False,
+                message=f"Errore durante la creazione del DDT: {str(e)}"
+            )
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_ddt_created_data,
+        source="ddt_service.create_ddt_partial_from_order_details"
+    )
+    def create_ddt_partial_from_order_details(self, articoli_data: List[DDTCreatePartialItemSchema], user_id: int, user: dict = None) -> DDTCreatePartialResponseSchema:
+        """
+        Crea un DDT parziale a partire da più articoli ordine
+        
+        Args:
+            articoli_data: Lista di articoli con id_order_detail e quantity
+            user_id: ID dell'utente
+            user: Contesto utente per eventi
+            
+        Returns:
+            DDTCreatePartialResponseSchema: Risposta con DDT creato
+        """
+        try:
+            # Converti gli schemi in dizionari per il repository
+            articoli_dict = [{"id_order_detail": a.id_order_detail, "quantity": a.quantity} for a in articoli_data]
+            
+            ddt = self.ddt_repo.create_ddt_partial_from_order_details(articoli_dict, user_id)
+            
+            if not ddt:
+                return DDTCreatePartialResponseSchema(
+                    success=False,
+                    message="Articoli ordine non trovati"
+                )
+            
+            ddt_complete = self.get_ddt_complete(ddt.id_order_document)
+            
+            return DDTCreatePartialResponseSchema(
+                success=True,
+                message=f"DDT {ddt.document_number} creato con successo",
+                ddt=ddt_complete
+            )
+        except ValueError as e:
+            return DDTCreatePartialResponseSchema(
+                success=False,
+                message=str(e)
+            )
+        except Exception as e:
+            return DDTCreatePartialResponseSchema(
+                success=False,
+                message=f"Errore durante la creazione del DDT: {str(e)}"
+            )
+    
+    def get_ddt_list(self, skip: int = 0, limit: int = 100, search: Optional[str] = None,
+                     sectionals_ids: Optional[str] = None, payments_ids: Optional[str] = None,
+                     date_from: Optional[str] = None, date_to: Optional[str] = None) -> DDTListResponseSchema:
+        """
+        Recupera lista DDT essenziali con filtri
+        
+        Args:
+            skip: Offset paginazione
+            limit: Limite risultati
+            search: Ricerca testuale
+            sectionals_ids: ID sezionali
+            payments_ids: ID pagamenti
+            date_from: Data inizio
+            date_to: Data fine
+            
+        Returns:
+            DDTListResponseSchema: Lista DDT essenziali
+        """
+        ddt_list = self.ddt_repo.get_ddt_list(skip, limit, search, sectionals_ids, payments_ids, date_from, date_to)
+        total = self.ddt_repo.get_ddt_list_count(search, sectionals_ids, payments_ids, date_from, date_to)
+        
+        result_list = []
+        for ddt in ddt_list:
+            # Recupera customer essenziale
+            customer_data = None
+            if ddt.id_customer:
+                customer = self.db.query(Customer).filter(Customer.id_customer == ddt.id_customer).first()
+                if customer:
+                    customer_data = {
+                        "id_customer": customer.id_customer,
+                        "name": f"{customer.firstname} {customer.lastname}".strip()
+                    }
+            
+            # Recupera articoli essenziali
+            details = self.ddt_repo.get_ddt_details(ddt.id_order_document)
+            articoli = [
+                {
+                    "id_order_detail": d.id_order_detail,
+                    "product_name": d.product_name,
+                    "product_reference": d.product_reference,
+                    "product_qty": d.product_qty
+                } for d in details
+            ]
+            
+            result_list.append(DDTListItemSchema(
+                id_order_document=ddt.id_order_document,
+                document_number=ddt.document_number,
+                date_add=ddt.date_add,
+                customer=customer_data,
+                articoli=articoli
+            ))
+        
+        return DDTListResponseSchema(
+            ddt_list=result_list,
+            total=total,
+            page=(skip // limit) + 1,
+            limit=limit
+        )
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_CREATED,
+        data_extractor=extract_ddt_created_data,
+        source="ddt_service.create_ddt"
+    )
+    def create_ddt(self, data: DDTCreateRequestSchema, user_id: int, user: dict = None) -> DDTCreateResponseSchema:
+        """
+        Crea un DDT normale
+        
+        Args:
+            data: Dati DDT
+            user_id: ID utente
+            user: Contesto utente per eventi
+            
+        Returns:
+            DDTCreateResponseSchema: Risposta con DDT creato
+        """
+        try:
+            # Verifica che non esista già DDT con stesso document_number (se necessario)
+            # NOTA: Rimosso controllo stesso ordine per permettere più DDT per ordine
+            
+            ddt_data = data.model_dump(exclude_unset=True)
+            ddt = self.ddt_repo.create_ddt(ddt_data, user_id)
+            
+            if not ddt:
+                return DDTCreateResponseSchema(
+                    success=False,
+                    message="Errore durante la creazione del DDT"
+                )
+            
+            ddt_complete = self.get_ddt_complete(ddt.id_order_document)
+            
+            return DDTCreateResponseSchema(
+                success=True,
+                message=f"DDT {ddt.document_number} creato con successo",
+                ddt=ddt_complete
+            )
+        except Exception as e:
+            return DDTCreateResponseSchema(
+                success=False,
+                message=f"Errore durante la creazione del DDT: {str(e)}"
+            )
+    
+    @emit_event_on_success(
+        event_type=EventType.DOCUMENT_UPDATED,
+        data_extractor=extract_ddt_updated_data,
+        source="ddt_service.merge_articolo_to_ddt"
+    )
+    def merge_articolo_to_ddt(self, id_order_document: int, id_order_detail: int, quantity: int, user: dict = None) -> DDTMergeResponseSchema:
+        """
+        Accorpa un articolo a un DDT esistente
+        
+        Args:
+            id_order_document: ID DDT esistente
+            id_order_detail: ID articolo ordine
+            quantity: Quantità da aggiungere
+            user: Contesto utente per eventi
+            
+        Returns:
+            DDTMergeResponseSchema: Risposta con DDT aggiornato
+        """
+        try:
+            detail = self.ddt_repo.merge_articolo_to_ddt(id_order_document, id_order_detail, quantity)
+            
+            if not detail:
+                return DDTMergeResponseSchema(
+                    success=False,
+                    message="Errore durante l'accorpamento"
+                )
+            
+            ddt_complete = self.get_ddt_complete(id_order_document)
+            
+            return DDTMergeResponseSchema(
+                success=True,
+                message="Articolo accorpato con successo",
+                ddt=ddt_complete
+            )
+        except ValueError as e:
+            return DDTMergeResponseSchema(
+                success=False,
+                message=str(e)
+            )
+        except Exception as e:
+            return DDTMergeResponseSchema(
+                success=False,
+                message=f"Errore durante l'accorpamento: {str(e)}"
+            )

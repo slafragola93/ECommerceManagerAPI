@@ -86,6 +86,7 @@ class ArticoloPreventivoSchema(BaseModel):
     note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
     img_url: Optional[str] = None  # Image URL from product
     rda: Optional[str] = Field(None, max_length=10, description="RDA")
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
     
     @validator('product_name', 'product_reference', 'product_qty')
     def validate_fields_when_no_product(cls, v, values):
@@ -96,6 +97,14 @@ class ArticoloPreventivoSchema(BaseModel):
             # Per product_name e product_reference, controlla anche stringa vuota
             if isinstance(v, str) and not v.strip():
                 raise ValueError('I campi product_name, product_reference e product_qty sono obbligatori quando non viene specificato id_product')
+        return v
+    
+    @validator('rda_quantity')
+    def validate_rda_quantity(cls, v, values):
+        """Valida che rda_quantity non superi product_qty"""
+        if v is not None and 'product_qty' in values:
+            if v > values.get('product_qty', 0):
+                raise ValueError('rda_quantity non può superare product_qty')
         return v
     
     @validator('unit_price_with_tax', 'total_price_net', 'total_price_with_tax', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
@@ -203,6 +212,7 @@ class ArticoloPreventivoUpdateItemSchema(BaseModel):
     reduction_amount: Optional[float] = Field(None, ge=0)
     note: Optional[str] = Field(None, max_length=200)
     rda: Optional[str] = Field(None, max_length=10)
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
 
 
 class OrderPackageUpdateItemSchema(BaseModel):
@@ -249,13 +259,15 @@ class ArticoloPreventivoUpdateSchema(BaseModel):
     """Schema per modifica articolo in preventivo (OrderDetail)"""
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
-    product_price: Optional[float] = Field(None, ge=0)
+    unit_price_net: Optional[float] = Field(None, ge=0)  # Backward compatibility: alias per unit_price_net
+    total_price_with_tax: Optional[float] = Field(None, ge=0, description="Totale con IVA")
     product_weight: Optional[float] = Field(None, ge=0)
     product_qty: Optional[int] = Field(None, gt=0)  # Integer come nel modello
     id_tax: Optional[int] = Field(None, gt=0)
     reduction_percent: Optional[float] = Field(None, ge=0)  # Sconto percentuale
     reduction_amount: Optional[float] = Field(None, ge=0)  # Sconto importo
     rda: Optional[str] = Field(None, max_length=10)  # RDA
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
     note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
 
 
@@ -601,16 +613,46 @@ class BulkRemoveArticoliResponseSchema(BaseModel):
 class BulkUpdateArticoliItem(BaseModel):
     """Schema per singolo articolo da aggiornare in operazione bulk"""
     id_order_detail: int = Field(..., gt=0, description="ID dell'articolo da aggiornare")
+    id_product: Optional[int] = None  # Se articolo esistente
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
-    product_price: Optional[float] = Field(None, ge=0)
+    unit_price_with_tax: Optional[float] = Field(None, ge=0, description="Prezzo unitario con IVA (opzionale, calcolato se non fornito)")
+    total_price_net: Optional[float] = Field(None, ge=0, description="Totale imponibile senza IVA (opzionale, calcolato se non fornito)")
+    total_price_with_tax: Optional[float] = Field(None, ge=0, description="Totale con IVA (opzionale)")
     product_weight: Optional[float] = Field(None, ge=0)
-    product_qty: Optional[int] = Field(None, gt=0)
-    id_tax: Optional[int] = Field(None, gt=0)
-    reduction_percent: Optional[float] = Field(None, ge=0)
-    reduction_amount: Optional[float] = Field(None, ge=0)
-    rda: Optional[str] = Field(None, max_length=10)
+    product_qty: Optional[int] = Field(None, gt=0)  # Integer come nel modello
+    id_tax: Optional[int] = Field(None, gt=0)  # Opzionale per update
+    reduction_percent: Optional[float] = Field(None, ge=0)  # Sconto percentuale
+    reduction_amount: Optional[float] = Field(None, ge=0)  # Sconto importo
     note: Optional[str] = Field(None, max_length=200, description="Note per l'articolo")
+    img_url: Optional[str] = None  # Image URL from product
+    rda: Optional[str] = Field(None, max_length=10, description="RDA")
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
+    
+    @validator('product_name', 'product_reference', 'product_qty')
+    def validate_fields_when_no_product(cls, v, values):
+        """Valida che i campi siano presenti quando non c'è id_product"""
+        if not values.get('id_product'):
+            if v is None:
+                raise ValueError('I campi product_name, product_reference e product_qty sono obbligatori quando non viene specificato id_product')
+            # Per product_name e product_reference, controlla anche stringa vuota
+            if isinstance(v, str) and not v.strip():
+                raise ValueError('I campi product_name, product_reference e product_qty sono obbligatori quando non viene specificato id_product')
+        return v
+    
+    @validator('rda_quantity')
+    def validate_rda_quantity(cls, v, values):
+        """Valida che rda_quantity non superi product_qty"""
+        if v is not None and 'product_qty' in values:
+            if v > values.get('product_qty', 0):
+                raise ValueError('rda_quantity non può superare product_qty')
+        return v
+    
+    @validator('unit_price_with_tax', 'total_price_net', 'total_price_with_tax', 'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class BulkUpdateArticoliError(BaseModel):

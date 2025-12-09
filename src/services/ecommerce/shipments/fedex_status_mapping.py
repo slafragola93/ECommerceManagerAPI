@@ -6,6 +6,9 @@ For now, it's prepared for future use.
 """
 from typing import Dict, Optional
 
+# Default internal state id used when the FedEx status is unknown/not mapped
+DEFAULT_STATE_ID: int = 12  # Stato Sconosciuto
+
 # Mapping FedEx status descriptions to internal shipping state codes
 FEDEX_STATUS_MAPPING: Dict[str, int] = {
     # "Il tuo collo è in transito" → 5 (In Transito)

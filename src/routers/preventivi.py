@@ -854,11 +854,13 @@ async def bulk_update_articoli(
                 {
                     "id_order_detail": 101,
                     "product_qty": 5,
-                    "product_price": 25.50
+                    "unit_price_with_tax": 31.11,
+                    "id_tax": 9
                 },
                 {
                     "id_order_detail": 102,
-                    "reduction_percent": 10.0
+                    "reduction_percent": 10.0,
+                    "total_price_with_tax": 100.0
                 }
             ]
         },
@@ -868,7 +870,9 @@ async def bulk_update_articoli(
             "value": [
                 {
                     "id_order_detail": 101,
-                    "product_qty": 3
+                    "product_qty": 3,
+                    "total_price_net": 75.0,
+                    "id_tax": 9
                 }
             ]
         }

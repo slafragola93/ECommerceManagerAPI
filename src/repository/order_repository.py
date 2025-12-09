@@ -203,8 +203,6 @@ class OrderRepository(IOrderRepository):
         ))
 
     def create(self, data: OrderSchema):
-        logger.warning(f"[DEBUG] OrderRepository.create chiamato - inizio creazione ordine")
-        
         order = Order(
             **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional', 'order_details']))
 

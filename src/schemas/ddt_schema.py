@@ -109,3 +109,83 @@ class DDTGenerateResponseSchema(BaseModel):
     success: bool
     message: str
     ddt: Optional[DDTResponseSchema] = None
+
+
+class DDTCreatePartialItemSchema(BaseModel):
+    """Schema per singolo articolo in creazione DDT parziale"""
+    id_order_detail: int = Field(..., gt=0, description="ID dell'articolo ordine")
+    quantity: int = Field(..., gt=0, description="Quantità da includere nel DDT")
+
+
+class DDTCreatePartialRequestSchema(BaseModel):
+    """Schema per richiesta creazione DDT parziale da order_detail"""
+    articoli: List[DDTCreatePartialItemSchema] = Field(..., min_items=1, description="Lista di articoli da includere nel DDT")
+
+
+class DDTCreatePartialResponseSchema(BaseModel):
+    """Schema per risposta creazione DDT parziale"""
+    success: bool
+    message: str
+    ddt: Optional[DDTResponseSchema] = None
+
+
+class DDTListRequestSchema(BaseModel):
+    """Schema per filtri lista DDT"""
+    search: Optional[str] = None
+    sectionals_ids: Optional[str] = None
+    payments_ids: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    page: int = Field(1, ge=1)
+    limit: int = Field(100, ge=1, le=1000)
+
+
+class DDTListItemSchema(BaseModel):
+    """Schema per elemento lista DDT essenziale"""
+    id_order_document: int
+    document_number: int
+    date_add: Optional[datetime] = None
+    customer: Optional[dict] = None  # Solo id e nome
+    articoli: List[dict] = Field(default_factory=list)  # Lista essenziale articoli
+
+
+class DDTListResponseSchema(BaseModel):
+    """Schema per risposta lista DDT essenziali"""
+    ddt_list: List[DDTListItemSchema]
+    total: int
+    page: int
+    limit: int
+
+
+class DDTCreateRequestSchema(BaseModel):
+    """Schema per creazione DDT normale"""
+    id_order: Optional[int] = Field(None, gt=0, description="ID ordine collegato (opzionale)")
+    id_customer: Optional[int] = Field(None, gt=0)
+    id_address_delivery: Optional[int] = Field(None, gt=0)
+    id_address_invoice: Optional[int] = Field(None, gt=0)
+    id_sectional: Optional[int] = Field(None, gt=0)
+    id_shipping: Optional[int] = Field(None, gt=0)
+    id_payment: Optional[int] = Field(None, gt=0)
+    is_invoice_requested: Optional[bool] = False
+    note: Optional[str] = Field(None, max_length=200)
+
+
+class DDTCreateResponseSchema(BaseModel):
+    """Schema per risposta creazione DDT normale"""
+    success: bool
+    message: str
+    ddt: Optional[DDTResponseSchema] = None
+
+
+class DDTMergeRequestSchema(BaseModel):
+    """Schema per richiesta accorpamento articolo a DDT"""
+    id_order_document: int = Field(..., gt=0, description="ID DDT esistente")
+    id_order_detail: int = Field(..., gt=0, description="ID articolo ordine da aggiungere")
+    quantity: int = Field(..., gt=0, description="Quantità da aggiungere")
+
+
+class DDTMergeResponseSchema(BaseModel):
+    """Schema per risposta accorpamento DDT"""
+    success: bool
+    message: str
+    ddt: Optional[DDTResponseSchema] = None

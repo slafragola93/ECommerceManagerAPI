@@ -129,12 +129,14 @@ class CarrierServiceFactory:
             return service
             
         elif carrier.carrier_type == CarrierTypeEnum.FEDEX:
-            # Future implementation
-            raise BusinessRuleException(
-                f"FedEx tracking service not yet implemented",
-                ErrorCode.BUSINESS_RULE_VIOLATION,
-                {"carrier_type": carrier.carrier_type.value}
-            )
+            from src.services.interfaces.fedex_tracking_service_interface import IFedexTrackingService
+            service = self.container.resolve_with_session(IFedexTrackingService, db)
+            if not isinstance(service, ITrackingService):
+                raise BusinessRuleException(
+                    f"FedEx tracking service does not implement ITrackingService",
+                    ErrorCode.DATABASE_ERROR
+                )
+            return service
         else:
             raise BusinessRuleException(
                 f"Unsupported carrier type: {carrier.carrier_type}",

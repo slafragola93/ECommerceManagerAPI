@@ -59,7 +59,7 @@ class OrderDocumentService:
         Recupera la configurazione del mittente per DDT da AppConfiguration
         
         Returns:
-            Dict con i dati del mittente
+            Dict con i dati del mittente, incluso id_address se configurato
         """
         configs = self.db.query(AppConfiguration).filter(
             AppConfiguration.category == "ddt_sender"
@@ -68,6 +68,20 @@ class OrderDocumentService:
         sender_config = {}
         for config in configs:
             sender_config[config.name] = config.value
+        
+        # Recupera id_address default se configurato
+        default_address_config = self.db.query(AppConfiguration).filter(
+            and_(
+                AppConfiguration.category == "ddt_sender",
+                AppConfiguration.name == "default_sender_address_id"
+            )
+        ).first()
+        
+        if default_address_config and default_address_config.value:
+            try:
+                sender_config["default_sender_address_id"] = int(default_address_config.value)
+            except (ValueError, TypeError):
+                sender_config["default_sender_address_id"] = None
         
         return sender_config
 
@@ -477,6 +491,120 @@ class OrderDocumentService:
         
         # Aggiorna i campi forniti
         update_data = articolo_data.model_dump(exclude_unset=True)
+        
+        # Se viene passato total_price_with_tax, ricalcola i prezzi unitari (devono essere al pezzo singolo)
+        if 'total_price_with_tax' in update_data and update_data['total_price_with_tax'] is not None:
+            total_price_with_tax = float(update_data['total_price_with_tax'])
+            product_qty = update_data.get('product_qty', order_detail.product_qty) or 1
+            
+            # Calcola unit_price_with_tax (al pezzo singolo)
+            unit_price_with_tax = total_price_with_tax / product_qty
+            
+            # Recupera tax_percentage per calcolare unit_price_net
+            tax_percentage = 0.0
+            id_tax = update_data.get('id_tax', order_detail.id_tax)
+            if id_tax:
+                tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+                if tax and tax.percentage is not None:
+                    tax_percentage = float(tax.percentage)
+            
+            # Calcola unit_price_net (al pezzo singolo)
+            unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+            
+            # Calcola total_price_net
+            total_price_net = unit_price_net * product_qty
+            
+            # Applica sconti se presenti
+            reduction_percent = update_data.get('reduction_percent', order_detail.reduction_percent) or 0.0
+            reduction_amount = update_data.get('reduction_amount', order_detail.reduction_amount) or 0.0
+            
+            if reduction_percent > 0:
+                discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
+                total_price_net = total_price_net - discount
+                # Ricalcola total_price_with_tax dopo lo sconto
+                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+                # Ricalcola unit_price_with_tax dopo lo sconto
+                unit_price_with_tax = total_price_with_tax / product_qty
+                unit_price_net = total_price_net / product_qty
+            elif reduction_amount > 0:
+                total_price_net = total_price_net - reduction_amount
+                # Ricalcola total_price_with_tax dopo lo sconto
+                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+                # Ricalcola unit_price_with_tax dopo lo sconto
+                unit_price_with_tax = total_price_with_tax / product_qty
+                unit_price_net = total_price_net / product_qty
+            
+            # Aggiorna i prezzi calcolati
+            order_detail.unit_price_net = unit_price_net
+            order_detail.unit_price_with_tax = unit_price_with_tax
+            order_detail.total_price_net = total_price_net
+            order_detail.total_price_with_tax = total_price_with_tax
+            # Rimuovi total_price_with_tax da update_data per evitare sovrascrittura
+            update_data.pop('total_price_with_tax', None)
+        
+        # Se viene passato unit_price_net o unit_price_with_tax, assicurati che siano al pezzo singolo
+        # e ricalcola i totali
+        if 'unit_price_net' in update_data or 'unit_price_with_tax' in update_data:
+            unit_price_net = float(update_data.get('unit_price_net', order_detail.unit_price_net)) if update_data.get('unit_price_net') is not None else float(order_detail.unit_price_net or 0.0)
+            unit_price_with_tax = float(update_data.get('unit_price_with_tax', order_detail.unit_price_with_tax)) if update_data.get('unit_price_with_tax') is not None else float(order_detail.unit_price_with_tax or 0.0)
+            product_qty = update_data.get('product_qty', order_detail.product_qty) or 1
+            
+            # Se manca uno dei due, calcolalo
+            if unit_price_net == 0.0 and unit_price_with_tax > 0.0:
+                tax_percentage = 0.0
+                id_tax = update_data.get('id_tax', order_detail.id_tax)
+                if id_tax:
+                    tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+                    if tax and tax.percentage is not None:
+                        tax_percentage = float(tax.percentage)
+                unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+            elif unit_price_with_tax == 0.0 and unit_price_net > 0.0:
+                tax_percentage = 0.0
+                id_tax = update_data.get('id_tax', order_detail.id_tax)
+                if id_tax:
+                    tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+                    if tax and tax.percentage is not None:
+                        tax_percentage = float(tax.percentage)
+                unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
+            
+            # Calcola totali (prezzi unitari * quantità)
+            total_price_net = unit_price_net * product_qty
+            total_price_with_tax = unit_price_with_tax * product_qty
+            
+            # Applica sconti
+            reduction_percent = update_data.get('reduction_percent', order_detail.reduction_percent) or 0.0
+            reduction_amount = update_data.get('reduction_amount', order_detail.reduction_amount) or 0.0
+            
+            if reduction_percent > 0:
+                discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
+                total_price_net = total_price_net - discount
+                tax_percentage = 0.0
+                id_tax = update_data.get('id_tax', order_detail.id_tax)
+                if id_tax:
+                    tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+                    if tax and tax.percentage is not None:
+                        tax_percentage = float(tax.percentage)
+                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+            elif reduction_amount > 0:
+                total_price_net = total_price_net - reduction_amount
+                tax_percentage = 0.0
+                id_tax = update_data.get('id_tax', order_detail.id_tax)
+                if id_tax:
+                    tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+                    if tax and tax.percentage is not None:
+                        tax_percentage = float(tax.percentage)
+                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+            
+            # Aggiorna i prezzi
+            order_detail.unit_price_net = unit_price_net
+            order_detail.unit_price_with_tax = unit_price_with_tax
+            order_detail.total_price_net = total_price_net
+            order_detail.total_price_with_tax = total_price_with_tax
+            # Rimuovi da update_data per evitare sovrascrittura
+            update_data.pop('unit_price_net', None)
+            update_data.pop('unit_price_with_tax', None)
+        
+        # Aggiorna gli altri campi
         for key, value in update_data.items():
             if hasattr(order_detail, key) and value is not None:
                 setattr(order_detail, key, value)
