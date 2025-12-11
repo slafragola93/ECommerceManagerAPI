@@ -110,9 +110,19 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
         Returns:
             Dictionary formattato per la risposta API
         """
-        # Fallback image se non fornita
+        # Recupera img_url dal prodotto se non fornita
         if img_url is None:
-            img_url = "media/product_images/fallback/product_not_found.jpg"
+            if order_detail.id_product:
+                from src.models.product import Product
+                product = self._session.query(Product.id_product, Product.img_url).filter(
+                    Product.id_product == order_detail.id_product
+                ).first()
+                if product and product.img_url:
+                    img_url = product.img_url
+                else:
+                    img_url = "media/product_images/fallback/product_not_found.jpg"
+            else:
+                img_url = "media/product_images/fallback/product_not_found.jpg"
         
         return {
             "id_order_detail": order_detail.id_order_detail,
@@ -131,9 +141,10 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
             "product_weight": order_detail.product_weight,
             "reduction_percent": order_detail.reduction_percent,
             "reduction_amount": order_detail.reduction_amount,
-            "img_url": img_url,
-            # Backward compatibility
-            "product_price": order_detail.unit_price_net
+            "rda": order_detail.rda,
+            "rda_quantity": order_detail.rda_quantity,
+            "note": order_detail.note,
+            "img_url": img_url
         }
     
     def bulk_create_csv_import(self, data_list: List[OrderDetailSchema], batch_size: int = 1000) -> int:

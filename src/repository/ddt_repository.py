@@ -102,7 +102,14 @@ class DDTRepository:
             )
             self.db.add(new_detail)
         
+        # Ricalcola totali DDT (peso e prezzi)
+        self.order_doc_service.update_document_totals(new_ddt.id_order_document, "DDT")
+        
         self.db.commit()
+        
+        # Refresh del DDT per assicurarsi che total_weight e altri totali siano aggiornati
+        self.db.refresh(new_ddt)
+        
         return new_ddt
     
     def get_ddt_by_id(self, id_order_document: int) -> Optional[OrderDocument]:
@@ -327,6 +334,10 @@ class DDTRepository:
         self.order_doc_service.update_document_totals(new_ddt.id_order_document, "DDT")
         
         self.db.commit()
+        
+        # Refresh del DDT per assicurarsi che total_weight e altri totali siano aggiornati
+        self.db.refresh(new_ddt)
+        
         return new_ddt
     
     def create_ddt_partial_from_order_details(self, articoli_data: List[dict], user_id: int) -> Optional[OrderDocument]:
@@ -476,6 +487,10 @@ class DDTRepository:
         self.order_doc_service.update_document_totals(new_ddt.id_order_document, "DDT")
         
         self.db.commit()
+        
+        # Refresh del DDT per assicurarsi che total_weight e altri totali siano aggiornati
+        self.db.refresh(new_ddt)
+        
         return new_ddt
     
     def create_ddt(self, data: dict, user_id: int) -> Optional[OrderDocument]:
@@ -514,7 +529,14 @@ class DDTRepository:
         self.db.add(new_ddt)
         self.db.flush()
         
+        # Ricalcola totali DDT (se ci sono articoli)
+        self.order_doc_service.update_document_totals(new_ddt.id_order_document, "DDT")
+        
         self.db.commit()
+        
+        # Refresh del DDT per assicurarsi che total_weight e altri totali siano aggiornati
+        self.db.refresh(new_ddt)
+        
         return new_ddt
     
     def get_ddt_list(self, skip: int = 0, limit: int = 100, search: Optional[str] = None,

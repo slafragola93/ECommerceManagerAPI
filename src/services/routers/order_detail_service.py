@@ -255,7 +255,7 @@ class OrderDetailService(IOrderDetailService):
         
         # Recupera img_url del prodotto usando ProductService (DIP)
         if order_detail.id_product:
-            images_map = self._product_service.get_product_images_map([order_detail.id_product], self._db)
+            images_map = self._product_service.get_product_images_map([order_detail.id_product])
             img_url = images_map.get(order_detail.id_product)
         else:
             img_url = None
@@ -288,7 +288,7 @@ class OrderDetailService(IOrderDetailService):
             # PERFORMANCE OPTIMIZATION: Recupera tutte le immagini in batch (1 query invece di N)
             # Usa ProductService per gestire le immagini (DIP - Dependency Inversion)
             product_ids = [od.id_product for od in order_details if od.id_product]
-            images_map = self._product_service.get_product_images_map(product_ids, self._db)
+            images_map = self._product_service.get_product_images_map(product_ids)
             
             # Formatta output con img_url
             return [
@@ -344,7 +344,7 @@ class OrderDetailService(IOrderDetailService):
             
             # PERFORMANCE: Batch recupero immagini
             product_ids = [od.id_product for od in order_details if od.id_product]
-            images_map = self._product_service.get_product_images_map(product_ids, self._db)
+            images_map = self._product_service.get_product_images_map(product_ids)
             
             return [
                 self._order_detail_repository.formatted_output(od, img_url=images_map.get(od.id_product))
@@ -367,7 +367,7 @@ class OrderDetailService(IOrderDetailService):
             
             # PERFORMANCE: Batch recupero immagini usando ProductService
             product_ids = [od.id_product for od in order_details if od.id_product]
-            images_map = self._product_service.get_product_images_map(product_ids, self._db)
+            images_map = self._product_service.get_product_images_map(product_ids)
             
             return [
                 self._order_detail_repository.formatted_output(od, img_url=images_map.get(od.id_product))

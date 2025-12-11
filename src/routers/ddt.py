@@ -43,18 +43,106 @@ db_dependency = Depends(get_db)
 @check_authentication
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
 async def create_ddt_partial(
-    request: DDTCreatePartialRequestSchema = Body(...),
+    request: DDTCreatePartialRequestSchema = Body(..., examples={
+        "esempio_base": {
+            "summary": "Crea DDT parziale con 2 articoli",
+            "description": "Esempio base di creazione DDT parziale con due articoli ordine",
+            "value": {
+                "articoli": [
+                    {
+                        "id_order_detail": 1,
+                        "quantity": 1
+                    },
+                    {
+                        "id_order_detail": 2,
+                        "quantity": 1
+                    }
+                ]
+            }
+        },
+        "esempio_singolo_articolo": {
+            "summary": "Crea DDT parziale con un solo articolo",
+            "description": "Esempio di creazione DDT parziale con un singolo articolo ordine",
+            "value": {
+                "articoli": [
+                    {
+                        "id_order_detail": 5,
+                        "quantity": 3
+                    }
+                ]
+            }
+        },
+        "esempio_multipli_articoli": {
+            "summary": "Crea DDT parziale con più articoli",
+            "description": "Esempio di creazione DDT parziale con più articoli ordine e quantità diverse",
+            "value": {
+                "articoli": [
+                    {
+                        "id_order_detail": 10,
+                        "quantity": 2
+                    },
+                    {
+                        "id_order_detail": 15,
+                        "quantity": 5
+                    },
+                    {
+                        "id_order_detail": 20,
+                        "quantity": 1
+                    }
+                ]
+            }
+        }
+    }),
     user: dict = user_dependency,
     db: Session = db_dependency
 ):
     """
     Crea un DDT parziale da uno o più articoli ordine.
     
+    **Formato Richiesta:**
+    Il body deve essere un oggetto JSON con il campo `articoli` che contiene un array di articoli.
+    Ogni articolo deve avere:
+    - `id_order_detail` (int, obbligatorio): ID dell'articolo ordine
+    - `quantity` (int, obbligatorio): Quantità da includere nel DDT
+    
+    **Esempio JSON corretto:**
+    ```json
+    {
+      "articoli": [
+        {
+          "id_order_detail": 1,
+          "quantity": 1
+        },
+        {
+          "id_order_detail": 2,
+          "quantity": 1
+        }
+      ]
+    }
+    ```
+    
     **Comportamento:**
-    - Recupera gli articoli ordine originali
-    - Per ogni articolo: se presente rda_quantity, usa quella come quantità, altrimenti usa quantity passata
-    - Crea nuovo DDT con mittente da AppConfiguration
+    - Recupera gli articoli ordine originali dal database
+    - Per ogni articolo: se presente `rda_quantity` nell'ordine originale, usa quella come quantità, altrimenti usa `quantity` passata nella richiesta
+    - Crea nuovo DDT con mittente da AppConfiguration (se configurato)
     - Include tutti gli articoli specificati con le quantità indicate
+    - Ricalcola automaticamente i totali del DDT (peso, prezzo con IVA, ecc.)
+    - Copia tutti i dati dell'ordine originale (cliente, indirizzi, spedizione, ecc.)
+    
+    **Validazioni:**
+    - La quantità richiesta non può superare la quantità disponibile nell'ordine originale
+    - Se presente `rda_quantity`, viene verificato che non superi `product_qty`
+    - Tutti gli `id_order_detail` devono esistere e appartenere a ordini validi
+    
+    **Risposta:**
+    - `success` (bool): Indica se l'operazione è riuscita
+    - `message` (str): Messaggio descrittivo del risultato
+    - `ddt` (DDTResponseSchema, opzionale): Dettagli completi del DDT creato (se success=True)
+    
+    **Note:**
+    - Il DDT creato è collegato all'ordine originale tramite `id_order`
+    - I prezzi unitari (`unit_price_net`, `unit_price_with_tax`) sono sempre al pezzo singolo
+    - I totali vengono calcolati automaticamente moltiplicando i prezzi unitari per la quantità
     """
     service = get_ddt_service(db)
     result = service.create_ddt_partial_from_order_details(

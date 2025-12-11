@@ -270,41 +270,18 @@ class ProductService(IProductService):
         except Exception as e:
             raise ValidationException(f"Errore nel conteggio dei prodotti: {str(e)}")
     
-    def get_product_images_map(self, product_ids: List[int], db: Session) -> Dict[int, str]:
+    def get_product_images_map(self, product_ids: List[int]) -> Dict[int, str]:
         """
         Recupera img_url per una lista di product_ids in batch (performance optimization).
         Segue SRP: responsabilità singola del Product Service di gestire tutto ciò che riguarda i prodotti.
         
         Args:
             product_ids: Lista di ID prodotti
-            db: Session del database
             
         Returns:
             Dictionary {id_product: img_url}, con fallback se img_url è None
         """
-        try:
-            if not product_ids:
-                return {}
-            
-            # Query ottimizzata: seleziona solo i campi necessari
-            products = db.query(Product.id_product, Product.img_url).filter(
-                Product.id_product.in_(product_ids)
-            ).all()
-            
-            # Fallback image URL
-            fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
-            
-            # Crea mapping con fallback per img_url mancanti
-            return {
-                product.id_product: product.img_url if product.img_url else fallback_img_url
-                for product in products
-            }
-        except Exception as e:
-            raise InfrastructureException(
-                f"Errore nel recupero delle immagini dei prodotti: {str(e)}",
-                ErrorCode.DATABASE_ERROR,
-                {"product_ids": product_ids}
-            )
+        return self._product_repository.get_products_images_map(product_ids)
     
     async def get_live_price(self, id_origin: int) -> Optional[float]:
         """

@@ -10,10 +10,13 @@ from sqlalchemy.orm import Session
 from starlette import status
 
 from src.database import get_db
+from src.repository.order_detail_repository import OrderDetailRepository
+from src.repository.product_repository import ProductRepository
 from src.routers.dependencies import get_fiscal_document_service
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.services.routers.auth_service import authorize, get_current_user
+from src.services.routers.product_service import ProductService
 
 from .. import OrderSchema
 from ..repository.order_repository import OrderRepository
@@ -27,6 +30,7 @@ from ..schemas.order_schema import (
 from src.services.routers.order_service import OrderService
 from src.services.interfaces.order_service_interface import IOrderService
 from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
+from ..schemas.order_detail_schema import OrderDetailCreateSchema, OrderDetailUpdateSchema, OrderDetailResponseSchema
 from ..schemas.return_schema import (
     AllReturnsResponseSchema,
     ReturnCreateSchema,
@@ -51,10 +55,19 @@ def get_repository(db: Session = Depends(get_db)) -> OrderRepository:
     return OrderRepository(db)
 
 
+def get_order_detail_repository(db: Session = Depends(get_db)) -> OrderDetailRepository:
+    """Dependency injection per Order Detail Repository."""
+    return OrderDetailRepository(db)
+
 def get_order_service(db: Session = Depends(get_db)) -> IOrderService:
     """Dependency injection per Order Service."""
     order_repo = OrderRepository(db)
     return OrderService(order_repo)
+
+def get_product_service(db: Session = Depends(get_db)) -> ProductService:
+    """Dependency injection per Product Service."""
+    product_repo = ProductRepository(db)
+    return ProductService(product_repo)
 
 @router.get("/", 
            status_code=status.HTTP_200_OK,
@@ -593,3 +606,137 @@ async def get_all_returns(
         page=page,
         limit=limit
     )
+
+
+# ==================== ENDPOINT PER ORDER DETAIL ====================
+
+@router.post("/{order_id}/order_detail", 
+            status_code=status.HTTP_201_CREATED,
+            response_model=OrderDetailResponseSchema,
+            summary="Aggiungi articolo all'ordine",
+            description="Aggiunge un nuovo articolo all'ordine. I totali vengono ricalcolati automaticamente.",
+            response_description="Articolo aggiunto con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
+async def add_order_detail(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine"),
+    order_detail_data: OrderDetailCreateSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service),
+    product_service: ProductService = Depends(get_product_service),
+    order_detail_repo: OrderDetailRepository = Depends(get_order_detail_repository)
+):
+    """
+    Aggiunge un nuovo articolo all'ordine.
+    
+    **Campi obbligatori:**
+    - `id_tax`: ID aliquota IVA
+    - `product_name`: Nome prodotto
+    - `product_qty`: Quantità
+    - `product_weight`: Peso prodotto
+    - `unit_price_with_tax`: Prezzo unitario con IVA
+    - `total_price_with_tax`: Totale con IVA
+    
+    **Calcoli automatici:**
+    - `unit_price_net` e `total_price_net` vengono calcolati automaticamente da `unit_price_with_tax` e `total_price_with_tax` usando la percentuale IVA di `id_tax`
+    
+    **Ricalcoli automatici:**
+    - `order.total_weight`
+    - `order.total_price_net`
+    - `order.total_price_with_tax`
+    - `order.products_total_price_net`
+    - `order.products_total_price_with_tax`
+    - `shipping.weight`
+    """
+    order_detail = await order_service.add_order_detail(order_id, order_detail_data)
+    
+    # Recupera img_url se id_product è presente
+    img_url = None
+    if order_detail.id_product:
+        images_map = product_service.get_product_images_map([order_detail.id_product])
+        img_url = images_map.get(order_detail.id_product)
+    
+    # Formatta la risposta
+    return order_detail_repo.formatted_output(order_detail, img_url=img_url)
+
+
+@router.put("/{order_id}/order_detail/{id_order_detail}", 
+           status_code=status.HTTP_200_OK,
+           response_model=OrderDetailResponseSchema,
+           summary="Modifica articolo ordine",
+           description="Modifica un articolo esistente nell'ordine. Solo i campi forniti vengono aggiornati. I totali vengono ricalcolati automaticamente se necessario.",
+           response_description="Articolo aggiornato con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
+async def update_order_detail(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine"),
+    id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
+    order_detail_data: OrderDetailUpdateSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service),
+    product_service: ProductService = Depends(get_product_service),
+    order_detail_repo: OrderDetailRepository = Depends(get_order_detail_repository)
+):
+    """
+    Modifica un articolo esistente nell'ordine.
+    
+    **Aggiornamenti parziali:**
+    - Solo i campi forniti nel JSON vengono aggiornati
+    - Tutti i campi sono opzionali
+    
+    **Ricalcolo automatico:**
+    I totali dell'ordine vengono ricalcolati se vengono modificati:
+    - `id_tax`, `product_qty`, `product_weight`
+    - `unit_price_net`, `unit_price_with_tax`
+    - `reduction_percent`, `reduction_amount`
+    - `total_price_net`, `total_price_with_tax`
+    
+    **Calcolo prezzi netti:**
+    Se `unit_price_with_tax` o `total_price_with_tax` vengono forniti senza i corrispondenti valori netti,
+    questi vengono calcolati automaticamente usando la percentuale IVA di `id_tax`.
+    
+    **Aggiornamento peso spedizione:**
+    Il peso della spedizione viene aggiornato automaticamente se viene modificato `product_weight` o `product_qty`.
+    """
+    order_detail = await order_service.update_order_detail(order_id, id_order_detail, order_detail_data)
+    
+    # Recupera img_url se id_product è presente
+    img_url = None
+    if order_detail.id_product:
+        images_map = product_service.get_product_images_map([order_detail.id_product])
+        img_url = images_map.get(order_detail.id_product)
+    
+    # Formatta la risposta
+    return order_detail_repo.formatted_output(order_detail, img_url=img_url)
+
+
+@router.delete("/{order_id}/order_detail/{id_order_detail}", 
+              status_code=status.HTTP_200_OK,
+              summary="Rimuovi articolo ordine",
+              description="Rimuove un articolo dall'ordine. I totali vengono ricalcolati automaticamente.",
+              response_description="Articolo rimosso con successo")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
+async def remove_order_detail(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine"),
+    id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service)
+):
+    """
+    Rimuove un articolo dall'ordine.
+    
+    **Ricalcoli automatici:**
+    - `order.total_weight`
+    - `order.total_price_net`
+    - `order.total_price_with_tax`
+    - `order.products_total_price_net`
+    - `order.products_total_price_with_tax`
+    - `shipping.weight`
+    """
+    success = await order_service.remove_order_detail(order_id, id_order_detail)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Errore durante la rimozione dell'articolo")
+    
+    return {"message": "Articolo rimosso con successo", "order_id": order_id, "id_order_detail": id_order_detail}

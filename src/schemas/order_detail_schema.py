@@ -57,6 +57,7 @@ class OrderDetailResponseSchema(BaseModel):
     product_weight: float
     reduction_percent: float
     reduction_amount: float
+    rda: Optional[str] = None
     rda_quantity: Optional[int] = None
     note: Optional[str] = None
     img_url: Optional[str] = None  
@@ -83,6 +84,72 @@ class AllOrderDetailsResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class OrderDetailUpdateSchema(BaseModel):
+    """Schema per modifica parziale order_detail - tutti i campi opzionali"""
+    product_name: Optional[str] = Field(None, max_length=100)
+    product_reference: Optional[str] = Field(None, max_length=100)
+    product_qty: Optional[int] = Field(None, gt=0)
+    product_weight: Optional[float] = Field(None, ge=0)
+    id_tax: Optional[int] = Field(None, gt=0)
+    unit_price_net: Optional[float] = Field(None, ge=0, description="Prezzo unitario senza IVA")
+    unit_price_with_tax: Optional[float] = Field(None, ge=0, description="Prezzo unitario con IVA")
+    total_price_net: Optional[float] = Field(None, ge=0, description="Totale senza IVA")
+    total_price_with_tax: Optional[float] = Field(None, ge=0, description="Totale con IVA")
+    reduction_percent: Optional[float] = Field(None, ge=0)
+    reduction_amount: Optional[float] = Field(None, ge=0)
+    rda: Optional[str] = Field(None, max_length=10)
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
+    note: Optional[str] = Field(None, max_length=200)
+    
+    @validator('rda_quantity')
+    def validate_rda_quantity(cls, v, values):
+        """Valida che rda_quantity non superi product_qty"""
+        if v is not None and 'product_qty' in values:
+            product_qty = values.get('product_qty')
+            if product_qty is not None and v > product_qty:
+                raise ValueError('rda_quantity non può superare product_qty')
+        return v
+    
+    @validator('unit_price_net', 'unit_price_with_tax', 'total_price_net', 'total_price_with_tax', 
+               'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
+
+class OrderDetailCreateSchema(BaseModel):
+    """Schema per creazione order_detail - campi obbligatori specifici"""
+    id_product: Optional[int] = Field(None, ge=0)
+    id_tax: int = Field(..., gt=0, description="ID aliquota IVA (obbligatorio)")
+    product_name: str = Field(..., max_length=100, description="Nome prodotto (obbligatorio)")
+    product_qty: int = Field(..., gt=0, description="Quantità (obbligatorio)")
+    product_weight: float = Field(..., ge=0, description="Peso prodotto (obbligatorio)")
+    unit_price_with_tax: float = Field(..., ge=0, description="Prezzo unitario con IVA (obbligatorio)")
+    total_price_with_tax: float = Field(..., ge=0, description="Totale con IVA (obbligatorio)")
+    product_reference: Optional[str] = Field(None, max_length=100)
+    reduction_percent: Optional[float] = Field(0.0, ge=0)
+    reduction_amount: Optional[float] = Field(0.0, ge=0)
+    rda: Optional[str] = Field(None, max_length=10)
+    rda_quantity: Optional[int] = Field(None, ge=0, description="Quantità da restituire")
+    note: Optional[str] = Field(None, max_length=200)
+    
+    @validator('rda_quantity')
+    def validate_rda_quantity(cls, v, values):
+        """Valida che rda_quantity non superi product_qty"""
+        if v is not None and 'product_qty' in values:
+            if v > values.get('product_qty', 0):
+                raise ValueError('rda_quantity non può superare product_qty')
+        return v
+    
+    @validator('unit_price_with_tax', 'total_price_with_tax', 'product_weight', 
+               'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 class ConfigDict:

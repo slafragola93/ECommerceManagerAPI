@@ -22,7 +22,10 @@ from src.schemas.order_schema import (
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
 from src.events.extractors import extract_order_created_data
-from src.services.core.tool import calculate_order_totals
+from src.services.core.tool import calculate_order_totals, calculate_price_without_tax,calculate_amount_with_percentage
+from src.repository.tax_repository import TaxRepository
+from src.services.routers.order_document_service import OrderDocumentService
+from src.schemas.order_detail_schema import OrderDetailCreateSchema, OrderDetailUpdateSchema
 import logging
 
 from src.models.order_document import OrderDocument
@@ -341,7 +344,8 @@ class OrderService(IOrderService):
             float(od.total_price_net) if hasattr(od, 'total_price_net') and od.total_price_net is not None else 0.0
             for od in order_details
         )
-        order.total_price_net = total_price_net - discount if discount > 0 else total_price_net
+        # Aggiungi il costo della spedizione senza IVA
+        order.total_price_net = total_price_net + shipping_cost_excl - discount
         
         # Calcola products_total_price_net e products_total_price_with_tax per Order
         # Solo OrderDetail collegati direttamente all'Order (id_order_document IS NULL o = 0)
@@ -363,6 +367,271 @@ class OrderService(IOrderService):
         order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
 
         session.commit()
+    
+    async def add_order_detail(self, order_id: int, order_detail_data: OrderDetailCreateSchema) -> OrderDetail:
+        """
+        Aggiunge un nuovo order_detail all'ordine.
+        
+        Calcola automaticamente unit_price_net e total_price_net da unit_price_with_tax e total_price_with_tax
+        usando la percentuale IVA di id_tax. Ricalcola i totali dell'ordine e aggiorna il peso della spedizione.
+        
+        Args:
+            order_id: ID dell'ordine
+            order_detail_data: Dati del nuovo order_detail
+            
+        Returns:
+            OrderDetail creato
+        """
+        # Verifica che l'ordine esista
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise ValueError(f"Ordine {order_id} non trovato")
+        
+        session = self._order_repository.session
+        
+        # Recupera la percentuale IVA
+        tax_repo = TaxRepository(session)
+        tax_percentage = tax_repo.get_percentage_by_id(order_detail_data.id_tax)
+        
+        # Calcola unit_price_net da unit_price_with_tax
+        unit_price_net = calculate_price_without_tax(order_detail_data.unit_price_with_tax, tax_percentage)
+        
+        # Calcola total_price_net_base da total_price_with_tax (assumendo che total_price_with_tax sia già il totale finale)
+        total_price_net_base = calculate_price_without_tax(order_detail_data.total_price_with_tax, tax_percentage)
+        
+        # Applica sconti se presenti (gli sconti vengono applicati al totale netto)
+        total_price_net = total_price_net_base
+        if order_detail_data.reduction_percent and order_detail_data.reduction_percent > 0:
+            discount = calculate_amount_with_percentage(total_price_net_base, order_detail_data.reduction_percent)
+            total_price_net = total_price_net_base - discount
+        elif order_detail_data.reduction_amount and order_detail_data.reduction_amount > 0:
+            total_price_net = total_price_net_base - order_detail_data.reduction_amount
+        
+        # Ricalcola total_price_with_tax dal total_price_net finale (dopo sconti)
+        from src.services.core.tool import calculate_price_with_tax
+        total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+        
+        # Crea l'order_detail
+        order_detail = OrderDetail(
+            id_order=order_id,
+            id_order_document=0,
+            id_origin=0,
+            id_tax=order_detail_data.id_tax,
+            id_product=order_detail_data.id_product,
+            product_name=order_detail_data.product_name,
+            product_reference=order_detail_data.product_reference or "",
+            product_qty=order_detail_data.product_qty,
+            unit_price_net=unit_price_net,
+            unit_price_with_tax=order_detail_data.unit_price_with_tax,
+            total_price_net=total_price_net,
+            total_price_with_tax=total_price_with_tax,
+            product_weight=order_detail_data.product_weight,
+            reduction_percent=order_detail_data.reduction_percent or 0.0,
+            reduction_amount=order_detail_data.reduction_amount or 0.0,
+            rda=order_detail_data.rda,
+            rda_quantity=order_detail_data.rda_quantity,
+            note=order_detail_data.note
+        )
+        
+        session.add(order_detail)
+        session.commit()
+        session.refresh(order_detail)
+        
+        # Ricalcola i totali dell'ordine
+        self.recalculate_totals_for_order(order_id)
+        
+        # Aggiorna il peso della spedizione
+        order_doc_service = OrderDocumentService(session)
+        order_doc_service.update_shipping_weight_from_articles(id_order=order_id, check_order_state=True)
+        
+        return order_detail
+    
+    async def update_order_detail(
+        self, 
+        order_id: int, 
+        order_detail_id: int, 
+        order_detail_data: OrderDetailUpdateSchema
+    ) -> OrderDetail:
+        """
+        Aggiorna un order_detail esistente con aggiornamenti parziali.
+        
+        Ricalcola i totali dell'ordine se vengono modificati campi tracciati:
+        id_tax, product_qty, product_weight, unit_price_net, unit_price_with_tax,
+        reduction_percent, reduction_amount, total_price_net, total_price_with_tax.
+        
+        Aggiorna il peso della spedizione se viene modificato product_weight o product_qty.
+        
+        Args:
+            order_id: ID dell'ordine
+            order_detail_id: ID dell'order_detail da aggiornare
+            order_detail_data: Dati aggiornati (solo campi da modificare)
+            
+        Returns:
+            OrderDetail aggiornato
+        """
+        # Verifica che l'ordine esista
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise ValueError(f"Ordine {order_id} non trovato")
+        
+        session = self._order_repository.session
+        
+        # Verifica che l'order_detail esista e appartenga all'ordine
+        order_detail = session.query(OrderDetail).filter(
+            OrderDetail.id_order_detail == order_detail_id,
+            OrderDetail.id_order == order_id
+        ).first()
+        
+        if not order_detail:
+            raise ValueError(f"OrderDetail {order_detail_id} non trovato per l'ordine {order_id}")
+        
+        # Salva i valori precedenti per verificare se serve ricalcolare
+        previous_values = {
+            "id_tax": order_detail.id_tax,
+            "product_qty": order_detail.product_qty,
+            "product_weight": order_detail.product_weight,
+            "unit_price_net": order_detail.unit_price_net,
+            "unit_price_with_tax": order_detail.unit_price_with_tax,
+            "reduction_percent": order_detail.reduction_percent,
+            "reduction_amount": order_detail.reduction_amount,
+            "total_price_net": order_detail.total_price_net,
+            "total_price_with_tax": order_detail.total_price_with_tax,
+        }
+        
+        # Prepara i dati da aggiornare (solo campi forniti)
+        update_data = order_detail_data.model_dump(exclude_unset=True)
+        
+        # Se viene modificato id_tax, unit_price_with_tax o total_price_with_tax, 
+        # calcola i prezzi netti se necessario
+        if 'id_tax' in update_data or 'unit_price_with_tax' in update_data or 'total_price_with_tax' in update_data:
+            # Usa id_tax aggiornato o quello esistente
+            id_tax = update_data.get('id_tax') or order_detail.id_tax
+            if not id_tax:
+                raise ValueError("id_tax è obbligatorio per calcolare i prezzi netti")
+            
+            tax_repo = TaxRepository(session)
+            tax_percentage = tax_repo.get_percentage_by_id(id_tax)
+            
+            # Se unit_price_with_tax è fornito ma unit_price_net no, calcola unit_price_net
+            if 'unit_price_with_tax' in update_data and 'unit_price_net' not in update_data:
+                update_data['unit_price_net'] = calculate_price_without_tax(
+                    update_data['unit_price_with_tax'], 
+                    tax_percentage
+                )
+            
+            # Se total_price_with_tax è fornito ma total_price_net no, calcola total_price_net
+            if 'total_price_with_tax' in update_data and 'total_price_net' not in update_data:
+                update_data['total_price_net'] = calculate_price_without_tax(
+                    update_data['total_price_with_tax'], 
+                    tax_percentage
+                )
+        
+        # Se vengono modificati reduction_percent o reduction_amount, ricalcola i totali
+        if 'reduction_percent' in update_data or 'reduction_amount' in update_data:
+            # Usa i valori aggiornati o quelli esistenti
+            id_tax = update_data.get('id_tax') or order_detail.id_tax
+            unit_price_net = update_data.get('unit_price_net') or order_detail.unit_price_net
+            product_qty = update_data.get('product_qty') or order_detail.product_qty
+            
+            if not id_tax or not unit_price_net or not product_qty:
+                raise ValueError("id_tax, unit_price_net e product_qty sono necessari per applicare gli sconti")
+            
+            # Calcola il totale base (prima degli sconti)
+            total_base_net = unit_price_net * product_qty
+            
+            # Applica gli sconti
+            reduction_percent = update_data.get('reduction_percent') or order_detail.reduction_percent or 0.0
+            reduction_amount = update_data.get('reduction_amount') or order_detail.reduction_amount or 0.0
+            
+            if reduction_percent > 0:
+                discount = calculate_amount_with_percentage(total_base_net, reduction_percent)
+                total_price_net = total_base_net - discount
+            elif reduction_amount > 0:
+                total_price_net = total_base_net - reduction_amount
+            else:
+                total_price_net = total_base_net
+            
+            # Calcola total_price_with_tax dal total_price_net finale
+            tax_repo = TaxRepository(session)
+            tax_percentage = tax_repo.get_percentage_by_id(id_tax)
+            from src.services.core.tool import calculate_price_with_tax
+            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
+            
+            # Aggiorna i totali
+            update_data['total_price_net'] = total_price_net
+            update_data['total_price_with_tax'] = total_price_with_tax
+        
+        # Applica gli aggiornamenti
+        for field_name, value in update_data.items():
+            if hasattr(order_detail, field_name) and value is not None:
+                setattr(order_detail, field_name, value)
+        
+        session.commit()
+        session.refresh(order_detail)
+        
+        # Verifica se serve ricalcolare i totali
+        tracked_fields = (
+            "id_tax", "product_qty", "product_weight", "unit_price_net", 
+            "unit_price_with_tax", "reduction_percent", "reduction_amount",
+            "total_price_net", "total_price_with_tax"
+        )
+        
+        needs_recalculation = any(
+            field in update_data and previous_values.get(field) != getattr(order_detail, field)
+            for field in tracked_fields
+        )
+        
+        if needs_recalculation:
+            self.recalculate_totals_for_order(order_id)
+        
+        # Aggiorna il peso della spedizione se product_weight o product_qty sono stati modificati
+        if 'product_weight' in update_data or 'product_qty' in update_data:
+            order_doc_service = OrderDocumentService(session)
+            order_doc_service.update_shipping_weight_from_articles(id_order=order_id, check_order_state=True)
+        
+        return order_detail
+    
+    async def remove_order_detail(self, order_id: int, order_detail_id: int) -> bool:
+        """
+        Rimuove un order_detail dall'ordine.
+        
+        Ricalcola i totali dell'ordine e aggiorna il peso della spedizione dopo la rimozione.
+        
+        Args:
+            order_id: ID dell'ordine
+            order_detail_id: ID dell'order_detail da rimuovere
+            
+        Returns:
+            True se rimosso con successo
+        """
+        # Verifica che l'ordine esista
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise ValueError(f"Ordine {order_id} non trovato")
+        
+        session = self._order_repository.session
+        
+        # Verifica che l'order_detail esista e appartenga all'ordine
+        order_detail = session.query(OrderDetail).filter(
+            OrderDetail.id_order_detail == order_detail_id,
+            OrderDetail.id_order == order_id
+        ).first()
+        
+        if not order_detail:
+            raise ValueError(f"OrderDetail {order_detail_id} non trovato per l'ordine {order_id}")
+        
+        # Elimina l'order_detail
+        session.delete(order_detail)
+        session.commit()
+        
+        # Ricalcola i totali dell'ordine
+        self.recalculate_totals_for_order(order_id)
+        
+        # Aggiorna il peso della spedizione
+        order_doc_service = OrderDocumentService(session)
+        order_doc_service.update_shipping_weight_from_articles(id_order=order_id, check_order_state=True)
+        
+        return True
     
     async def validate_business_rules(self, data: Any) -> None:
         """

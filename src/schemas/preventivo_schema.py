@@ -315,12 +315,13 @@ class PreventivoResponseSchema(BaseModel):
     total_iva: float
     total_finale: float
     total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
+    total_weight: float = Field(default=0.0, description="Peso totale del preventivo (kg)")
     date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo (solo se show_details=True)")
 
-    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', pre=True, allow_reuse=True)
+    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', 'total_weight', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -352,12 +353,13 @@ class PreventivoDetailResponseSchema(BaseModel):
     total_finale: float
     total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
     total_discounts_applied: float = Field(default=0.0, description="Totale di tutti gli sconti applicati (sconti articoli + sconto totale documento)")
+    total_weight: float = Field(default=0.0, description="Peso totale del preventivo (kg)")
     date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo")
 
-    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', 'total_discounts_applied', pre=True, allow_reuse=True)
+    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', 'total_discounts_applied', 'total_weight', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

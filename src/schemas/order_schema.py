@@ -10,6 +10,7 @@ from src.schemas.order_detail_schema import OrderDetailSchema
 from src.schemas.shipping_schema import ShippingResponseSchema
 from src.schemas.sectional_schema import SectionalResponseSchema
 from src.schemas.order_state_schema import OrderStateResponseSchema
+from src.schemas.preventivo_schema import OrderPackageUpdateItemSchema
 
 
 class OrderHistorySchema(BaseModel):
@@ -70,6 +71,7 @@ class OrderUpdateSchema(BaseModel):
     privacy_note: Optional[str] = None
     general_note: Optional[str] = None
     delivery_date: Optional[datetime] = None
+    order_packages: Optional[List[OrderPackageUpdateItemSchema]] = None
 
     model_config = ConfigDict(from_attributes=True, extra='forbid')
 

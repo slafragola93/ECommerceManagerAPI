@@ -99,19 +99,32 @@ class Container:
             # Se è un servizio, crea le dipendenze con la sessione
             if hasattr(implementation, '__init__'):
                 import inspect
+                from sqlalchemy.orm import Session as SQLSession
                 sig = inspect.signature(implementation.__init__)
                 kwargs = {}
                 for param_name, param in sig.parameters.items():
                     if param_name == 'self':
                         continue
-                    elif param_name == 'session':
+                    elif param_name == 'session' or param_name == 'db':
+                        # Inietta la sessione se il parametro si chiama 'session' o 'db'
                         kwargs[param_name] = session
-                    else:
+                    elif param.annotation != inspect.Parameter.empty:
+                        # Controlla se il tipo è Session
+                        try:
+                            if issubclass(param.annotation, SQLSession):
+                                kwargs[param_name] = session
+                                continue
+                        except TypeError:
+                            pass
                         # Risolve le altre dipendenze
                         try:
                             kwargs[param_name] = self.resolve_with_session(param.annotation, session)
                         except:
                             kwargs[param_name] = self.resolve(param.annotation)
+                    else:
+                        # Se ha un default, usa quello
+                        if param.default != inspect.Parameter.empty:
+                            kwargs[param_name] = param.default
                 
                 return implementation(**kwargs)
             else:

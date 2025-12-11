@@ -246,7 +246,7 @@ class PreventivoService:
         # Recupera articoli con img_url (PERFORMANCE: batch query)
         articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
         product_ids = [a.id_product for a in articoli if a.id_product]
-        images_map = self.product_service.get_product_images_map(product_ids, self.db)
+        images_map = self.product_service.get_product_images_map(product_ids)
         articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
         
         sectional_obj = None
@@ -366,7 +366,7 @@ class PreventivoService:
         # Recupera articoli con img_url (PERFORMANCE: batch query)
         articoli = self.order_doc_service.get_articoli_order_document(id_order_document, "preventivo")
         product_ids = [a.id_product for a in articoli if a.id_product]
-        images_map = self.product_service.get_product_images_map(product_ids, self.db)
+        images_map = self.product_service.get_product_images_map(product_ids)
         articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
         
         # Recupera indirizzi completi
@@ -555,6 +555,7 @@ class PreventivoService:
             total_finale=order_document.total_price_with_tax,
             total_discount=order_document.total_discount,
             total_discounts_applied=totals.get("total_discounts_applicati", 0.0),
+            total_weight=order_document.total_weight,
             articoli=articoli_data,
             order_packages=order_packages_data,
             date_add=order_document.date_add,
@@ -608,7 +609,7 @@ class PreventivoService:
             if show_details:
                 articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
                 product_ids = [a.id_product for a in articoli if a.id_product]
-                images_map = self.product_service.get_product_images_map(product_ids, self.db)
+                images_map = self.product_service.get_product_images_map(product_ids)
                 articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
             
             # Recupera order_packages solo se show_details è True
@@ -710,6 +711,7 @@ class PreventivoService:
                 total_iva=totals["total_iva"],
                 total_finale=order_document.total_price_with_tax,
                 total_discount=order_document.total_discount,
+                total_weight=order_document.total_weight,
                 articoli=articoli_data,
                 order_packages=order_packages_data,
                 date_add=order_document.date_add,
@@ -1093,7 +1095,7 @@ class PreventivoService:
         # Fallback image se non fornita
         if img_url is None and order_detail.id_product:
             # Usa ProductService per recuperare immagine (DIP - Dependency Inversion)
-            images_map = self.product_service.get_product_images_map([order_detail.id_product], self.db)
+            images_map = self.product_service.get_product_images_map([order_detail.id_product])
             img_url = images_map.get(order_detail.id_product, "media/product_images/fallback/product_not_found.jpg")
         elif img_url is None:
             img_url = "media/product_images/fallback/product_not_found.jpg"
@@ -1269,7 +1271,7 @@ class PreventivoService:
         # Recupera articoli
         articoli = self.order_doc_service.get_articoli_order_document(order_document.id_order_document, "preventivo")
         product_ids = [a.id_product for a in articoli if a.id_product]
-        images_map = self.product_service.get_product_images_map(product_ids, self.db)
+        images_map = self.product_service.get_product_images_map(product_ids)
         articoli_data = [self._format_articolo(articolo, img_url=images_map.get(articolo.id_product)) for articolo in articoli]
         
         # Recupera order_packages

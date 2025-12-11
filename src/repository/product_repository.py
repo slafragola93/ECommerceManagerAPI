@@ -402,6 +402,36 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             self._session.rollback()
             raise InfrastructureException(f"Database error updating product details: {str(e)}")
 
+    def get_products_images_map(self, product_ids: List[int]) -> Dict[int, str]:
+        """
+        Recupera img_url per una lista di product_ids in batch.
+        
+        Args:
+            product_ids: Lista di ID prodotti
+            
+        Returns:
+            Dictionary {id_product: img_url}, con fallback se img_url è None
+        """
+        try:
+            if not product_ids:
+                return {}
+            
+            # Query ottimizzata: seleziona solo i campi necessari
+            products = self._session.query(Product.id_product, Product.img_url).filter(
+                Product.id_product.in_(product_ids)
+            ).all()
+            
+            # Fallback image URL
+            fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
+            
+            # Crea mapping con fallback per img_url mancanti
+            return {
+                product.id_product: product.img_url if product.img_url else fallback_img_url
+                for product in products
+            }
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving product images: {str(e)}")
+    
     @staticmethod
     def formatted_output(product: Product,
                          category_id_origin: int,

@@ -333,8 +333,8 @@ class OrderDocumentService:
             
             # Calcola peso totale
             articoli = self.get_articoli_order_document(id_order_document, document_type)
-            total_weight = sum((float(articolo.product_weight) if articolo.product_weight is not None else 0.0) * articolo.product_qty for articolo in articoli)
-            document.total_weight = round(total_weight, 2)
+            total_weight = sum((float(articolo.product_weight)) * articolo.product_qty for articolo in articoli)
+            document.total_weight = total_weight
             
             # Aggiorna timestamp
             document.updated_at = datetime.now()

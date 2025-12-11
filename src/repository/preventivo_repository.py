@@ -590,6 +590,32 @@ class PreventivoRepository:
         for articolo in articoli:
             # Crea order detail utilizzando lo schema e il repository
             from src.schemas.order_detail_schema import OrderDetailSchema
+            
+            # Recupera i prezzi dall'articolo preventivo
+            unit_price_with_tax = float(articolo.unit_price_with_tax) if articolo.unit_price_with_tax else 0.0
+            unit_price_net = float(articolo.unit_price_net) if articolo.unit_price_net else 0.0
+            total_price_net = float(articolo.total_price_net) if articolo.total_price_net else 0.0
+            total_price_with_tax = float(articolo.total_price_with_tax) if articolo.total_price_with_tax else 0.0
+            id_tax = articolo.id_tax or 0
+            
+            # Validazione: unit_price_with_tax è obbligatorio
+            if unit_price_with_tax == 0.0 or unit_price_with_tax is None:
+                raise ValueError(f"unit_price_with_tax è obbligatorio per l'articolo '{articolo.product_name}' (ID: {articolo.id_order_detail})")
+            
+            # Validazione: id_tax è obbligatorio
+            if id_tax == 0 or id_tax is None:
+                raise ValueError(f"id_tax è obbligatorio per l'articolo '{articolo.product_name}' (ID: {articolo.id_order_detail})")
+            
+            # Se unit_price_net non è fornito, calcolalo usando la percentuale IVA da id_tax
+            if unit_price_net == 0.0 or unit_price_net is None:
+                from src.repository.tax_repository import TaxRepository
+                from src.services.core.tool import calculate_price_without_tax
+                
+                tax_repository = TaxRepository(self.db)
+                tax_percentage = tax_repository.get_percentage_by_id(id_tax)
+                unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
+    
+            
             detail_data = OrderDetailSchema(
                 id_origin=articolo.id_origin,
                 id_order=order.id_order,
@@ -599,10 +625,17 @@ class PreventivoRepository:
                 product_reference=articolo.product_reference or "",
                 product_qty=articolo.product_qty,
                 product_weight=articolo.product_weight or 0.0,
-                product_price=articolo.product_price or 0.0,
-                id_tax=articolo.id_tax or 0,
+                product_price=unit_price_net or 0.0,  # Backward compatibility alias
+                unit_price_net=unit_price_net or 0.0,
+                unit_price_with_tax=unit_price_with_tax,  # ✅ Prezzo singolo con IVA (obbligatorio)
+                total_price_net=total_price_net,  # ✅ Totale senza IVA
+                total_price_with_tax=total_price_with_tax,  # ✅ Totale con IVA
+                id_tax=id_tax,  # ✅ Obbligatorio
                 reduction_percent=articolo.reduction_percent or 0.0,
-                reduction_amount=articolo.reduction_amount or 0.0
+                reduction_amount=articolo.reduction_amount or 0.0,
+                rda=articolo.rda if hasattr(articolo, 'rda') else None,
+                rda_quantity=articolo.rda_quantity if hasattr(articolo, 'rda_quantity') else None,
+                note=articolo.note
             )
             self.order_repository.order_detail_repository.create(detail_data.model_dump())
         

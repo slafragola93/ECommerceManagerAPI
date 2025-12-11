@@ -371,12 +371,19 @@ class OrderRepository(IOrderRepository):
             
             # Calcola total_price_net se non fornito
             if order.total_price_net is None or order.total_price_net == 0:
-                from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
-                if order.id_address_delivery:
-                    tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
-                    order.total_price_net = calculate_price_without_tax(order.total_price_with_tax, tax_percentage) if order.total_price_with_tax > 0 else 0.0
-                else:
-                    order.total_price_net = 0.0
+                # Calcola total_price_net sommando i netti degli order_detail e aggiungendo shipping_cost_excl
+                shipping_cost_excl = 0.0
+                if order.id_shipping:
+                    shipping = self.shipping_repository.get_by_id(order.id_shipping)
+                    if shipping and shipping.price_tax_excl:
+                        shipping_cost_excl = float(shipping.price_tax_excl)
+                
+                total_price_net_products = sum(
+                    float(od.total_price_net) if hasattr(od, 'total_price_net') and od.total_price_net is not None else 0.0
+                    for od in created_order_details
+                )
+                discount = order.total_discounts if order.total_discounts else 0.0
+                order.total_price_net = total_price_net_products + shipping_cost_excl - discount
             
             # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
             order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
@@ -420,6 +427,9 @@ class OrderRepository(IOrderRepository):
         entity_updated = data.model_dump(exclude_unset=True)
         old_state_id = edited_order.id_order_state
         state_changed = False
+        
+        # Estrai order_packages se presente (non è un campo dell'Order, va gestito separatamente)
+        order_packages = entity_updated.pop('order_packages', None)
 
         for key, value in entity_updated.items():
             if not hasattr(edited_order, key) or value is None:
@@ -442,6 +452,10 @@ class OrderRepository(IOrderRepository):
 
         self.session.add(edited_order)
         self.session.commit()
+        
+        # Gestisci order_packages (smart merge) - DOPO commit ordine
+        if order_packages is not None:
+            self._handle_order_packages_smart_merge(edited_order.id_order, order_packages)
 
         # Event emission is now handled by the @emit_event_on_success decorator
         # in the router layer to avoid duplication and centralize event handling
@@ -757,7 +771,29 @@ class OrderRepository(IOrderRepository):
             order_details = self.order_detail_repository.get_by_order_id(order_id)
             if not order_details:
                 return []
-            return [self.order_detail_repository.formatted_output(detail) for detail in order_details]
+            
+            # Recupera immagini prodotti in batch (performance optimization)
+            product_ids = [detail.id_product for detail in order_details if detail.id_product]
+            images_map = {}
+            if product_ids:
+                from src.models.product import Product
+                products = self.session.query(Product.id_product, Product.img_url).filter(
+                    Product.id_product.in_(product_ids)
+                ).all()
+                fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
+                images_map = {
+                    product.id_product: product.img_url if product.img_url else fallback_img_url
+                    for product in products
+                }
+            
+            # Formatta output con img_url
+            return [
+                self.order_detail_repository.formatted_output(
+                    detail, 
+                    img_url=images_map.get(detail.id_product) if detail.id_product else None
+                ) 
+                for detail in order_details
+            ]
         
         # Helper per formattare la piattaforma
         def format_platform(platform_id):
@@ -896,3 +932,75 @@ class OrderRepository(IOrderRepository):
             raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
         
         return result
+    
+    def _handle_order_packages_smart_merge(self, id_order: int, packages: List) -> None:
+        """
+        Smart merge per order_packages:
+        1. Identifica packages da UPDATE (id_order_package presente nella lista)
+        2. Identifica packages da CREATE (id_order_package null nella lista)
+        3. Identifica packages da DELETE (esistenti nel DB ma non nella lista)
+        """
+        from src.models.order_package import OrderPackage
+        
+        # Recupera packages esistenti per questo ordine
+        existing_packages = self.session.query(OrderPackage).filter(
+            OrderPackage.id_order == id_order,
+            OrderPackage.id_order_document.is_(None)
+        ).all()
+        existing_ids = {p.id_order_package for p in existing_packages}
+        
+        # IDs nella lista fornita (packages è una lista di dict)
+        provided_ids = {
+            p.get('id_order_package') 
+            for p in packages 
+            if isinstance(p, dict) and p.get('id_order_package') is not None
+        }
+        
+        # 1. UPDATE + CREATE
+        for package_data in packages:
+            if not isinstance(package_data, dict):
+                continue
+                
+            id_order_package = package_data.get('id_order_package')
+            if id_order_package is not None:
+                # UPDATE esistente
+                package = self.session.query(OrderPackage).filter(
+                    OrderPackage.id_order_package == id_order_package
+                ).first()
+                if package:
+                    if 'height' in package_data and package_data['height'] is not None:
+                        package.height = package_data['height']
+                    if 'width' in package_data and package_data['width'] is not None:
+                        package.width = package_data['width']
+                    if 'depth' in package_data and package_data['depth'] is not None:
+                        package.depth = package_data['depth']
+                    if 'length' in package_data and package_data['length'] is not None:
+                        package.length = package_data['length']
+                    if 'weight' in package_data and package_data['weight'] is not None:
+                        package.weight = package_data['weight']
+                    if 'value' in package_data and package_data['value'] is not None:
+                        package.value = package_data['value']
+            else:
+                # CREATE nuovo
+                new_package = OrderPackage(
+                    id_order=id_order,
+                    id_order_document=None,
+                    height=package_data.get('height') or 10.0,
+                    width=package_data.get('width') or 10.0,
+                    depth=package_data.get('depth') or 10.0,
+                    length=package_data.get('length') or 10.0,
+                    weight=package_data.get('weight') or 0.0,
+                    value=package_data.get('value') or 0.0
+                )
+                self.session.add(new_package)
+        
+        # 2. DELETE packages non presenti nella lista
+        ids_to_delete = existing_ids - provided_ids
+        for id_to_delete in ids_to_delete:
+            package = self.session.query(OrderPackage).filter(
+                OrderPackage.id_order_package == id_to_delete
+            ).first()
+            if package:
+                self.session.delete(package)
+        
+        self.session.commit()
