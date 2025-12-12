@@ -13,6 +13,7 @@ class Store(Base):
     api_key = Column(String(500), nullable=False)
     vat_number = Column(String(50), nullable=True, index=True)
     country_code = Column(String(5), nullable=True, index=True)
+    logo = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     date_add = Column(DateTime, default=func.now())
@@ -27,4 +28,5 @@ class Store(Base):
     fiscal_documents = relationship("FiscalDocument", back_populates="store")
     order_documents = relationship("OrderDocument", back_populates="store")
     app_configurations = relationship("AppConfiguration", back_populates="store")
+    company_fiscal_infos = relationship("CompanyFiscalInfo", back_populates="store")
 
