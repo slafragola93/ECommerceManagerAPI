@@ -111,7 +111,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                     id_origin=data.id_origin if data.id_origin and data.id_origin > 0 else 0,
                     id_category=id_category,
                     id_brand=id_brand,
-                    id_platform=data.id_platform if data.id_platform is not None else 0,
+                    id_store=data.id_store if hasattr(data, 'id_store') and data.id_store is not None else None,
                     img_url=data.img_url,
                     name=data.name,
                     sku=data.sku,
@@ -146,7 +146,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             id_origin=data.id_origin if data.id_origin and data.id_origin > 0 else 0,
             id_category=id_category,
             id_brand=id_brand,
-            id_platform=data.id_platform if data.id_platform is not None else 0,
+            id_store=data.id_store if data.id_store is not None else None,
             img_url=data.img_url,
             name=data.name,
             sku=data.sku,
@@ -191,13 +191,13 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
 
         return True
 
-    def bulk_update_quantity(self, quantity_map: Dict[int, int], id_platform: int, batch_size: int = 1000) -> int:
+    def bulk_update_quantity(self, quantity_map: Dict[int, int], id_store: int, batch_size: int = 1000) -> int:
         """
         Aggiorna le quantità dei prodotti in batch utilizzando SQL diretto per performance.
         
         Args:
             quantity_map: Dizionario {id_origin: quantity} mappando id_origin a nuova quantità
-            id_platform: ID della piattaforma per filtrare i prodotti
+            id_store: ID dello store per filtrare i prodotti
             batch_size: Dimensione del batch per l'aggiornamento (default: 1000)
             
         Returns:
@@ -215,7 +215,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             stmt = text("""
                 UPDATE products 
                 SET quantity = :quantity 
-                WHERE id_origin = :id_origin AND id_platform = :id_platform
+                WHERE id_origin = :id_origin AND id_store = :id_store
             """)
             
             # Processa in batch per evitare transazioni troppo lunghe
@@ -229,7 +229,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                         result = self._session.execute(stmt, {
                             'id_origin': id_origin,
                             'quantity': quantity,
-                            'id_platform': id_platform
+                            'id_store': id_store
                         })
                         if result.rowcount > 0:
                             batch_updated += result.rowcount
@@ -250,13 +250,13 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             self._session.rollback()
             raise InfrastructureException(f"Database error updating product quantities: {str(e)}")
 
-    def bulk_update_price(self, price_map: Dict[int, float], id_platform: int, batch_size: int = 1000) -> int:
+    def bulk_update_price(self, price_map: Dict[int, float], id_store: int, batch_size: int = 1000) -> int:
         """
         Aggiorna i prezzi dei prodotti in batch utilizzando SQL diretto per performance.
         
         Args:
             price_map: Dizionario {id_origin: price} mappando id_origin a nuovo prezzo
-            id_platform: ID della piattaforma per filtrare i prodotti
+            id_store: ID dello store per filtrare i prodotti
             batch_size: Dimensione del batch per l'aggiornamento (default: 1000)
             
         Returns:
@@ -274,7 +274,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             stmt = text("""
                 UPDATE products 
                 SET price = :price 
-                WHERE id_origin = :id_origin AND id_platform = :id_platform
+                WHERE id_origin = :id_origin AND id_store = :id_store
             """)
             
             # Processa in batch per evitare transazioni troppo lunghe
@@ -288,7 +288,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                         result = self._session.execute(stmt, {
                             'id_origin': id_origin,
                             'price': float(price),
-                            'id_platform': id_platform
+                            'id_store': id_store
                         })
                         if result.rowcount > 0:
                             batch_updated += result.rowcount
@@ -308,7 +308,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             self._session.rollback()
             raise InfrastructureException(f"Database error updating product prices: {str(e)}")
 
-    def bulk_update_product_details(self, details_map: Dict[int, Dict[str, Any]], id_platform: int, batch_size: int = 5000) -> int:
+    def bulk_update_product_details(self, details_map: Dict[int, Dict[str, Any]], id_store: int, batch_size: int = 5000) -> int:
         """
         Aggiorna i dettagli dei prodotti in batch utilizzando SQL diretto per performance ottimizzata.
         
@@ -319,7 +319,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
         
         Args:
             details_map: Dizionario {id_origin: {sku, reference, weight, ...}} con tutti i dettagli
-            id_platform: ID della piattaforma per filtrare i prodotti
+            id_store: ID dello store per filtrare i prodotti
             batch_size: Dimensione del batch per l'aggiornamento (default: 5000)
             
         Returns:
@@ -347,7 +347,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                     minimal_quantity = :minimal_quantity,
                     price = :price,
                     quantity = :quantity
-                WHERE id_origin = :id_origin AND id_platform = :id_platform
+                WHERE id_origin = :id_origin AND id_store = :id_store
             """)
             
             # Processa in batch per evitare transazioni troppo lunghe
@@ -375,7 +375,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                             'minimal_quantity': int(details.get('minimal_quantity', 0) or 0),
                             'price': float(details.get('price', 0.0) or 0.0),
                             'quantity': int(details.get('quantity', 0) or 0),
-                            'id_platform': id_platform
+                            'id_store': id_store
                         })
                         if result.rowcount > 0:
                             batch_updated += result.rowcount

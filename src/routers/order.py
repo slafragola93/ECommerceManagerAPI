@@ -81,7 +81,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                         orders_ids: Optional[str] = Query(None, description="ID degli ordini, separati da virgole (es: 1,2,3)"),
                         customers_ids: Optional[str] = Query(None, description="ID dei clienti, separati da virgole (es: 1,2,3)"),
                         order_states_ids: Optional[str] = Query(None, description="ID degli stati ordine, separati da virgole (es: 1,2,3)"),
-                        platforms_ids: Optional[str] = Query(None, description="ID delle piattaforme, separati da virgole (es: 1,2,3)"),
+                        stores_ids: Optional[str] = Query(None, description="ID degli store, separati da virgole (es: 1,2,3)"),
                         payments_ids: Optional[str] = Query(None, description="ID dei pagamenti, separati da virgole (es: 1,2,3)"),
                         is_payed: Optional[bool] = Query(None, description="Filtro per ordini pagati (true) o non pagati (false)"),
                         is_invoice_requested: Optional[bool] = Query(None, description="Filtro per ordini con fattura richiesta (true) o no (false)"),
@@ -97,7 +97,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `orders_ids`: ID degli ordini specifici (es: "1,2,3")
     - `customers_ids`: ID dei clienti (es: "1,2,3") 
     - `order_states_ids`: ID degli stati ordine (es: "1,2,3")
-    - `platforms_ids`: ID delle piattaforme (es: "1,2,3")
+    - `stores_ids`: ID degli store (es: "1,2,3")
     - `payments_ids`: ID dei metodi di pagamento (es: "1,2,3")
     - `is_payed`: Filtro per ordini pagati (true) o non pagati (false)
     - `is_invoice_requested`: Filtro per ordini con fattura richiesta (true) o no (false)
@@ -108,7 +108,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `show_details=false` (default): Restituisce solo i campi base con ID delle relazioni
     - `show_details=true`: Include dettagli completi delle entità correlate:
       - `customer`: Dettagli completi del cliente
-      - `platform`: Dettagli della piattaforma
+      - `store`: Dettagli dello store
       - `payment`: Dettagli del metodo di pagamento
       - `shipping`: Dettagli della spedizione
       - `address_delivery`: Indirizzo di consegna completo
@@ -141,7 +141,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     orders = or_repo.get_all(orders_ids=orders_ids,
                             customers_ids=customers_ids,
                             order_states_ids=order_states_ids,
-                            platforms_ids=platforms_ids,
+                            platforms_ids=stores_ids,
                             payments_ids=payments_ids,
                             is_payed=is_payed,
                             is_invoice_requested=is_invoice_requested,
@@ -157,7 +157,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     total_count = or_repo.get_count(orders_ids=orders_ids,
                                    customers_ids=customers_ids,
                                    order_states_ids=order_states_ids,
-                                   platforms_ids=platforms_ids,
+                                   platforms_ids=stores_ids,
                                    payments_ids=payments_ids,
                                    is_payed=is_payed,
                                    is_invoice_requested=is_invoice_requested,

@@ -34,7 +34,7 @@ class CSVImportService:
         self,
         file_content: bytes,
         entity_type: str,
-        id_platform: int = 1,
+        id_store: int = None,
         batch_size: int = 1000,
         validate_only: bool = False
     ) -> ImportResult:
@@ -53,7 +53,7 @@ class CSVImportService:
         Args:
             file_content: File CSV in bytes
             entity_type: Tipo entità (products, customers, ecc.)
-            id_platform: ID platform (default: 1)
+            id_store: ID store (default: None)
             batch_size: Dimensione batch insert (default: 1000)
             validate_only: Se True, solo validazione senza import
             
@@ -81,7 +81,7 @@ class CSVImportService:
             deps_valid, missing_deps = DependencyResolver.validate_dependencies(
                 entity_type, 
                 self.db,
-                id_platform
+                id_store
             )
             
             if not deps_valid:
@@ -101,7 +101,7 @@ class CSVImportService:
                 try:
                     # Passa db session per order_details (necessario per lookup id_origin->id_product e Tax->id_tax)
                     db_session = self.db if entity_type == 'order_details' else None
-                    schema_instance = EntityMapper.map_to_schema(row, entity_type, id_platform, db_session)
+                    schema_instance = EntityMapper.map_to_schema(row, entity_type, id_store, db_session)
                     mapped_data.append(schema_instance)
                 except Exception as e:
                     mapping_errors.append(ValidationError(
@@ -115,7 +115,7 @@ class CSVImportService:
                 print(f"❌ Mapping failed: {len(mapping_errors)} errors")
                 return ImportResult(
                     entity_type=entity_type,
-                    id_platform=id_platform,
+                    id_store=id_store,
                     total_rows=len(rows),
                     validated_rows=0,
                     inserted_rows=0,
@@ -127,13 +127,13 @@ class CSVImportService:
             
             # Step 5: Validate all
             print(f"✓ Validating {len(mapped_data)} {entity_type}...")
-            validation_result = await self.validator.validate_batch(rows, entity_type, id_platform)
+            validation_result = await self.validator.validate_batch(rows, entity_type, id_store)
             
             if not validation_result.is_valid:
                 print(f"❌ Validation failed: {len(validation_result.errors)} errors")
                 return ImportResult(
                     entity_type=entity_type,
-                    id_platform=id_platform,
+                    id_store=id_store,
                     total_rows=len(rows),
                     validated_rows=validation_result.valid_rows,
                     inserted_rows=0,
@@ -149,7 +149,7 @@ class CSVImportService:
                 print(f"✓ Validation passed: {len(mapped_data)} valid rows (validate_only mode)")
                 return ImportResult(
                     entity_type=entity_type,
-                    id_platform=id_platform,
+                    id_store=id_store,
                     total_rows=len(rows),
                     validated_rows=len(mapped_data),
                     inserted_rows=0,
@@ -167,7 +167,7 @@ class CSVImportService:
             inserted_count = await self._bulk_insert(
                 mapped_data,
                 entity_type,
-                id_platform,
+                id_store,
                 batch_size
             )
             
@@ -177,7 +177,7 @@ class CSVImportService:
             
             return ImportResult(
                 entity_type=entity_type,
-                id_platform=id_platform,
+                id_store=id_platform,
                 total_rows=len(rows),
                 validated_rows=len(mapped_data),
                 inserted_rows=inserted_count,
@@ -211,7 +211,7 @@ class CSVImportService:
         Args:
             data_list: Lista schema instances
             entity_type: Tipo entità
-            id_platform: ID platform
+            id_store: ID store
             batch_size: Dimensione batch
             
         Returns:
@@ -226,8 +226,8 @@ class CSVImportService:
                 # ProductRepository ha bulk_create standard
                 return repository.bulk_create(data_list, batch_size)
             else:
-                # Address, Order hanno bulk_create_csv_import con id_platform
-                return repository.bulk_create_csv_import(data_list, id_platform, batch_size)
+                # Address, Order hanno bulk_create_csv_import con id_store
+                return repository.bulk_create_csv_import(data_list, id_store, batch_size)
         else:
             return repository.bulk_create_csv_import(data_list, batch_size)
     

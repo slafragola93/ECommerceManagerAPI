@@ -388,7 +388,7 @@ class PreventivoService:
                     address_delivery_obj = AddressResponseSchema(
                         id_address=address_delivery.id_address,
                         id_origin=address_delivery.id_origin,
-                        id_platform=getattr(address_delivery, 'id_platform', None),
+                        id_store=address_delivery.id_store,
                         customer=None,
                         country=country_obj,
                         company=address_delivery.company,
@@ -433,7 +433,7 @@ class PreventivoService:
                     address_invoice_obj = AddressResponseSchema(
                         id_address=address_invoice.id_address,
                         id_origin=address_invoice.id_origin,
-                        id_platform=getattr(address_invoice, 'id_platform', None),
+                        id_store=address_invoice.id_store,
                         customer=None,
                         country=country_obj,
                         company=address_invoice.company,

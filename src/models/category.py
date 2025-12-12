@@ -25,7 +25,7 @@ class Category(Base):
 
     id_category = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, default=0)
-    id_platform = Column(Integer, ForeignKey('platforms.id_platform'), default=0, nullable=False, index=True)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), default=1, nullable=False, index=True)
     name = Column(String(200))
 
     products = relationship("Product", back_populates="category")

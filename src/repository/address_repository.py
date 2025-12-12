@@ -142,7 +142,7 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
                 id_customer=customer_id,
                 id_origin=address_data.id_origin or 0,
                 id_country=address_data.id_country,
-                id_platform=address_data.id_platform or 0,
+                id_store=address_data.id_store if hasattr(address_data, 'id_store') and address_data.id_store else 1,
                 firstname=address_data.firstname,
                 lastname=address_data.lastname,
                 address1=address_data.address1,
@@ -165,13 +165,13 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error getting or creating address: {str(e)}")
     
-    def bulk_create_csv_import(self, data_list: List[AddressSchema], id_platform: int = 1, batch_size: int = 1000) -> int:
+    def bulk_create_csv_import(self, data_list: List[AddressSchema], id_store: int = None, batch_size: int = 1000) -> int:
         """
-        Bulk insert addresses da CSV import con gestione id_platform.
+        Bulk insert addresses da CSV import con gestione id_store.
         
         Args:
             data_list: Lista AddressSchema da inserire
-            id_platform: ID platform per uniqueness check
+            id_store: ID store per uniqueness check
             batch_size: Dimensione batch (default: 1000)
             
         Returns:
@@ -181,17 +181,15 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
             return 0
         
         try:
-            # Get existing (id_origin, id_platform) pairs to avoid duplicates
+            # Get existing (id_origin, id_store) pairs to avoid duplicates
             origin_ids = [data.id_origin for data in data_list if data.id_origin]
             
             if origin_ids:
                 from sqlalchemy import and_
-                existing_addresses = self._session.query(Address.id_origin).filter(
-                    and_(
-                        Address.id_origin.in_(origin_ids),
-                        Address.id_platform == id_platform
-                    )
-                ).all()
+                query = self._session.query(Address.id_origin).filter(Address.id_origin.in_(origin_ids))
+                if id_store:
+                    query = query.filter(Address.id_store == id_store)
+                existing_addresses = query.all()
                 existing_origins = {a.id_origin for a in existing_addresses}
             else:
                 existing_origins = set()

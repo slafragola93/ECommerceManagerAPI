@@ -61,6 +61,7 @@ class OrderRepository(IOrderRepository):
                 orders_ids: Optional[str] = None,
                 customers_ids: Optional[str] = None,
                 order_states_ids: Optional[str] = None,
+                store_ids: Optional[str] = "1",
                 platforms_ids: Optional[str] = None,
                 payments_ids: Optional[str] = None,
                 is_payed: Optional[bool] = None,
@@ -84,6 +85,8 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_customer', customers_ids)
             if order_states_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_order_state', order_states_ids)
+            if store_ids:
+                query = QueryUtils.filter_by_id(query, Order, 'id_store', store_ids)
             if platforms_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_platform', platforms_ids)
             if payments_ids:
@@ -112,6 +115,7 @@ class OrderRepository(IOrderRepository):
                   orders_ids: Optional[str] = None,
                   customers_ids: Optional[str] = None,
                   order_states_ids: Optional[str] = None,
+                  store_ids: Optional[str] = "1",
                   platforms_ids: Optional[str] = None,
                   payments_ids: Optional[str] = None,
                   is_payed: Optional[bool] = None,
@@ -132,6 +136,8 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_customer', customers_ids)
             if order_states_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_order_state', order_states_ids)
+            if store_ids:
+                query = QueryUtils.filter_by_id(query, Order, 'id_store', store_ids)
             if platforms_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_platform', platforms_ids)
             if payments_ids:
@@ -436,7 +442,7 @@ class OrderRepository(IOrderRepository):
                 continue
 
             if key in ['id_customer', 'id_address_delivery', 'id_address_invoice',
-                       'id_platform', 'id_payment', 'id_shipping', 'id_sectional']:
+                       'id_store', 'id_payment', 'id_shipping', 'id_sectional']:
                 if value == 0:
                     setattr(edited_order, key, 0)
                 else:
@@ -560,13 +566,13 @@ class OrderRepository(IOrderRepository):
         self.session.commit()
         return True
     
-    def bulk_create_csv_import(self, data_list: List, id_platform: int = 1, batch_size: int = 1000) -> int:
+    def bulk_create_csv_import(self, data_list: List, id_store: int = None, batch_size: int = 1000) -> int:
         """
-        Bulk insert orders da CSV import con gestione id_platform.
+        Bulk insert orders da CSV import con gestione id_store.
         
         Args:
             data_list: Lista OrderSchema da inserire
-            id_platform: ID platform per uniqueness check
+            id_store: ID store per uniqueness check
             batch_size: Dimensione batch (default: 1000)
             
         Returns:
@@ -579,15 +585,17 @@ class OrderRepository(IOrderRepository):
             from sqlalchemy import and_, text
             from src.models.order import Order
             
-            # Get existing (id_origin, id_platform) pairs
+            # Get existing (id_origin, id_store) pairs
             origin_ids = [data.id_origin for data in data_list if hasattr(data, 'id_origin') and data.id_origin]
             
             if origin_ids:
                 placeholders = ','.join([f':id_{i}' for i in range(len(origin_ids))])
                 params = {f'id_{i}': origin for i, origin in enumerate(origin_ids)}
-                params['id_platform'] = id_platform
-                
-                query = text(f"SELECT id_origin FROM orders WHERE id_origin IN ({placeholders}) AND id_platform = :id_platform")
+                if id_store:
+                    params['id_store'] = id_store
+                    query = text(f"SELECT id_origin FROM orders WHERE id_origin IN ({placeholders}) AND id_store = :id_store")
+                else:
+                    query = text(f"SELECT id_origin FROM orders WHERE id_origin IN ({placeholders})")
                 result = self.session.execute(query, params)
                 existing_origins = {row[0] for row in result}
             else:
@@ -852,7 +860,7 @@ class OrderRepository(IOrderRepository):
             "id_address_delivery": order.id_address_delivery,
             "id_address_invoice": order.id_address_invoice,
             "id_customer": order.id_customer,
-            "id_platform": order.id_platform,
+            "id_store": order.id_store,
             "id_payment": order.id_payment,
             "id_shipping": order.id_shipping,
             "id_sectional": order.id_sectional,
@@ -878,7 +886,7 @@ class OrderRepository(IOrderRepository):
             response.pop("id_address_delivery", None)
             response.pop("id_address_invoice", None)
             response.pop("id_customer", None)
-            response.pop("id_platform", None)
+            response.pop("id_store", None)
             response.pop("id_payment", None)
             response.pop("id_shipping", None)
             response.pop("id_sectional", None)
@@ -887,7 +895,7 @@ class OrderRepository(IOrderRepository):
                 "address_delivery": format_address(order.id_address_delivery),
                 "address_invoice": format_address(order.id_address_invoice),
                 "customer": format_customer(order.id_customer),
-                "platform": format_platform(order.id_platform),
+                "store": format_platform(order.id_store) if hasattr(order, 'id_store') else None,
                 "payment": format_payment(order.id_payment),
                 "shipping": format_shipping(order.id_shipping),
                 "sectional": format_sectional(order.id_sectional),

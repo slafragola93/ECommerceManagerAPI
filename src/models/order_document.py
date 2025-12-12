@@ -10,6 +10,7 @@ class OrderDocument(Base):
 
     id_order_document = Column(Integer, primary_key=True, index=True)
     id_order = Column(Integer, ForeignKey('orders.id_order'), index=True, default=None)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), index=True, nullable=True, default=None)
     id_address_delivery = Column(Integer, ForeignKey('addresses.id_address'), index=True, default=None)
     id_address_invoice = Column(Integer, ForeignKey('addresses.id_address'), index=True, default=None)
     id_customer = Column(Integer, ForeignKey('customers.id_customer'), index=True, default=None)
@@ -30,6 +31,7 @@ class OrderDocument(Base):
     date_add = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    store = relationship("Store", back_populates="order_documents")
     order = relationship("Order", back_populates="orders_document")
     address_delivery = relationship("Address", foreign_keys=[id_address_delivery], back_populates="address_delivery")
     address_invoice = relationship("Address", foreign_keys=[id_address_invoice], back_populates="address_invoice")

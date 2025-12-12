@@ -120,7 +120,7 @@ class DependencyResolver:
     def validate_dependencies(
         entity_type: str, 
         db: Session,
-        id_platform: Optional[int] = None
+        id_store: Optional[int] = None
     ) -> Tuple[bool, List[str]]:
         """
         Valida che tutte le dipendenze siano popolate nel database.
@@ -128,7 +128,7 @@ class DependencyResolver:
         Args:
             entity_type: Tipo entità da importare
             db: Sessione database
-            id_platform: ID platform (opzionale, per entity platform-specific)
+            id_store: ID store (opzionale, per entity store-specific)
             
         Returns:
             Tuple (is_valid, missing_dependencies)
@@ -148,9 +148,9 @@ class DependencyResolver:
             try:
                 # Check se la tabella ha records
                 # Per tabelle platform-aware, controlla solo per platform specifico
-                if dep in ['products', 'addresses', 'orders'] and id_platform is not None:
-                    query = text(f"SELECT COUNT(*) FROM {table_name} WHERE id_platform = :id_platform")
-                    count = db.execute(query, {"id_platform": id_platform}).scalar()
+                if dep in ['products', 'addresses', 'orders', 'customers'] and id_store is not None:
+                    query = text(f"SELECT COUNT(*) FROM {table_name} WHERE id_store = :id_store")
+                    count = db.execute(query, {"id_store": id_store}).scalar()
                 else:
                     query = text(f"SELECT COUNT(*) FROM {table_name}")
                     count = db.execute(query).scalar()

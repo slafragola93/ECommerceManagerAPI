@@ -6,7 +6,7 @@ Follows Single Responsibility Principle.
 """
 from __future__ import annotations
 
-from typing import List, Dict, Any, Set, Tuple
+from typing import List, Dict, Any, Set, Tuple, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import ValidationError as PydanticValidationError
@@ -34,7 +34,7 @@ class CSVValidator:
         self,
         rows: List[Dict[str, Any]],
         entity_type: str,
-        id_platform: int = 1
+        id_store: int = None
     ) -> ValidationResult:
         """
         Valida batch completo di righe CSV.
@@ -44,7 +44,7 @@ class CSVValidator:
         Args:
             rows: Lista righe CSV (con _row_number)
             entity_type: Tipo entità
-            id_platform: ID platform
+            id_store: ID store
             
         Returns:
             ValidationResult con esito validazione
@@ -54,19 +54,19 @@ class CSVValidator:
         valid_rows = 0
         
         # 1. Validate Pydantic schemas
-        schema_errors = self._validate_pydantic_schemas(rows, entity_type, id_platform)
+        schema_errors = self._validate_pydantic_schemas(rows, entity_type, id_store)
         errors.extend(schema_errors)
         
         # 2. Check for duplicate id_origin in CSV
-        duplicate_errors = self._check_duplicate_origins(rows, entity_type, id_platform)
+        duplicate_errors = self._check_duplicate_origins(rows, entity_type, id_store)
         errors.extend(duplicate_errors)
         
         # 3. Validate foreign keys
-        fk_errors = await self._validate_foreign_keys(rows, entity_type, id_platform)
+        fk_errors = await self._validate_foreign_keys(rows, entity_type, id_store)
         errors.extend(fk_errors)
         
         # 4. Check existing records (duplicates in DB)
-        existing_errors = self._check_existing_records(rows, entity_type, id_platform)
+        existing_errors = self._check_existing_records(rows, entity_type, id_store)
         errors.extend(existing_errors)
         
         # 5. Business rules validation (entity-specific)
@@ -89,7 +89,7 @@ class CSVValidator:
         self,
         rows: List[Dict[str, Any]],
         entity_type: str,
-        id_platform: int
+        id_store: int = None
     ) -> List[ImportValidationError]:
         """Valida righe con Pydantic schema"""
         errors = []
@@ -98,7 +98,7 @@ class CSVValidator:
             row_num = row.get('_row_number', 0)
             try:
                 # Prova a creare schema
-                EntityMapper.map_to_schema(row, entity_type, id_platform)
+                EntityMapper.map_to_schema(row, entity_type, id_store)
             except PydanticValidationError as e:
                 # Estrai errori Pydantic
                 for pyd_err in e.errors():
@@ -124,7 +124,7 @@ class CSVValidator:
         self,
         rows: List[Dict[str, Any]],
         entity_type: str,
-        id_platform: int
+        id_store: int = None
     ) -> List[ImportValidationError]:
         """Check duplicati id_origin nel CSV stesso"""
         errors = []
@@ -137,9 +137,9 @@ class CSVValidator:
             if not id_origin:
                 continue
             
-            # Per entity platform-aware, la chiave è (id_origin, id_platform)
+            # Per entity store-aware, la chiave è (id_origin, id_store)
             if entity_type in EntityMapper.PLATFORM_AWARE_ENTITIES:
-                key = (id_origin, id_platform)
+                key = (id_origin, id_store) if id_store else id_origin
             else:
                 key = id_origin
             
@@ -160,7 +160,7 @@ class CSVValidator:
         self,
         rows: List[Dict[str, Any]],
         entity_type: str,
-        id_platform: int
+        id_store: int = None
     ) -> List[ImportValidationError]:
         """Valida che foreign keys esistano nel DB"""
         errors = []
@@ -181,9 +181,11 @@ class CSVValidator:
                 try:
                     placeholders = ','.join([f':val_{i}' for i in range(len(values_to_check))])
                     params = {f'val_{i}': val for i, val in enumerate(values_to_check)}
-                    params['id_platform'] = id_platform
-                    
-                    query = text(f"SELECT id_order FROM orders WHERE id_order IN ({placeholders}) AND id_platform = :id_platform")
+                    if id_store:
+                        params['id_store'] = id_store
+                        query = text(f"SELECT id_order FROM orders WHERE id_order IN ({placeholders}) AND id_store = :id_store")
+                    else:
+                        query = text(f"SELECT id_order FROM orders WHERE id_order IN ({placeholders})")
                     result = self.db.execute(query, params)
                     existing = {row[0] for row in result}
                     missing = values_to_check - existing
@@ -209,12 +211,12 @@ class CSVValidator:
             
             # Valida id_origin (prodotto) -> id_product
             product_origins_to_check = set()
-            row_platform_map = {}  # Mappa row_num -> id_platform per quel row
+            row_store_map = {}  # Mappa row_num -> id_store per quel row
             for row in rows:
                 row_num = row.get('_row_number', 0)
                 id_origin = row.get('id_origin')
-                row_id_platform = row.get('id_platform', id_platform)
-                row_platform_map[row_num] = row_id_platform
+                row_id_store = row.get('id_store', id_store)
+                row_store_map[row_num] = row_id_store
                 if id_origin and id_origin != '' and id_origin != '0' and id_origin != 0:
                     try:
                         product_origins_to_check.add(int(id_origin))
@@ -223,22 +225,24 @@ class CSVValidator:
             
             if product_origins_to_check:
                 try:
-                    platforms_in_csv = set(row_platform_map.values())
+                    stores_in_csv = set(row_store_map.values())
                     
-                    for platform in platforms_in_csv:
+                    for store in stores_in_csv:
                         placeholders = ','.join([f':origin_{i}' for i in range(len(product_origins_to_check))])
                         params = {f'origin_{i}': origin for i, origin in enumerate(product_origins_to_check)}
-                        params['id_platform'] = platform
-                        
-                        query = text(f"SELECT id_origin FROM products WHERE id_origin IN ({placeholders}) AND id_platform = :id_platform")
+                        if store:
+                            params['id_store'] = store
+                            query = text(f"SELECT id_origin FROM products WHERE id_origin IN ({placeholders}) AND id_store = :id_store")
+                        else:
+                            query = text(f"SELECT id_origin FROM products WHERE id_origin IN ({placeholders})")
                         result = self.db.execute(query, params)
                         existing_origins = {row[0] for row in result}
                         missing_origins = product_origins_to_check - existing_origins
                         
                         for row in rows:
                             row_num = row.get('_row_number', 0)
-                            row_id_platform = row_platform_map.get(row_num, id_platform)
-                            if row_id_platform != platform:
+                            row_id_store = row_store_map.get(row_num, id_store)
+                            if row_id_store != store:
                                 continue
                             
                             id_origin = row.get('id_origin')
@@ -250,7 +254,7 @@ class CSVValidator:
                                             row_number=row_num,
                                             field_name='id_origin',
                                             error_type='fk_violation',
-                                            message=f"Product with id_origin={origin_int} and id_platform={row_id_platform} not found",
+                                            message=f"Product with id_origin={origin_int} and id_store={row_id_store} not found",
                                             value=origin_int
                                         ))
                                 except (ValueError, TypeError):
@@ -324,8 +328,11 @@ class CSVValidator:
                     params = {f'val_{i}': val for i, val in enumerate(values_to_check)}
                     
                     if platform_aware:
-                        query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders}) AND id_platform = :id_platform")
-                        params['id_platform'] = id_platform
+                        if id_store:
+                            query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders}) AND id_store = :id_store")
+                            params['id_store'] = id_store
+                        else:
+                            query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders})")
                     else:
                         query = text(f"SELECT {id_field} FROM {table} WHERE {id_field} IN ({placeholders})")
                     
@@ -361,7 +368,7 @@ class CSVValidator:
         self,
         rows: List[Dict[str, Any]],
         entity_type: str,
-        id_platform: int
+        id_store: int = None
     ) -> List[ImportValidationError]:
         """Check records già esistenti nel DB (duplicati)"""
         errors = []
@@ -384,13 +391,13 @@ class CSVValidator:
             return errors
         
         try:
-            # Check existing by id_origin (+ id_platform se applicabile)
+            # Check existing by id_origin (+ id_store se applicabile)
             placeholders = ','.join([f':id_{i}' for i in range(len(id_origins))])
             params = {f'id_{i}': id_val for i, id_val in enumerate(id_origins)}
             
-            if entity_type in EntityMapper.PLATFORM_AWARE_ENTITIES:
-                query = text(f"SELECT id_origin FROM {table_name} WHERE id_origin IN ({placeholders}) AND id_platform = :id_platform")
-                params['id_platform'] = id_platform
+            if entity_type in EntityMapper.PLATFORM_AWARE_ENTITIES and id_store:
+                query = text(f"SELECT id_origin FROM {table_name} WHERE id_origin IN ({placeholders}) AND id_store = :id_store")
+                params['id_store'] = id_store
             else:
                 query = text(f"SELECT id_origin FROM {table_name} WHERE id_origin IN ({placeholders})")
             

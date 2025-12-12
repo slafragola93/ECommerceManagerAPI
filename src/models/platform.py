@@ -12,4 +12,6 @@ class Platform(Base):
     
     # Relationships
     state_triggers = relationship("PlatformStateTrigger", back_populates="platform", cascade="all, delete-orphan")
+    stores = relationship("Store", back_populates="platform", cascade="all, delete-orphan")
+    orders = relationship("Order", back_populates="platform")
 

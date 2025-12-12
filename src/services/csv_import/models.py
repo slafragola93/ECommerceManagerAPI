@@ -76,7 +76,7 @@ class ImportResult:
     
     Attributes:
         entity_type: Tipo entità importata
-        id_platform: ID platform usato
+        id_store: ID store usato
         total_rows: Numero totale righe CSV
         validated_rows: Numero righe validate con successo
         inserted_rows: Numero righe effettivamente inserite
@@ -88,7 +88,7 @@ class ImportResult:
         completed_at: Timestamp fine operazione
     """
     entity_type: str
-    id_platform: int
+    id_store: Optional[int]
     total_rows: int
     validated_rows: int
     inserted_rows: int
@@ -115,7 +115,7 @@ class ImportResult:
         """Converte in dizionario per risposta API"""
         return {
             "entity_type": self.entity_type,
-            "id_platform": self.id_platform,
+            "id_store": self.id_store,
             "total_rows": self.total_rows,
             "validated_rows": self.validated_rows,
             "inserted_rows": self.inserted_rows,

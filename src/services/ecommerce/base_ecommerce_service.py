@@ -16,25 +16,25 @@ class BaseEcommerceService(ABC):
     Provides common functionality and defines the interface for all e-commerce integrations.
     """
     
-    def __init__(self, db: Session, platform_id: int = 1, batch_size: int = 5000):
+    def __init__(self, db: Session, store_id: int, batch_size: int = 5000):
         """
         Initialize the e-commerce service
         
         Args:
             db: Database session
-            platform_id: ID of the platform in the platforms table (deprecated, kept for compatibility)
+            store_id: ID of the store in the stores table
             batch_size: Number of records to process in each batch
         """
         self.db = db
-        self.platform_id = platform_id
+        self.store_id = store_id
         self.batch_size = batch_size
         self.session = None
-        self._ecommerce_config = None
+        self._store_config = None
         
     async def __aenter__(self):
         """Async context manager entry"""
         self.session = aiohttp.ClientSession()
-        await self._load_platform_data()
+        await self._load_store_data()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -42,41 +42,53 @@ class BaseEcommerceService(ABC):
         if self.session:
             await self.session.close()
     
-    async def _load_platform_data(self):
-        """Load ecommerce configuration from app_configurations"""
-        from ...repository.app_configuration_repository import AppConfigurationRepository
-        config_repo = AppConfigurationRepository(self.db)
+    async def _load_store_data(self):
+        """Load store configuration (URL, API key, P.IVA)"""
+        from ...repository.store_repository import StoreRepository
+        store_repo = StoreRepository(self.db)
+        store = store_repo.get_by_id(self.store_id)
         
-        # Recupera le configurazioni dalla categoria "ecommerce"
-        configurations = config_repo.get_by_category("ecommerce")
+        if not store:
+            raise ValueError(f"Store with ID {self.store_id} not found")
         
-        if not configurations:
-            raise ValueError("Ecommerce configurations not found in app_configurations. Please configure 'base_url' and 'api_key' in category 'ecommerce'.")
+        if not store.is_active:
+            raise ValueError(f"Store {store.name} is not active")
         
-        # Converti in dizionario
-        self._ecommerce_config = {}
-        for config in configurations:
-            self._ecommerce_config[config.name] = config.value
-        
-        # Verifica che le configurazioni essenziali siano presenti
-        if not self._ecommerce_config.get('base_url'):
-            raise ValueError("Missing 'base_url' in ecommerce configurations")
-        if not self._ecommerce_config.get('api_key'):
-            raise ValueError("Missing 'api_key' in ecommerce configurations")
+        self._store_config = {
+            'base_url': store.base_url,
+            'api_key': store.api_key,
+            'vat_number': store.vat_number,
+            'country_code': store.country_code,
+            'name': store.name
+        }
     
     @property
     def api_key(self) -> str:
-        """Get API key from ecommerce configuration"""
-        if not self._ecommerce_config:
-            raise RuntimeError("Ecommerce configuration not loaded. Use async context manager.")
-        return self._ecommerce_config.get('api_key')
+        """Get API key from store configuration"""
+        if not self._store_config:
+            raise RuntimeError("Store configuration not loaded. Use async context manager.")
+        return self._store_config.get('api_key')
     
     @property
     def base_url(self) -> str:
-        """Get base URL from ecommerce configuration"""
-        if not self._ecommerce_config:
-            raise RuntimeError("Ecommerce configuration not loaded. Use async context manager.")
-        return self._ecommerce_config.get('base_url').rstrip('/')
+        """Get base URL from store configuration"""
+        if not self._store_config:
+            raise RuntimeError("Store configuration not loaded. Use async context manager.")
+        return self._store_config.get('base_url').rstrip('/')
+    
+    @property
+    def vat_number(self) -> Optional[str]:
+        """Get VAT number from store configuration"""
+        if not self._store_config:
+            raise RuntimeError("Store configuration not loaded. Use async context manager.")
+        return self._store_config.get('vat_number')
+    
+    @property
+    def country_code(self) -> Optional[str]:
+        """Get country code from store configuration"""
+        if not self._store_config:
+            raise RuntimeError("Store configuration not loaded. Use async context manager.")
+        return self._store_config.get('country_code')
     
     @abstractmethod
     async def sync_all_data(self) -> Dict[str, Any]:

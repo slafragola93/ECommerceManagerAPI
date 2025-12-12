@@ -122,6 +122,7 @@ class PreventivoCreateSchema(BaseModel):
     sectional: SectionalField = Field(..., description="Sezionale (ID o oggetto completo) - se esiste un sectional con lo stesso nome viene riutilizzato")
     shipping: ShippingField = Field(..., escription="Dati spedizione (opzionale)")
     id_payment: int = Field(..., gt=0, description="ID metodo di pagamento (opzionale)")
+    id_store: Optional[int] = Field(None, gt=0, description="ID store (opzionale)")
     is_invoice_requested: Optional[bool] = Field(False, description="Se richiedere fattura")
     is_payed: Optional[bool] = Field(None, description="Indica se il preventivo è pagato. Se non specificato, viene impostato automaticamente a True se il metodo di pagamento ha is_complete_payment=True")
     note: Optional[str] = None
@@ -179,7 +180,7 @@ class AddressUpdateField(BaseModel):
     sdi: Optional[str] = None
     ipa: Optional[str] = None
     id_origin: Optional[int] = None
-    id_platform: Optional[int] = None
+    id_store: Optional[int] = 1
 
 
 class SectionalUpdateField(BaseModel):

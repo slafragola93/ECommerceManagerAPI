@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, Boolean, DateTime, func
+from sqlalchemy import Integer, Column, String, Boolean, DateTime, func, ForeignKey
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -27,6 +27,7 @@ class AppConfiguration(Base):
 
     id_app_configuration = Column(Integer, primary_key=True, index=True)
     id_lang = Column(Integer, default=0)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), nullable=True, index=True)
     category = Column(String(50), nullable=False, index=True)
     name = Column(String(100), nullable=False, index=True)
     value = Column(String(1000), default=None)
@@ -34,3 +35,6 @@ class AppConfiguration(Base):
     is_encrypted = Column(Boolean, default=False)
     date_add = Column(DateTime, default=func.now())
     date_upd = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationships
+    store = relationship("Store", back_populates="app_configurations")

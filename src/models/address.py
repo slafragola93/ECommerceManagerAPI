@@ -9,7 +9,7 @@ class Address(Base):
 
     id_address = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, default=0)
-    id_platform = Column(Integer, ForeignKey('platforms.id_platform'), default=0, nullable=True)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), index=True, nullable=True, default=None)
     id_country = Column(Integer, ForeignKey('countries.id_country'), default=None)
     id_customer = Column(Integer, ForeignKey('customers.id_customer'), default=None)
     company = Column(String(255), default=None)
@@ -29,6 +29,7 @@ class Address(Base):
     ipa = Column(String(128), default=None)
     date_add = Column(Date, default=func.now())
 
+    store = relationship("Store", back_populates="addresses")
     customer = relationship("Customer", back_populates="addresses")
     country = relationship("Country", back_populates="addresses")
     address_delivery = relationship("OrderDocument", foreign_keys="OrderDocument.id_address_delivery", back_populates="address_delivery")

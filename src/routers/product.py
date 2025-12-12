@@ -6,6 +6,7 @@ from typing import Optional
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.repository.interfaces.platform_repository_interface import IPlatformRepository
+from src.repository.interfaces.store_repository_interface import IStoreRepository
 from src.schemas.product_schema import ProductSchema, ProductResponseSchema, AllProductsResponseSchema
 from src.core.exceptions import (
     NotFoundException
@@ -30,11 +31,12 @@ def get_product_service(db: db_dependency) -> IProductService:
 
     product_repo = configured_container.resolve_with_session(IProductRepository, db)
     platform_repo = configured_container.resolve_with_session(IPlatformRepository, db)
+    store_repo = configured_container.resolve_with_session(IStoreRepository, db)
 
     product_service = configured_container.resolve(IProductService)
 
     if hasattr(product_service, "set_dependencies"):
-        product_service.set_dependencies(product_repo, platform_repo, db)
+        product_service.set_dependencies(product_repo, platform_repo, store_repo, db)
     elif hasattr(product_service, "_product_repository"):
         product_service._product_repository = product_repo
 

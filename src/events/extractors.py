@@ -69,7 +69,7 @@ def extract_product_created_data(*args, result=None, **kwargs) -> Optional[Dict[
             "id_origin": product.id_origin,
             "id_category": product.id_category,
             "id_brand": product.id_brand,
-            "id_platform": product.id_platform,
+            "id_store": product.id_store,
             "name": product.name,
             "sku": product.sku,
             "reference": product.reference,
@@ -105,7 +105,7 @@ def extract_product_updated_data(*args, result=None, **kwargs) -> Optional[Dict[
             "id_origin": product.id_origin,
             "id_category": product.id_category,
             "id_brand": product.id_brand,
-            "id_platform": product.id_platform,
+            "id_store": product.id_store,
             "name": product.name,
             "sku": product.sku,
             "reference": product.reference,
@@ -767,14 +767,14 @@ def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Option
     """
     Estrae dati completi per evento SHIPPING_STATUS_CHANGED.
     
-    Query ottimizzata per recuperare solo id_order e id_platform necessari.
+    Query ottimizzata per recuperare solo id_order e id_store necessari.
     
     Args:
         result: Shipping aggiornato o dict con old_state_id, new_state_id, id_shipping
         kwargs: Contiene 'user' per contesto
     
     Returns:
-        Dict con id_shipping, id_order, old_state_id, new_state_id, id_platform
+        Dict con id_shipping, id_order, old_state_id, new_state_id, id_store
     """
     try:
         if not result:
@@ -795,7 +795,7 @@ def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Option
         if not id_shipping or not old_state_id or not new_state_id:
             return None
         
-        # Query SQL ottimizzata: SOLO id_order e id_platform
+        # Query SQL ottimizzata: SOLO id_order e id_store
         from src.database import get_db
         from sqlalchemy import text
         
@@ -803,7 +803,7 @@ def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Option
         
         try:
             stmt = text("""
-                SELECT o.id_order, o.id_platform
+                SELECT o.id_order, o.id_store
                 FROM orders o
                 WHERE o.id_shipping = :id_shipping
                 LIMIT 1
@@ -815,7 +815,7 @@ def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Option
                 return None
             
             id_order = result_order.id_order
-            id_platform = result_order.id_platform
+            id_store = result_order.id_store
         finally:
             db.close()
         
@@ -824,7 +824,7 @@ def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Option
             "id_order": id_order,
             "old_state_id": old_state_id,
             "new_state_id": new_state_id,
-            "id_platform": id_platform,
+            "id_store": id_store,
             "updated_by": kwargs.get('user', {}).get('id')
         }
     except Exception as e:
@@ -871,7 +871,7 @@ def extract_shipping_status_from_order_update(*args, result=None, **kwargs) -> O
         try:
             # Recupera shipping con stato attuale
             stmt = text("""
-                SELECT s.id_shipping_state, o.id_order, o.id_platform
+                SELECT s.id_shipping_state, o.id_order, o.id_store
                 FROM shipments s
                 INNER JOIN orders o ON o.id_shipping = s.id_shipping
                 WHERE s.id_shipping = :id_shipping AND o.id_order = :order_id
@@ -894,7 +894,6 @@ def extract_shipping_status_from_order_update(*args, result=None, **kwargs) -> O
                 "id_order": result_shipping.id_order,
                 "old_state_id": old_state_id,
                 "new_state_id": new_state_id,
-                "id_platform": result_shipping.id_platform,
                 "updated_by": kwargs.get('user', {}).get('id')
             }
         finally:

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from src.services.interfaces.product_service_interface import IProductService
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.repository.interfaces.platform_repository_interface import IPlatformRepository
+from src.repository.interfaces.store_repository_interface import IStoreRepository
 from src.repository.tax_repository import TaxRepository
 from src.schemas.product_schema import ProductSchema
 from src.schemas.category_schema import CategoryResponseSchema
@@ -36,16 +37,19 @@ class ProductService(IProductService):
     def __init__(self, product_repository: IProductRepository):
         self._product_repository = product_repository
         self._platform_repository: Optional[IPlatformRepository] = None
+        self._store_repository: Optional[IStoreRepository] = None
         self._db: Optional[Session] = None
 
     def set_dependencies(
         self,
         product_repository: IProductRepository,
         platform_repository: IPlatformRepository,
+        store_repository: IStoreRepository,
         db: Session,
     ) -> None:
         self._product_repository = product_repository
         self._platform_repository = platform_repository
+        self._store_repository = store_repository
         self._db = db
     
     @emit_event_on_success(
@@ -148,7 +152,7 @@ class ProductService(IProductService):
         product_dict = {
             "id_product": product.id_product,
             "id_origin": product.id_origin,
-            "id_platform": product.id_platform,
+            "id_store": product.id_store,
             "img_url": product.img_url,
             "name": product.name,
             "sku": product.sku,
@@ -303,21 +307,21 @@ class ProductService(IProductService):
                 {"id_origin": id_origin},
             )
 
-        if not product.id_platform:
+        if not product.id_store:
             raise BusinessRuleException(
-                "Product has no platform associated",
+                "Product has no store associated",
                 details={"id_origin": id_origin},
             )
 
-        platform = self._platform_repository.get_by_id(product.id_platform)
-        if not platform:
+        store = self._store_repository.get_by_id(product.id_store)
+        if not store:
             raise NotFoundException(
-                "Platform",
-                product.id_platform,
+                "Store",
+                product.id_store,
                 {"id_origin": id_origin},
             )
 
-        ecommerce_service = create_ecommerce_service(platform, self._db)
+        ecommerce_service = create_ecommerce_service(store.id_store, self._db)
 
         try:
             async with ecommerce_service as service:
@@ -343,8 +347,8 @@ class ProductService(IProductService):
                 ErrorCode.EXTERNAL_SERVICE_ERROR,
                 {
                     "id_origin": id_origin,
-                    "platform_id": platform.id_platform,
-                    "platform_name": platform.name,
+                    "store_id": store.id_store,
+                    "store_name": store.name,
                 },
             ) from exc
 
@@ -354,5 +358,5 @@ class ProductService(IProductService):
         pass
 
     def _ensure_dependencies_configured(self) -> None:
-        if not self._product_repository or not self._platform_repository or not self._db:
+        if not self._product_repository or not self._platform_repository or not self._store_repository or not self._db:
             raise RuntimeError("ProductService dependencies are not configured")

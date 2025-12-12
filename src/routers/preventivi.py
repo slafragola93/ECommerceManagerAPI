@@ -86,6 +86,7 @@ async def create_preventivo(
                     "id_customer": 0,
                     "id_origin": 67890,
                     "id_platform": 1,
+                    "id_store": 1,
                     "company": "Rossi SRL",
                     "address2": "Interno 5",
                     "mobile_phone": "3331234567",
@@ -129,6 +130,7 @@ async def create_preventivo(
                 "shipping_message": "Consegna express 24h"
             },
             "id_payment": 3,
+            "id_store": 1,
             "is_invoice_requested": True,
             "note": "Preventivo per progetto speciale - sconto applicato per cliente fedele",
             "total_discount": 50.00,

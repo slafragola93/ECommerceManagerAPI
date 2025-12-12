@@ -35,7 +35,7 @@ async def import_csv(
     user: dict = Depends(get_current_user),
     file: UploadFile = File(..., description="CSV file to import"),
     entity_type: str = Query(..., description="Entity type: products, customers, addresses, brands, categories, carriers, countries, languages, payments, orders, order_details"),
-    id_platform: int = Query(1, ge=0, description="Platform ID: 0=Manual, 1=PrestaShop, etc."),
+    id_store: Optional[int] = Query(None, description="Store ID (optional)"),
     batch_size: int = Query(1000, ge=100, le=10000, description="Batch size for insert (100-10000)"),
     validate_only: bool = Query(False, description="If true, only validate without importing")
 ):
@@ -45,7 +45,7 @@ async def import_csv(
     **Workflow**:
     1. Parse CSV with headers
     2. Auto-detect and validate dependencies
-    3. Map CSV rows to Pydantic schemas (inject id_platform)
+    3. Map CSV rows to Pydantic schemas (inject id_store)
     4. Complete validation (Pydantic + FK + unique constraints + business rules)
     5. If errors: return validation errors (no import)
     6. If valid and validate_only=false: batch insert
@@ -54,9 +54,9 @@ async def import_csv(
     **Entity types**: products, customers, addresses, brands, categories, carriers, 
                       countries, languages, payments, orders, order_details
     
-    **id_platform**:
-    - 0 = Manual/Generic
-    - 1 = PrestaShop (default)
+    **id_store**:
+    - None = Use default store or no store filtering
+    - Integer = Specific store ID
     - Future: 2 = WooCommerce, 3 = Shopify
     
     **CSV Format**:
@@ -64,7 +64,7 @@ async def import_csv(
     - Delimiter: auto-detected (comma, semicolon, tab)
     - Encoding: UTF-8 or Latin-1
     
-    **Example**: products.csv with id_platform=1
+    **Example**: products.csv with id_store=1
     ```csv
     id_origin,name,sku,reference,id_category,id_brand,price,weight,quantity
     12345,Product Name,SKU123,REF001,5,3,99.99,1.5,100
@@ -98,7 +98,7 @@ async def import_csv(
     result = await import_service.import_entity(
         file_content=content,
         entity_type=entity_type,
-        id_platform=id_platform,
+        id_store=id_store,
         batch_size=batch_size,
         validate_only=validate_only
     )
@@ -115,7 +115,7 @@ async def import_csv(
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_csv_template(
     entity_type: str = Path(..., description="Entity type for template"),
-    id_platform: Optional[int] = Query(None, description="Platform ID (optional, for documentation)"),
+    id_store: Optional[int] = Query(None, description="Store ID (optional, for documentation)"),
     user: dict = Depends(get_current_user)
 ):
     """
@@ -136,7 +136,7 @@ async def get_csv_template(
     - orders
     - order_details
     
-    **Note**: id_platform is NOT included in CSV template (passed as query parameter during import)
+    **Note**: id_store is NOT included in CSV template (passed as query parameter during import)
     """
     # Validate entity type
     if entity_type not in EntityMapper.SCHEMA_MAPPING:

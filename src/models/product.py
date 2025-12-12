@@ -25,7 +25,7 @@ class Product(Base):
     id_origin = Column(Integer, default=0, index=True)
     id_category = Column(Integer, ForeignKey('categories.id_category'), index=True, default=None)
     id_brand = Column(Integer, ForeignKey('brands.id_brand'), index=True, default=None)
-    id_platform = Column(Integer, default=0, nullable=False, index=True)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), index=True, nullable=True, default=None)
     img_url = Column(String(500), default=None)
     name = Column(String(128))
     sku = Column(String(32))
@@ -40,5 +40,6 @@ class Product(Base):
     purchase_price = Column(Numeric(10, 5), default=0.0, nullable=True)
     minimal_quantity = Column(Integer, default=0, nullable=True)
 
+    store = relationship("Store", back_populates="products")
     brand = relationship("Brand", back_populates="products")
     category = relationship("Category", back_populates="products")

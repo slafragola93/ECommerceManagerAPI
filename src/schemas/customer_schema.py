@@ -24,6 +24,7 @@ class CustomerSchema(BaseModel):
     """
     id_origin: Optional[int] = 0
     id_lang: int = Field(..., gt=0)
+    id_store: Optional[int] = Field(None)
     firstname: str = Field(..., min_length=1, max_length=100)
     lastname: str = Field(..., min_length=1, max_length=100)
     email: str = Field(..., max_length=150)
@@ -38,7 +39,7 @@ class CountryResponseSchema(BaseModel):
 class AddressResponseSchema(BaseModel):
     id_address: int | None
     id_origin: int | None
-    id_platform: int | None = Field(None, description="Platform ID (0 for manual addresses, 1 for PrestaShop)")
+    id_store: int | None = Field(None, description="Store ID")
     country: Optional[CountryResponseSchema] = None
     company: str | None
     firstname: str | None
@@ -60,6 +61,7 @@ class CustomerResponseSchema(BaseModel):
     id_customer: int | None
     id_origin: int | None
     id_lang: int | None
+    id_store: int | None
     firstname: str | None
     lastname: str | None
     email: str | None
@@ -71,6 +73,7 @@ class CustomerResponseWithoutAddressSchema(BaseModel):
     id_customer: int | None
     id_origin: int | None
     id_lang: int | None
+    id_store: int | None
     firstname: str | None
     lastname: str | None
     email: str | None

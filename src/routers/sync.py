@@ -2,7 +2,7 @@
 Synchronization endpoints for e-commerce platforms
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from starlette import status
 from sqlalchemy.orm import Session
 from typing import Dict, Any
@@ -13,8 +13,10 @@ from src.services.routers.auth_service import db_dependency, get_current_user
 from src.services.core.wrap import check_authentication
 from src.services.routers.auth_service import authorize
 from src.repository.platform_repository import PlatformRepository
+from src.repository.store_repository import StoreRepository
 from src.repository.product_repository import ProductRepository
 from src.models.platform import Platform
+from src.models.store import Store
 from src.routers.dependencies import get_ecommerce_service
 import time
 
@@ -28,25 +30,28 @@ def get_platform_repository(db: db_dependency) -> PlatformRepository:
     return PlatformRepository(db)
 
 
-def get_default_platform(pr: PlatformRepository = Depends(get_platform_repository)):
+def get_store_repository(db: db_dependency) -> StoreRepository:
+    return StoreRepository(db)
+
+def get_default_store(sr: StoreRepository = Depends(get_store_repository)):
     """
-    Dependency per recuperare la piattaforma di default (is_default = 1)
+    Dependency per recuperare lo store di default (is_default = 1)
     
     Raises:
-        HTTPException 400: Se non viene trovata nessuna piattaforma di default
+        HTTPException 400: Se non viene trovato nessuno store di default
     
     Returns:
-        Platform: La piattaforma di default
+        Store: Lo store di default
     """
-    platform = pr.get_default()
+    store = sr.get_default()
     
-    if not platform:
+    if not store:
         raise HTTPException(
             status_code=400, 
-            detail="No default platform found (is_default = 1). Please set a default platform."
+            detail="No default store found (is_default = 1). Please set a default store."
         )
     
-    return platform
+    return store
 
 
 @router.post("/prestashop", status_code=status.HTTP_202_ACCEPTED)
@@ -55,7 +60,8 @@ def get_default_platform(pr: PlatformRepository = Depends(get_platform_repositor
 async def sync_prestashop(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_repo: StoreRepository = Depends(get_store_repository),
+    store_id: int = Query(..., description="ID dello store da sincronizzare"),  
     limit: int = None,
     user: dict = Depends(get_current_user)
 ):
@@ -63,21 +69,27 @@ async def sync_prestashop(
     Start PrestaShop incremental synchronization process
     
     This endpoint starts an asynchronous synchronization process that will:
-    1. Retrieve the default platform (is_default = 1)
+    1. Retrieve the store by ID
     2. Sync all data in the correct order (base tables first, then dependent tables)
     3. Process data in batches to avoid timeouts
     4. Log all operations for tracking
     
     Returns:
         202 Accepted: Synchronization started successfully
-        400 Bad Request: Missing configuration or invalid platform
+        400 Bad Request: Missing configuration or invalid store
         500 Internal Server Error: Failed to start synchronization
     """
+    # Verifica che lo store esista
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
     # Start background synchronization
     background_tasks.add_task(
         _run_prestashop_sync,
         db=db,
-        platform_id=platform.id_platform,
+        store_id=store_id,
         new_elements=True,
         limit=limit
     )
@@ -86,8 +98,9 @@ async def sync_prestashop(
         "message": "PrestaShop incremental synchronization started",
         "status": "accepted",
         "sync_type": "incremental",
-        "platform_id": platform.id_platform,
-        "platform_name": platform.name,
+        "store_id": store_id,
+        "store_name": store.name,
+        "vat_number": store.vat_number,
         "sync_id": f"prestashop_incremental_{user['id']}_{int(__import__('time').time())}"
     }
         
@@ -98,28 +111,35 @@ async def sync_prestashop(
 async def sync_prestashop_full(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_id: int = Query(..., description="ID dello store da sincronizzare"),
     user: dict = Depends(get_current_user)
 ):
     """
     Start PrestaShop full synchronization process
     
     This endpoint starts an asynchronous synchronization process that will:
-    1. Retrieve the default platform (is_default = 1)
+    1. Retrieve the store by ID
     2. Sync all data in the correct order (base tables first, then dependent tables)
     3. Process data in batches to avoid timeouts
     4. Log all operations for tracking
     
     Returns:
         202 Accepted: Synchronization started successfully
-        400 Bad Request: Missing configuration or invalid platform
+        400 Bad Request: Missing configuration or invalid store
         500 Internal Server Error: Failed to start synchronization
     """
+    # Verifica che lo store esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
     # Start background synchronization
     background_tasks.add_task(
         _run_prestashop_sync,
         db=db,
-        platform_id=platform.id_platform,
+        store_id=store_id,
         new_elements=False
     )
     
@@ -127,8 +147,9 @@ async def sync_prestashop_full(
         "message": "PrestaShop full synchronization started",
         "status": "accepted",
         "sync_type": "full",
-        "platform_id": platform.id_platform,
-        "platform_name": platform.name,
+        "store_id": store_id,
+        "store_name": store.name,
+        "vat_number": store.vat_number,
         "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
     }
 
@@ -163,7 +184,7 @@ async def get_prestashop_sync_status(
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_prestashop_last_imported_ids(
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_id: int = Query(..., description="ID dello store"),
     user: dict = Depends(get_current_user)
 ):
     """
@@ -177,26 +198,33 @@ async def get_prestashop_last_imported_ids(
     Returns:
         Dict with table names and their last imported ID origins
     """
-    service_class = get_ecommerce_service(platform, db)
+    # Verifica che lo store esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
+    service_class = get_ecommerce_service(store_id, db)
     async with service_class as ps_service:
         last_ids = await ps_service._get_last_imported_ids()
         
         return {
             "last_imported_ids": last_ids,
-            "platform_id": platform.id_platform,
-            "platform_name": platform.name,
+            "store_id": store_id,
+            "store_name": store.name,
             "message": "Last imported IDs retrieved successfully",
             "note": "These IDs represent the highest ID origin imported for each table"
         }
 
 
-async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: bool = True, incremental: bool = None, limit: int = None):
+async def _run_prestashop_sync(db: Session, store_id: int, new_elements: bool = True, incremental: bool = None, limit: int = None):
     """
     Background task to run PrestaShop synchronization
     
     Args:
         db: Database session
-        platform_id: Platform ID in the platforms table (default: 1 for PrestaShop)
+        store_id: Store ID in the stores table
         new_elements: Whether to sync only new elements (incremental sync)
         incremental: Whether to run incremental sync (only new data) - deprecated, use new_elements
         limit: Maximum number of records to process per batch
@@ -207,14 +235,17 @@ async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: 
     
     sync_type = "incremental" if new_elements else "full"
     print(f"Starting PrestaShop {sync_type} synchronization...")
-    print(f"Platform ID: {platform_id}")
+    print(f"Store ID: {store_id}")
     
-    # Recupera la piattaforma per ottenere il service corretto
-    platform_repo = PlatformRepository(db)
-    platform = platform_repo.get_by_id(platform_id)
+    # Recupera lo store per verificare che esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
     
-    if not platform:
-        raise Exception(f"Platform with ID {platform_id} not found")
+    if not store:
+        raise Exception(f"Store with ID {store_id} not found")
+    
+    if not store.is_active:
+        raise Exception(f"Store {store.name} is not active")
     
     # Note: limit parameter is not currently supported by PrestaShopService
     # but we log it for future implementation
@@ -222,7 +253,7 @@ async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: 
         print(f"Limit parameter set to {limit} (not yet implemented in PrestaShopService)")
     
     # Crea il service usando la funzione centralizzata
-    service_class = get_ecommerce_service(platform, db, new_elements=new_elements)
+    service_class = get_ecommerce_service(store_id, db, new_elements=new_elements)
     
     async with service_class as ps_service:
         print(f"Base URL: {ps_service.base_url}")
@@ -256,13 +287,13 @@ async def _run_prestashop_sync(db: Session, platform_id: int = 1, new_elements: 
 @authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def test_prestashop_connection(
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_id: int = Query(..., description="ID dello store da testare"),
     user: dict = Depends(get_current_user)
 ):
     """
     Test PrestaShop API connection
     
-    This endpoint tests the connection to PrestaShop API using the ecommerce configurations.
+    This endpoint tests the connection to PrestaShop API using the store configuration.
     Useful for verifying configuration before starting a full synchronization.
     
     Returns:
@@ -271,8 +302,15 @@ async def test_prestashop_connection(
         401 Unauthorized: Invalid credentials
         500 Internal Server Error: Connection failed
     """
-        # Test connection
-    service_class = get_ecommerce_service(platform, db)
+    # Verifica che lo store esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
+    # Test connection
+    service_class = get_ecommerce_service(store_id, db)
     async with service_class as ps_service:
         # Try to get a simple endpoint (languages)
         response = await ps_service._make_request('/api/languages')
@@ -280,8 +318,8 @@ async def test_prestashop_connection(
         return {
             "status": "success",
             "message": "PrestaShop connection successful",
-            "platform_id": platform.id_platform,
-            "platform_name": platform.name,
+            "store_id": store_id,
+            "store_name": store.name,
             "base_url": ps_service.base_url,
             "api_key_preview": f"{ps_service.api_key[:10]}..." if len(ps_service.api_key) > 10 else "***",
             "test_endpoint": "/api/languages",
@@ -296,66 +334,73 @@ async def test_prestashop_connection(
 async def sync_products_quantity(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_id: int = Query(..., description="ID dello store da sincronizzare"),
     user: dict = Depends(get_current_user)
 ):
     """
     Sincronizza le quantità dei prodotti dalla piattaforma e-commerce.
     
     Questo endpoint avvia un processo asincrono che:
-    1. Seleziona il service corretto in base alla piattaforma (PrestaShop, etc.)
+    1. Seleziona il service corretto per lo store
     2. Chiama l'API della piattaforma per recuperare le quantità aggiornate
     3. Aggiorna i prodotti nel database con le nuove quantità
     
     Returns:
         202 Accepted: Sincronizzazione quantità avviata con successo
-        400 Bad Request: Piattaforma non supportata o configurazione mancante
+        400 Bad Request: Store non supportato o configurazione mancante
         500 Internal Server Error: Errore nell'avvio della sincronizzazione
     """
+    # Verifica che lo store esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
     background_tasks.add_task(
         _run_quantity_sync,
         db=db,
-        platform_id=platform.id_platform,
-        platform_name=platform.name
+        store_id=store_id,
+        store_name=store.name
     )
     
     return {
         "message": "Product quantity synchronization started",
         "status": "accepted",
-        "platform_id": platform.id_platform,
-        "platform_name": platform.name,
+        "store_id": store_id,
+        "store_name": store.name,
         "sync_id": f"quantity_sync_{user['id']}_{int(time.time())}"
     }
 
 
-async def _run_quantity_sync(db: Session, platform_id: int, platform_name: str):
+async def _run_quantity_sync(db: Session, store_id: int, store_name: str):
     """
     Background task per eseguire la sincronizzazione delle quantità dei prodotti.
     
     Args:
         db: Database session
-        platform_id: ID della piattaforma
-        platform_name: Nome della piattaforma
+        store_id: ID dello store
+        store_name: Nome dello store
     """
-    print(f"🚀 Starting quantity synchronization for platform: {platform_name} (ID: {platform_id})")
+    print(f"🚀 Starting quantity synchronization for store: {store_name} (ID: {store_id})")
     
     try:
-        # Recupera la piattaforma per ottenere l'oggetto completo
-        platform_repo = PlatformRepository(db)
-        platform = platform_repo.get_by_id(platform_id)
+        # Recupera lo store per verificare che esista
+        store_repo = StoreRepository(db)
+        store = store_repo.get_by_id(store_id)
         
-        if not platform:
-            raise Exception(f"Platform with ID {platform_id} not found")
+        if not store:
+            raise Exception(f"Store with ID {store_id} not found")
         
-        # Seleziona il service corretto in base alla piattaforma
-        service_class = get_ecommerce_service(platform, db)
+        # Seleziona il service corretto per lo store
+        service_class = get_ecommerce_service(store_id, db)
         
         # Crea il repository per i prodotti
         product_repo = ProductRepository(db)
         
         # Esegui la sincronizzazione usando async context manager
         async with service_class as service:
-            print(f"📡 Fetching quantities from {platform_name} API...")
+            print(f"📡 Fetching quantities from {store_name} API...")
             
             # Chiama sync_quantity del service
             sync_result = await service.sync_quantity()
@@ -371,10 +416,10 @@ async def _run_quantity_sync(db: Session, platform_id: int, platform_name: str):
                 return
             
             # Aggiorna le quantità nel database
-            print(f"💾 Updating quantities in database for platform {platform_id}...")
+            print(f"💾 Updating quantities in database for store {store_id}...")
             updated_count = product_repo.bulk_update_quantity(
                 quantity_map=quantity_map,
-                id_platform=platform_id
+                id_store=store_id
             )
             
             print(f"✅ Quantity synchronization completed:")
@@ -398,7 +443,7 @@ async def _run_quantity_sync(db: Session, platform_id: int, platform_name: str):
 async def sync_products_price(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_id: int = Query(..., description="ID dello store da sincronizzare"),
     user: dict = Depends(get_current_user)
 ):
     """
@@ -414,50 +459,57 @@ async def sync_products_price(
         400 Bad Request: Piattaforma non supportata o configurazione mancante
         500 Internal Server Error: Errore nell'avvio della sincronizzazione
     """
+    # Verifica che lo store esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
     background_tasks.add_task(
         _run_price_sync,
         db=db,
-        platform_id=platform.id_platform,
-        platform_name=platform.name
+        store_id=store_id,
+        store_name=store.name
     )
     
     return {
         "message": "Product price synchronization started",
         "status": "accepted",
-        "platform_id": platform.id_platform,
-        "platform_name": platform.name,
+        "store_id": store_id,
+        "store_name": store.name,
         "sync_id": f"price_sync_{user['id']}_{int(time.time())}"
     }
 
 
-async def _run_price_sync(db: Session, platform_id: int, platform_name: str):
+async def _run_price_sync(db: Session, store_id: int, store_name: str):
     """
     Background task per eseguire la sincronizzazione dei prezzi dei prodotti.
     
     Args:
         db: Database session
-        platform_id: ID della piattaforma
-        platform_name: Nome della piattaforma
+        store_id: ID dello store
+        store_name: Nome dello store
     """
-    print(f"🚀 Starting price synchronization for platform: {platform_name} (ID: {platform_id})")
+    print(f"🚀 Starting price synchronization for store: {store_name} (ID: {store_id})")
     
     try:
-        # Recupera la piattaforma per ottenere l'oggetto completo
-        platform_repo = PlatformRepository(db)
-        platform = platform_repo.get_by_id(platform_id)
+        # Recupera lo store per verificare che esista
+        store_repo = StoreRepository(db)
+        store = store_repo.get_by_id(store_id)
         
-        if not platform:
-            raise Exception(f"Platform with ID {platform_id} not found")
+        if not store:
+            raise Exception(f"Store with ID {store_id} not found")
         
-        # Seleziona il service corretto in base alla piattaforma
-        service_class = get_ecommerce_service(platform, db)
+        # Seleziona il service corretto per lo store
+        service_class = get_ecommerce_service(store_id, db)
         
         # Crea il repository per i prodotti
         product_repo = ProductRepository(db)
         
         # Esegui la sincronizzazione usando async context manager
         async with service_class as service:
-            print(f"📡 Fetching prices from {platform_name} API...")
+            print(f"📡 Fetching prices from {store_name} API...")
             
             # Chiama sync_price del service
             sync_result = await service.sync_price()
@@ -473,10 +525,10 @@ async def _run_price_sync(db: Session, platform_id: int, platform_name: str):
                 return
             
             # Aggiorna i prezzi nel database
-            print(f"💾 Updating prices in database for platform {platform_id}...")
+            print(f"💾 Updating prices in database for store {store_id}...")
             updated_count = product_repo.bulk_update_price(
                 price_map=price_map,
-                id_platform=platform_id
+                id_store=store_id
             )
             
             print(f"✅ Price synchronization completed:")
@@ -500,7 +552,7 @@ async def _run_price_sync(db: Session, platform_id: int, platform_name: str):
 async def sync_products_details(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    platform = Depends(get_default_platform),
+    store_id: int = Query(..., description="ID dello store da sincronizzare"),
     user: dict = Depends(get_current_user)
 ):
     """
@@ -514,26 +566,33 @@ async def sync_products_details(
     
     Returns:
         202 Accepted: Sincronizzazione dettagli prodotti avviata con successo
-        400 Bad Request: Piattaforma non supportata o configurazione mancante
+        400 Bad Request: Store non supportato o configurazione mancante
         500 Internal Server Error: Errore nell'avvio della sincronizzazione
     """
+    # Verifica che lo store esista
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+    
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
+    
     background_tasks.add_task(
         _run_details_sync,
         db=db,
-        platform_id=platform.id_platform,
-        platform_name=platform.name
+        store_id=store_id,
+        store_name=store.name
     )
     
     return {
         "message": "Product details synchronization started",
         "status": "accepted",
-        "platform_id": platform.id_platform,
-        "platform_name": platform.name,
+        "store_id": store_id,
+        "store_name": store.name,
         "sync_id": f"details_sync_{user['id']}_{int(time.time())}"
     }
 
 
-async def _run_details_sync(db: Session, platform_id: int, platform_name: str):
+async def _run_details_sync(db: Session, store_id: int, store_name: str):
     """
     Background task per eseguire la sincronizzazione dei dettagli dei prodotti.
     
@@ -541,28 +600,28 @@ async def _run_details_sync(db: Session, platform_id: int, platform_name: str):
     
     Args:
         db: Database session
-        platform_id: ID della piattaforma
-        platform_name: Nome della piattaforma
+        store_id: ID dello store
+        store_name: Nome dello store
     """
-    print(f"🚀 Starting product details synchronization for platform: {platform_name} (ID: {platform_id})")
+    print(f"🚀 Starting product details synchronization for store: {store_name} (ID: {store_id})")
     
     try:
-        # Recupera la piattaforma per ottenere l'oggetto completo
-        platform_repo = PlatformRepository(db)
-        platform = platform_repo.get_by_id(platform_id)
+        # Recupera lo store per verificare che esista
+        store_repo = StoreRepository(db)
+        store = store_repo.get_by_id(store_id)
         
-        if not platform:
-            raise Exception(f"Platform with ID {platform_id} not found")
+        if not store:
+            raise Exception(f"Store with ID {store_id} not found")
         
-        # Seleziona il service corretto in base alla piattaforma
-        service_class = get_ecommerce_service(platform, db)
+        # Seleziona il service corretto per lo store
+        service_class = get_ecommerce_service(store_id, db)
         
         # Crea il repository per i prodotti
         product_repo = ProductRepository(db)
         
         # Esegui la sincronizzazione usando async context manager
         async with service_class as service:
-            print(f"📡 Fetching product details and quantities from {platform_name} API...")
+            print(f"📡 Fetching product details and quantities from {store_name} API...")
             
             # Ottimizzazione: chiama sync_product_details() e sync_quantity() in parallelo
             details_result, quantity_result = await asyncio.gather(
@@ -606,10 +665,10 @@ async def _run_details_sync(db: Session, platform_id: int, platform_name: str):
             print(f"✅ Merged {len(details_map)} products with details and quantities")
             
             # Aggiorna i dettagli nel database
-            print(f"💾 Updating product details in database for platform {platform_id}...")
+            print(f"💾 Updating product details in database for store {store_id}...")
             updated_count = product_repo.bulk_update_product_details(
                 details_map=details_map,
-                id_platform=platform_id
+                id_store=store_id
             )
             
             print(f"✅ Product details synchronization completed:")

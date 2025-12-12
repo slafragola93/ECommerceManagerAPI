@@ -25,7 +25,8 @@ class OrderSchema(BaseModel):
     address_delivery: int | AddressSchema = 0
     address_invoice: int | AddressSchema = 0
     customer: CustomerSchema | int = 0
-    id_platform: Optional[int] = 0
+    id_platform: Optional[int] = 1
+    id_store: Optional[int] = None
     id_payment: Optional[int] = 0
     id_carrier: Optional[int] = 0
     shipping: int | ShippingSchema | None = 0
@@ -52,6 +53,7 @@ class OrderUpdateSchema(BaseModel):
     id_address_invoice: Optional[int] = None
     id_customer: Optional[int] = None
     id_platform: Optional[int] = None
+    id_store: Optional[int] = None
     id_payment: Optional[int] = None
     id_carrier: Optional[int] = None
     id_shipping: Optional[int] = None

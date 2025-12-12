@@ -92,6 +92,7 @@ class PreventivoRepository:
             id_address_invoice=invoice_address_id,
             id_sectional=sectional_id,
             id_payment=preventivo_data.id_payment if preventivo_data.id_payment else None,
+            id_store=preventivo_data.id_store if preventivo_data.id_store else None,
             is_invoice_requested=preventivo_data.is_invoice_requested,  # Default per preventivi
             is_payed=is_payed_value,
             note=preventivo_data.note,
@@ -567,6 +568,7 @@ class PreventivoRepository:
             address_invoice=preventivo.id_address_invoice or 0,  # Default 0 se None
             reference=generate_preventivo_reference(preventivo.document_number),
             id_platform=0,  # Ordine creato dall'app, non da piattaforma esterna
+            id_store=preventivo.id_store,
             shipping=preventivo.id_shipping or 0,  # Usa spedizione del preventivo, altrimenti 0
             sectional=preventivo.id_sectional or 0,  # Usa sectional del preventivo, altrimenti 0
             id_order_state=1,  # Default 1 (pending)
@@ -1193,9 +1195,8 @@ class PreventivoRepository:
                 address.ipa = address_field.ipa
             if address_field.id_origin is not None:
                 address.id_origin = address_field.id_origin
-            if address_field.id_platform is not None:
-                address.id_platform = address_field.id_platform
-            
+            if address_field.id_store is not None:
+                address.id_store = address_field.id_store
             self.db.commit()
             return address.id_address
         else:
@@ -1204,7 +1205,7 @@ class PreventivoRepository:
                 id_customer=customer_id,
                 id_origin=address_field.id_origin or 0,
                 id_country=address_field.id_country,
-                id_platform=address_field.id_platform or 0,
+                id_store=address_field.id_store,
                 firstname=address_field.firstname,
                 lastname=address_field.lastname,
                 address1=address_field.address1,

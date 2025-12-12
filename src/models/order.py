@@ -23,7 +23,8 @@ class Order(Base):
     id_address_delivery = Column(Integer, index=True, nullable=True, default=None)
     id_address_invoice = Column(Integer, index=True, nullable=True, default=None)
     id_customer = Column(Integer, index=True, nullable=True, default=None)
-    id_platform = Column(Integer, index=True, nullable=True, default=1)
+    id_platform = Column(Integer, ForeignKey('platforms.id_platform'), index=True, nullable=True, default=1)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), index=True, nullable=True, default=1)
     id_payment = Column(Integer, index=True, nullable=True, default=None)
     id_carrier = Column(Integer, ForeignKey('carriers.id_carrier'), default=0, nullable=True)
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'), default=None)
@@ -47,6 +48,8 @@ class Order(Base):
     updated_at = Column(String(19), nullable=True)  # Formato: DD-MM-YYYY hh:mm:ss
 
     # Relazioni
+    platform = relationship("Platform", back_populates="orders")
+    store = relationship("Store", back_populates="orders")
     order_states = relationship("OrderState", secondary=orders_history, back_populates="orders")
     carrier = relationship("Carrier", back_populates="orders")
     shipments = relationship("Shipping", back_populates="orders")

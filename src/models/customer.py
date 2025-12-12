@@ -1,5 +1,5 @@
 from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey
 
 from ..database import Base
 
@@ -31,10 +31,12 @@ class Customer(Base):
     id_customer = Column(Integer, primary_key=True, index=True)
     id_origin = Column(Integer, default=0)
     id_lang = Column(Integer)
+    id_store = Column(Integer, ForeignKey('stores.id_store'), index=True, nullable=True, default=None)
     firstname = Column(String(100))
     lastname = Column(String(100))
     email = Column(String(150), index=True)
     date_add = Column(DateTime, default=func.now())
 
+    store = relationship("Store", back_populates="customers")
     addresses = relationship("Address", back_populates="customer")
     orders_document = relationship("OrderDocument", back_populates="customer")

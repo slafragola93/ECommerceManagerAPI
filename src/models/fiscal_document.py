@@ -23,6 +23,7 @@ class FiscalDocument(Base):
     
     # Relazioni
     id_order = Column(Integer, ForeignKey("orders.id_order"), nullable=False, index=True)
+    id_store = Column(Integer, ForeignKey("stores.id_store"), index=True, nullable=True, default=None)
     id_fiscal_document_ref = Column(Integer, ForeignKey("fiscal_documents.id_fiscal_document"), nullable=True, index=True)  # Per note di credito -> fattura
     
     # Numerazione
@@ -51,6 +52,7 @@ class FiscalDocument(Base):
     date_upd = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
+    store = relationship("Store", back_populates="fiscal_documents")
     order = relationship("Order", back_populates="fiscal_documents")
     referenced_document = relationship("FiscalDocument", remote_side=[id_fiscal_document], foreign_keys=[id_fiscal_document_ref])
     credit_notes = relationship("FiscalDocument", back_populates="referenced_document", foreign_keys=[id_fiscal_document_ref])

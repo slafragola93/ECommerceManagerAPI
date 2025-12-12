@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.database import get_db
-from src.services.image_cache_service import get_image_cache_service
+from src.services.media.image_cache_service import get_image_cache_service
 from src.repository.product_repository import ProductRepository
 from src.core.settings import get_cache_settings
 from sqlalchemy import text

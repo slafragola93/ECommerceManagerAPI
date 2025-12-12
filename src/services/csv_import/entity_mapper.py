@@ -25,7 +25,7 @@ from src.schemas.order_detail_schema import OrderDetailSchema
 
 class EntityMapper:
     """
-    Mapper CSV → Pydantic Schema con gestione id_platform.
+    Mapper CSV → Pydantic Schema con gestione id_store.
     
     Stateless mapper - configurazione dichiarativa.
     """
@@ -45,8 +45,8 @@ class EntityMapper:
         'order_details': OrderDetailSchema
     }
     
-    # Entità che hanno campo id_platform
-    PLATFORM_AWARE_ENTITIES = {'products', 'addresses', 'orders'}
+    # Entità che hanno campo id_store
+    PLATFORM_AWARE_ENTITIES = {'products', 'addresses', 'orders', 'customers'}
     
     # Campi richiesti per entità (per validazione headers)
     REQUIRED_FIELDS: Dict[str, List[str]] = {
@@ -141,7 +141,7 @@ class EntityMapper:
     def transform_fields(
         row: Dict[str, Any],
         entity_type: str,
-        id_platform: int = 1,
+        id_store: int = None,
         db: Optional[Session] = None
     ) -> Dict[str, Any]:
         """
@@ -170,35 +170,37 @@ class EntityMapper:
             if value == '':
                 cleaned[key] = None
         
-        # Inietta id_platform se entity è platform-aware
+        # Inietta id_store se entity è store-aware
         if entity_type in EntityMapper.PLATFORM_AWARE_ENTITIES:
-            cleaned['id_platform'] = id_platform
+            if id_store:
+                cleaned['id_store'] = id_store
         
-        # Per order_details: gestisci id_platform, id_origin->id_product e Tax->id_tax
+        # Per order_details: gestisci id_store, id_origin->id_product e Tax->id_tax
         if entity_type == 'order_details':
-            # Inietta id_platform se presente nel CSV, altrimenti usa quello passato come parametro
-            if 'id_platform' in cleaned and cleaned['id_platform'] is not None:
-                # Usa id_platform dal CSV
+            # Inietta id_store se presente nel CSV, altrimenti usa quello passato come parametro
+            if 'id_store' in cleaned and cleaned['id_store'] is not None:
+                # Usa id_store dal CSV
                 pass
-            else:
-                # Usa id_platform dal parametro
-                cleaned['id_platform'] = id_platform
+            elif id_store:
+                # Usa id_store dal parametro
+                cleaned['id_store'] = id_store
             
             # Converti id_origin (prodotto) in id_product
             if 'id_origin' in cleaned and cleaned['id_origin'] is not None and db is not None:
                 from src.models.product import Product
                 from sqlalchemy.orm import load_only
                 product_origin = int(cleaned['id_origin'])
-                product = db.query(Product).options(
-                    load_only(Product.id_product)
-                ).filter(
-                    Product.id_origin == product_origin,
-                    Product.id_platform == cleaned.get('id_platform', id_platform)
-                ).first()
+                query = db.query(Product).options(load_only(Product.id_product)).filter(Product.id_origin == product_origin)
+                if cleaned.get('id_store'):
+                    query = query.filter(Product.id_store == cleaned['id_store'])
+                elif id_store:
+                    query = query.filter(Product.id_store == id_store)
+                product = query.first()
                 if product:
                     cleaned['id_product'] = product.id_product
                 else:
-                    raise ValueError(f"Prodotto con id_origin={product_origin} e id_platform={cleaned.get('id_platform', id_platform)} non trovato")
+                    store_id = cleaned.get('id_store', id_store)
+                    raise ValueError(f"Prodotto con id_origin={product_origin} e id_store={store_id} non trovato")
                 # Rimuovi id_origin dal dizionario (non fa parte dello schema OrderDetailSchema)
                 cleaned.pop('id_origin', None)
             

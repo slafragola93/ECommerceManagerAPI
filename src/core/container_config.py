@@ -88,6 +88,8 @@ from src.services.interfaces.order_package_service_interface import IOrderPackag
 from src.services.routers.order_package_service import OrderPackageService
 from src.repository.interfaces.order_repository_interface import IOrderRepository
 from src.repository.order_repository import OrderRepository
+from src.repository.interfaces.store_repository_interface import IStoreRepository
+from src.repository.store_repository import StoreRepository
 
 def configure_container():
     """Configura il container di dependency injection"""
@@ -107,6 +109,7 @@ def configure_container():
     container.register_transient(IAddressRepository, AddressRepository)
     container.register_transient(ICarrierRepository, CarrierRepository)
     container.register_transient(IPlatformRepository, PlatformRepository)
+    container.register_transient(IStoreRepository, StoreRepository)
     container.register_transient(ISectionalRepository, SectionalRepository)
     container.register_transient(IMessageRepository, MessageRepository)
     container.register_transient(IPaymentRepository, PaymentRepository)
@@ -151,6 +154,8 @@ def configure_container():
     from src.services.routers.fiscal_document_service import FiscalDocumentService
     from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
     from src.repository.fiscal_document_repository import FiscalDocumentRepository
+    from src.services.interfaces.store_service_interface import IStoreService
+    from src.services.routers.store_service import StoreService
     
     container.register_transient(IFiscalDocumentRepository, FiscalDocumentRepository)
     
@@ -169,6 +174,7 @@ def configure_container():
     container.register_transient(IAddressService, AddressService)
     container.register_transient(ICarrierService, CarrierService)
     container.register_transient(IPlatformService, PlatformService)
+    container.register_transient(IStoreService, StoreService)
     container.register_transient(ISectionalService, SectionalService)
     container.register_transient(IMessageService, MessageService)
     container.register_transient(IPaymentService, PaymentService)

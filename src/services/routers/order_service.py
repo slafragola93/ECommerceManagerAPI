@@ -288,6 +288,7 @@ class OrderService(IOrderService):
             return
 
         session = self._order_repository.session
+
         order_details: List[OrderDetail] = session.query(OrderDetail).filter(
             OrderDetail.id_order == order_id
         ).all()
