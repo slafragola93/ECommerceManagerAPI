@@ -7,7 +7,7 @@ from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerRes
 
 class AddressSchema(BaseModel):
     id_origin: Optional[int] = None
-    id_store: Optional[int] = Field(None)
+    id_store: Optional[int] = None
     id_country: Optional[int] = None
     id_customer: Optional[int] = None
     company: Optional[str] = None

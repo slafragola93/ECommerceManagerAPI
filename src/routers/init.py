@@ -2,14 +2,17 @@
 Router per i dati di inizializzazione del frontend
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
+from pydantic import ValidationError
 from typing import Optional
 import time
 
 from src.database import get_db
 from src.services.routers.init_service import InitService
 from src.schemas.init_schema import InitDataSchema
+from src.core.exceptions import InfrastructureException, ErrorCode
 
 router = APIRouter(
     prefix="/api/v1/init",
@@ -59,7 +62,8 @@ async def get_init_data(
                                       len(static_data.get("languages", [])) + 
                                       len(static_data.get("countries", [])) + 
                                       len(static_data.get("taxes", [])) +
-                                      len(static_data.get("carriers", []))
+                                      len(static_data.get("carriers", [])) +
+                                      len(static_data.get("stores", []))
                     }
                 }
             )
@@ -75,6 +79,9 @@ async def get_init_data(
                     "languages": [],
                     "countries": [],
                     "taxes": [],
+                    "payments": [],
+                    "carriers": [],
+                    "stores": [],
                     **dynamic_data,
                     "cache_info": {
                         "generated_at": time.time(),
@@ -90,16 +97,67 @@ async def get_init_data(
         
         else:
             # Tutti i dati (default)
-            init_data = await init_service.get_full_init_data()
-            print(f"[INIT] Caricamento dati completi completato in {time.time() - start_time:.2f}s")
-            
-            return init_data
+            try:
+                init_data = await init_service.get_full_init_data()
+                print(f"[INIT] Caricamento dati completi completato in {time.time() - start_time:.2f}s")
+                
+                return init_data
+            except (ValidationError, ValueError) as e:
+                # Se c'è un errore di validazione Pydantic, potrebbe essere cache vecchia
+                error_msg = str(e)
+                print(f"[ERROR] Errore validazione InitDataSchema: {error_msg}")
+                print("[ERROR] Possibile causa: cache obsoleta senza campo 'stores'")
+                print("[ERROR] Soluzione: cancella la cache e riprova")
+                raise InfrastructureException(
+                    message=f"Errore validazione dati inizializzazione. Il campo 'stores' potrebbe mancare nella cache. "
+                           f"Prova a cancellare la cache e riprova.",
+                    error_code=ErrorCode.DATABASE_ERROR,
+                    details={
+                        "original_error": error_msg,
+                        "suggestion": "Cancella la cache e riprova",
+                        "cache_keys": ["init_data:static", "init_data:full"]
+                    }
+                )
+            except ResponseValidationError as e:
+                # Errore di validazione della risposta (Pydantic)
+                error_msg = str(e)
+                print(f"[ERROR] Errore validazione risposta: {error_msg}")
+                print("[ERROR] Possibile causa: cache obsoleta senza campo 'stores'")
+                print("[ERROR] Soluzione: cancella la cache e riprova")
+                raise InfrastructureException(
+                    message=f"Errore validazione risposta. Il campo 'stores' potrebbe mancare nella cache. "
+                           f"Prova a cancellare la cache e riprova.",
+                    error_code=ErrorCode.DATABASE_ERROR,
+                    details={
+                        "original_error": error_msg,
+                        "suggestion": "Cancella la cache e riprova",
+                        "cache_keys": ["init_data:static", "init_data:full"]
+                    }
+                )
+            except Exception as e:
+                error_msg = str(e)
+                if "stores" in error_msg.lower() or "validation" in error_msg.lower():
+                    print(f"[ERROR] Errore validazione InitDataSchema: {error_msg}")
+                    print("[ERROR] Possibile causa: cache obsoleta senza campo 'stores'")
+                    print("[ERROR] Soluzione: cancella la cache e riprova")
+                    raise InfrastructureException(
+                        message=f"Errore validazione dati inizializzazione. Il campo 'stores' potrebbe mancare nella cache. "
+                               f"Prova a cancellare la cache e riprova.",
+                        error_code=ErrorCode.DATABASE_ERROR,
+                        details={
+                            "original_error": error_msg,
+                            "suggestion": "Cancella la cache e riprova",
+                            "cache_keys": ["init_data:static", "init_data:full"]
+                        }
+                    )
+                raise
     
     except Exception as e:
         print(f"[ERROR] Errore caricamento dati inizializzazione: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Errore interno durante il caricamento dei dati: {str(e)}"
+        raise InfrastructureException(
+            message=f"Errore interno durante il caricamento dei dati: {str(e)}",
+            error_code=ErrorCode.DATABASE_ERROR,
+            details={"original_error": str(e)}
         )
 
 
@@ -126,9 +184,10 @@ async def get_static_data_only(db=Depends(get_db)):
         )
     
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Errore caricamento dati statici: {str(e)}"
+        raise InfrastructureException(
+            message=f"Errore caricamento dati statici: {str(e)}",
+            error_code=ErrorCode.DATABASE_ERROR,
+            details={"original_error": str(e)}
         )
 
 
@@ -155,9 +214,10 @@ async def get_dynamic_data_only(db=Depends(get_db)):
         )
     
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Errore caricamento dati dinamici: {str(e)}"
+        raise InfrastructureException(
+            message=f"Errore caricamento dati dinamici: {str(e)}",
+            error_code=ErrorCode.DATABASE_ERROR,
+            details={"original_error": str(e)}
         )
 
 

@@ -25,10 +25,10 @@ class BrandSchema(BaseModel):
 class BrandResponseSchema(BaseModel):
     id_brand: int | None
     id_origin: int | None
-    id_platform: int | None
+    id_store: int | None
     name: str | None
     
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "extra": "ignore"}
 
 
 class AllBrandsResponseSchema(BaseModel):

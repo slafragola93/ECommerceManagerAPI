@@ -7,6 +7,7 @@ from datetime import datetime
 
 from src.core.cached import cached
 from src.core.settings import TTL_PRESETS
+from src.core.exceptions import InfrastructureException, ErrorCode
 from src.schemas.init_schema import InitDataSchema, CacheInfoSchema
 
 from src.repository.platform_repository import PlatformRepository
@@ -18,6 +19,7 @@ from src.repository.order_state_repository import OrderStateRepository
 from src.repository.shipping_state_repository import ShippingStateRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.api_carrier_repository import ApiCarrierRepository
+from src.repository.store_repository import StoreRepository
 
 
 class InitService:
@@ -36,6 +38,7 @@ class InitService:
         self.shipping_state_repo = ShippingStateRepository(db)
         self.payment_repo = PaymentRepository(db)
         self.api_carrier_repo = ApiCarrierRepository(db)
+        self.store_repo = StoreRepository(db)
     
     @cached(
         ttl=TTL_PRESETS.get("init_static", 604800),  # 7 giorni per dati statici
@@ -56,15 +59,30 @@ class InitService:
         taxes = self._get_taxes()
         payments = self._get_payments()
         carriers = self._get_api_carriers()
+        stores = self._get_stores()
         
-        return {
+        print(f"[INIT] get_static_data - Stores recuperati: {stores}")
+        print(f"[INIT] get_static_data - Stores type: {type(stores)}")
+        print(f"[INIT] get_static_data - Stores len: {len(stores) if stores else 0}")
+        print(f"[INIT] get_static_data - Stores è None: {stores is None}")
+        print(f"[INIT] get_static_data - Stores è lista vuota: {stores == []}")
+
+        result_dict = {
             "platforms": platforms,
             "languages": languages,
             "countries": countries,
             "taxes": taxes,
             "payments": payments,
-            "carriers": carriers
+            "carriers": carriers,
+            "stores": stores
         }
+        
+        print(f"[INIT] get_static_data - Chiavi nel dict risultante: {list(result_dict.keys())}")
+        print(f"[INIT] get_static_data - Stores nel dict: {result_dict.get('stores')}")
+        print(f"[INIT] get_static_data - Stores type nel dict: {type(result_dict.get('stores'))}")
+        print(f"[INIT] get_static_data - 'stores' in dict: {'stores' in result_dict}")
+        
+        return result_dict
     
     @cached(
         ttl=TTL_PRESETS.get("init_dynamic", 86400),  # 1 giorno per dati dinamici
@@ -112,6 +130,7 @@ class InitService:
             len(static_data.get("taxes", [])) +
             len(static_data.get("payments", [])) +
             len(static_data.get("carriers", [])) +
+            len(static_data.get("stores", [])) +
             len(dynamic_data.get("sectionals", [])) +
             len(dynamic_data.get("order_states", [])) +
             len(dynamic_data.get("shipping_states", []))
@@ -126,19 +145,53 @@ class InitService:
             total_items=total_items
         )
         
-        # Combina tutti i dati
-        return InitDataSchema(
-            platforms=static_data.get("platforms", []),
-            languages=static_data.get("languages", []),
-            countries=static_data.get("countries", []),
-            taxes=static_data.get("taxes", []),
-            payments=static_data.get("payments", []),
-            carriers=static_data.get("carriers", []),
-            sectionals=dynamic_data.get("sectionals", []),
-            order_states=dynamic_data.get("order_states", []),
-            shipping_states=dynamic_data.get("shipping_states", []),
-            cache_info=cache_info
-        )
+        # Combina tutti i dati - assicurati che stores sia sempre una lista
+        stores_list = static_data.get("stores")
+        if stores_list is None:
+            print("[WARNING] Stores non trovato in static_data, uso lista vuota")
+            stores_list = []
+        elif not isinstance(stores_list, list):
+            print(f"[WARNING] Stores non è una lista (tipo: {type(stores_list)}), converto in lista vuota")
+            stores_list = []
+        
+        print(f"[INIT] Stores recuperati: {len(stores_list)}")
+        print(f"[INIT] Stores data: {stores_list}")
+        print(f"[INIT] Stores type: {type(stores_list)}")
+        
+        # Verifica che tutti i campi richiesti siano presenti
+        try:
+            return InitDataSchema(
+                platforms=static_data.get("platforms", []),
+                languages=static_data.get("languages", []),
+                countries=static_data.get("countries", []),
+                taxes=static_data.get("taxes", []),
+                payments=static_data.get("payments", []),
+                carriers=static_data.get("carriers", []),
+                stores=stores_list,
+                sectionals=dynamic_data.get("sectionals", []),
+                order_states=dynamic_data.get("order_states", []),
+                shipping_states=dynamic_data.get("shipping_states", []),
+                cache_info=cache_info
+            )
+        except Exception as e:
+            print(f"[ERROR] Errore creazione InitDataSchema: {e}")
+            print(f"[ERROR] static_data keys: {list(static_data.keys())}")
+            print(f"[ERROR] stores presente in static_data: {'stores' in static_data}")
+            print(f"[ERROR] stores value: {static_data.get('stores')}")
+            print("[ERROR] Possibile causa: cache obsoleta. Prova a cancellare la cache.")
+            raise InfrastructureException(
+                message=f"Errore validazione InitDataSchema. Possibile causa: cache obsoleta senza campo 'stores'. "
+                       f"Prova a cancellare la cache e riprova.",
+                error_code=ErrorCode.DATABASE_ERROR,
+                details={
+                    "original_error": str(e),
+                    "static_data_keys": list(static_data.keys()),
+                    "stores_present": 'stores' in static_data,
+                    "stores_value": str(static_data.get('stores')),
+                    "suggestion": "Cancella la cache e riprova",
+                    "cache_keys": ["init_data:static", "init_data:full"]
+                }
+            ) from e
     
     def _get_platforms(self) -> List[Dict[str, Any]]:
         """Ottiene le piattaforme (senza API key)"""
@@ -273,6 +326,37 @@ class InitService:
             return result
         except Exception as e:
             print(f"[ERROR] Errore caricamento API carriers: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def _get_stores(self) -> List[Dict[str, Any]]:
+        """Ottiene gli store attivi (solo id_store, name, logo)"""
+        try:
+            print("[INIT] _get_stores - Inizio recupero store attivi...")
+            stores = self.store_repo.get_active_stores()
+            print(f"[INIT] _get_stores - Store objects recuperati dal repository: {len(stores)}")
+            
+            if not stores:
+                print("[WARNING] _get_stores - Nessuno store attivo trovato nel database")
+                return []
+            
+            result = []
+            for s in stores:
+                store_dict = {
+                    "id_store": s.id_store,
+                    "name": s.name,
+                    "logo": s.logo
+                }
+                print(f"[INIT] _get_stores - Store processato: {store_dict}")
+                result.append(store_dict)
+            
+            print(f"[INIT] _get_stores - Risultato finale: {result}")
+            print(f"[INIT] _get_stores - Tipo risultato: {type(result)}")
+            print(f"[INIT] _get_stores - Lunghezza risultato: {len(result)}")
+            return result
+        except Exception as e:
+            print(f"[ERROR] Errore caricamento stores: {e}")
             import traceback
             traceback.print_exc()
             return []

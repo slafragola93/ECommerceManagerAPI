@@ -111,7 +111,7 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                     id_origin=data.id_origin if data.id_origin and data.id_origin > 0 else 0,
                     id_category=id_category,
                     id_brand=id_brand,
-                    id_store=data.id_store if hasattr(data, 'id_store') and data.id_store is not None else None,
+                    id_store=data.id_store,
                     img_url=data.img_url,
                     name=data.name,
                     sku=data.sku,

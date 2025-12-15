@@ -76,9 +76,22 @@ class StoreRepository(BaseRepository[Store, int], IStoreRepository):
     def get_active_stores(self) -> List[Store]:
         """Ottiene tutti gli store attivi"""
         try:
-            return self._session.query(Store).filter(
+            print("[STORE_REPO] get_active_stores - Esecuzione query...")
+            query = self._session.query(Store).filter(
                 Store.is_active == True
-            ).order_by(desc(Store.id_store)).all()
+            ).order_by(desc(Store.id_store))
+            
+            print(f"[STORE_REPO] get_active_stores - Query SQL: {query}")
+            stores = query.all()
+            print(f"[STORE_REPO] get_active_stores - Store trovati: {len(stores)}")
+            
+            for store in stores:
+                print(f"[STORE_REPO] get_active_stores - Store: id={store.id_store}, name={store.name}, is_active={store.is_active}, logo={store.logo}")
+            
+            return stores
         except Exception as e:
+            print(f"[STORE_REPO] get_active_stores - Errore: {e}")
+            import traceback
+            traceback.print_exc()
             raise InfrastructureException(f"Database error retrieving active stores: {str(e)}")
 

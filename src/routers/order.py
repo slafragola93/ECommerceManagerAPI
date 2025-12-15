@@ -81,6 +81,9 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                         orders_ids: Optional[str] = Query(None, description="ID degli ordini, separati da virgole (es: 1,2,3)"),
                         customers_ids: Optional[str] = Query(None, description="ID dei clienti, separati da virgole (es: 1,2,3)"),
                         order_states_ids: Optional[str] = Query(None, description="ID degli stati ordine, separati da virgole (es: 1,2,3)"),
+                        shipping_states_ids: Optional[str] = Query(None, description="ID degli stati spedizione, separati da virgole (es: 1,2,3)"),
+                        delivery_countries_ids: Optional[str] = Query(None, description="ID dei paesi di consegna, separati da virgole (es: 1,2,3)"),
+                        platforms_ids: Optional[str] = Query(None, description="ID delle piattaforme, separati da virgole (es: 1,2,3)"),
                         stores_ids: Optional[str] = Query(None, description="ID degli store, separati da virgole (es: 1,2,3)"),
                         payments_ids: Optional[str] = Query(None, description="ID dei pagamenti, separati da virgole (es: 1,2,3)"),
                         is_payed: Optional[bool] = Query(None, description="Filtro per ordini pagati (true) o non pagati (false)"),
@@ -97,6 +100,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `orders_ids`: ID degli ordini specifici (es: "1,2,3")
     - `customers_ids`: ID dei clienti (es: "1,2,3") 
     - `order_states_ids`: ID degli stati ordine (es: "1,2,3")
+    - `shipping_states_ids`: ID degli stati spedizione (es: "1,2,3")
+    - `delivery_countries_ids`: ID dei paesi di consegna (es: "1,2,3")
     - `stores_ids`: ID degli store (es: "1,2,3")
     - `payments_ids`: ID dei metodi di pagamento (es: "1,2,3")
     - `is_payed`: Filtro per ordini pagati (true) o non pagati (false)
@@ -137,27 +142,32 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `/orders?customers_ids=1,2&show_details=true` - Ordini di clienti specifici con dettagli
     - `/orders?is_payed=true&date_from=2024-01-01` - Ordini pagati dal 1 gennaio 2024
     """
-    
     orders = or_repo.get_all(orders_ids=orders_ids,
                             customers_ids=customers_ids,
                             order_states_ids=order_states_ids,
-                            platforms_ids=stores_ids,
+                            shipping_states_ids=shipping_states_ids,
+                            delivery_countries_ids=delivery_countries_ids,
+                            platforms_ids=platforms_ids,
+                            store_ids=stores_ids,
                             payments_ids=payments_ids,
                             is_payed=is_payed,
                             is_invoice_requested=is_invoice_requested,
                             date_from=date_from,
                             date_to=date_to,
-                            show_details=show_details,
+                            show_details=show_details == "true",
                             page=page,
                             limit=limit)
-
+    
     if not orders:
         raise HTTPException(status_code=404, detail="Nessun ordine trovato")
 
     total_count = or_repo.get_count(orders_ids=orders_ids,
                                    customers_ids=customers_ids,
                                    order_states_ids=order_states_ids,
-                                   platforms_ids=stores_ids,
+                                   shipping_states_ids=shipping_states_ids,
+                                   delivery_countries_ids=delivery_countries_ids,
+                                   platforms_ids=platforms_ids,
+                                   store_ids=stores_ids,
                                    payments_ids=payments_ids,
                                    is_payed=is_payed,
                                    is_invoice_requested=is_invoice_requested,
@@ -166,7 +176,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
 
     results = []
     for order in orders:
-        results.append(or_repo.formatted_output(order, show_details=show_details))
+        results.append(or_repo.formatted_output(order, show_details=show_details == "true"))
     return {"orders": results, "total": total_count, "page": page, "limit": limit}
 
 

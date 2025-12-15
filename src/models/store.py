@@ -29,4 +29,5 @@ class Store(Base):
     order_documents = relationship("OrderDocument", back_populates="store")
     app_configurations = relationship("AppConfiguration", back_populates="store")
     company_fiscal_infos = relationship("CompanyFiscalInfo", back_populates="store")
+    carrier_assignments = relationship("CarrierAssignment", back_populates="store")
 

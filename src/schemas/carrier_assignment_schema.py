@@ -6,6 +6,7 @@ from .carrier_api_schema import CarrierApiResponseSchema
 
 class CarrierAssignmentSchema(BaseModel):
     id_carrier_api: int = Field(..., gt=0, description="ID del carrier API da assegnare")
+    id_store: Optional[int] = Field(None, gt=0, description="ID dello store (opzionale)")
     postal_codes: Optional[str] = Field(None, max_length=1000, description="Lista di codici postali separati da virgola")
     countries: Optional[str] = Field(None, max_length=1000, description="Lista di ID paesi separati da virgola")
     origin_carriers: Optional[str] = Field(None, max_length=1000, description="Lista di ID carrier di origine separati da virgola")
@@ -52,6 +53,7 @@ class CarrierAssignmentSchema(BaseModel):
 
 class CarrierAssignmentUpdateSchema(BaseModel):
     id_carrier_api: Optional[int] = Field(None, gt=0)
+    id_store: Optional[int] = Field(None, gt=0, description="ID dello store (opzionale)")
     postal_codes: Optional[str] = Field(None, max_length=1000)
     countries: Optional[str] = Field(None, max_length=1000)
     origin_carriers: Optional[str] = Field(None, max_length=1000)
@@ -96,6 +98,7 @@ class CarrierAssignmentUpdateSchema(BaseModel):
 class CarrierAssignmentResponseSchema(BaseModel):
     id_carrier_assignment: int
     id_carrier_api: int
+    id_store: Optional[int]
     postal_codes: Optional[str]
     countries: Optional[str]
     origin_carriers: Optional[str]
@@ -123,6 +126,7 @@ class AllCarrierAssignmentsResponseSchema(BaseModel):
 class CarrierAssignmentIdSchema(BaseModel):
     id_carrier_assignment: int
     id_carrier_api: int
+    id_store: Optional[int]
     postal_codes: Optional[str]
     countries: Optional[str]
     origin_carriers: Optional[str]

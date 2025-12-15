@@ -8,11 +8,13 @@ class CarrierAssignment(Base):
 
     id_carrier_assignment = Column(Integer, primary_key=True, index=True)
     id_carrier_api = Column(Integer, ForeignKey("carriers_api.id_carrier_api"), nullable=False, index=True)
+    id_store = Column(Integer, ForeignKey("stores.id_store"), nullable=True, index=True)
     postal_codes = Column(String(1000), nullable=True)  # JSON string with postal codes list
     countries = Column(String(1000), nullable=True)     # JSON string with country IDs list
     origin_carriers = Column(String(1000), nullable=True)  # JSON string with origin carrier IDs list
     min_weight = Column(Numeric(10, 5), nullable=True)
     max_weight = Column(Numeric(10, 5), nullable=True)
 
-    # Relationship with CarrierApi
+    # Relationships
     carrier_api = relationship("CarrierApi", back_populates="carrier_assignments")
+    store = relationship("Store", back_populates="carrier_assignments")

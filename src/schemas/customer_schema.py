@@ -61,7 +61,6 @@ class CustomerResponseSchema(BaseModel):
     id_customer: int | None
     id_origin: int | None
     id_lang: int | None
-    id_store: int | None
     firstname: str | None
     lastname: str | None
     email: str | None

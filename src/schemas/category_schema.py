@@ -27,10 +27,10 @@ class CategorySchema(BaseModel):
 class CategoryResponseSchema(BaseModel):
     id_category: int | None
     id_origin: int | None
-    id_platform: int | None
+    id_store: int | None
     name: str | None
     
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "extra": "ignore"}
 
 
 class AllCategoryResponseSchema(BaseModel):

@@ -18,7 +18,7 @@ class OrderHistorySchema(BaseModel):
     state: str
     data: datetime
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderSchema(BaseModel):
@@ -44,7 +44,7 @@ class OrderSchema(BaseModel):
     cash_on_delivery: Optional[float] = None
     order_details: Optional[list[OrderDetailSchema]] = None
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderUpdateSchema(BaseModel):
@@ -75,7 +75,7 @@ class OrderUpdateSchema(BaseModel):
     delivery_date: Optional[datetime] = None
     order_packages: Optional[List[OrderPackageUpdateItemSchema]] = None
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderSimpleResponseSchema(BaseModel):
@@ -114,7 +114,7 @@ class OrderSimpleResponseSchema(BaseModel):
             return None
         return round(float(v), 2)
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderResponseSchema(BaseModel):
@@ -164,7 +164,7 @@ class OrderResponseSchema(BaseModel):
             return None
         return round(float(v), 2)
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderIdSchema(BaseModel):
@@ -200,7 +200,7 @@ class OrderIdSchema(BaseModel):
     order_details: Optional[list] = None 
     order_packages: Optional[list] = None
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class AllOrderResponseSchema(BaseModel):
@@ -209,7 +209,7 @@ class AllOrderResponseSchema(BaseModel):
     page: int
     limit: int
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderStatusUpdateItem(BaseModel):
@@ -217,7 +217,7 @@ class OrderStatusUpdateItem(BaseModel):
     id_order: int = Field(gt=0, description="ID dell'ordine da aggiornare")
     id_order_state: int = Field(gt=0, description="Nuovo stato dell'ordine")
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 # BulkOrderStatusUpdateSchema è semplicemente una lista di OrderStatusUpdateItem
@@ -230,7 +230,7 @@ class OrderStatusUpdateResult(BaseModel):
     old_state_id: int
     new_state_id: int
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class OrderStatusUpdateError(BaseModel):
@@ -239,7 +239,7 @@ class OrderStatusUpdateError(BaseModel):
     error: str
     reason: str
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
 class BulkOrderStatusUpdateResponseSchema(BaseModel):
@@ -256,4 +256,4 @@ class BulkOrderStatusUpdateResponseSchema(BaseModel):
         description="Riepilogo operazione: total, successful_count, failed_count"
     )
 
-    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)

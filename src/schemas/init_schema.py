@@ -27,6 +27,13 @@ class ApiCarrierInitSchema(BaseModel):
     name: str = Field(..., description="Nome dell'API carrier")
 
 
+class StoreInitSchema(BaseModel):
+    """Schema per gli store nei dati di inizializzazione"""
+    id_store: int = Field(..., description="ID dello store")
+    name: str = Field(..., description="Nome dello store")
+    logo: Optional[str] = Field(None, description="URL o percorso del logo dello store")
+
+
 class InitDataSchema(BaseModel):
     """
     Schema per i dati di inizializzazione del frontend
@@ -39,6 +46,7 @@ class InitDataSchema(BaseModel):
     taxes: List[TaxResponseSchema] = Field(..., description="Lista delle tasse")
     payments: List[PaymentInitSchema] = Field(..., description="Lista dei metodi di pagamento")
     carriers: List[ApiCarrierInitSchema] = Field(..., description="Lista degli API carrier attivi")
+    stores: List[StoreInitSchema] = Field(..., description="Lista degli store disponibili")
     
     # Dati dinamici (cache giornaliera)
     sectionals: List[SectionalResponseSchema] = Field(..., description="Lista delle sezioni/aree geografiche")

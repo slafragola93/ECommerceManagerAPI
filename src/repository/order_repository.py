@@ -21,7 +21,7 @@ from .shipping_state_repository import ShippingStateRepository
 from .tax_repository import TaxRepository
 from .app_configuration_repository import AppConfigurationRepository
 from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
-from ..models import Order, OrderState
+from ..models import Order, OrderState, Shipping, Address
 from ..models.relations.relations import orders_history
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
@@ -61,6 +61,8 @@ class OrderRepository(IOrderRepository):
                 orders_ids: Optional[str] = None,
                 customers_ids: Optional[str] = None,
                 order_states_ids: Optional[str] = None,
+                shipping_states_ids: Optional[str] = None,
+                delivery_countries_ids: Optional[str] = None,
                 store_ids: Optional[str] = "1",
                 platforms_ids: Optional[str] = None,
                 payments_ids: Optional[str] = None,
@@ -91,6 +93,14 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_platform', platforms_ids)
             if payments_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_payment', payments_ids)
+            if shipping_states_ids:
+                ids = QueryUtils.parse_int_list(shipping_states_ids)
+                query = query.join(Shipping, Order.id_shipping == Shipping.id_shipping)
+                query = query.filter(Shipping.id_shipping_state.in_(ids))
+            if delivery_countries_ids:
+                ids = QueryUtils.parse_int_list(delivery_countries_ids)
+                query = query.join(Address, Order.id_address_delivery == Address.id_address)
+                query = query.filter(Address.id_country.in_(ids))
             
             # Filtri booleani
             if is_payed is not None:
@@ -115,6 +125,8 @@ class OrderRepository(IOrderRepository):
                   orders_ids: Optional[str] = None,
                   customers_ids: Optional[str] = None,
                   order_states_ids: Optional[str] = None,
+                  shipping_states_ids: Optional[str] = None,
+                  delivery_countries_ids: Optional[str] = None,
                   store_ids: Optional[str] = "1",
                   platforms_ids: Optional[str] = None,
                   payments_ids: Optional[str] = None,
@@ -142,6 +154,14 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_platform', platforms_ids)
             if payments_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_payment', payments_ids)
+            if shipping_states_ids:
+                ids = QueryUtils.parse_int_list(shipping_states_ids)
+                query = query.join(Shipping, Order.id_shipping == Shipping.id_shipping)
+                query = query.filter(Shipping.id_shipping_state.in_(ids))
+            if delivery_countries_ids:
+                ids = QueryUtils.parse_int_list(delivery_countries_ids)
+                query = query.join(Address, Order.id_address_delivery == Address.id_address)
+                query = query.filter(Address.id_country.in_(ids))
             
             if is_payed is not None:
                 query = query.filter(Order.is_payed == is_payed)
@@ -895,7 +915,7 @@ class OrderRepository(IOrderRepository):
                 "address_delivery": format_address(order.id_address_delivery),
                 "address_invoice": format_address(order.id_address_invoice),
                 "customer": format_customer(order.id_customer),
-                "store": format_platform(order.id_store) if hasattr(order, 'id_store') else None,
+                # store non incluso nella risposta - è solo un dato DB
                 "payment": format_payment(order.id_payment),
                 "shipping": format_shipping(order.id_shipping),
                 "sectional": format_sectional(order.id_sectional),
