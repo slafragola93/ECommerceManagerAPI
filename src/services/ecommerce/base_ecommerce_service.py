@@ -157,6 +157,19 @@ class BaseEcommerceService(ABC):
         """Synchronize order details"""
         pass
     
+    @abstractmethod
+    async def sync_order_states(self) -> List[Any]:
+        """
+        Synchronize order states from the e-commerce platform.
+        
+        Each implementation should retrieve order states from the remote e-commerce platform
+        and return a list of state objects with id and name attributes.
+        
+        Returns:
+            List of order state objects (e.g., PrestaShopOrderState, ShopifyOrderState)
+        """
+        pass
+    
     async def _make_request(self, endpoint: str, params: Optional[Dict] = None, max_retries: int = 3) -> Dict[str, Any]:
         """
         Make HTTP request to the e-commerce API with retry mechanism

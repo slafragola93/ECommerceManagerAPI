@@ -261,6 +261,15 @@ async def _run_prestashop_sync(db: Session, store_id: int, new_elements: bool = 
         # Run synchronization based on type
         results = await ps_service.sync_all_data()
         
+        # Sincronizza anche gli stati ordini
+        try:
+            print("Syncing order states...")
+            order_states = await ps_service.sync_order_states()
+            print(f"Order states sync completed: {len(order_states)} states retrieved")
+        except Exception as e:
+            print(f"Warning: Order states sync failed: {str(e)}")
+            # Non bloccare la sincronizzazione per errori di sync stati
+        
         print(f"{sync_type.capitalize()} synchronization completed:")
         print(f"  Total processed: {results['total_processed']}")
         print(f"  Total errors: {results['total_errors']}")

@@ -45,7 +45,6 @@ async def get_init_data(
         if include == "static":
             # Solo dati statici
             static_data = await init_service.get_static_data()
-            print(f"[INIT] Caricamento dati statici completato in {time.time() - start_time:.2f}s")
             
             return JSONResponse(
                 content={
@@ -53,6 +52,7 @@ async def get_init_data(
                     "sectionals": [],
                     "order_states": [],
                     "shipping_states": [],
+                    "ecommerce_order_states": [],
                     "cache_info": {
                         "generated_at": time.time(),
                         "ttl_static": 604800,  # 7 giorni
@@ -71,7 +71,6 @@ async def get_init_data(
         elif include == "dynamic":
             # Solo dati dinamici
             dynamic_data = await init_service.get_dynamic_data()
-            print(f"[INIT] Caricamento dati dinamici completato in {time.time() - start_time:.2f}s")
             
             return JSONResponse(
                 content={
@@ -90,7 +89,8 @@ async def get_init_data(
                         "version": version,
                         "total_items": len(dynamic_data.get("sectionals", [])) + 
                                       len(dynamic_data.get("order_states", [])) + 
-                                      len(dynamic_data.get("shipping_states", []))
+                                      len(dynamic_data.get("shipping_states", [])) +
+                                      len(dynamic_data.get("ecommerce_order_states", []))
                     }
                 }
             )
@@ -99,15 +99,10 @@ async def get_init_data(
             # Tutti i dati (default)
             try:
                 init_data = await init_service.get_full_init_data()
-                print(f"[INIT] Caricamento dati completi completato in {time.time() - start_time:.2f}s")
-                
                 return init_data
             except (ValidationError, ValueError) as e:
                 # Se c'è un errore di validazione Pydantic, potrebbe essere cache vecchia
                 error_msg = str(e)
-                print(f"[ERROR] Errore validazione InitDataSchema: {error_msg}")
-                print("[ERROR] Possibile causa: cache obsoleta senza campo 'stores'")
-                print("[ERROR] Soluzione: cancella la cache e riprova")
                 raise InfrastructureException(
                     message=f"Errore validazione dati inizializzazione. Il campo 'stores' potrebbe mancare nella cache. "
                            f"Prova a cancellare la cache e riprova.",
@@ -121,9 +116,6 @@ async def get_init_data(
             except ResponseValidationError as e:
                 # Errore di validazione della risposta (Pydantic)
                 error_msg = str(e)
-                print(f"[ERROR] Errore validazione risposta: {error_msg}")
-                print("[ERROR] Possibile causa: cache obsoleta senza campo 'stores'")
-                print("[ERROR] Soluzione: cancella la cache e riprova")
                 raise InfrastructureException(
                     message=f"Errore validazione risposta. Il campo 'stores' potrebbe mancare nella cache. "
                            f"Prova a cancellare la cache e riprova.",
@@ -137,9 +129,6 @@ async def get_init_data(
             except Exception as e:
                 error_msg = str(e)
                 if "stores" in error_msg.lower() or "validation" in error_msg.lower():
-                    print(f"[ERROR] Errore validazione InitDataSchema: {error_msg}")
-                    print("[ERROR] Possibile causa: cache obsoleta senza campo 'stores'")
-                    print("[ERROR] Soluzione: cancella la cache e riprova")
                     raise InfrastructureException(
                         message=f"Errore validazione dati inizializzazione. Il campo 'stores' potrebbe mancare nella cache. "
                                f"Prova a cancellare la cache e riprova.",
@@ -153,7 +142,6 @@ async def get_init_data(
                 raise
     
     except Exception as e:
-        print(f"[ERROR] Errore caricamento dati inizializzazione: {e}")
         raise InfrastructureException(
             message=f"Errore interno durante il caricamento dei dati: {str(e)}",
             error_code=ErrorCode.DATABASE_ERROR,

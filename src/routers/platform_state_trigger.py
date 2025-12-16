@@ -36,7 +36,7 @@ async def get_platform_state_triggers(
     page: int = Query(1, ge=1, description="Numero pagina"),
     limit: int = Query(100, ge=1, le=1000, description="Limite risultati per pagina"),
     event_type: Optional[str] = Query(None, description="Filtra per tipo evento"),
-    id_platform: Optional[int] = Query(None, gt=0, description="Filtra per ID piattaforma"),
+    id_store: Optional[int] = Query(None, gt=0, description="Filtra per ID store"),
     is_active: Optional[bool] = Query(None, description="Filtra per trigger attivi"),
     user: dict = Depends(get_current_user),
     repo: PlatformStateTriggerRepository = Depends(get_repository)
@@ -46,15 +46,15 @@ async def get_platform_state_triggers(
     
     Filtri disponibili:
     - event_type: Tipo evento (es. order_status_changed)
-    - id_platform: ID piattaforma
+    - id_store: ID store
     - is_active: Solo trigger attivi
     """
     try:
         filters = {"page": page, "limit": limit}
         if event_type:
             filters["event_type"] = event_type
-        if id_platform:
-            filters["id_platform"] = id_platform
+        if id_store:
+            filters["id_store"] = id_store
         if is_active is not None:
             filters["is_active"] = is_active
         
@@ -110,7 +110,7 @@ async def create_platform_state_trigger(
     ```json
     {
         "event_type": "order_status_changed",
-        "id_platform": 1,
+        "id_store": 1,
         "state_type": "order_state",
         "id_state_local": 2,
         "id_state_platform": 5,

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Path
+from fastapi import APIRouter, Depends, Query, Path, Body
 from typing import List
 import logging
 from sqlalchemy.orm import Session
@@ -8,6 +8,12 @@ from src.core.container_config import get_configured_container
 from src.factories.services.carrier_service_factory import CarrierServiceFactory
 from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
 from src.schemas.dhl_tracking_schema import NormalizedTrackingResponseSchema
+from src.schemas.shipment_schema import (
+    BulkShipmentCreateRequestSchema,
+    BulkShipmentCreateResponseSchema,
+    BulkShipmentCreateSuccess,
+    BulkShipmentCreateError
+)
 from src.database import get_db
 from src.repository.shipping_repository import ShippingRepository
 from src.repository.shipment_document_repository import ShipmentDocumentRepository
@@ -82,6 +88,139 @@ async def create_shipment(
     result = await shipment_service.create_shipment(order_id)
     
     return result
+
+
+@router.post("/bulk-create", response_model=BulkShipmentCreateResponseSchema)
+async def bulk_create_shipments(
+    request: BulkShipmentCreateRequestSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
+    db: Session = Depends(get_db)
+):
+    """
+    Crea spedizioni in modo massivo per una lista di ordini (unificato per tutti i corrieri)
+    
+    Il sistema determina automaticamente quale corriere usare per ogni ordine in base a
+    Shipping.id_carrier_api associato all'ordine.
+    
+    Ogni ordine viene processato indipendentemente: gli errori su singoli ordini
+    non bloccano il processing degli altri.
+    
+    Args:
+        request: Richiesta con lista di order_ids
+        factory: Factory per selezionare il service corretto
+        db: Database session
+        
+    Returns:
+        BulkShipmentCreateResponseSchema con:
+        - successful: Lista di spedizioni create (order_id, awb)
+        - failed: Lista di errori (order_id, error_type, error_message)
+        - summary: Riepilogo (total, successful_count, failed_count)
+    """
+    from src.models.order import Order
+    
+    successful = []
+    failed = []
+    total = len(request.order_ids)
+    
+    logger.info(f"Starting bulk shipment creation for {total} orders")
+    
+    for order_id in request.order_ids:
+        try:
+            # 1. Recupera id_shipping da Order
+            stmt = select(Order.id_shipping).where(Order.id_order == order_id)
+            result = db.execute(stmt)
+            id_shipping = result.scalar_one_or_none()
+            
+            if not id_shipping:
+                failed.append(BulkShipmentCreateError(
+                    order_id=order_id,
+                    error_type="NOT_FOUND",
+                    error_message=f"Order {order_id} has no shipping"
+                ))
+                logger.warning(f"Order {order_id}: No shipping found")
+                continue
+            
+            # 2. Recupera Shipping per ottenere id_carrier_api
+            shipping_repo = ShippingRepository(db)
+            shipping_info = shipping_repo.get_carrier_info(id_shipping)
+            carrier_api_id = shipping_info.id_carrier_api
+            
+            if not carrier_api_id:
+                failed.append(BulkShipmentCreateError(
+                    order_id=order_id,
+                    error_type="NO_CARRIER_API",
+                    error_message=f"Order {order_id} has no carrier_api assigned"
+                ))
+                logger.warning(f"Order {order_id}: No carrier_api assigned")
+                continue
+            
+            # 3. Usa factory per ottenere il service corretto
+            shipment_service = factory.get_shipment_service(carrier_api_id, db)
+            
+            # 4. Crea spedizione
+            logger.info(f"Creating shipment for order {order_id} with carrier_api_id {carrier_api_id}")
+            result = await shipment_service.create_shipment(order_id)
+            
+            # 5. Estrai awb dal risultato
+            awb = result.get("awb", "") if isinstance(result, dict) else ""
+            
+            if not awb:
+                failed.append(BulkShipmentCreateError(
+                    order_id=order_id,
+                    error_type="SHIPMENT_ERROR",
+                    error_message=f"Shipment created but no AWB returned for order {order_id}"
+                ))
+                logger.warning(f"Order {order_id}: Shipment created but no AWB in response")
+                continue
+            
+            successful.append(BulkShipmentCreateSuccess(
+                order_id=order_id,
+                awb=awb
+            ))
+            logger.info(f"Order {order_id}: Shipment created successfully with AWB {awb}")
+            
+        except NotFoundException as e:
+            failed.append(BulkShipmentCreateError(
+                order_id=order_id,
+                error_type="NOT_FOUND",
+                error_message=str(e)
+            ))
+            logger.warning(f"Order {order_id}: NotFoundException - {str(e)}")
+            
+        except BusinessRuleException as e:
+            failed.append(BulkShipmentCreateError(
+                order_id=order_id,
+                error_type="NO_CARRIER_API",
+                error_message=str(e)
+            ))
+            logger.warning(f"Order {order_id}: BusinessRuleException - {str(e)}")
+            
+        except Exception as e:
+            failed.append(BulkShipmentCreateError(
+                order_id=order_id,
+                error_type="SHIPMENT_ERROR",
+                error_message=f"Error creating shipment: {str(e)}"
+            ))
+            logger.error(f"Order {order_id}: Unexpected error - {str(e)}", exc_info=True)
+    
+    # Calcola summary
+    successful_count = len(successful)
+    failed_count = len(failed)
+    
+    summary = {
+        "total": total,
+        "successful_count": successful_count,
+        "failed_count": failed_count
+    }
+    
+    logger.info(f"Bulk shipment creation completed: {successful_count} successful, {failed_count} failed out of {total} total")
+    
+    return BulkShipmentCreateResponseSchema(
+        successful=successful,
+        failed=failed,
+        summary=summary
+    )
 
 
 @router.get("/{id_carrier_api}/tracking", response_model=List[NormalizedTrackingResponseSchema])

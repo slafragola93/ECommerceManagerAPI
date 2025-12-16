@@ -30,6 +30,7 @@ class Order(Base):
     id_shipping = Column(Integer, ForeignKey('shipments.id_shipping'), default=None)
     id_sectional = Column(Integer, index=True, nullable=True, default=None)
     id_order_state = Column(Integer, default=1)
+    id_ecommerce_state = Column(Integer, ForeignKey('ecommerce_order_states.id_ecommerce_order_state', ondelete='SET NULL'), nullable=True, index=True, comment="ID stato corrente sull'e-commerce remoto (PrestaShop, Shopify, ecc.)")
     is_invoice_requested = Column(Boolean, default=False)
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
@@ -56,3 +57,4 @@ class Order(Base):
     orders_document = relationship("OrderDocument", back_populates="order")
     fiscal_documents = relationship("FiscalDocument", back_populates="order")
     order_packages = relationship("OrderPackage", back_populates="order")
+    ecommerce_order_state = relationship("EcommerceOrderState", back_populates="orders")

@@ -34,6 +34,13 @@ class StoreInitSchema(BaseModel):
     logo: Optional[str] = Field(None, description="URL o percorso del logo dello store")
 
 
+class EcommerceOrderStateInitSchema(BaseModel):
+    """Schema per gli stati e-commerce nei dati di inizializzazione"""
+    id_platform_state: int = Field(..., description="ID dello stato sulla piattaforma remota")
+    id_store: int = Field(..., description="ID dello store associato")
+    name: str = Field(..., description="Nome dello stato")
+
+
 class InitDataSchema(BaseModel):
     """
     Schema per i dati di inizializzazione del frontend
@@ -52,6 +59,7 @@ class InitDataSchema(BaseModel):
     sectionals: List[SectionalResponseSchema] = Field(..., description="Lista delle sezioni/aree geografiche")
     order_states: List[OrderStateResponseSchema] = Field(..., description="Lista degli stati degli ordini")
     shipping_states: List[ShippingStateResponseSchema] = Field(..., description="Lista degli stati di spedizione")
+    ecommerce_order_states: List[EcommerceOrderStateInitSchema] = Field(default_factory=list, description="Lista degli stati ordini e-commerce sincronizzati")
     
     # Metadati cache
     cache_info: 'CacheInfoSchema' = Field(..., description="Informazioni sulla cache")

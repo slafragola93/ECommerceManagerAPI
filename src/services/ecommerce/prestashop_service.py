@@ -3,6 +3,7 @@ PrestaShop synchronization service
 """
 
 from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
 import aiohttp
 from fastapi.datastructures import Address
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ import asyncio
 import logging
 from datetime import datetime
 import os
+from tenacity import retry, stop_after_attempt, wait_exponential
 from src.schemas.order_schema import OrderUpdateSchema
 from src.services.core.tool import safe_int, safe_float, sql_value,get_tax_percentage_by_country, calculate_price_without_tax, calculate_price_with_tax,get_tax_percentage_by_address_delivery_id
 from src.services.external.province_service import province_service
@@ -22,6 +24,13 @@ from src.schemas.customer_schema import CustomerSchema
 from .base_ecommerce_service import BaseEcommerceService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PrestaShopOrderState:
+    """Dataclass per rappresentare uno stato ordine PrestaShop"""
+    id: int
+    name: str
 
 
 class PrestaShopService(BaseEcommerceService):
@@ -4064,6 +4073,63 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             print(f"DEBUG: Error in carrier assignment logic: {str(e)}")
             return None  # Nessuna assegnazione in caso di errore
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    async def sync_order_states(self) -> List[PrestaShopOrderState]:
+        """
+        Recupera stati ordini da PrestaShop.
+        
+        Endpoint: /api/order_states?output_format=JSON&display=[id,name]&language=1
+        
+        Returns:
+            Lista di PrestaShopOrderState con id e name
+        """
+        try:
+            if not self.session:
+                raise RuntimeError("Service not initialized. Use async context manager.")
+            
+            # Chiama endpoint PrestaShop per recuperare stati ordini
+            params = {
+                'output_format': 'JSON',
+                'display': '[id,name]',
+                'language': 1
+            }
+            
+            response = await self._make_request('/api/order_states', params=params)
+            
+            # Estrai array order_states dalla risposta
+            order_states_data = response.get('order_states', [])
+            
+            if not isinstance(order_states_data, list):
+                logger.warning(f"Expected list of order_states, got {type(order_states_data)}")
+                return []
+            
+            # Converti in lista di PrestaShopOrderState
+            order_states = []
+            for state_data in order_states_data:
+                try:
+                    state_id = safe_int(state_data.get('id', 0))
+                    state_name = state_data.get('name', '')
+                    
+                    # Gestisci nomi multi-lingua: se name è dict, prendi primo valore
+                    if isinstance(state_name, dict):
+                        # Prendi il primo valore del dizionario
+                        state_name = next(iter(state_name.values())) if state_name else ''
+                    elif not isinstance(state_name, str):
+                        state_name = str(state_name) if state_name else ''
+                    
+                    if state_id and state_id > 0:
+                        order_states.append(PrestaShopOrderState(id=state_id, name=state_name))
+                except Exception as e:
+                    logger.warning(f"Error parsing order state {state_data}: {str(e)}")
+                    continue
+            
+            logger.info(f"Retrieved {len(order_states)} order states from PrestaShop")
+            return order_states
+            
+        except Exception as e:
+            logger.error(f"Error retrieving order states from PrestaShop: {str(e)}")
+            raise
     
     async def sync_order_state_to_platform(self, order_id: int, platform_state_id: int) -> bool:
         """

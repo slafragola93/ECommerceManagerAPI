@@ -11,7 +11,6 @@ class Platform(Base):
     is_default = Column(Boolean, default=False, nullable=False)
     
     # Relationships
-    state_triggers = relationship("PlatformStateTrigger", back_populates="platform", cascade="all, delete-orphan")
     stores = relationship("Store", back_populates="platform", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="platform")
 

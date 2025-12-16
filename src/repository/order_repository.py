@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy import desc, func, select
 from sqlalchemy.engine import Row
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from .address_repository import AddressRepository
 from .api_carrier_repository import ApiCarrierRepository
 from .customer_repository import CustomerRepository
@@ -77,7 +77,10 @@ class OrderRepository(IOrderRepository):
         """
         Recupera tutti gli ordini con filtri opzionali
         """
-        query = self.session.query(Order)
+        # Eager load ecommerce_order_state relationship per evitare N+1 queries
+        query = self.session.query(Order).options(
+            joinedload(Order.ecommerce_order_state)
+        )
         
         try:
             # Filtri per ID
@@ -174,8 +177,10 @@ class OrderRepository(IOrderRepository):
         return query.scalar()
 
     def get_by_id(self, _id: int) -> Order:
-        """Recupera un ordine per ID"""
-        return self.session.query(Order).filter(Order.id_order == _id).first()
+        """Recupera un ordine per ID con eager loading di ecommerce_order_state"""
+        return self.session.query(Order).options(
+            joinedload(Order.ecommerce_order_state)
+        ).filter(Order.id_order == _id).first()
 
     def get_order_history_by_id_order(self, id_order: int) -> list[dict]:
         """Restituisce la cronologia dell'ordine in formato [{state, data}]."""
@@ -545,6 +550,7 @@ class OrderRepository(IOrderRepository):
             # Non bloccare il flusso per errori non critici di sync peso
             pass
 
+
     def update_order_status(self, id_order: int, id_order_state: int) -> bool:
         """
         Aggiorna lo stato di un ordine e aggiunge alla cronologia.
@@ -872,6 +878,19 @@ class OrderRepository(IOrderRepository):
                 "value": pkg.value
             } for pkg in packages]
         
+        # Helper per formattare lo stato e-commerce
+        def format_ecommerce_order_state(order):
+            """Formatta lo stato e-commerce usando la relationship già caricata"""
+            if not order.id_ecommerce_state:
+                return None
+            # Usa la relationship per evitare query N+1 (già caricata con joinedload)
+            if hasattr(order, 'ecommerce_order_state') and order.ecommerce_order_state:
+                return {
+                    "id": order.id_ecommerce_state,
+                    "state_name": order.ecommerce_order_state.name
+                }
+            return None
+        
         # Base response con campi essenziali
         response = {
             "id_order": order.id_order,
@@ -897,7 +916,8 @@ class OrderRepository(IOrderRepository):
             "privacy_note": order.privacy_note,
             "general_note": order.general_note,
             "delivery_date": order.delivery_date,
-            "date_add": order.date_add
+            "date_add": order.date_add,
+            "ecommerce_order_state": format_ecommerce_order_state(order)
         }
         
         # Se show_details è True, aggiungi le relazioni popolate

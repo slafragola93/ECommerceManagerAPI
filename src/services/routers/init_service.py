@@ -20,6 +20,7 @@ from src.repository.shipping_state_repository import ShippingStateRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.api_carrier_repository import ApiCarrierRepository
 from src.repository.store_repository import StoreRepository
+from src.models.ecommerce_order_state import EcommerceOrderState
 
 
 class InitService:
@@ -50,8 +51,6 @@ class InitService:
         Ottiene i dati statici (platforms, languages, countries, taxes)
         Cache: 7 giorni
         """
-        print("[INIT] Caricamento dati statici...")
-        
         # Carica tutti i dati statici sequenzialmente
         platforms = self._get_platforms()
         languages = self._get_languages()
@@ -60,12 +59,6 @@ class InitService:
         payments = self._get_payments()
         carriers = self._get_api_carriers()
         stores = self._get_stores()
-        
-        print(f"[INIT] get_static_data - Stores recuperati: {stores}")
-        print(f"[INIT] get_static_data - Stores type: {type(stores)}")
-        print(f"[INIT] get_static_data - Stores len: {len(stores) if stores else 0}")
-        print(f"[INIT] get_static_data - Stores è None: {stores is None}")
-        print(f"[INIT] get_static_data - Stores è lista vuota: {stores == []}")
 
         result_dict = {
             "platforms": platforms,
@@ -77,11 +70,6 @@ class InitService:
             "stores": stores
         }
         
-        print(f"[INIT] get_static_data - Chiavi nel dict risultante: {list(result_dict.keys())}")
-        print(f"[INIT] get_static_data - Stores nel dict: {result_dict.get('stores')}")
-        print(f"[INIT] get_static_data - Stores type nel dict: {type(result_dict.get('stores'))}")
-        print(f"[INIT] get_static_data - 'stores' in dict: {'stores' in result_dict}")
-        
         return result_dict
     
     @cached(
@@ -91,20 +79,20 @@ class InitService:
     )
     async def get_dynamic_data(self) -> Dict[str, Any]:
         """
-        Ottiene i dati dinamici (sectionals, order_states, shipping_states)
+        Ottiene i dati dinamici (sectionals, order_states, shipping_states, ecommerce_order_states)
         Cache: 1 giorno
         """
-        print("[INIT] Caricamento dati dinamici...")
-        
         # Carica tutti i dati dinamici sequenzialmente
         sectionals = self._get_sectionals()
         order_states = self._get_order_states()
         shipping_states = self._get_shipping_states()
+        ecommerce_order_states = self._get_ecommerce_order_states()
         
         return {
             "sectionals": sectionals,
             "order_states": order_states,
-            "shipping_states": shipping_states
+            "shipping_states": shipping_states,
+            "ecommerce_order_states": ecommerce_order_states
         }
     
     @cached(
@@ -133,7 +121,8 @@ class InitService:
             len(static_data.get("stores", [])) +
             len(dynamic_data.get("sectionals", [])) +
             len(dynamic_data.get("order_states", [])) +
-            len(dynamic_data.get("shipping_states", []))
+            len(dynamic_data.get("shipping_states", [])) +
+            len(dynamic_data.get("ecommerce_order_states", []))
         )
         
         # Crea metadati cache
@@ -148,15 +137,9 @@ class InitService:
         # Combina tutti i dati - assicurati che stores sia sempre una lista
         stores_list = static_data.get("stores")
         if stores_list is None:
-            print("[WARNING] Stores non trovato in static_data, uso lista vuota")
             stores_list = []
         elif not isinstance(stores_list, list):
-            print(f"[WARNING] Stores non è una lista (tipo: {type(stores_list)}), converto in lista vuota")
             stores_list = []
-        
-        print(f"[INIT] Stores recuperati: {len(stores_list)}")
-        print(f"[INIT] Stores data: {stores_list}")
-        print(f"[INIT] Stores type: {type(stores_list)}")
         
         # Verifica che tutti i campi richiesti siano presenti
         try:
@@ -171,14 +154,10 @@ class InitService:
                 sectionals=dynamic_data.get("sectionals", []),
                 order_states=dynamic_data.get("order_states", []),
                 shipping_states=dynamic_data.get("shipping_states", []),
+                ecommerce_order_states=dynamic_data.get("ecommerce_order_states", []),
                 cache_info=cache_info
             )
         except Exception as e:
-            print(f"[ERROR] Errore creazione InitDataSchema: {e}")
-            print(f"[ERROR] static_data keys: {list(static_data.keys())}")
-            print(f"[ERROR] stores presente in static_data: {'stores' in static_data}")
-            print(f"[ERROR] stores value: {static_data.get('stores')}")
-            print("[ERROR] Possibile causa: cache obsoleta. Prova a cancellare la cache.")
             raise InfrastructureException(
                 message=f"Errore validazione InitDataSchema. Possibile causa: cache obsoleta senza campo 'stores'. "
                        f"Prova a cancellare la cache e riprova.",
@@ -208,7 +187,6 @@ class InitService:
                 for p in platforms
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento platforms: {e}")
             return []
     
     def _get_languages(self) -> List[Dict[str, Any]]:
@@ -216,9 +194,6 @@ class InitService:
         try:
             return self.lang_repo.get_all_for_init()
         except Exception as e:
-            print(f"[ERROR] Errore caricamento languages: {e}")
-            import traceback
-            traceback.print_exc()
             return []
     
     def _get_countries(self) -> List[Dict[str, Any]]:
@@ -235,7 +210,6 @@ class InitService:
                 for c in countries
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento countries: {e}")
             return []
     
     def _get_taxes(self) -> List[Dict[str, Any]]:
@@ -256,7 +230,6 @@ class InitService:
                 for t in taxes
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento taxes: {e}")
             return []
     
     def _get_sectionals(self) -> List[Dict[str, Any]]:
@@ -271,7 +244,6 @@ class InitService:
                 for s in sectionals
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento sectionals: {e}")
             return []
     
     def _get_order_states(self) -> List[Dict[str, Any]]:
@@ -286,7 +258,6 @@ class InitService:
                 for os in order_states
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento order_states: {e}")
             return []
     
     def _get_shipping_states(self) -> List[Dict[str, Any]]:
@@ -301,7 +272,6 @@ class InitService:
                 for ss in shipping_states
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento shipping_states: {e}")
             return []
     
     def _get_payments(self) -> List[Dict[str, Any]]:
@@ -316,7 +286,6 @@ class InitService:
                 for p in payments
             ]
         except Exception as e:
-            print(f"[ERROR] Errore caricamento metodi di pagamento: {e}")
             return []
     
     def _get_api_carriers(self) -> List[Dict[str, Any]]:
@@ -325,20 +294,14 @@ class InitService:
             result = self.api_carrier_repo.get_active_carriers_for_init()
             return result
         except Exception as e:
-            print(f"[ERROR] Errore caricamento API carriers: {e}")
-            import traceback
-            traceback.print_exc()
             return []
     
     def _get_stores(self) -> List[Dict[str, Any]]:
         """Ottiene gli store attivi (solo id_store, name, logo)"""
         try:
-            print("[INIT] _get_stores - Inizio recupero store attivi...")
             stores = self.store_repo.get_active_stores()
-            print(f"[INIT] _get_stores - Store objects recuperati dal repository: {len(stores)}")
             
             if not stores:
-                print("[WARNING] _get_stores - Nessuno store attivo trovato nel database")
                 return []
             
             result = []
@@ -348,15 +311,22 @@ class InitService:
                     "name": s.name,
                     "logo": s.logo
                 }
-                print(f"[INIT] _get_stores - Store processato: {store_dict}")
                 result.append(store_dict)
-            
-            print(f"[INIT] _get_stores - Risultato finale: {result}")
-            print(f"[INIT] _get_stores - Tipo risultato: {type(result)}")
-            print(f"[INIT] _get_stores - Lunghezza risultato: {len(result)}")
             return result
         except Exception as e:
-            print(f"[ERROR] Errore caricamento stores: {e}")
-            import traceback
-            traceback.print_exc()
+            return []
+    
+    def _get_ecommerce_order_states(self) -> List[Dict[str, Any]]:
+        """Ottiene gli stati e-commerce sincronizzati (id_platform_state, id_store, name)"""
+        try:
+            ecommerce_states = self.db.query(EcommerceOrderState).all()
+            return [
+                {
+                    "id_platform_state": es.id_platform_state,
+                    "id_store": es.id_store,
+                    "name": es.name
+                }
+                for es in ecommerce_states
+            ]
+        except Exception as e:
             return []

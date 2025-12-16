@@ -70,9 +70,14 @@ except ImportError:
 
 EVENT_CONFIG_PATH = Path("config/event_handlers.yaml")
 
+# Global task tracker per evitare duplicati
+_order_states_sync_task = None
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    global _order_states_sync_task
+    
     # Initialize new cache system
     try:
         settings = get_cache_settings()
@@ -118,10 +123,38 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         print("Event system initialised")
     except Exception as e:
         print(f"WARNING: Event system initialisation failed: {e}")
+    
+    # Start periodic order states sync task
+    try:
+        # Verifica se il task è già in esecuzione
+        if _order_states_sync_task is None or _order_states_sync_task.done():
+            from src.database import SessionLocal
+            from src.services.sync.order_state_sync_service import run_order_states_sync_task
+            
+            # Crea una sessione DB per la task periodica
+            db = SessionLocal()
+            
+            # Avvia la task periodica in background
+            _order_states_sync_task = asyncio.create_task(run_order_states_sync_task(db))
+            print("Order states sync periodic task started (runs every hour)")
+    except Exception as e:
+        print(f"WARNING: Failed to start order states sync task: {e}")
 
     yield
     
     # Cleanup
+    try:
+        # Cancella il task di sincronizzazione se in esecuzione
+        if _order_states_sync_task and not _order_states_sync_task.done():
+            _order_states_sync_task.cancel()
+            try:
+                await _order_states_sync_task
+            except asyncio.CancelledError:
+                pass
+            print("Order states sync task cancelled")
+    except Exception as e:
+        print(f"WARNING: Error cancelling sync task: {e}")
+    
     try:
         await close_cache_manager()
         print("Cache system closed")

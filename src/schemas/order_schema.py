@@ -32,6 +32,7 @@ class OrderSchema(BaseModel):
     shipping: int | ShippingSchema | None = 0
     sectional: int | SectionalSchema = 0
     id_order_state: int
+    id_ecommerce_state: Optional[int] = None
     id_origin: Optional[int] = 0
     reference: Optional[str] = None
     is_invoice_requested: bool
@@ -59,6 +60,7 @@ class OrderUpdateSchema(BaseModel):
     id_shipping: Optional[int] = None
     id_sectional: Optional[int] = None
     id_order_state: Optional[int] = None
+    id_ecommerce_state: Optional[int] = None
     id_origin: Optional[int] = None
     reference: Optional[str] = None
     is_invoice_requested: Optional[bool] = None
@@ -92,6 +94,7 @@ class OrderSimpleResponseSchema(BaseModel):
     id_shipping: Optional[int]
     id_sectional: Optional[int]
     id_order_state: int
+    id_ecommerce_state: Optional[int] = None
     is_invoice_requested: bool
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
@@ -131,6 +134,7 @@ class OrderResponseSchema(BaseModel):
     id_shipping: Optional[int]
     id_sectional: Optional[int]
     id_order_state: int
+    id_ecommerce_state: Optional[int] = None
     is_invoice_requested: bool
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
@@ -172,6 +176,7 @@ class OrderIdSchema(BaseModel):
     id_order: int
     id_origin: Optional[int]
     reference: Optional[str]
+    id_ecommerce_state: Optional[int] = None
     # Campi dati
     is_invoice_requested: bool
     is_payed: Optional[bool]
