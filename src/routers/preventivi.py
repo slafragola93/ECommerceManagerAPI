@@ -690,14 +690,15 @@ async def convert_to_order(
     - Customer, indirizzi, sectional (stessi ID)
     - Articoli (copiati: prezzi, quantità, sconti, IVA)
     - Shipping (riutilizzato, stesso ID)
+    - Metodo di pagamento (id_payment, stesso ID)
     - Totali (total_price_with_tax, total_weight)
     
     **Ordine creato**:
     - `id_order_state`: 1 (pending)
-    - `id_platform`: 1 (default)
+    - `id_platform`: 0 (default, ordine creato dall'app)
     - `reference`: "PRV{document_number}"
-    - `is_payed`: false
-    - `id_payment`: null
+    - `is_payed`: valore dal preventivo (o false se None)
+    - `id_payment`: valore dal preventivo (o 0 se None)
     
     **Validazioni**: Preventivo deve esistere e non essere già convertito.
     **Risultato**: Preventivo collegato all'ordine tramite `id_order`. Conversione una sola volta.

@@ -569,6 +569,7 @@ class PreventivoRepository:
             reference=generate_preventivo_reference(preventivo.document_number),
             id_platform=0,  # Ordine creato dall'app, non da piattaforma esterna
             id_store=preventivo.id_store,
+            id_payment=preventivo.id_payment or 0,  # Porta il metodo di pagamento dal preventivo
             shipping=preventivo.id_shipping or 0,  # Usa spedizione del preventivo, altrimenti 0
             sectional=preventivo.id_sectional or 0,  # Usa sectional del preventivo, altrimenti 0
             id_order_state=1,  # Default 1 (pending)

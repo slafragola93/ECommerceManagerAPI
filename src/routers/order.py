@@ -86,6 +86,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                         platforms_ids: Optional[str] = Query(None, description="ID delle piattaforme, separati da virgole (es: 1,2,3)"),
                         stores_ids: Optional[str] = Query(None, description="ID degli store, separati da virgole (es: 1,2,3)"),
                         payments_ids: Optional[str] = Query(None, description="ID dei pagamenti, separati da virgole (es: 1,2,3)"),
+                        ecommerce_states_ids: Optional[str] = Query(None, description="ID degli stati e-commerce, separati da virgole (es: 1,2,3)"),
+                        search: Optional[str] = Query(None, description="Ricerca rapida in vari campi (reference, internal_reference, customer, address, payment, products, tracking)"),
                         is_payed: Optional[bool] = Query(None, description="Filtro per ordini pagati (true) o non pagati (false)"),
                         is_invoice_requested: Optional[bool] = Query(None, description="Filtro per ordini con fattura richiesta (true) o no (false)"),
                         date_from: Optional[str] = Query(None, description="Data inizio filtro (formato: YYYY-MM-DD)"),
@@ -104,6 +106,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `delivery_countries_ids`: ID dei paesi di consegna (es: "1,2,3")
     - `stores_ids`: ID degli store (es: "1,2,3")
     - `payments_ids`: ID dei metodi di pagamento (es: "1,2,3")
+    - `ecommerce_states_ids`: ID degli stati e-commerce (es: "1,2,3")
+    - `search`: Ricerca rapida in vari campi (reference, internal_reference, customer, address, payment, products, tracking)
     - `is_payed`: Filtro per ordini pagati (true) o non pagati (false)
     - `is_invoice_requested`: Filtro per ordini con fattura richiesta (true) o no (false)
     - `date_from`: Data inizio filtro (formato: YYYY-MM-DD)
@@ -150,6 +154,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                             platforms_ids=platforms_ids,
                             store_ids=stores_ids,
                             payments_ids=payments_ids,
+                            ecommerce_states_ids=ecommerce_states_ids,
+                            search=search,
                             is_payed=is_payed,
                             is_invoice_requested=is_invoice_requested,
                             date_from=date_from,
@@ -169,6 +175,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                                    platforms_ids=platforms_ids,
                                    store_ids=stores_ids,
                                    payments_ids=payments_ids,
+                                   ecommerce_states_ids=ecommerce_states_ids,
+                                   search=search,
                                    is_payed=is_payed,
                                    is_invoice_requested=is_invoice_requested,
                                    date_from=date_from,

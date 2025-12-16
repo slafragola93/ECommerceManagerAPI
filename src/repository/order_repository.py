@@ -3,7 +3,7 @@ from typing import Optional, List
 from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
 from datetime import datetime
 from fastapi import HTTPException
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, or_, String
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, joinedload
 from .address_repository import AddressRepository
@@ -22,6 +22,10 @@ from .tax_repository import TaxRepository
 from .app_configuration_repository import AppConfigurationRepository
 from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
 from ..models import Order, OrderState, Shipping, Address
+from ..models.customer import Customer
+from ..models.payment import Payment
+from ..models.product import Product
+from ..models.order_detail import OrderDetail as OrderDetailModel
 from ..models.relations.relations import orders_history
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
@@ -66,6 +70,8 @@ class OrderRepository(IOrderRepository):
                 store_ids: Optional[str] = "1",
                 platforms_ids: Optional[str] = None,
                 payments_ids: Optional[str] = None,
+                ecommerce_states_ids: Optional[str] = None,
+                search: Optional[str] = None,
                 is_payed: Optional[bool] = None,
                 is_invoice_requested: Optional[bool] = None,
                 date_from: Optional[str] = None,
@@ -77,10 +83,17 @@ class OrderRepository(IOrderRepository):
         """
         Recupera tutti gli ordini con filtri opzionali
         """
-        # Eager load ecommerce_order_state relationship per evitare N+1 queries
-        query = self.session.query(Order).options(
-            joinedload(Order.ecommerce_order_state)
-        )
+        query = self.session.query(Order)
+        
+        # LEFT JOINs per la ricerca rapida (solo se necessario)
+        needs_search_joins = search is not None
+        if needs_search_joins:
+            query = query.outerjoin(Address, Order.id_address_delivery == Address.id_address)
+            query = query.outerjoin(Customer, Order.id_customer == Customer.id_customer)
+            query = query.outerjoin(Payment, Order.id_payment == Payment.id_payment)
+            query = query.outerjoin(Shipping, Order.id_shipping == Shipping.id_shipping)
+            query = query.outerjoin(OrderDetailModel, Order.id_order == OrderDetailModel.id_order)
+            query = query.outerjoin(Product, OrderDetailModel.id_product == Product.id_product)
         
         try:
             # Filtri per ID
@@ -90,6 +103,8 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_customer', customers_ids)
             if order_states_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_order_state', order_states_ids)
+            if ecommerce_states_ids:
+                query = QueryUtils.filter_by_id(query, Order, 'id_ecommerce_state', ecommerce_states_ids)
             if store_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_store', store_ids)
             if platforms_ids:
@@ -98,11 +113,13 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_payment', payments_ids)
             if shipping_states_ids:
                 ids = QueryUtils.parse_int_list(shipping_states_ids)
-                query = query.join(Shipping, Order.id_shipping == Shipping.id_shipping)
+                if not needs_search_joins:
+                    query = query.join(Shipping, Order.id_shipping == Shipping.id_shipping)
                 query = query.filter(Shipping.id_shipping_state.in_(ids))
             if delivery_countries_ids:
                 ids = QueryUtils.parse_int_list(delivery_countries_ids)
-                query = query.join(Address, Order.id_address_delivery == Address.id_address)
+                if not needs_search_joins:
+                    query = query.join(Address, Order.id_address_delivery == Address.id_address)
                 query = query.filter(Address.id_country.in_(ids))
             
             # Filtri booleani
@@ -116,9 +133,12 @@ class OrderRepository(IOrderRepository):
                 query = query.filter(Order.date_add >= date_from)
             if date_to:
                 query = query.filter(Order.date_add <= date_to)
-                
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
+        
+        # Usa distinct per evitare duplicati quando ci sono JOINs multipli (es. OrderDetail)
+        if needs_search_joins:
+            query = query.distinct()
         
         orders_result = query.order_by(desc(Order.id_order)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
         
@@ -133,6 +153,8 @@ class OrderRepository(IOrderRepository):
                   store_ids: Optional[str] = "1",
                   platforms_ids: Optional[str] = None,
                   payments_ids: Optional[str] = None,
+                  ecommerce_states_ids: Optional[str] = None,
+                  search: Optional[str] = None,
                   is_payed: Optional[bool] = None,
                   is_invoice_requested: Optional[bool] = None,
                   date_from: Optional[str] = None,
@@ -141,7 +163,21 @@ class OrderRepository(IOrderRepository):
         """
         Conta il numero totale di ordini con i filtri applicati
         """
-        query = self.session.query(func.count(Order.id_order))
+        # Usa distinct count se ci sono JOINs che possono creare duplicati
+        if search is not None:
+            query = self.session.query(func.count(func.distinct(Order.id_order)))
+        else:
+            query = self.session.query(func.count(Order.id_order))
+        
+        # LEFT JOINs per la ricerca rapida (solo se necessario)
+        needs_search_joins = search is not None
+        if needs_search_joins:
+            query = query.outerjoin(Address, Order.id_address_delivery == Address.id_address)
+            query = query.outerjoin(Customer, Order.id_customer == Customer.id_customer)
+            query = query.outerjoin(Payment, Order.id_payment == Payment.id_payment)
+            query = query.outerjoin(Shipping, Order.id_shipping == Shipping.id_shipping)
+            query = query.outerjoin(OrderDetailModel, Order.id_order == OrderDetailModel.id_order)
+            query = query.outerjoin(Product, OrderDetailModel.id_product == Product.id_product)
         
         try:
             # Applica gli stessi filtri di get_all
@@ -151,6 +187,8 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_customer', customers_ids)
             if order_states_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_order_state', order_states_ids)
+            if ecommerce_states_ids:
+                query = QueryUtils.filter_by_id(query, Order, 'id_ecommerce_state', ecommerce_states_ids)
             if store_ids:
                 query = QueryUtils.filter_by_id(query, Order, 'id_store', store_ids)
             if platforms_ids:
@@ -159,22 +197,66 @@ class OrderRepository(IOrderRepository):
                 query = QueryUtils.filter_by_id(query, Order, 'id_payment', payments_ids)
             if shipping_states_ids:
                 ids = QueryUtils.parse_int_list(shipping_states_ids)
-                query = query.join(Shipping, Order.id_shipping == Shipping.id_shipping)
+                if not needs_search_joins:
+                    query = query.join(Shipping, Order.id_shipping == Shipping.id_shipping)
                 query = query.filter(Shipping.id_shipping_state.in_(ids))
             if delivery_countries_ids:
                 ids = QueryUtils.parse_int_list(delivery_countries_ids)
-                query = query.join(Address, Order.id_address_delivery == Address.id_address)
+                if not needs_search_joins:
+                    query = query.join(Address, Order.id_address_delivery == Address.id_address)
                 query = query.filter(Address.id_country.in_(ids))
             
+            # Ricerca rapida
+            if search:
+                search_conditions = []
+                search_lower = f"%{search.lower()}%"
+                
+                # Address fields (gestisce NULL con coalesce)
+                search_conditions.append(func.cast(func.coalesce(Address.id_address, 0), String).ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.firstname, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.lastname, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.address1, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.postcode, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.vat, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.pec, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Address.sdi, '').ilike(search_lower))
+                
+                # Customer fields
+                search_conditions.append(func.coalesce(Customer.firstname, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Customer.lastname, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Customer.email, '').ilike(search_lower))
+                
+                # Order fields
+                search_conditions.append(func.coalesce(Order.reference, '').ilike(search_lower))
+                search_conditions.append(func.coalesce(Order.internal_reference, '').ilike(search_lower))
+                
+                # Payment fields
+                search_conditions.append(func.coalesce(Payment.name, '').ilike(search_lower))
+                
+                # Product fields
+                search_conditions.append(func.coalesce(Product.name, '').ilike(search_lower))
+                
+                # Shipping fields
+                search_conditions.append(func.coalesce(Shipping.tracking, '').ilike(search_lower))
+                
+                query = query.filter(or_(*search_conditions))
+            
+            # Filtri booleani
             if is_payed is not None:
                 query = query.filter(Order.is_payed == is_payed)
             if is_invoice_requested is not None:
                 query = query.filter(Order.is_invoice_requested == is_invoice_requested)
+            
+            # Filtri per data
+            if date_from:
+                query = query.filter(Order.date_add >= date_from)
+            if date_to:
+                query = query.filter(Order.date_add <= date_to)
                 
         except ValueError:
             raise HTTPException(status_code=400, detail="Parametri di ricerca non validi")
         
-        return query.scalar()
+        return query.scalar() or 0
 
     def get_by_id(self, _id: int) -> Order:
         """Recupera un ordine per ID con eager loading di ecommerce_order_state"""
