@@ -21,6 +21,8 @@ class OrderHistorySchema(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
+
+
 class OrderSchema(BaseModel):
     address_delivery: int | AddressSchema = 0
     address_invoice: int | AddressSchema = 0
@@ -158,7 +160,6 @@ class OrderResponseSchema(BaseModel):
     customer: Optional[CustomerResponseSchema] = None
     shipping: Optional[ShippingResponseSchema] = None
     sectional: Optional[SectionalResponseSchema] = None
-    order_states: Optional[list[OrderStateResponseSchema]] = None
     order_details: Optional[list] = None 
     order_history: Optional[list[OrderHistorySchema]] = None
 
@@ -176,7 +177,6 @@ class OrderIdSchema(BaseModel):
     id_order: int
     id_origin: Optional[int]
     reference: Optional[str]
-    id_ecommerce_state: Optional[int] = None
     # Campi dati
     is_invoice_requested: bool
     is_payed: Optional[bool]
@@ -197,13 +197,12 @@ class OrderIdSchema(BaseModel):
     address_invoice: Optional[dict] = None
     payment: Optional[dict] = None
     platform: Optional[dict] = None
-    order_states: Optional[dict] = None
     customer: Optional[dict] = None
     shipping: Optional[dict] = None
     sectional: Optional[dict] = None
-    order_states: Optional[list[dict]] = None
     order_details: Optional[list] = None 
     order_packages: Optional[list] = None
+    order_history: Optional[list] = None
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 

@@ -131,11 +131,18 @@ async def uninstall_event_plugin(
     user: dict = Depends(get_current_user),
     installer: PluginInstaller = Depends(get_installer),
 ):
-    """Disinstalla un plugin eliminando completamente i suoi file dal filesystem."""
+    """Disinstalla un plugin eliminando completamente i suoi file dal filesystem.
+    
+    Nota: I plugin di sistema (in src/events/plugins/) non possono essere disinstallati,
+    solo quelli in src/events/plugins/customs/ possono essere rimossi.
+    """
     try:
         config = await installer.uninstall(plugin_name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        # Plugin di sistema non può essere disinstallato
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - defensive
         logger.exception("Errore disinstallazione plugin '%s'", plugin_name)
         raise HTTPException(status_code=500, detail="Disinstallazione plugin fallita") from exc

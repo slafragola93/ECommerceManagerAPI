@@ -26,6 +26,7 @@ from ..models.customer import Customer
 from ..models.payment import Payment
 from ..models.product import Product
 from ..models.order_detail import OrderDetail as OrderDetailModel
+from ..models.carrier import Carrier
 from ..models.relations.relations import orders_history
 from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
@@ -83,7 +84,8 @@ class OrderRepository(IOrderRepository):
         """
         Recupera tutti gli ordini con filtri opzionali
         """
-        query = self.session.query(Order)
+        # Usa joinedload per caricare carrier ed evitare N+1 queries
+        query = self.session.query(Order).options(joinedload(Order.carrier))
         
         # LEFT JOINs per la ricerca rapida (solo se necessario)
         needs_search_joins = search is not None
@@ -731,13 +733,14 @@ class OrderRepository(IOrderRepository):
             from src.core.exceptions import InfrastructureException
             raise InfrastructureException(f"Database error bulk creating orders: {str(e)}")
 
-    def formatted_output(self, order: Order, show_details: bool = False):
+    def formatted_output(self, order: Order, show_details: bool = False, include_order_history: bool = True):
         """
         Formatta l'output di un ordine con le relazioni popolate tramite query separate
         
         Args:
             order: Oggetto Order da formattare
             show_details: Se True, include dettagli completi delle relazioni
+            include_order_history: Se True, include order_history nella risposta (default: True)
         """
         # Helper per formattare gli indirizzi
         def format_address(address_id):
@@ -880,6 +883,31 @@ class OrderRepository(IOrderRepository):
                 "date": date_add
             } for state, date_add in order_states]
         
+        # Helper per formattare l'order history
+        def format_order_history(order_id):
+            """Formatta la cronologia ordine con order_state.name e order_history.date_add"""
+            if not order_id:
+                return []
+            # Recupera gli order states per questo ordine con date_add
+            history_records = self.session.query(
+                OrderState.name,
+                orders_history.c.date_add
+            ).join(
+                orders_history, OrderState.id_order_state == orders_history.c.id_order_state
+            ).filter(
+                orders_history.c.id_order == order_id
+            ).order_by(
+                orders_history.c.date_add
+            ).all()
+            
+            if not history_records:
+                return []
+            
+            return [{
+                "name": name,
+                "date_add": format_datetime_ddmmyyyy_hhmmss(date_add) if date_add else None
+            } for name, date_add in history_records]
+        
         # Helper per formattare i dettagli dell'ordine
         def format_order_details(order_id):
             if not order_id:
@@ -969,7 +997,19 @@ class OrderRepository(IOrderRepository):
             if hasattr(order, 'ecommerce_order_state') and order.ecommerce_order_state:
                 return {
                     "id": order.id_ecommerce_state,
-                    "state_name": order.ecommerce_order_state.name
+                    "name": order.ecommerce_order_state.name
+                }
+            return None
+        
+        # Helper per formattare il carrier e-commerce
+        def format_ecommerce_carrier(order):
+            """Formatta il carrier e-commerce usando la relationship già caricata"""
+            if not order.id_carrier:
+                return None
+            # Usa la relationship per evitare query N+1 (già caricata con joinedload)
+            if hasattr(order, 'carrier') and order.carrier:
+                return {
+                    "name": order.carrier.name
                 }
             return None
         
@@ -999,8 +1039,13 @@ class OrderRepository(IOrderRepository):
             "general_note": order.general_note,
             "delivery_date": order.delivery_date,
             "date_add": order.date_add,
-            "ecommerce_order_state": format_ecommerce_order_state(order)
+            "ecommerce_order_state": format_ecommerce_order_state(order),
+            "ecommerce_carrier": format_ecommerce_carrier(order)
         }
+        
+        # Aggiungi order_history solo se richiesto
+        if include_order_history:
+            response["order_history"] = format_order_history(order.id_order)
         
         # Se show_details è True, aggiungi le relazioni popolate
         if show_details:
@@ -1021,9 +1066,9 @@ class OrderRepository(IOrderRepository):
                 "payment": format_payment(order.id_payment),
                 "shipping": format_shipping(order.id_shipping),
                 "sectional": format_sectional(order.id_sectional),
-                "order_states": format_order_states(order.id_order),
                 "order_details": format_order_details(order.id_order),
-                "order_packages": format_order_packages(order.id_order)
+                "order_packages": format_order_packages(order.id_order),
+                "ecommerce_order_state": format_ecommerce_order_state(order)
             })
 
         

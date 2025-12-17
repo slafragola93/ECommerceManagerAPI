@@ -184,7 +184,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
 
     results = []
     for order in orders:
-        results.append(or_repo.formatted_output(order, show_details=show_details == "true"))
+        results.append(or_repo.formatted_output(order, show_details=show_details == "true", include_order_history=False))
     return {"orders": results, "total": total_count, "page": page, "limit": limit}
 
 

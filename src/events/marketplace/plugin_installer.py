@@ -73,6 +73,14 @@ class PluginInstaller:
         if plugin_dir is None or not plugin_dir.exists():
             raise FileNotFoundError(f"Plugin '{plugin_name}' non trovato nelle directory configurate")
 
+        # Verifica se è un plugin di sistema (non cancellabile)
+        if self._is_system_plugin(plugin_dir):
+            raise ValueError(
+                f"Impossibile disinstallare il plugin '{plugin_name}': "
+                f"è un plugin di sistema e non può essere cancellato. "
+                f"Puoi solo disabilitarlo usando l'endpoint /disable."
+            )
+
         shutil.rmtree(plugin_dir, ignore_errors=True)
 
         self._remove_plugin_from_config(config, plugin_name)
@@ -206,4 +214,36 @@ class PluginInstaller:
             if candidate.exists():
                 return candidate
         return None
+
+    def _is_system_plugin(self, plugin_path: Path) -> bool:
+        """
+        Verifica se un plugin è un plugin di sistema (non cancellabile).
+        
+        Un plugin è considerato di sistema se si trova in src/events/plugins/
+        ma NON in src/events/plugins/customs/.
+        
+        Args:
+            plugin_path: Percorso completo del plugin
+            
+        Returns:
+            True se è un plugin di sistema, False altrimenti
+        """
+        # Normalizza il percorso per gestire sia / che \
+        normalized_path = plugin_path.resolve()
+        path_str = str(normalized_path).replace("\\", "/")
+        
+        # Un plugin è di sistema se:
+        # 1. Il percorso contiene "plugins" (è un plugin)
+        # 2. Il percorso NON contiene "plugins/customs" (non è custom)
+        
+        if "plugins" not in path_str:
+            return False
+        
+        # Se contiene "plugins/customs", non è di sistema (è un plugin custom)
+        if "/plugins/customs/" in path_str or "/plugins/customs\\" in path_str:
+            return False
+        
+        # Se contiene "plugins" ma non "customs", è un plugin di sistema
+        # (es: .../plugins/platform_state_sync/...)
+        return True
 
