@@ -216,10 +216,20 @@ async def _update_single_order_status_in_bulk(
         
     Returns:
         Dict con order_id, old_state_id, new_state_id per emissione evento
+        
+    Raises:
+        ValueError: Se l'ordine non esiste, se lo stato non esiste, o se lo stato è già impostato
     """
     order = or_repo.get_by_id(_id=order_id)
     if order is None:
         raise ValueError(f"Ordine {order_id} non trovato")
+    
+    # Valida che l'id_order_state esista
+    order_state = or_repo.session.query(OrderState).filter(
+        OrderState.id_order_state == new_state_id
+    ).first()
+    if not order_state:
+        raise ValueError(f"Stato ordine {new_state_id} non esiste nella tabella order_states")
     
     old_state_id = order.id_order_state
     if old_state_id == new_state_id:
@@ -666,10 +676,20 @@ class OrderService(IOrderService):
             
         Returns:
             Dict con message, order_id, new_status_id, old_state_id
+            
+        Raises:
+            ValueError: Se l'ordine non esiste o se lo stato non esiste nella tabella order_states
         """
         order = self._order_repository.get_by_id(_id=order_id)
         if order is None:
             raise ValueError(f"Ordine {order_id} non trovato")
+
+        # Valida che l'id_order_state esista
+        order_state = self._order_repository.session.query(OrderState).filter(
+            OrderState.id_order_state == new_status_id
+        ).first()
+        if not order_state:
+            raise ValueError(f"Stato ordine {new_status_id} non esiste nella tabella order_states")
 
         old_state_id = order.id_order_state
         if old_state_id == new_status_id:

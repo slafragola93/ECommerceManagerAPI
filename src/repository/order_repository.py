@@ -645,10 +645,20 @@ class OrderRepository(IOrderRepository):
             
         Returns:
             bool: True se aggiornato con successo
+            
+        Raises:
+            ValueError: Se l'id_order_state non esiste nella tabella order_states
         """
         order = self.get_by_id(id_order)
         if not order:
             return False
+        
+        # Valida che l'id_order_state esista
+        order_state = self.session.query(OrderState).filter(
+            OrderState.id_order_state == id_order_state
+        ).first()
+        if not order_state:
+            raise ValueError(f"Stato ordine {id_order_state} non esiste nella tabella order_states")
         
         order.id_order_state = id_order_state
         
@@ -866,6 +876,18 @@ class OrderRepository(IOrderRepository):
                 "name": sectional.name
             }
         
+        # Helper per formattare l'order state corrente
+        def format_order_state(order_state_id):
+            if not order_state_id:
+                return None
+            order_state = self.order_state_repository.get_by_id(order_state_id)
+            if not order_state:
+                return None
+            return {
+                "id_order_state": order_state.id_order_state,
+                "name": order_state.name
+            }
+        
         # Helper per formattare gli order states
         def format_order_states(order_id):
             if not order_id:
@@ -1026,6 +1048,7 @@ class OrderRepository(IOrderRepository):
             "id_shipping": order.id_shipping,
             "id_sectional": order.id_sectional,
             "id_order_state": order.id_order_state,
+            "order_state": format_order_state(order.id_order_state),
             "is_invoice_requested": order.is_invoice_requested,
             "is_payed": order.is_payed,
             "payment_date": order.payment_date,
@@ -1066,6 +1089,7 @@ class OrderRepository(IOrderRepository):
                 "payment": format_payment(order.id_payment),
                 "shipping": format_shipping(order.id_shipping),
                 "sectional": format_sectional(order.id_sectional),
+                "order_state": format_order_state(order.id_order_state),
                 "order_details": format_order_details(order.id_order),
                 "order_packages": format_order_packages(order.id_order),
                 "ecommerce_order_state": format_ecommerce_order_state(order)

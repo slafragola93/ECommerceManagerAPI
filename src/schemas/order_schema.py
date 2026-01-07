@@ -96,6 +96,7 @@ class OrderSimpleResponseSchema(BaseModel):
     id_shipping: Optional[int]
     id_sectional: Optional[int]
     id_order_state: int
+    order_state: Optional[OrderStateResponseSchema] = None
     id_ecommerce_state: Optional[int] = None
     is_invoice_requested: bool
     is_payed: Optional[bool]
@@ -160,6 +161,7 @@ class OrderResponseSchema(BaseModel):
     customer: Optional[CustomerResponseSchema] = None
     shipping: Optional[ShippingResponseSchema] = None
     sectional: Optional[SectionalResponseSchema] = None
+    order_state: Optional[OrderStateResponseSchema] = None
     order_details: Optional[list] = None 
     order_history: Optional[list[OrderHistorySchema]] = None
 
@@ -200,6 +202,7 @@ class OrderIdSchema(BaseModel):
     customer: Optional[dict] = None
     shipping: Optional[dict] = None
     sectional: Optional[dict] = None
+    order_state: Optional[OrderStateResponseSchema] = None
     order_details: Optional[list] = None 
     order_packages: Optional[list] = None
     order_history: Optional[list] = None

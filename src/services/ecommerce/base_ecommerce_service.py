@@ -61,6 +61,12 @@ class BaseEcommerceService(ABC):
             'country_code': store.country_code,
             'name': store.name
         }
+        
+        # Alias per compatibilità con codice esistente
+        self._ecommerce_config = {
+            'skip_images': 0,  # Default: sincronizza immagini
+            **self._store_config
+        }
     
     @property
     def api_key(self) -> str:

@@ -336,7 +336,9 @@ class PrestaShopService(BaseEcommerceService):
             phase3_functions = []
             
             # Controlla se skip_images è 0 prima di aggiungere sync_product_images
-            skip_images = self._ecommerce_config.get('skip_images', 0)
+            # Usa _store_config se _ecommerce_config non è disponibile (backward compatibility)
+            ecommerce_config = getattr(self, '_ecommerce_config', None) or getattr(self, '_store_config', {})
+            skip_images = ecommerce_config.get('skip_images', 0)
             
             if skip_images == 0:
                 phase3_functions.append(("Product Images", self.sync_product_images))
