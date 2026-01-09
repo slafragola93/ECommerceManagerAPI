@@ -124,7 +124,7 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
             ID dell'indirizzo (nuovo o esistente)
         """
         try:
-            # Cerca indirizzo esistente con stessi dati chiave (query idratata - solo id_address)
+            # Cerca indirizzo esistente con stessi dati chiave
             existing_id = self._session.query(Address.id_address).filter(
                 Address.id_customer == customer_id,
                 Address.firstname == address_data.firstname,
@@ -132,7 +132,7 @@ class AddressRepository(BaseRepository[Address, int], IAddressRepository):
                 Address.address1 == address_data.address1,
                 Address.postcode == address_data.postcode,
                 Address.city == address_data.city
-            ).scalar()
+            ).limit(1).scalar()
             
             if existing_id:
                 return existing_id

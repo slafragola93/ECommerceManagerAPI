@@ -72,11 +72,12 @@ EVENT_CONFIG_PATH = Path("config/event_handlers.yaml")
 
 # Global task tracker per evitare duplicati
 _order_states_sync_task = None
+_tracking_polling_task = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    global _order_states_sync_task
+    global _order_states_sync_task, _tracking_polling_task
     
     # Initialize new cache system
     try:
@@ -139,6 +140,22 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             print("Order states sync periodic task started (runs every hour)")
     except Exception as e:
         print(f"WARNING: Failed to start order states sync task: {e}")
+    
+    # Start periodic tracking polling task
+    try:
+        # Verifica se il task è già in esecuzione
+        if _tracking_polling_task is None or _tracking_polling_task.done():
+            from src.database import SessionLocal
+            from src.services.sync.tracking_polling_service import run_tracking_polling_task
+            
+            # Crea una sessione DB per la task periodica
+            db = SessionLocal()
+            
+            # Avvia la task periodica in background
+            _tracking_polling_task = asyncio.create_task(run_tracking_polling_task(db))
+            print("Tracking polling periodic task started")
+    except Exception as e:
+        print(f"WARNING: Failed to start tracking polling task: {e}")
 
     yield
     
@@ -154,6 +171,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             print("Order states sync task cancelled")
     except Exception as e:
         print(f"WARNING: Error cancelling sync task: {e}")
+    
+    try:
+        # Cancella il task di polling tracking se in esecuzione
+        if _tracking_polling_task and not _tracking_polling_task.done():
+            _tracking_polling_task.cancel()
+            try:
+                await _tracking_polling_task
+            except asyncio.CancelledError:
+                pass
+            print("Tracking polling task cancelled")
+    except Exception as e:
+        print(f"WARNING: Error cancelling tracking polling task: {e}")
     
     try:
         await close_cache_manager()

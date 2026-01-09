@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import List, Optional, Union
 
 
 class BulkShipmentCreateRequestSchema(BaseModel):
@@ -30,8 +30,12 @@ class BulkShipmentCreateSuccess(BaseModel):
 class BulkShipmentCreateError(BaseModel):
     """Errore di una creazione spedizione fallita"""
     order_id: int = Field(..., description="ID dell'ordine")
-    error_type: str = Field(..., description="Tipo di errore (NOT_FOUND, NO_CARRIER_API, SHIPMENT_ERROR, UNKNOWN_ERROR)")
+    error_type: str = Field(..., description="Tipo di errore (NOT_FOUND, AUTHENTICATION_ERROR, VALIDATION_ERROR, BUSINESS_RULE_ERROR, INFRASTRUCTURE_ERROR, UNKNOWN_ERROR)")
     error_message: str = Field(..., description="Messaggio di errore dettagliato")
+    carrier_error_code: Optional[Union[int, str]] = Field(None, description="Codice errore generico del corriere (può essere numero o stringa)")
+    carrier_error_description: Optional[str] = Field(None, description="Descrizione errore generica del corriere")
+    carrier_name: Optional[str] = Field(None, description="Nome del corriere (BRT, DHL, FedEx, ecc.)")
+    error_category: Optional[str] = Field(None, description="Categoria errore (authentication, validation, business, infrastructure, not_found)")
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')
 

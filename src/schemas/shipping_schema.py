@@ -14,6 +14,19 @@ class ShippingSchema(BaseModel):
     shipping_message: Optional[str] = None
 
 
+class ShippingUpdateSchema(BaseModel):
+    """Schema per aggiornamento shipping con tutti i campi opzionali"""
+    id_carrier_api: Optional[int] = Field(None, gt=0)
+    id_shipping_state: Optional[int] = Field(None, gt=0)
+    id_tax: Optional[int] = Field(None, gt=0)
+    tracking: Optional[str] = None
+    weight: Optional[float] = Field(None, ge=0)
+    price_tax_incl: Optional[float] = None
+    price_tax_excl: Optional[float] = None
+    customs_value: Optional[float] = Field(None, ge=0)
+    shipping_message: Optional[str] = None
+
+
 class ShippingResponseSchema(BaseModel):
     id_carrier_api: Optional[int] = None
     id_shipping_state: int

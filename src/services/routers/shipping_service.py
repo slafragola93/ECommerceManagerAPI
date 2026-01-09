@@ -4,7 +4,7 @@ Shipping Service rifattorizzato seguendo i principi SOLID
 from typing import List, Optional, Any, Dict
 from src.services.interfaces.shipping_service_interface import IShippingService
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
-from src.schemas.shipping_schema import ShippingSchema
+from src.schemas.shipping_schema import ShippingSchema, ShippingUpdateSchema
 from src.models.shipping import Shipping
 from src.core.exceptions import (
     ValidationException, 
@@ -25,16 +25,6 @@ class ShippingService(IShippingService):
     
     async def create_shipping(self, shipping_data: ShippingSchema) -> Shipping:
         """Crea un nuovo shipping con validazioni business"""
-        
-        # Business Rule 1: Nome deve essere unico
-        if hasattr(shipping_data, 'name') and shipping_data.name:
-            existing_shipping = self._shipping_repository.get_by_name(shipping_data.name)
-            if existing_shipping:
-                raise BusinessRuleException(
-                    f"Shipping with name '{shipping_data.name}' already exists",
-                    ErrorCode.BUSINESS_RULE_VIOLATION,
-                    {"name": shipping_data.name}
-                )
         
         # Crea il shipping
         try:
@@ -68,8 +58,8 @@ class ShippingService(IShippingService):
         condition=_should_emit_shipping_status_event,
         source="shipping_service.update_shipping",
     )
-    async def update_shipping(self, shipping_id: int, shipping_data: ShippingSchema) -> Dict[str, Any]:
-        """Aggiorna un shipping esistente"""
+    async def update_shipping(self, shipping_id: int, shipping_data: ShippingUpdateSchema) -> Dict[str, Any]:
+        """Aggiorna un shipping esistente. Tutti i campi sono opzionali - solo i campi inviati verranno aggiornati."""
         
         # Verifica esistenza
         shipping = self._shipping_repository.get_by_id_or_raise(shipping_id)
@@ -77,19 +67,9 @@ class ShippingService(IShippingService):
         # Salva vecchio stato prima dell'aggiornamento
         old_state_id = shipping.id_shipping_state
         
-        # Business Rule: Se nome cambia, deve essere unico
-        if hasattr(shipping_data, 'name') and shipping_data.name != shipping.name:
-            existing = self._shipping_repository.get_by_name(shipping_data.name)
-            if existing and existing.id_shipping != shipping_id:
-                raise BusinessRuleException(
-                    f"Shipping with name '{shipping_data.name}' already exists",
-                    ErrorCode.BUSINESS_RULE_VIOLATION,
-                    {"name": shipping_data.name}
-                )
-        
         # Aggiorna il shipping
         try:
-            # Aggiorna i campi
+            # Aggiorna i campi - exclude_unset=True ignora i campi non inviati
             for field_name, value in shipping_data.model_dump(exclude_unset=True).items():
                 if hasattr(shipping, field_name) and value is not None:
                     setattr(shipping, field_name, value)

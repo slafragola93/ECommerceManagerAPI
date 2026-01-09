@@ -48,10 +48,18 @@ class BrtMapper:
         # Get province abbreviation using ProvinceService
         province = ""
         if hasattr(receiver_address, 'state') and receiver_address.state:
-            province = province_service.get_province_abbreviation(receiver_address.state)
-            if not province:
-                # Fallback: use first 2 uppercase letters if service doesn't find it
-                province = str(receiver_address.state).upper()[:2]
+            state_value = str(receiver_address.state).strip()
+            
+            # Check if state is already an abbreviation (2 uppercase letters)
+            if len(state_value) == 2 and state_value.isupper() and state_value.isalpha():
+                # Already an abbreviation, use it directly
+                province = state_value
+            else:
+                # It's a full name, convert using ProvinceService
+                province = province_service.get_province_abbreviation(state_value)
+                if not province:
+                    # Fallback: use first 2 uppercase letters if service doesn't find it
+                    province = state_value.upper()[:2]
         elif hasattr(receiver_address, 'province_code') and receiver_address.province_code:
             # If province_code is already an abbreviation, use it directly
             province = str(receiver_address.province_code).upper()[:2]
@@ -129,11 +137,18 @@ class BrtMapper:
         if not province:
             # Get province abbreviation using ProvinceService
             if hasattr(receiver_address, 'state') and receiver_address.state:
-                print(f"Receiver address state: {receiver_address.state}")
-                province = province_service.get_province_abbreviation(receiver_address.state)
-                if not province:
-                    # Fallback: use first 2 uppercase letters if service doesn't find it
-                    province = str(receiver_address.state).upper()[:2]
+                state_value = str(receiver_address.state).strip()
+                
+                # Check if state is already an abbreviation (2 uppercase letters)
+                if len(state_value) == 2 and state_value.isupper() and state_value.isalpha():
+                    # Already an abbreviation, use it directly
+                    province = state_value
+                else:
+                    # It's a full name, convert using ProvinceService
+                    province = province_service.get_province_abbreviation(state_value)
+                    if not province:
+                        # Fallback: use first 2 uppercase letters if service doesn't find it
+                        province = state_value.upper()[:2]
             elif hasattr(receiver_address, 'province_code') and receiver_address.province_code:
                 # If province_code is already an abbreviation, use it directly
                 province = str(receiver_address.province_code).upper()[:2]
@@ -194,6 +209,14 @@ class BrtMapper:
         else:
             parcels_count = len(packages) if packages else 1
         
+        # Build notes: use shipping_message (max 70 chars) if available, otherwise use brt_config.notes
+        notes = ""
+        if shipping_message:
+            # Use shipping_message, limit to 70 characters
+            notes = str(shipping_message)[:70]
+        elif brt_config.notes:
+            notes = str(brt_config.notes)
+        
         # Build createData
         create_data = {
             "network": brt_config.network or "",
@@ -222,7 +245,7 @@ class BrtMapper:
             "isCODMandatory": "0",
             "numericSenderReference": numeric_ref,
             "alphanumericSenderReference": alphanumeric_ref,
-            "notes": str(shipping_message) if shipping_message else (str(brt_config.notes) if brt_config.notes else ""),
+            "notes": notes,
             "parcelsHandlingCode": "2"
         }
         
@@ -233,7 +256,7 @@ class BrtMapper:
                 "password": str(brt_config.api_password)
             },
             "createData": create_data,
-            "isLabelRequired": 1,
+            "isLabelRequired": "1",
             "labelParameters": {
                 "outputType": (brt_config.label_format or "PDF").upper(),
                 "offsetX": 0,

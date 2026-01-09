@@ -14,6 +14,9 @@ class EventType(str, Enum):
     # Eventi esistenti
     ORDER_STATUS_CHANGED = "order_status_changed"
     SHIPPING_STATUS_CHANGED = "shipping_status_changed"
+    
+    # ===== SHIPMENTS =====
+    SHIPMENT_CREATED = "shipment_created"
 
     # ===== DOCUMENTI (OrderDocument + FiscalDocument unificati) =====
     # Distinguere tramite document_source ("order_document" o "fiscal_document")

@@ -4,7 +4,7 @@ Shipping Router rifattorizzato seguendo i principi SOLID
 from fastapi import APIRouter, Depends, status, Query, Path
 from src.services.interfaces.shipping_service_interface import IShippingService
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
-from src.schemas.shipping_schema import ShippingSchema, ShippingResponseSchema, AllShippingResponseSchema
+from src.schemas.shipping_schema import ShippingSchema, ShippingUpdateSchema, ShippingResponseSchema, AllShippingResponseSchema
 from src.core.container import container
 from src.core.exceptions import (
     NotFoundException
@@ -116,7 +116,7 @@ async def create_shipping(
 @check_authentication
 @authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_shipping(
-    shipping_data: ShippingSchema,
+    shipping_data: ShippingUpdateSchema,
     shipping_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
@@ -124,6 +124,7 @@ async def update_shipping(
 ):
     """
     Aggiorna i dati di un shipping esistente basato sull'ID specificato.
+    Tutti i campi sono facoltativi - solo i campi inviati verranno aggiornati.
 
     - **shipping_id**: Identificativo del shipping da aggiornare.
     """

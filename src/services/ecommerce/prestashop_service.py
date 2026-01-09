@@ -4150,8 +4150,8 @@ class PrestaShopService(BaseEcommerceService):
             from src.models.order import Order
             
             order = self.db.query(Order).filter(Order.id_order == order_id).first()
-            if not order or not order.id_origin:
-                logger.warning(f"Ordine {order_id} non trovato o senza id_origin")
+            if not order or not order.id_origin or order.id_origin == 0:
+                logger.warning(f"Ordine {order_id} non trovato o senza id_origin valido (id_origin={order.id_origin if order else None})")
                 return False
             
             order_id_origin = order.id_origin

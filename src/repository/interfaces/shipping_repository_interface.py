@@ -61,3 +61,13 @@ class IShippingRepository(IRepository[Shipping, int]):
         """Imposta lo stato della shipping a 11 (Annullato)"""
         pass
     
+    @abstractmethod
+    def get_shipments_with_tracking(self, exclude_states: Optional[List[int]] = None) -> List[Row]:
+        """Recupera spedizioni con tracking number, escludendo stati finali"""
+        pass
+    
+    @abstractmethod
+    def has_tracking_events(self, tracking_number: str) -> bool:
+        """Verifica se una spedizione ha eventi in shipments_history"""
+        pass
+    

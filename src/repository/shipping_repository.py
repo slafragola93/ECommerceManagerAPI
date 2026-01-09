@@ -202,11 +202,8 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         try:
             result = self._session.query(Shipping.shipping_message).filter(
                 Shipping.id_shipping == id_shipping
-            ).first()
-            if result:
-                # result è una tupla (shipping_message,), estraiamo il primo elemento
-                return result[0] if isinstance(result, tuple) else result
-            return None
+            ).scalar()
+            return result
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving shipping message: {str(e)}")
     
@@ -238,4 +235,71 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             self._session.rollback()
             # Non sollevare eccezione per non bloccare il flusso
             pass
+    
+    def get_shipments_with_tracking(self, exclude_states: Optional[List[int]] = None) -> List[Row]:
+        """
+        Recupera solo i campi necessari (id_shipping, tracking, id_carrier_api) 
+        per tutte le spedizioni con tracking number non nullo, escludendo stati finali.
+        
+        Args:
+            exclude_states: Lista di id_shipping_state da escludere (default: [1, 8, 11, 13])
+            
+        Returns:
+            Lista di Row objects con solo i campi essenziali
+        """
+        from src.models.carrier_api import CarrierApi
+        
+        try:
+            # Stati finali di default
+            if exclude_states is None:
+                exclude_states = [1, 8, 11, 13] # Stati finali esclusi dal polling
+            
+            stmt = select(
+                Shipping.id_shipping,
+                Shipping.tracking,
+                Shipping.id_carrier_api
+            ).join(
+                CarrierApi, Shipping.id_carrier_api == CarrierApi.id_carrier_api
+            ).where(
+                Shipping.tracking.isnot(None),
+                Shipping.tracking != '',
+                CarrierApi.is_active == True
+            )
+            
+            # Escludi stati finali
+            if exclude_states:
+                stmt = stmt.where(
+                    (Shipping.id_shipping_state.is_(None)) | 
+                    (~Shipping.id_shipping_state.in_(exclude_states))
+                )
+            
+            result = self._session.execute(stmt).all()
+            return list(result)
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving shipments with tracking: {str(e)}")
+    
+    def has_tracking_events(self, tracking_number: str) -> bool:
+        """
+        Verifica se una spedizione ha eventi in shipments_history.
+        Indica che ha ricevuto almeno una risposta valida dal tracking.
+        
+        Args:
+            tracking_number: Numero di tracking della spedizione
+            
+        Returns:
+            True se esiste almeno un evento, False altrimenti
+        """
+        from src.models.shipments_history import ShipmentsHistory
+        
+        try:
+            # Conta eventi in shipments_history per questa spedizione
+            count = self._session.query(func.count(ShipmentsHistory.id)).join(
+                Shipping, ShipmentsHistory.id_shipping == Shipping.id_shipping
+            ).filter(
+                Shipping.tracking == tracking_number
+            ).scalar()
+            
+            return count > 0 if count is not None else False
+        except Exception as e:
+            raise InfrastructureException(f"Database error checking tracking events: {str(e)}")
     

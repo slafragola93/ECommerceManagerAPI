@@ -1,13 +1,58 @@
 import httpx
 import asyncio
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, Type
 from sqlalchemy.engine import Row
 import logging
 
 from src.core.settings import get_carrier_integration_settings
 
 logger = logging.getLogger(__name__)
+
+# Mapping dei codici di errore BRT: (message, category)
+# Le eccezioni vengono determinate dinamicamente in base alla categoria
+BRT_ERROR_MAPPING: Dict[int, Tuple[str, str]] = {
+    # Authentication errors
+    -7: ("BRT login failed", "authentication"),
+    -57: ("BRT login parameter missing", "authentication"),
+    
+    # Validation errors
+    -5: ("BRT invalid parameter", "validation"),
+    -10: ("BRT shipment number required", "validation"),
+    -11: ("BRT shipment not found", "validation"),
+    -21: ("BRT client code required", "validation"),
+    -22: ("BRT non-unique reference", "validation"),
+    -30: ("BRT parcel ID required", "validation"),
+    -68: ("BRT wrong or inconsistent data", "validation"),
+    -69: ("BRT invalid or non-existent pudoId", "validation"),
+    
+    # Infrastructure errors
+    -3: ("BRT database connection problem", "infrastructure"),
+    
+    # Business rule errors
+    -1: ("BRT generic error", "business"),
+    -63: ("BRT routing calculation error", "business"),
+    -64: ("BRT parcel numbering error", "business"),
+    -65: ("BRT label printing error", "business"),
+    -67: ("BRT user/account error: senderCustomerCode not linked to account.userId", "business"),
+    -101: ("BRT shipment cannot be confirmed", "business"),
+    -102: ("BRT shipment already confirmed", "business"),
+    -151: ("BRT shipment never created or created more than 40 days ago", "business"),
+    -152: ("BRT shipment already being processed by depot", "business"),
+    -153: ("BRT shipment being processed, try again", "business"),
+    -154: ("BRT multiple shipments found with same identifiers", "business"),
+    -155: ("BRT record allocated for cancellation", "business"),
+}
+
+# Codici di warning che non devono sollevare eccezioni
+BRT_WARNING_CODES = {4, 5, 6}
+
+# Descriptions for warning codes
+BRT_WARNING_DESCRIPTIONS = {
+    4: "Normalizzazione dati eseguita (City/ZIP code/Province abb.)",
+    5: "Indirizzo destinatario modificato con l'indirizzo del BRTfermopoint pudo",
+    6: "Impostati i dati del destinatario con i dati del depot di ritorno"
+}
 
 
 class BrtClient:
@@ -37,11 +82,7 @@ class BrtClient:
         """
         url = f"{self._get_base_url(credentials.use_sandbox)}/rest/v1/shipments/routing"
         headers = self._get_headers(for_tracking=False)
-        
-        logger.info(f"BRT Routing Request URL: {url}")
-        logger.info(f"BRT Routing Request Method: PUT")
-        logger.info(f"BRT Routing Request Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
-        
+    
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await self._make_request_with_retry(
                 client, "PUT", url, headers=headers, json=payload
@@ -75,7 +116,6 @@ class BrtClient:
         headers = self._get_headers(for_tracking=False)
         
         logger.info(f"BRT Create Shipment Request URL: {url}")
-        logger.info(f"BRT Create Shipment Request Method: POST")
         logger.info(f"BRT Create Shipment Request Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
         
         async with httpx.AsyncClient(timeout=45.0) as client:
@@ -184,6 +224,9 @@ class BrtClient:
         
         response_data = response.json()
         
+        # Check for BRT API errors in response
+        self._check_brt_response_errors(response_data)
+        
         return response_data
     
     async def cancel_shipment(
@@ -276,46 +319,94 @@ class BrtClient:
     
     def _check_brt_response_errors(self, response_data: Dict[str, Any]) -> None:
         """
-        Check for BRT API errors in response (severity: ERROR)
-        Raises exception if error is found
+        Check for BRT API errors in response and handle them appropriately
+        
+        - Warning codes (4, 5, 6) are logged but don't raise exceptions
+        - Error codes (< 0) are mapped to appropriate exceptions based on BRT_ERROR_MAPPING
         
         Args:
             response_data: BRT API response dict
             
         Raises:
-            BusinessRuleException: If BRT API returned an error
+            AuthenticationException: For authentication errors (-7, -57)
+            ValidationException: For validation errors (-5, -10, -11, -21, -22, -30, -68, -69)
+            InfrastructureException: For infrastructure errors (-3)
+            BusinessRuleException: For business rule errors (all other negative codes)
         """
-        from src.core.exceptions import BusinessRuleException
+        from src.core.exceptions import (
+            BusinessRuleException,
+            AuthenticationException,
+            ValidationException,
+            InfrastructureException
+        )
         
         if not isinstance(response_data, dict):
             return
         
-        # Check for executionMessage in createResponse, routingData, confirmResponse, etc.
-        response_keys = ["createResponse", "routingData", "confirmResponse", "deleteResponse"]
+        # Check for executionMessage in createResponse, routingData, confirmResponse, deleteResponse, trackingResponse, ttParcelIdResponse, etc.
+        response_keys = ["createResponse", "routingData", "confirmResponse", "deleteResponse", "trackingResponse", "ttParcelIdResponse"]
         
         for key in response_keys:
             if key in response_data:
                 exec_message = response_data[key].get("executionMessage", {})
-                severity = exec_message.get("severity", "")
+                if not exec_message:
+                    continue
                 
-                if severity and severity.upper() == "ERROR":
-                    error_code = exec_message.get("code", "")
-                    error_message = exec_message.get("message", "Unknown BRT error")
-                    code_desc = exec_message.get("codeDesc", "")
+                severity = exec_message.get("severity", "")
+                error_code = exec_message.get("code")
+                error_message = exec_message.get("message", "Unknown BRT error")
+                code_desc = exec_message.get("codeDesc", "")
+                
+                # Handle warnings (4, 5, 6) - log but don't raise exception
+                if error_code in BRT_WARNING_CODES:
+                    warning_desc = BRT_WARNING_DESCRIPTIONS.get(error_code, f"Warning code {error_code}")
+                    logger.info(
+                        f"BRT API Warning (Code: {error_code}, {warning_desc}): {error_message}"
+                    )
+                    continue
+                
+                # Handle errors (negative codes or ERROR severity)
+                is_error = False
+                if error_code is not None and error_code < 0:
+                    is_error = True
+                elif severity and severity.upper() == "ERROR":
+                    is_error = True
+                
+                if is_error:
+                    # Get exception type and message from mapping
+                    exception_type = BusinessRuleException
+                    base_message = "BRT API error"
+                    error_category = "business"
+                    
+                    if error_code in BRT_ERROR_MAPPING:
+                        base_message, error_category = BRT_ERROR_MAPPING[error_code]
+                        
+                        # Map to appropriate exception type based on category
+                        if error_category == "authentication":
+                            exception_type = AuthenticationException
+                        elif error_category == "validation":
+                            exception_type = ValidationException
+                        elif error_category == "infrastructure":
+                            exception_type = InfrastructureException
+                        else:
+                            exception_type = BusinessRuleException
                     
                     # Build detailed error message
-                    error_details = f"BRT API Error (Code: {error_code}"
+                    error_details = f"{base_message} (Code: {error_code}"
                     if code_desc:
                         error_details += f", {code_desc}"
                     error_details += f"): {error_message}"
                     
                     logger.error(f"BRT API returned error: {error_details}")
-                    raise BusinessRuleException(
+                    
+                    # Raise appropriate exception with details using generic convention
+                    raise exception_type(
                         error_details,
                         details={
-                            "brt_error_code": error_code,
-                            "brt_code_desc": code_desc,
-                            "brt_message": error_message
+                            "carrier_error_code": error_code,
+                            "carrier_error_description": code_desc or error_message,
+                            "carrier_name": "BRT",
+                            "error_category": error_category
                         }
                     )
     

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, Path, Body
-from typing import List
+from typing import List, Optional
 import logging
 from sqlalchemy.orm import Session
 
@@ -17,12 +17,73 @@ from src.schemas.shipment_schema import (
 from src.database import get_db
 from src.repository.shipping_repository import ShippingRepository
 from src.repository.shipment_document_repository import ShipmentDocumentRepository
-from src.core.exceptions import NotFoundException, BusinessRuleException
+from src.core.exceptions import (
+    NotFoundException,
+    BusinessRuleException,
+    ValidationException,
+    AuthenticationException,
+    InfrastructureException
+)
 from src.services.routers.auth_service import get_current_user
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
+from src.services.routers.order_service import OrderService
+from src.repository.order_repository import OrderRepository
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/shippings", tags=["Shipments"])
+
+
+def _extract_carrier_error_details(exception: Exception, default_category: Optional[str] = None) -> dict:
+    """
+    Estrae i dettagli di errore del corriere in modo generico dalle eccezioni.
+    Supporta sia la nuova convenzione generica che quella legacy BRT per retrocompatibilità.
+    
+    Args:
+        exception: L'eccezione da cui estrarre i dettagli
+        default_category: Categoria di errore di default se non presente nei details
+        
+    Returns:
+        Dict con carrier_error_code, carrier_error_description, carrier_name, error_category
+    """
+    details = {}
+    if hasattr(exception, 'details') and isinstance(exception.details, dict):
+        details = exception.details
+    
+    # Extract carrier_error_code (new generic convention)
+    # Fallback to error_code, then to legacy brt_error_code
+    carrier_error_code = details.get("carrier_error_code") or details.get("error_code")
+    if carrier_error_code is None:
+        # Legacy BRT support
+        brt_error_code = details.get("brt_error_code")
+        if brt_error_code is not None:
+            carrier_error_code = brt_error_code
+    
+    # Extract carrier_error_description (new generic convention)
+    # Fallback to error_description, then to legacy brt_code_desc
+    carrier_error_description = details.get("carrier_error_description") or details.get("error_description")
+    if carrier_error_description is None:
+        # Legacy BRT support
+        brt_code_desc = details.get("brt_code_desc")
+        if brt_code_desc:
+            carrier_error_description = brt_code_desc
+    
+    # Extract carrier_name
+    carrier_name = details.get("carrier_name")
+    
+    # Extract error_category (new generic convention)
+    # Fallback to legacy brt_error_category
+    error_category = details.get("error_category") or details.get("brt_error_category")
+    if error_category is None:
+        error_category = default_category
+    
+    return {
+        "carrier_error_code": carrier_error_code,
+        "carrier_error_description": carrier_error_description,
+        "carrier_name": carrier_name,
+        "error_category": error_category
+    }
 
 
 def get_carrier_repo(db: Session = Depends(get_db)) -> IApiCarrierRepository:
@@ -86,6 +147,37 @@ async def create_shipment(
     # 4. Crea spedizione
     logger.info(f"Creating shipment for order {order_id} with carrier_api_id {carrier_api_id}")
     result = await shipment_service.create_shipment(order_id)
+    
+    # 5. Emetti evento per creazione spedizione
+    try:
+        awb = result.get("awb", "") if isinstance(result, dict) else ""
+        event = Event(
+            event_type=EventType.SHIPMENT_CREATED.value,
+            data={
+                "order_id": order_id,
+                "carrier_api_id": carrier_api_id,
+                "awb": awb,
+                "shipment_data": result
+            },
+            metadata={
+                "source": "shipments.create_shipment",
+                "id_order": order_id
+            }
+        )
+        emit_event(event)
+        logger.info(f"Event SHIPMENT_CREATED emitted for order {order_id}")
+    except Exception as e:
+        # Non bloccare la risposta in caso di errori nell'emissione dell'evento
+        logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id}: {str(e)}", exc_info=True)
+    
+    # 6. Aggiorna stato ordine a 4 ("Spedizione Confermata")
+    try:
+        order_service = OrderService(OrderRepository(db))
+        await order_service.update_order_status(order_id, 4)
+        logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
+    except Exception as e:
+        # Non bloccare la risposta in caso di errori nell'aggiornamento dello stato
+        logger.warning(f"Failed to update order {order_id} status to 4: {str(e)}", exc_info=True)
     
     return result
 
@@ -180,27 +272,123 @@ async def bulk_create_shipments(
             ))
             logger.info(f"Order {order_id}: Shipment created successfully with AWB {awb}")
             
+            # Emetti evento per creazione spedizione
+            try:
+                event = Event(
+                    event_type=EventType.SHIPMENT_CREATED.value,
+                    data={
+                        "order_id": order_id,
+                        "carrier_api_id": carrier_api_id,
+                        "awb": awb,
+                        "shipment_data": result
+                    },
+                    metadata={
+                        "source": "shipments.bulk_create_shipments",
+                        "id_order": order_id
+                    }
+                )
+                emit_event(event)
+                logger.info(f"Event SHIPMENT_CREATED emitted for order {order_id} in bulk operation")
+            except Exception as e:
+                # Non bloccare il processing in caso di errori nell'emissione dell'evento
+                logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id} in bulk operation: {str(e)}", exc_info=True)
+            
+            # Aggiorna stato ordine a 4 ("Spedizione Confermata")
+            try:
+                order_service = OrderService(OrderRepository(db))
+                await order_service.update_order_status(order_id, 4)
+                logger.info(f"Order {order_id} status updated to 4 (Spedito) after shipment creation in bulk operation")
+            except Exception as e:
+                # Non bloccare il processing in caso di errori nell'aggiornamento dello stato
+                logger.warning(f"Failed to update order {order_id} status to 4 in bulk operation: {str(e)}", exc_info=True)
+            
         except NotFoundException as e:
+            # Extract carrier error details in generic way
+            error_details = _extract_carrier_error_details(e, "not_found")
+            
             failed.append(BulkShipmentCreateError(
                 order_id=order_id,
                 error_type="NOT_FOUND",
-                error_message=str(e)
+                error_message=str(e),
+                carrier_error_code=error_details.get("carrier_error_code"),
+                carrier_error_description=error_details.get("carrier_error_description"),
+                carrier_name=error_details.get("carrier_name"),
+                error_category="not_found"
             ))
             logger.warning(f"Order {order_id}: NotFoundException - {str(e)}")
             
         except BusinessRuleException as e:
+            # Extract carrier error details in generic way
+            error_details = _extract_carrier_error_details(e, "business")
+            
             failed.append(BulkShipmentCreateError(
                 order_id=order_id,
-                error_type="NO_CARRIER_API",
-                error_message=str(e)
+                error_type="BUSINESS_RULE_ERROR",
+                error_message=str(e),
+                carrier_error_code=error_details.get("carrier_error_code"),
+                carrier_error_description=error_details.get("carrier_error_description"),
+                carrier_name=error_details.get("carrier_name"),
+                error_category=error_details.get("error_category", "business")
             ))
             logger.warning(f"Order {order_id}: BusinessRuleException - {str(e)}")
             
-        except Exception as e:
+        except ValidationException as e:
+            # Extract carrier error details in generic way
+            error_details = _extract_carrier_error_details(e, "validation")
+            
             failed.append(BulkShipmentCreateError(
                 order_id=order_id,
-                error_type="SHIPMENT_ERROR",
-                error_message=f"Error creating shipment: {str(e)}"
+                error_type="VALIDATION_ERROR",
+                error_message=str(e),
+                carrier_error_code=error_details.get("carrier_error_code"),
+                carrier_error_description=error_details.get("carrier_error_description"),
+                carrier_name=error_details.get("carrier_name"),
+                error_category="validation"
+            ))
+            logger.warning(f"Order {order_id}: ValidationException - {str(e)}")
+            
+        except AuthenticationException as e:
+            # Extract carrier error details in generic way
+            error_details = _extract_carrier_error_details(e, "authentication")
+            
+            failed.append(BulkShipmentCreateError(
+                order_id=order_id,
+                error_type="AUTHENTICATION_ERROR",
+                error_message=str(e),
+                carrier_error_code=error_details.get("carrier_error_code"),
+                carrier_error_description=error_details.get("carrier_error_description"),
+                carrier_name=error_details.get("carrier_name"),
+                error_category="authentication"
+            ))
+            logger.warning(f"Order {order_id}: AuthenticationException - {str(e)}")
+            
+        except InfrastructureException as e:
+            # Extract carrier error details in generic way
+            error_details = _extract_carrier_error_details(e, "infrastructure")
+            
+            failed.append(BulkShipmentCreateError(
+                order_id=order_id,
+                error_type="INFRASTRUCTURE_ERROR",
+                error_message=str(e),
+                carrier_error_code=error_details.get("carrier_error_code"),
+                carrier_error_description=error_details.get("carrier_error_description"),
+                carrier_name=error_details.get("carrier_name"),
+                error_category="infrastructure"
+            ))
+            logger.warning(f"Order {order_id}: InfrastructureException - {str(e)}")
+            
+        except Exception as e:
+            # Extract carrier error details in generic way (for any other exception)
+            error_details = _extract_carrier_error_details(e, None)
+            
+            failed.append(BulkShipmentCreateError(
+                order_id=order_id,
+                error_type="UNKNOWN_ERROR",
+                error_message=f"Error creating shipment: {str(e)}",
+                carrier_error_code=error_details.get("carrier_error_code"),
+                carrier_error_description=error_details.get("carrier_error_description"),
+                carrier_name=error_details.get("carrier_name"),
+                error_category=error_details.get("error_category")
             ))
             logger.error(f"Order {order_id}: Unexpected error - {str(e)}", exc_info=True)
     

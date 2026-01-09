@@ -80,12 +80,8 @@ class BrtShipmentService(IBrtShipmentService):
         
         # 5. Recupero indirizzo di consegna
         receiver_address = self.address_repository.get_delivery_data(order_data.id_address_delivery)
-        print(f"order_data.id_address_delivery: {order_data.id_address_delivery}")
-        print(f"Receiver address: {receiver_address}")
         # 6. Recupero codice ISO paese destinatario
-        print(f"id country: {receiver_address.id_country}")
         receiver_country_iso = self.country_repository.get_iso_code(receiver_address.id_country)
-        print(f"Receiver country ISO: {receiver_country_iso}")
         
         # 6.1. Validazione: BRT supporta solo spedizioni in Italia
         if receiver_country_iso.upper() != "IT":
@@ -475,23 +471,14 @@ class BrtShipmentService(IBrtShipmentService):
             brt_config=brt_config
         )
         
-        # 9. Verifica risultato dalla risposta
+        # 9. Se arriviamo qui, la cancellazione è riuscita
+        # _check_brt_response_errors() nel client ha già gestito tutti gli errori
+        # Estrai informazioni dalla risposta per il risultato
         delete_result = delete_response.get("deleteResponse", {})
         execution_message = delete_result.get("executionMessage", {})
-        code = execution_message.get("code", -1)
-        severity = execution_message.get("severity", "ERROR")
-        message = execution_message.get("message", "Unknown error")
-        
-        # Se code < 0, è un errore
-        if code < 0:
-            raise BusinessRuleException(
-                f"BRT cancellation failed: {message}",
-                details={
-                    "brt_error_code": code,
-                    "severity": severity,
-                    "message": message
-                }
-            )
+        code = execution_message.get("code", 0)
+        severity = execution_message.get("severity", "SUCCESS")
+        message = execution_message.get("message", "Shipment cancelled successfully")
         
         # 10. Aggiorna lo stato della shipping a 11 (Annullato)
         self.shipping_repository.update_shipping_to_cancelled_state(order_data.id_shipping)
