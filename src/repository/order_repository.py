@@ -1122,6 +1122,8 @@ class OrderRepository(IOrderRepository):
             Order.total_weight,
             Order.total_price_with_tax,
             Order.total_price_net,
+            Order.products_total_price_net,
+            Order.products_total_price_with_tax,
             Order.cash_on_delivery,
             Order.insured_value
         ).where(Order.id_order == order_id)

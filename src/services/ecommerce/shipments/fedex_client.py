@@ -65,17 +65,11 @@ class FedexClient:
         client_id = getattr(fedex_config, 'client_id', None)
         client_secret = getattr(fedex_config, 'client_secret', None)
         
-        print(f"client_id: {client_id}")
-        print(f"client_secret: {client_secret}")
-        print(f"url: {url}")
         if not client_id or not client_secret:
             raise ValueError(
                 "Missing client_id or client_secret in FedexConfiguration. "
                 "For REST API, client_id must be the API Key and client_secret must be the Secret from your FedEx project."
             )
-        
-        # Log credential presence (without exposing values)
-        logger.info(f"FedEx OAuth using REST API credentials (client_id present: {bool(client_id)}, client_secret present: {bool(client_secret)})")
         
         # Build form data for client_credentials grant type
         form_data = {
@@ -88,9 +82,6 @@ class FedexClient:
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json"
         }
-        
-        logger.info(f"FedEx OAuth Request URL: {url}")
-        logger.info(f"FedEx OAuth Grant Type: client_credentials")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
@@ -125,7 +116,6 @@ class FedexClient:
                     "expires_at": expires_at
                 }
                 
-                logger.info(f"FedEx OAuth token obtained successfully, expires in {expires_in}s")
                 return access_token
                 
             except httpx.HTTPStatusError as e:
@@ -295,18 +285,12 @@ class FedexClient:
         url = f"{self._get_base_url(credentials.use_sandbox)}/ship/v1/shipments/cancel"
         headers = self._get_headers(access_token)
         
-        logger.info(f"FedEx Cancel Shipment Request URL: {url}")
-        logger.info(f"FedEx Cancel Shipment Request Method: PUT")
-        logger.info(f"FedEx Cancel Shipment Request Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
-        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await self._make_request_with_retry(
                 client, "PUT", url, headers=headers, json=payload
             )
         
         response_data = response.json()
-        logger.info(f"FedEx Cancel Shipment Response Status: {response.status_code}")
-        logger.info(f"FedEx Cancel Shipment Response JSON: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
         
         # Check for errors
         self._check_fedex_errors(response_data, response.status_code)
@@ -334,13 +318,13 @@ class FedexClient:
         access_token = await self.get_access_token(credentials, fedex_config)
         
         url = f"{self._get_base_url(credentials.use_sandbox)}/track/v1/trackingnumbers"
-        print(f"url tracking: {url}")
+        
         # Generate unique customer transaction ID for this request
         customer_transaction_id = str(uuid.uuid4())
         
         # Get headers with tracking-specific headers (x-customer-transaction-id and x-locale)
         headers = self._get_headers(access_token, locale="it_IT")
-        print(f"headers tracking: {headers}")
+        
         # Build tracking request payload
         tracking_info = []
         for tracking_number in tracking_numbers:

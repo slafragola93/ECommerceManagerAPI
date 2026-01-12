@@ -42,18 +42,15 @@ class BrtTrackingService(IBrtTrackingService):
         brt_config = self.brt_config_repository.get_by_carrier_api_id(carrier_api_id)
         if not brt_config:
             raise NotFoundException("BrtConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
-        print(f"[BRT TRACKING SERVICE] BRT configuration retrieved: {brt_config}")
+        
         # Verifica che le credenziali siano presenti per il tracking
         if not hasattr(brt_config, 'api_user') or not brt_config.api_user:
             raise ValueError(f"BRT api_user is missing or empty in BrtConfiguration for carrier_api_id {carrier_api_id}")
         if not hasattr(brt_config, 'api_password') or not brt_config.api_password:
             raise ValueError(f"BRT api_password is missing or empty in BrtConfiguration for carrier_api_id {carrier_api_id}")
         
-        logger.info(f"BRT Tracking - Using api_user: {brt_config.api_user} for carrier_api_id {carrier_api_id}")
-        
         # BRT tracking API only supports single parcel ID per request
         # So we need to make multiple requests
-        logger.info(f"Getting BRT tracking for {len(tracking_numbers)} shipments")
         
         normalized_tracking = []
         for tracking_number in tracking_numbers:

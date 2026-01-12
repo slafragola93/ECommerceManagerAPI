@@ -95,7 +95,6 @@ class FedexShipmentService(IFedexShipmentService):
             
             # 8. Recupero internal_reference dell'ordine
             internal_reference = order_data.internal_reference or str(order_id)
-            
             # 9. Costruzione FedEx payload
             fedex_payload = self.fedex_mapper.build_shipment_request(
                 order_data=order_data,
@@ -108,8 +107,91 @@ class FedexShipmentService(IFedexShipmentService):
                 order_details=order_details
             )
             
-            # 10. Chiama a API FedEx
-            logger.info(f"Creating FedEx shipment for order {order_id}")
+            # 9.1. Validazione payload prima della creazione
+            logger.info(f"Validating FedEx shipment payload for order {order_id}")
+            try:
+                validation_response = await self.fedex_client.validate_shipment(
+                    payload=fedex_payload,
+                    credentials=credentials,
+                    fedex_config=fedex_config
+                )
+                # Se la validazione passa (200 OK), non ci sono eccezioni
+                logger.info(f"FedEx shipment validation passed for order {order_id}")
+                
+                # Controlla se ci sono errori o warnings nella risposta (anche se status 200)
+                errors = validation_response.get("errors", [])
+                warnings = validation_response.get("warnings", [])
+                
+                if errors:
+                    # Anche con status 200, se ci sono errori nella risposta, fallisce
+                    error_messages = [f"{e.get('code', 'UNKNOWN')}: {e.get('message', 'Unknown error')}" for e in errors]
+                    combined_errors = " | ".join(error_messages)
+                    raise ValidationException(
+                        f"FedEx validation failed: {combined_errors}",
+                        details={
+                            "order_id": order_id,
+                            "errors": errors,
+                            "warnings": warnings,
+                            "transaction_id": validation_response.get("transactionId")
+                        }
+                    )
+                
+                if warnings:
+                    logger.warning(f"FedEx validation warnings for order {order_id}: {warnings}")
+                    
+            except ValueError as e:
+                # Handle FedEx client validation errors (400, 401, 403, 404, 422)
+                error_str = str(e)
+                logger.error(f"FedEx Validation Error for order {order_id}: {error_str}")
+                
+                # Check error type for more specific handling
+                if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
+                    raise ValidationException(
+                        f"FedEx authentication error during validation: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "authentication"}
+                    )
+                elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
+                    raise ValidationException(
+                        f"FedEx access denied during validation: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "forbidden"}
+                    )
+                elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
+                    raise ValidationException(
+                        f"FedEx resource not found during validation: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "not_found"}
+                    )
+                else:
+                    # Validation errors (400, 422)
+                    raise ValidationException(
+                        f"FedEx validation error: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "validation"}
+                    )
+            except RuntimeError as e:
+                # Handle FedEx server errors during validation (500, 503)
+                error_str = str(e)
+                logger.error(f"FedEx Server Error during validation for order {order_id}: {error_str}")
+                
+                if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
+                    raise InfrastructureException(
+                        f"FedEx service unavailable during validation: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
+                    )
+                else:
+                    raise InfrastructureException(
+                        f"FedEx server error during validation: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "server_error"}
+                    )
+            except Exception as e:
+                # Handle other validation errors
+                error_str = str(e)
+                logger.error(f"FedEx validation error for order {order_id}: {error_str}")
+                raise ValidationException(
+                    f"FedEx validation failed: {error_str}",
+                    details={"order_id": order_id, "error": error_str, "type": "unknown"}
+                )
+            
+            # 10. Chiama a API FedEx per creare la spedizione (solo se validazione OK)
+            logger.info(f"Creating FedEx shipment for order {order_id} (validation passed)")
             try:
                 fedex_response = await self.fedex_client.create_shipment(
                     payload=fedex_payload,
@@ -185,22 +267,52 @@ class FedexShipmentService(IFedexShipmentService):
             # Use master tracking as primary AWB, fallback to first tracking number
             awb = master_tracking or (tracking_numbers[0] if tracking_numbers else None)
             
-            # Extract label - try both base64 content and URL
+            # Extract label - try both base64 content and packageDocuments URLs
             label_b64 = self.fedex_mapper.extract_label_from_response(fedex_response)
-            label_url = self.fedex_mapper.extract_label_url_from_response(fedex_response)
+            package_document_urls = self.fedex_mapper.extract_package_documents_urls(fedex_response)
             
-            # If we have URL but no base64, download from URL
-            if label_url and not label_b64:
-                logger.info(f"Downloading label from URL for AWB {awb}")
+            # If we have packageDocuments URLs, download and merge all PDFs
+            if package_document_urls and not label_b64:
                 try:
-                    label_b64 = await self._download_label_from_url(label_url)
-                    if label_b64:
-                        logger.info(f"Successfully downloaded label from URL for AWB {awb}")
+                    # Download all PDFs from URLs
+                    pdf_bytes_list = []
+                    for url in package_document_urls:
+                        pdf_bytes = await self._download_pdf_from_url(url)
+                        if pdf_bytes:
+                            pdf_bytes_list.append(pdf_bytes)
+                            logger.debug(f"Downloaded PDF from {url}, size: {len(pdf_bytes)} bytes")
+                    
+                    if pdf_bytes_list:
+                        # Merge all PDFs into one
+                        if len(pdf_bytes_list) > 1:
+                            logger.info(f"Merging {len(pdf_bytes_list)} PDFs into one for AWB {awb}")
+                            merged_pdf_bytes = self._merge_pdf_labels(pdf_bytes_list)
+                        else:
+                            merged_pdf_bytes = pdf_bytes_list[0]
+                        
+                        # Convert merged PDF to base64
+                        label_b64 = base64.b64encode(merged_pdf_bytes).decode('utf-8')
+                        logger.info(f"Successfully downloaded and merged {len(pdf_bytes_list)} PDF(s) for AWB {awb}, total size: {len(merged_pdf_bytes)} bytes")
                     else:
-                        logger.warning(f"Failed to download label from URL for AWB {awb}")
+                        logger.warning(f"Failed to download any PDFs from packageDocuments URLs for AWB {awb}")
+                        label_b64 = None
                 except Exception as e:
-                    logger.error(f"Error downloading label from URL {label_url}: {str(e)}")
+                    logger.error(f"Error downloading/merging PDFs from packageDocuments URLs: {str(e)}", exc_info=True)
                     label_b64 = None
+            # Fallback: try single URL (backward compatibility)
+            elif not label_b64:
+                label_url = self.fedex_mapper.extract_label_url_from_response(fedex_response)
+                if label_url:
+                    logger.info(f"Downloading label from single URL for AWB {awb}")
+                    try:
+                        label_b64 = await self._download_label_from_url(label_url)
+                        if label_b64:
+                            logger.info(f"Successfully downloaded label from URL for AWB {awb}")
+                        else:
+                            logger.warning(f"Failed to download label from URL for AWB {awb}")
+                    except Exception as e:
+                        logger.error(f"Error downloading label from URL {label_url}: {str(e)}")
+                        label_b64 = None
             
             logger.info(f"FedEx label extracted: {label_b64 is not None}, AWB: {awb}")
             
@@ -290,20 +402,24 @@ class FedexShipmentService(IFedexShipmentService):
             # 6. Recupero dimensioni dei colli
             packages = self.order_package_repository.get_dimensions_by_order(order_id)
             
-            # 7. Recupero internal_reference dell'ordine
+            # 7. Recupero dettagli ordine per commodities
+            order_details = self.order_detail_repository.get_by_order_id(order_id)
+            
+            # 8. Recupero internal_reference dell'ordine
             internal_reference = order_data.internal_reference or str(order_id)
             
-            # 8. Costruzione FedEx validation payload
+            # 9. Costruzione FedEx validation payload
             validation_payload = self.fedex_mapper.build_validate_request(
                 order_data=order_data,
                 fedex_config=fedex_config,
                 receiver_address=receiver_address,
                 receiver_country_iso=receiver_country_iso,
                 packages=packages,
-                reference=internal_reference
+                reference=internal_reference,
+                order_details=order_details
             )
             
-            # 9. Chiama a API FedEx per validazione
+            # 10. Chiama a API FedEx per validazione
             logger.info(f"Validating FedEx shipment for order {order_id}")
             try:
                 validation_response = await self.fedex_client.validate_shipment(
@@ -378,7 +494,6 @@ class FedexShipmentService(IFedexShipmentService):
         try:
             # 1. Recupero informazioni Ordine
             order_data = self.order_repository.get_shipment_data(order_id)
-            
             # 2. Recupero info di spedizione
             shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
             carrier_api_id = shipping_info.id_carrier_api
@@ -641,18 +756,17 @@ class FedexShipmentService(IFedexShipmentService):
             logger.error(f"Error saving FedEx document record for AWB {awb}: {str(e)}")
             raise
     
-    async def _download_label_from_url(self, url: str) -> Optional[str]:
+    async def _download_pdf_from_url(self, url: str) -> Optional[bytes]:
         """
-        Download label PDF from URL and convert to base64
+        Download PDF from URL and return as bytes
         
         Args:
-            url: URL of the label PDF
+            url: URL of the PDF
             
         Returns:
-            Base64 encoded label string or None if download fails
+            PDF bytes or None if download fails
         """
         try:
-            logger.info(f"Downloading label from URL: {url}")
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url)
@@ -666,21 +780,80 @@ class FedexShipmentService(IFedexShipmentService):
                     logger.warning(f"Downloaded content from {url} doesn't appear to be a PDF")
                     return None
                 
-                # Convert to base64
-                label_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                
-                logger.info(f"Successfully downloaded label from URL, size: {len(pdf_bytes)} bytes")
-                return label_b64
+                return pdf_bytes
                 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error downloading label from URL {url}: {e.response.status_code} - {e.response.text}")
+            logger.error(f"HTTP error downloading PDF from URL {url}: {e.response.status_code} - {e.response.text}")
             return None
         except httpx.TimeoutException:
-            logger.error(f"Timeout downloading label from URL {url}")
+            logger.error(f"Timeout downloading PDF from URL {url}")
             return None
         except Exception as e:
-            logger.error(f"Error downloading label from URL {url}: {str(e)}")
+            logger.error(f"Error downloading PDF from URL {url}: {str(e)}")
             return None
+    
+    async def _download_label_from_url(self, url: str) -> Optional[str]:
+        """
+        Download label PDF from URL and convert to base64 (legacy method for backward compatibility)
+        
+        Args:
+            url: URL of the label PDF
+            
+        Returns:
+            Base64 encoded label string or None if download fails
+        """
+        pdf_bytes = await self._download_pdf_from_url(url)
+        if pdf_bytes:
+            return base64.b64encode(pdf_bytes).decode('utf-8')
+        return None
+    
+    def _merge_pdf_labels(self, pdf_bytes_list: List[bytes]) -> bytes:
+        """
+        Unisce multiple label PDF in un unico PDF
+        
+        Args:
+            pdf_bytes_list: Lista di bytes di PDF da unire
+            
+        Returns:
+            bytes del PDF unito
+            
+        Raises:
+            ValueError: Se un PDF non è valido o l'unione fallisce
+        """
+        try:
+            from pypdf import PdfWriter, PdfReader
+            from io import BytesIO
+        except ImportError:
+            raise ImportError("pypdf library is required. Install with: pip install pypdf")
+        
+        if not pdf_bytes_list:
+            raise ValueError("Cannot merge empty list of PDFs")
+        
+        if len(pdf_bytes_list) == 1:
+            return pdf_bytes_list[0]
+        
+        try:
+            writer = PdfWriter()
+            
+            for pdf_bytes in pdf_bytes_list:
+                try:
+                    pdf_reader = PdfReader(BytesIO(pdf_bytes))
+                    # Aggiungi tutte le pagine del PDF al writer
+                    for page in pdf_reader.pages:
+                        writer.add_page(page)
+                except Exception as e:
+                    raise ValueError(f"Invalid PDF in merge operation: {str(e)}")
+            
+            # Crea il PDF unito
+            output_buffer = BytesIO()
+            writer.write(output_buffer)
+            output_buffer.seek(0)
+            
+            return output_buffer.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error merging PDF labels: {str(e)}")
+            raise ValueError(f"Failed to merge PDF labels: {str(e)}")
     
     def _cleanup_old_documents(self, order_id: int) -> None:
         """

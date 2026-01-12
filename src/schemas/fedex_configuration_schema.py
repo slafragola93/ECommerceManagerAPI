@@ -38,6 +38,7 @@ class FedexConfigurationSchema(BaseModel):
     packaging_type: str = Field(..., max_length=100)
     pickup_type: str = Field(..., max_length=100)
     customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType (SENDER, RECIPIENT, THIRD_PARTY, ACCOUNT)
+    harmonized_code: Optional[str] = Field(None, max_length=20)  # HS code for customs commodities
 
 
 class FedexConfigurationResponseSchema(BaseModel):
@@ -65,6 +66,7 @@ class FedexConfigurationResponseSchema(BaseModel):
     packaging_type: str
     pickup_type: str
     customs_charges: Optional[str]
+    harmonized_code: Optional[str]
     
     model_config = {"from_attributes": True}
 
@@ -92,3 +94,4 @@ class FedexConfigurationUpdateSchema(BaseModel):
     packaging_type: Optional[str] = Field(None, max_length=100)
     pickup_type: Optional[str] = Field(None, max_length=100)
     customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType
+    harmonized_code: Optional[str] = Field(None, max_length=20)  # HS code for customs commodities

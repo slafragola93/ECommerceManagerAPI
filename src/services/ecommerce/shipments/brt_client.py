@@ -199,19 +199,10 @@ class BrtClient:
         url = f"{self._get_base_url(credentials.use_sandbox)}/rest/v1/tracking/parcelID/{parcel_id}"
         headers = self._get_headers(for_tracking=True, brt_config=brt_config)
         
-        logger.info(f"BRT Get Tracking Request URL: {url}")
-        logger.info(f"BRT Get Tracking Request Method: GET")
-        # Log headers (senza password per sicurezza)
-        safe_headers = {k: v if k != "password" else "***" for k, v in headers.items()}
-        logger.info(f"BRT Get Tracking Request Headers: {json.dumps(safe_headers, indent=2)}")
-        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await self._make_request_with_retry(
                 client, "GET", url, headers=headers
             )
-        
-        # Log response status for debugging
-        logger.info(f"BRT Get Tracking Response Status: {response.status_code}")
         
         # Se c'è un errore 401, logga i dettagli
         if response.status_code == 401:
@@ -312,8 +303,6 @@ class BrtClient:
             # PHP uses: 'userID: ' . $this->conf['username']
             headers["userID"] = str(api_user).strip()
             headers["password"] = str(api_password).strip()
-            
-            logger.info(f"BRT Tracking auth configured - userID: {api_user}, password: {'***' if api_password else 'None'}")
         
         return headers
     

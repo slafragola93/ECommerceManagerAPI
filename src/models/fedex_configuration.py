@@ -43,6 +43,7 @@ class FedexConfiguration(Base):
     packaging_type = Column(String(100))  # YOUR_PACKAGING, FEDEX_PAK, FEDEX_BOX, etc.
     pickup_type = Column(String(100))  # DROPOFF_AT_FEDEX_LOCATION, USE_SCHEDULED_PICKUP, CONTACT_FEDEX_TO_SCHEDULE
     customs_charges = Column(String(50), nullable=True)  # SENDER, RECIPIENT, THIRD_PARTY, ACCOUNT - used for paymentType
+    harmonized_code = Column(String(20), nullable=True)  # HS code for customs commodities
     
     # Legacy/Deprecated fields (kept for backward compatibility)
     sandbox = Column(String(10), nullable=True)

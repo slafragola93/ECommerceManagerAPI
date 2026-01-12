@@ -59,15 +59,18 @@ class FedexMapper:
         # Build package line items (without customsValue - it goes in commodities)
         package_line_items = self._build_package_line_items(packages, fedex_config)
         
-        # Calculate total weight from package line items
-        total_weight = sum(
-            float(item.get("weight", {}).get("value", 0))
-            for item in package_line_items
-        )
+        # Get total weight from order_data, fallback to sum of packages if not available
+        total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
+
+        if total_weight <= 0:
+            # Fallback: calculate from package line items
+            total_weight = sum(
+                float(item.get("weight", {}).get("value", 0))
+                for item in package_line_items
+            )
         
         # Get service type and packaging type from config
         service_type = fedex_config.service_type  # Required field from fedex_configurations.service_type
-        print(f"SERVICE TYPE: {service_type}")
         if not service_type:
             raise ValidationException(
                 "service_type is required in FedEx configuration",
@@ -83,29 +86,47 @@ class FedexMapper:
         # Ship date (today or tomorrow)
         ship_datestamp = datetime.now().strftime("%Y-%m-%d")
         
-        # Build customsClearanceDetail with dutiesPayment, commodities and totalCustomsValue if shipping price is provided
+        # Build customsClearanceDetail with dutiesPayment, commercialInvoice, commodities and totalCustomsValue
         customs_clearance_detail = None
-        if shipping_price_tax_incl is not None and shipping_price_tax_incl > 0:
+        if order_details:
+            # Get order_id from order_data
+            order_id = getattr(order_data, 'id_order', None)
+            
             # Build dutiesPayment
             duties_payment = self._build_duties_payment(fedex_config)
             
-            # Build commodities from order details or packages
+            # Build commercialInvoice
+            commercial_invoice = self._build_commercial_invoice(
+                fedex_config=fedex_config,
+                order_data=order_data,
+                order_id=order_id
+            )
+            
+            # Build commodities from order details
             commodities = self._build_commodities(
                 order_details=order_details,
                 packages=packages,
-                shipping_price_tax_incl=shipping_price_tax_incl,
+                shipping_price_tax_incl=shipping_price_tax_incl or 0.0,
                 fedex_config=fedex_config,
                 receiver_country_iso=receiver_country_iso
             )
             
+            # Get products_total_price_with_tax from order_data
+            products_total_price_with_tax = float(getattr(order_data, 'products_total_price_with_tax', None) or 0.0)
+            
             customs_clearance_detail = {
                 "dutiesPayment": duties_payment,
+                "commercialInvoice": commercial_invoice,
                 "commodities": commodities,
                 "totalCustomsValue": {
-                    "amount": round(float(shipping_price_tax_incl), 2),
+                    "amount": round(products_total_price_with_tax, 2),
                     "currency": "EUR"
                 }
             }
+        
+        # Build shipperDetails and receiverDetails
+        shipper_details = self._build_shipper_details(fedex_config)
+        receiver_details = self._build_receiver_details(receiver_address, receiver_country_iso)
         
         # Build payload
         payload = {
@@ -119,6 +140,8 @@ class FedexMapper:
                     "contact": recipient_contact,
                     "address": recipient_address
                 }],
+                "shipperDetails": shipper_details,
+                "receiverDetails": receiver_details,
                 "shipDatestamp": ship_datestamp,
                 "serviceType": service_type,
                 "packagingType": packaging_type,
@@ -154,7 +177,8 @@ class FedexMapper:
         receiver_country_iso: str,
         packages: List[Row],
         reference: Optional[str] = None,
-        shipping_price_tax_incl: Optional[float] = None
+        shipping_price_tax_incl: Optional[float] = None,
+        order_details: Optional[List] = None
     ) -> Dict[str, Any]:
         """
         Build FedEx validation request payload (same structure as shipment)
@@ -167,13 +191,14 @@ class FedexMapper:
             packages: List of package rows
             reference: Order reference (optional)
             shipping_price_tax_incl: Shipping price with tax included (optional)
+            order_details: List of order details for commodities (optional)
             
         Returns:
             FedEx validation payload dict (same as shipment)
         """
         # Validation uses the same structure as create shipment
         return self.build_shipment_request(
-            order_data, fedex_config, receiver_address, receiver_country_iso, packages, reference, shipping_price_tax_incl
+            order_data, fedex_config, receiver_address, receiver_country_iso, packages, reference, shipping_price_tax_incl, order_details
         )
     
     def build_cancel_request(
@@ -250,7 +275,7 @@ class FedexMapper:
     
     def extract_label_url_from_response(self, response: Dict[str, Any]) -> Optional[str]:
         """
-        Extract label URL from FedEx API response
+        Extract label URL from FedEx API response (legacy method, kept for backward compatibility)
         
         Args:
             response: FedEx API response dict
@@ -258,38 +283,63 @@ class FedexMapper:
         Returns:
             URL string or None
         """
+        # Try to get first URL from packageDocuments
+        urls = self.extract_package_documents_urls(response)
+        return urls[0] if urls else None
+    
+    def extract_package_documents_urls(self, response: Dict[str, Any]) -> List[str]:
+        """
+        Extract all packageDocuments URLs from FedEx API response
+        
+        Args:
+            response: FedEx API response dict
+            
+        Returns:
+            List of URL strings from packageDocuments
+        """
+        urls = []
         try:
             output = response.get("output", {})
             transaction_shipments = output.get("transactionShipments", [])
             
             if not transaction_shipments:
-                return None
+                return urls
             
-            # Get first shipment
-            shipment = transaction_shipments[0]
-            shipment_documents = shipment.get("shipmentDocuments", [])
+            # Navigate through transactionShipments -> pieceResponses -> packageDocuments
+            for shipment in transaction_shipments:
+                piece_responses = shipment.get("pieceResponses", [])
+                
+                for piece in piece_responses:
+                    package_documents = piece.get("packageDocuments", [])
+                    
+                    for doc in package_documents:
+                        url = doc.get("url")
+                        if url:
+                            # Check if it's a PDF document (label)
+                            doc_type = doc.get("docType", "").upper()
+                            content_type = doc.get("contentType", "").upper()
+                            # Accept PDF documents or any document with LABEL in contentType
+                            if doc_type == "PDF" or "LABEL" in content_type:
+                                urls.append(str(url))
             
-            if not shipment_documents:
-                return None
+            # Also check shipmentDocuments for backward compatibility
+            if not urls:
+                shipment = transaction_shipments[0]
+                shipment_documents = shipment.get("shipmentDocuments", [])
+                
+                for doc in shipment_documents:
+                    url = doc.get("url")
+                    if url:
+                        doc_type = doc.get("docType", "").upper()
+                        content_type = doc.get("contentType", "").upper()
+                        if doc_type == "PDF" or "LABEL" in content_type:
+                            urls.append(str(url))
             
-            # Find document with URL (FedEx uses contentType and docType)
-            # Accept any document with URL and docType="PDF" or contentType containing "LABEL"
-            for doc in shipment_documents:
-                url = doc.get("url")
-                if url:
-                    # Check if it's a PDF document (label)
-                    doc_type = doc.get("docType", "").upper()
-                    content_type = doc.get("contentType", "").upper()
-                    # Accept PDF documents or any document with LABEL in contentType
-                    if doc_type == "PDF" or "LABEL" in content_type:
-                        logger.info(f"Found label URL in shipmentDocuments: {url} (docType: {doc_type}, contentType: {content_type})")
-                        return str(url)
-            
-            return None
+            return urls
             
         except (KeyError, AttributeError, TypeError) as e:
-            logger.error(f"Error extracting label URL from FedEx response: {e}")
-            return None
+            logger.error(f"Error extracting packageDocuments URLs from FedEx response: {e}")
+            return urls
     
     def extract_tracking_from_response(self, response: Dict[str, Any]) -> List[str]:
         """
@@ -402,69 +452,126 @@ class FedexMapper:
             "countryCode": country_iso.upper() if country_iso else ""
         }
     
+    def _build_shipper_details(self, fedex_config: FedexConfiguration) -> Dict[str, Any]:
+        """Build shipperDetails structure for FedEx payload"""
+        # Build name from company_name or person_name
+        name = fedex_config.company_name or fedex_config.person_name or ""
+        
+        # Build postalAddress from shipper config
+        postal_address = {
+            "cityName": fedex_config.city or "",
+            "postalCode": fedex_config.postal_code or "",
+            "provinceCode": fedex_config.state_or_province_code or "",
+            "countryCode": fedex_config.country_code or "IT"
+        }
+        
+        # Build serviceArea - using city and country code
+        # Default to NAP (Naples) if not specified, but ideally should be configurable
+        service_area_code = "NAP"  # Default, could be made configurable
+        service_area_description = f"{fedex_config.city or 'Naples'}-{fedex_config.country_code or 'IT'}"
+        
+        shipper_details = {
+            "name": name,
+            "postalAddress": postal_address,
+            "serviceArea": [
+                {
+                    "code": service_area_code,
+                    "description": service_area_description
+                }
+            ]
+        }
+        
+        return shipper_details
+    
+    def _build_receiver_details(self, receiver_address: Row, receiver_country_iso: str) -> Dict[str, Any]:
+        """Build receiverDetails structure for FedEx payload"""
+        # Build name from company or firstname + lastname
+        company = getattr(receiver_address, 'company', '') or ''
+        firstname = getattr(receiver_address, 'firstname', '') or ''
+        lastname = getattr(receiver_address, 'lastname', '') or ''
+        name = company or f"{firstname} {lastname}".strip() or ""
+        
+        # Build postalAddress from receiver address
+        state = getattr(receiver_address, 'state', '') or getattr(receiver_address, 'province_code', '') or ''
+        
+        postal_address = {
+            "cityName": getattr(receiver_address, 'city', '') or '',
+            "postalCode": getattr(receiver_address, 'postcode', '') or '',
+            "countryCode": receiver_country_iso.upper() if receiver_country_iso else "IT"
+        }
+        
+        # Add provinceCode if available
+        if state:
+            postal_address["provinceCode"] = state
+        
+        # Build serviceArea - using city and country code
+        city = getattr(receiver_address, 'city', '') or 'Naples'
+        service_area_code = "NAP"  # Default, could be made configurable
+        service_area_description = f"{city}-{receiver_country_iso or 'IT'}"
+        
+        # Facility code - default to VND, could be made configurable
+        facility_code = "VND"
+        
+        receiver_details = {
+            "name": name,
+            "postalAddress": postal_address,
+            "serviceArea": [
+                {
+                    "code": service_area_code,
+                    "description": service_area_description,
+                    "facilityCode": facility_code
+                }
+            ]
+        }
+        
+        return receiver_details
+    
     def _build_duties_payment(self, fedex_config: FedexConfiguration) -> Dict[str, Any]:
         """Build dutiesPayment structure for customsClearanceDetail"""
-        # Build address from shipper config
-        address_lines = []
-        if fedex_config.address and fedex_config.address.strip():
-            address_lines.append(fedex_config.address.strip())
-        
-        if not address_lines:
-            address_lines = [""]
-        
-        responsible_party_address = {
-            "streetLines": address_lines,
-            "city": fedex_config.city or "",
-            "stateOrProvinceCode": fedex_config.state_or_province_code or "",
-            "postalCode": fedex_config.postal_code or "",
-            "countryCode": fedex_config.country_code or "",
-            "residential": False
-        }
-        
-        # Build contact from shipper config
-        responsible_party_contact = {
-            "personName": fedex_config.person_name or "",
-            "companyName": fedex_config.company_name or "",
-            "phoneNumber": fedex_config.phone_number or "",
-            "phoneExtension": ""  # Leave empty
-        }
-        
-        # Add email if available
-        if hasattr(fedex_config, 'contact_email') and fedex_config.contact_email:
-            responsible_party_contact["emailAddress"] = fedex_config.contact_email
-        
-        # Build account number
+        # Get account number
         account_number_value = str(fedex_config.account_number) if fedex_config.account_number else ""
-        
-        # Build responsible party
-        responsible_party = {
-            "address": responsible_party_address,
-            "contact": responsible_party_contact,
-            "accountNumber": {
-                "value": account_number_value
-            }
-            # Note: tins is NOT included as requested
-        }
-        
-        # Build billing details (using account number and country code)
-        billing_details = {
-            "accountNumber": account_number_value,
-            "accountNumberCountryCode": fedex_config.country_code or ""
-        }
         
         # Get payment type from customs_charges or default to SENDER
         payment_type = fedex_config.customs_charges or "SENDER"
         
-        # Build dutiesPayment
+        # Build simplified dutiesPayment structure
         duties_payment = {
+            "paymentType": payment_type,
             "payor": {
-                "responsibleParty": responsible_party
-            },
-            "billingDetails": billing_details,
-            "paymentType": payment_type
+                "responsibleParty": {
+                    "accountNumber": {
+                        "value": account_number_value
+                    }
+                }
+            }
         }
         
         return duties_payment
+    
+    def _build_commercial_invoice(
+        self,
+        fedex_config: FedexConfiguration,
+        order_data: Row,
+        order_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Build commercialInvoice structure for customsClearanceDetail"""
+        # Get internal_reference from order_data or use order_id as fallback
+        internal_reference = getattr(order_data, 'internal_reference', None) or (str(order_id) if order_id else "")
+        
+        commercial_invoice = {
+            "originatorName": fedex_config.company_name or "",
+            "comments": ["Commercial Invoice generated by shipper"],
+            "customerReferences": [
+                {
+                    "customerReferenceType": "INVOICE_NUMBER",
+                    "value": internal_reference
+                }
+            ],
+            "termsOfSale": "FCA",
+            "shipmentPurpose": "SOLD"
+        }
+        
+        return commercial_invoice
     
     def _build_package_line_items(
         self,
@@ -559,44 +666,38 @@ class FedexMapper:
         if total_weight == 0:
             total_weight = float(fedex_config.default_weight or 1.0)
         
+        # Get harmonized code from config or use default
+        harmonized_code = fedex_config.harmonized_code or "84191100"
+        
         # Build commodities
         if order_details:
             # Create one commodity per product
             for detail in order_details:
                 product_name = getattr(detail, 'product_name', None) or 'Product'
                 product_qty = int(getattr(detail, 'product_qty', None) or 1)
-                product_price = float(getattr(detail, 'product_price', None) or 0.0)
+                # Use unit_price_with_tax instead of product_price (unit_price_net)
+                unit_price_with_tax = float(getattr(detail, 'unit_price_with_tax', None) or 0.0)
+                # Use total_price_with_tax directly from OrderDetail
+                total_price_with_tax = float(getattr(detail, 'total_price_with_tax', None) or 0.0)
                 product_weight = float(getattr(detail, 'product_weight', None) or 0.0)
                 
-                # Calculate customs value proportionally
-                if total_value > 0:
-                    product_total_value = product_price * product_qty
-                    customs_value_amount = (product_total_value / total_value) * shipping_price_tax_incl
-                else:
-                    # Distribute by weight if no value
-                    if total_weight > 0:
-                        product_total_weight = product_weight * product_qty
-                        customs_value_amount = (product_total_weight / total_weight) * shipping_price_tax_incl
-                    else:
-                        customs_value_amount = shipping_price_tax_incl / len(order_details) if order_details else shipping_price_tax_incl
-                
                 commodity = {
-                    "name": product_name[:50],  # Limit to 50 chars
                     "description": product_name[:200],  # Limit to 200 chars
-                    "countryOfManufacture": country_of_manufacture,
+                    "name": product_name[:50],  # Limit to 50 chars
+                    "harmonizedCode": harmonized_code,
                     "quantity": product_qty,
-                    "quantityUnits": "Ea",
+                    "quantityUnits": "EA",  # Changed to uppercase
+                    "unitPrice": {
+                        "amount": round(unit_price_with_tax, 2),
+                        "currency": "EUR"
+                    },
+                    "customsValue": {
+                        "amount": round(total_price_with_tax, 2),
+                        "currency": "EUR"
+                    },
                     "weight": {
                         "units": "KG",
                         "value": round(product_weight * product_qty, 2)
-                    },
-                    "customsValue": {
-                        "amount": round(customs_value_amount, 2),
-                        "currency": "EUR"
-                    },
-                    "unitPrice": {
-                        "amount": round(product_price, 2),
-                        "currency": "EUR"
                     },
                     "purpose": "BUSINESS"
                 }
@@ -619,7 +720,7 @@ class FedexMapper:
                         "description": f"Shipment package {idx + 1}",
                         "countryOfManufacture": country_of_manufacture,
                         "quantity": 1,
-                        "quantityUnits": "Ea",
+                        "quantityUnits": "EA",
                         "weight": {
                             "units": "KG",
                             "value": round(weight, 2)
@@ -640,7 +741,7 @@ class FedexMapper:
                     "description": "Shipment contents",
                     "countryOfManufacture": country_of_manufacture,
                     "quantity": 1,
-                    "quantityUnits": "Ea",
+                    "quantityUnits": "EA",
                     "weight": {
                         "units": "KG",
                         "value": round(weight, 2)
