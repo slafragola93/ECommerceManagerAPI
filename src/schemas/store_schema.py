@@ -8,8 +8,6 @@ class StoreSchema(BaseModel):
     name: str = Field(..., max_length=200, description="Nome dello store")
     base_url: str = Field(..., max_length=500, description="URL base dell'ecommerce")
     api_key: str = Field(..., max_length=500, description="Chiave API dell'ecommerce")
-    vat_number: Optional[str] = Field(None, max_length=50, description="Partita IVA")
-    country_code: Optional[str] = Field(None, max_length=5, description="Codice paese ISO (es. IT, FR, DE)")
     logo: Optional[str] = Field(None, max_length=500, description="URL o percorso del logo dello store")
     is_active: bool = Field(True, description="Store attivo")
     is_default: bool = Field(False, description="Store di default")
@@ -20,8 +18,6 @@ class StoreCreateSchema(BaseModel):
     name: str = Field(..., max_length=200, description="Nome dello store")
     base_url: str = Field(..., max_length=500, description="URL base dell'ecommerce")
     api_key: str = Field(..., max_length=500, description="Chiave API dell'ecommerce")
-    vat_number: Optional[str] = Field(None, max_length=50, description="Partita IVA")
-    country_code: Optional[str] = Field(None, max_length=5, description="Codice paese ISO (es. IT, FR, DE)")
     logo: Optional[str] = Field(None, max_length=500, description="URL o percorso del logo dello store")
     is_active: bool = Field(True, description="Store attivo")
     is_default: bool = Field(False, description="Store di default")
@@ -31,8 +27,6 @@ class StoreUpdateSchema(BaseModel):
     name: Optional[str] = Field(None, max_length=200, description="Nome dello store")
     base_url: Optional[str] = Field(None, max_length=500, description="URL base dell'ecommerce")
     api_key: Optional[str] = Field(None, max_length=500, description="Chiave API dell'ecommerce")
-    vat_number: Optional[str] = Field(None, max_length=50, description="Partita IVA")
-    country_code: Optional[str] = Field(None, max_length=5, description="Codice paese ISO (es. IT, FR, DE)")
     logo: Optional[str] = Field(None, max_length=500, description="URL o percorso del logo dello store")
     is_active: Optional[bool] = Field(None, description="Store attivo")
     is_default: Optional[bool] = Field(None, description="Store di default")
@@ -44,8 +38,6 @@ class StoreResponseSchema(BaseModel):
     name: str
     base_url: str
     api_key: str
-    vat_number: Optional[str]
-    country_code: Optional[str]
     logo: Optional[str]
     is_active: bool
     is_default: bool

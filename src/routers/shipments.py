@@ -446,12 +446,35 @@ async def get_tracking(
     result = await tracking_service.get_tracking(tracking_list, id_carrier_api)
     # Aggiorna lo stato shipment in base al tracking (se presente)
     try:
+        # Recupera il carrier_type dal carrier_api
+        from src.repository.api_carrier_repository import ApiCarrierRepository
+        carrier_repo = ApiCarrierRepository(db)
+        carrier = carrier_repo.get_by_id(id_carrier_api)
+        carrier_type = carrier.carrier_type.value if carrier else None
+        
         repo = ShippingRepository(db)
         for item in result:
             tn = item.get("tracking_number")
             state_id = item.get("current_internal_state_id")
             if tn and isinstance(state_id, int):
-                repo.update_state_by_tracking(tn, state_id)
+                # Estrai informazioni evento se disponibili
+                events = item.get("events", [])
+                event_code = None
+                event_description = None
+                if events:
+                    # Prendi l'ultimo evento (più recente)
+                    last_event = events[-1] if events else None
+                    if last_event:
+                        event_code = last_event.get("code")
+                        event_description = last_event.get("description")
+                
+                repo.update_state_by_tracking(
+                    tn, 
+                    state_id,
+                    carrier_type=carrier_type,
+                    event_code=event_code,
+                    event_description=event_description
+                )
     except Exception as _:
         # Non bloccare la risposta in caso di problemi di aggiornamento
         logger.warning("Errore in aggiornamento stato spedizione", exc_info=True)

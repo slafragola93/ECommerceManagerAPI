@@ -7,6 +7,8 @@ import enum
 class SourceEnum(str, enum.Enum):
     MANUAL = "manual"
     DHL_TRACKING = "dhl_tracking"
+    BRT_TRACKING = "brt_tracking"
+    FEDEX_TRACKING = "fedex_tracking"
     API_UPDATE = "api_update"
 
 

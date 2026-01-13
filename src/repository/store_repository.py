@@ -65,11 +65,18 @@ class StoreRepository(BaseRepository[Store, int], IStoreRepository):
             raise InfrastructureException(f"Database error retrieving stores by platform: {str(e)}")
     
     def get_by_vat_number(self, vat_number: str) -> Optional[Store]:
-        """Ottiene uno store per partita IVA"""
+        """Ottiene uno store per partita IVA (cerca in CompanyFiscalInfo)"""
         try:
-            return self._session.query(Store).filter(
-                Store.vat_number == vat_number
+            from src.models.company_fiscal_info import CompanyFiscalInfo
+            # Cerca in CompanyFiscalInfo
+            fiscal_info = self._session.query(CompanyFiscalInfo).filter(
+                CompanyFiscalInfo.vat_number == vat_number
             ).first()
+            
+            if fiscal_info:
+                return self.get_by_id(fiscal_info.id_store)
+            
+            return None
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving store by VAT number: {str(e)}")
     

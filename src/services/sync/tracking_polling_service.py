@@ -142,7 +142,24 @@ async def poll_tracking_periodic(db: Session):
                         state_id = item.get("current_internal_state_id")
                         if tn and isinstance(state_id, int):
                             try:
-                                shipping_repo.update_state_by_tracking(tn, state_id)
+                                # Estrai informazioni evento se disponibili
+                                events = item.get("events", [])
+                                event_code = None
+                                event_description = None
+                                if events:
+                                    # Prendi l'ultimo evento (più recente)
+                                    last_event = events[-1] if events else None
+                                    if last_event:
+                                        event_code = last_event.get("code")
+                                        event_description = last_event.get("description")
+                                
+                                shipping_repo.update_state_by_tracking(
+                                    tn, 
+                                    state_id,
+                                    carrier_type=carrier_type,
+                                    event_code=event_code,
+                                    event_description=event_description
+                                )
                                 updated_count += 1
                                 # Aggiorna timestamp rate limiting
                                 _update_rate_limit_timestamp(carrier_type, tn)

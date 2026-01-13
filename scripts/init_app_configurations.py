@@ -46,30 +46,16 @@ def init_app_configurations():
             ),
             AppConfigurationSchema(
                 category="company_info",
-                name="fiscal_code",
-                value="",
-                description="Codice Fiscale",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
-                name="share_capital",
-                value="",
-                description="Capitale sociale",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
-                name="rea_number",
-                value="",
-                description="Numero REA",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
                 name="address",
                 value="",
                 description="Indirizzo",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="company_info",
+                name="civic_number",
+                value="",
+                description="Numero civico",
                 is_encrypted=False
             ),
             AppConfigurationSchema(
@@ -95,13 +81,6 @@ def init_app_configurations():
             ),
             AppConfigurationSchema(
                 category="company_info",
-                name="country",
-                value="",
-                description="Nazione",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
                 name="phone",
                 value="",
                 description="Telefono",
@@ -109,23 +88,9 @@ def init_app_configurations():
             ),
             AppConfigurationSchema(
                 category="company_info",
-                name="fax",
-                value="",
-                description="FAX",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
                 name="email",
                 value="",
                 description="Email",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
-                name="website",
-                value="",
-                description="Sito web",
                 is_encrypted=False
             ),
             AppConfigurationSchema(
@@ -144,37 +109,9 @@ def init_app_configurations():
             ),
             AppConfigurationSchema(
                 category="company_info",
-                name="bic_swift",
-                value="",
-                description="BIC/SWIFT",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
                 name="account_holder",
                 value="",
                 description="Intestazione",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
-                name="account_number",
-                value="",
-                description="Numero conto",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
-                name="abi",
-                value="",
-                description="ABI",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="company_info",
-                name="cab",
-                value="",
-                description="CAB",
                 is_encrypted=False
             ),
             
@@ -186,120 +123,6 @@ def init_app_configurations():
                 description="Regime fiscale",
                 is_encrypted=False
             ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="transmitter_fiscal_code",
-                value="",
-                description="Codice fiscale trasmittente",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="send_progressive",
-                value="",
-                description="Progressivo Invio",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="register_number",
-                value="",
-                description="Iscrizione Albo",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="rea_registration",
-                value="",
-                description="Iscrizione REA",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="cash_type",
-                value="",
-                description="Tipo Cassa",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="vat_exigibility",
-                value="",
-                description="Esigibilità IVA",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="intermediary_name",
-                value="",
-                description="Intermediario - Denominazione",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="intermediary_vat",
-                value="",
-                description="Intermediario - Partita IVA",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="electronic_invoicing",
-                name="intermediary_fiscal_code",
-                value="",
-                description="Intermediario - Codice Fiscale",
-                is_encrypted=False
-            ),
-            
-            # ALIQUOTE ESENTI
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_standard",
-                value="",
-                description="Aliquota esente",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_no",
-                value="",
-                description="Aliquota no",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_no_x",
-                value="",
-                description="Aliquota noX",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_vat_refund",
-                value="",
-                description="Restituzione IVA",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_spring",
-                value="",
-                description="Aliquota spring",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_san_marino",
-                value="",
-                description="Aliquota San Marino",
-                is_encrypted=False
-            ),
-            AppConfigurationSchema(
-                category="exempt_rates",
-                name="exempt_rate_commissions",
-                value="",
-                description="Aliquota commissioni",
-                is_encrypted=False
-            ),
             
             # FATTURAPA
             AppConfigurationSchema(
@@ -308,6 +131,91 @@ def init_app_configurations():
                 value="",
                 description="Chiave API Fatturapa",
                 is_encrypted=True
+            ),
+            AppConfigurationSchema(
+                category="fatturapa",
+                name="base_url",
+                value="",
+                description="URL base API Fatturapa",
+                is_encrypted=False
+            ),
+            
+            # DDT SENDER
+            AppConfigurationSchema(
+                category="ddt_sender",
+                name="default_sender_address_id",
+                value="",
+                description="ID indirizzo mittente di default per DDT",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="ddt_sender",
+                name="ddt_sender_company_name",
+                value="",
+                description="Ragione sociale mittente DDT",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="ddt_sender",
+                name="ddt_sender_address",
+                value="",
+                description="Indirizzo mittente DDT",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="ddt_sender",
+                name="ddt_sender_vat",
+                value="",
+                description="Partita IVA mittente DDT",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="ddt_sender",
+                name="ddt_sender_phone",
+                value="",
+                description="Telefono mittente DDT",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="ddt_sender",
+                name="ddt_sender_email",
+                value="",
+                description="Email mittente DDT",
+                is_encrypted=False
+            ),
+            
+            # ORDER STATES
+            AppConfigurationSchema(
+                category="order_states",
+                name="is_delivered",
+                value="",
+                description="ID stato ordine per 'Consegnato'",
+                is_encrypted=False
+            ),
+            
+            # ORDER REFERENCE
+            AppConfigurationSchema(
+                category="order_reference",
+                name="order_reference_counter_global",
+                value="0",
+                description="Contatore globale per generazione internal_reference ordini",
+                is_encrypted=False
+            ),
+            
+            # DEFAULT TAX (senza categoria specifica)
+            AppConfigurationSchema(
+                category="tax",
+                name="default_tav",
+                value="22.0",
+                description="Percentuale IVA di default",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="tax",
+                name="default_tax",
+                value="22.0",
+                description="Percentuale IVA di default (alias)",
+                is_encrypted=False
             ),
             
             # IMPOSTAZIONI EMAIL

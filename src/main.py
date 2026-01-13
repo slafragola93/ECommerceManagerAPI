@@ -21,7 +21,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, dhl_shipment, shipments, events, csv_import, platform_state_trigger, ddt
+    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt
 from src.database import Base, engine
 
 # Import new cache system
@@ -484,7 +484,6 @@ app.include_router(shipments.router)
 
 # Deprecated: DHL-specific router (kept for backward compatibility)
 # Use /api/v1/shippings/* endpoints instead
-app.include_router(dhl_shipment.router)
 app.include_router(events.router)
 app.include_router(csv_import.router)
 

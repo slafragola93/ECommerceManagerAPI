@@ -100,7 +100,7 @@ async def sync_prestashop(
         "sync_type": "incremental",
         "store_id": store_id,
         "store_name": store.name,
-        "vat_number": store.vat_number,
+        "vat_number": store.get_default_vat_number(),
         "sync_id": f"prestashop_incremental_{user['id']}_{int(__import__('time').time())}"
     }
         
@@ -149,7 +149,7 @@ async def sync_prestashop_full(
         "sync_type": "full",
         "store_id": store_id,
         "store_name": store.name,
-        "vat_number": store.vat_number,
+        "vat_number": store.get_default_vat_number(),
         "sync_id": f"prestashop_full_{user['id']}_{int(__import__('time').time())}"
     }
 

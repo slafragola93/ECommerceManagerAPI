@@ -12,6 +12,9 @@ from src.repository.interfaces.shipping_repository_interface import IShippingRep
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.schemas.shipping_schema import ShippingSchema
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
     """Shipping Repository rifattorizzato seguendo SOLID"""
@@ -145,13 +148,92 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             self._session.rollback()
             raise InfrastructureException(f"Database error updating tracking/state: {str(e)}")
 
-    def update_state_by_tracking(self, tracking: str, state_id: int) -> int:
-        """Update id_shipping_state by tracking. Returns affected rows count."""
+    def update_state_by_tracking(
+        self, 
+        tracking: str, 
+        state_id: int,
+        carrier_type: Optional[str] = None,
+        event_code: Optional[str] = None,
+        event_description: Optional[str] = None
+    ) -> int:
+        """
+        Update id_shipping_state by tracking and create history record.
+        Returns affected rows count.
+        
+        Args:
+            tracking: Tracking number
+            state_id: New shipping state ID
+            carrier_type: Optional carrier type (BRT, DHL, FEDEX) for source enum
+            event_code: Optional tracking event code
+            event_description: Optional tracking event description
+        """
         try:
+            # Recupera la spedizione per ottenere id_shipping e stato precedente
+            shipping = self._session.query(Shipping).filter(
+                Shipping.tracking == tracking
+            ).first()
+            
+            if not shipping:
+                return 0
+            
+            old_state_id = shipping.id_shipping_state
+            id_shipping = shipping.id_shipping
+            
+            # Se lo stato non è cambiato, non fare nulla
+            if old_state_id == state_id:
+                return 0
+            
+            # Determina il source enum in base al carrier_type
+            from src.models.shipments_history import SourceEnum
+            source = SourceEnum.API_UPDATE  # Default
+            
+            if carrier_type:
+                carrier_type_upper = carrier_type.upper()
+                if carrier_type_upper == "BRT":
+                    source = SourceEnum.BRT_TRACKING
+                elif carrier_type_upper == "DHL":
+                    source = SourceEnum.DHL_TRACKING
+                elif carrier_type_upper == "FEDEX":
+                    source = SourceEnum.FEDEX_TRACKING
+            else:
+                # Prova a recuperare il carrier_type dal carrier_api
+                try:
+                    from src.models.carrier_api import CarrierApi
+                    carrier = self._session.query(CarrierApi).filter(
+                        CarrierApi.id_carrier_api == shipping.id_carrier_api
+                    ).first()
+                    if carrier:
+                        carrier_type_upper = carrier.carrier_type.value.upper()
+                        if carrier_type_upper == "BRT":
+                            source = SourceEnum.BRT_TRACKING
+                        elif carrier_type_upper == "DHL":
+                            source = SourceEnum.DHL_TRACKING
+                        elif carrier_type_upper == "FEDEX":
+                            source = SourceEnum.FEDEX_TRACKING
+                except Exception:
+                    pass  # Usa default se non riesce a recuperare
+            
+            # Aggiorna lo stato
             stmt = update(Shipping).where(
                 Shipping.tracking == tracking
             ).values(id_shipping_state=state_id)
             result = self._session.execute(stmt)
+            
+            # Crea record in shipments_history
+            from src.models.shipments_history import ShipmentsHistory
+            from datetime import datetime
+            
+            history_record = ShipmentsHistory(
+                id_shipping=id_shipping,
+                id_shipping_state=state_id,
+                id_shipping_state_previous=old_state_id,
+                tracking_event_code=event_code,
+                tracking_event_description=event_description,
+                changed_at=datetime.now(),
+                source=source
+            )
+            self._session.add(history_record)
+            
             self._session.commit()
             return result.rowcount if hasattr(result, "rowcount") else 0
         except Exception as e:

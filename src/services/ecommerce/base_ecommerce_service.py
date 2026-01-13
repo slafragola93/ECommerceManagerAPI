@@ -54,11 +54,15 @@ class BaseEcommerceService(ABC):
         if not store.is_active:
             raise ValueError(f"Store {store.name} is not active")
         
+        # Recupera P.IVA e country_code da CompanyFiscalInfo (default)
+        vat_number = store.get_default_vat_number()
+        country_code = store.get_default_country_code()
+        
         self._store_config = {
             'base_url': store.base_url,
             'api_key': store.api_key,
-            'vat_number': store.vat_number,
-            'country_code': store.country_code,
+            'vat_number': vat_number,
+            'country_code': country_code,
             'name': store.name
         }
         
