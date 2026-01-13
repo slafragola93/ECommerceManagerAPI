@@ -916,6 +916,7 @@ class FedexMapper:
             List of normalized tracking responses
         """
         from src.services.ecommerce.shipments.fedex_status_mapping import (
+            map_fedex_derived_code_to_internal,
             map_fedex_status_to_internal,
             DEFAULT_STATE_ID
         )
@@ -938,7 +939,11 @@ class FedexMapper:
                         if not tracking_number:
                             continue
                         
-                        # Extract latest status
+                        # Extract derivedCode (primary method for state mapping)
+                        # derivedCode is found in output.completeTrackResults[0].trackResults[0].derivedCode
+                        derived_code = track_result.get("derivedCode", "")
+                        
+                        # Extract latest status (for display purposes)
                         latest_status_detail = track_result.get("latestStatusDetail", {})
                         status_code = latest_status_detail.get("code", "")
                         status_description = latest_status_detail.get("description", "")
@@ -949,9 +954,15 @@ class FedexMapper:
                         if not status_text:
                             status_text = status_code
                         
-                        # Map status to internal state
+                        # Map derivedCode to internal state (primary method)
                         internal_state_id = DEFAULT_STATE_ID
-                        if status_text:
+                        if derived_code:
+                            mapped = map_fedex_derived_code_to_internal(derived_code)
+                            if mapped is not None:
+                                internal_state_id = mapped
+                        
+                        # Fallback to status text mapping if derivedCode not available or not mapped
+                        if internal_state_id == DEFAULT_STATE_ID and status_text:
                             mapped = map_fedex_status_to_internal(status_text)
                             if mapped is not None:
                                 internal_state_id = mapped

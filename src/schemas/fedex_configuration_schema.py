@@ -1,6 +1,7 @@
 from typing import Optional
 from decimal import Decimal
 from pydantic import BaseModel, Field
+from src.models.fedex_configuration import FedexScopeEnum
 
 
 class FedexConfigurationSchema(BaseModel):
@@ -39,6 +40,7 @@ class FedexConfigurationSchema(BaseModel):
     pickup_type: str = Field(..., max_length=100)
     customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType (SENDER, RECIPIENT, THIRD_PARTY, ACCOUNT)
     harmonized_code: Optional[str] = Field(None, max_length=20)  # HS code for customs commodities
+    scope: FedexScopeEnum = Field(..., description="Scope of the configuration: SHIP for shipment operations, TRACK for tracking operations")
 
 
 class FedexConfigurationResponseSchema(BaseModel):
@@ -67,6 +69,7 @@ class FedexConfigurationResponseSchema(BaseModel):
     pickup_type: str
     customs_charges: Optional[str]
     harmonized_code: Optional[str]
+    scope: FedexScopeEnum
     
     model_config = {"from_attributes": True}
 
@@ -95,3 +98,4 @@ class FedexConfigurationUpdateSchema(BaseModel):
     pickup_type: Optional[str] = Field(None, max_length=100)
     customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType
     harmonized_code: Optional[str] = Field(None, max_length=20)  # HS code for customs commodities
+    scope: Optional[FedexScopeEnum] = Field(None, description="Scope of the configuration: SHIP for shipment operations, TRACK for tracking operations")

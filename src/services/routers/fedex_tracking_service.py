@@ -7,6 +7,7 @@ from src.repository.interfaces.fedex_configuration_repository_interface import I
 from src.services.ecommerce.shipments.fedex_client import FedexClient
 from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
 from src.core.exceptions import ValidationException, InfrastructureException
+from src.models.fedex_configuration import FedexScopeEnum
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,10 @@ class FedexTrackingService(IFedexTrackingService):
             # Get carrier credentials
             credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
             
-            # Get FedEx configuration
-            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            # Get FedEx configuration with scope TRACK
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.TRACK)
             if not fedex_config:
-                raise ValueError(f"FedEx configuration not found for carrier_api_id {carrier_api_id}")
+                raise ValueError(f"FedEx configuration not found for carrier_api_id {carrier_api_id} with scope TRACK")
             
             # Call FedEx API
             logger.info(f"Getting FedEx tracking for {len(tracking_numbers)} shipments")

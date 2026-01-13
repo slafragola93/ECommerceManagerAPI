@@ -21,6 +21,7 @@ from src.repository.interfaces.order_detail_repository_interface import IOrderDe
 from src.services.ecommerce.shipments.fedex_client import FedexClient
 from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
 from src.models.shipment_document import ShipmentDocument
+from src.models.fedex_configuration import FedexScopeEnum
 
 logger = logging.getLogger(__name__)
 
@@ -387,10 +388,10 @@ class FedexShipmentService(IFedexShipmentService):
             shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
             carrier_api_id = shipping_info.id_carrier_api
             
-            # 3. Recupero la configurazione FedEx
-            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            # 3. Recupero la configurazione FedEx con scope SHIP
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.SHIP)
             if not fedex_config:
-                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id, "scope": "SHIP"})
             
             # 4. Recupero credenziali FedEx
             credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
@@ -506,10 +507,10 @@ class FedexShipmentService(IFedexShipmentService):
                     details={"order_id": order_id}
                 )
             
-            # 4. Recupero la configurazione FedEx
-            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            # 4. Recupero la configurazione FedEx con scope SHIP
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.SHIP)
             if not fedex_config:
-                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id, "scope": "SHIP"})
             
             # 5. Recupero credenziali FedEx
             credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
@@ -588,10 +589,10 @@ class FedexShipmentService(IFedexShipmentService):
             Dict con risultati asincroni
         """
         try:
-            # 1. Recupero la configurazione FedEx
-            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            # 1. Recupero la configurazione FedEx con scope SHIP
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.SHIP)
             if not fedex_config:
-                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id, "scope": "SHIP"})
             
             # 2. Recupero credenziali FedEx
             credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)

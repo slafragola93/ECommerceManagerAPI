@@ -7,6 +7,7 @@ from src.schemas.fedex_configuration_schema import (
     FedexConfigurationUpdateSchema
 )
 from src.core.exceptions import BusinessRuleException, InfrastructureException
+from src.models.fedex_configuration import FedexScopeEnum
 
 
 class FedexConfigurationService(IFedexConfigurationService):
@@ -15,10 +16,11 @@ class FedexConfigurationService(IFedexConfigurationService):
 
     async def create_configuration(self, id_carrier_api: int, config_data: FedexConfigurationSchema) -> FedexConfigurationResponseSchema:
         try:
-            # Verifica se esiste già una configurazione per questo carrier_api
-            existing_config = self._fedex_configuration_repository.get_by_carrier_api_id(id_carrier_api)
+            # Verifica se esiste già una configurazione per questo carrier_api e scope
+            scope = config_data.scope
+            existing_config = self._fedex_configuration_repository.get_by_carrier_api_id_and_scope(id_carrier_api, scope)
             if existing_config:
-                raise BusinessRuleException(f"Fedex configuration already exists for carrier_api {id_carrier_api}")
+                raise BusinessRuleException(f"Fedex configuration already exists for carrier_api {id_carrier_api} with scope {scope.value}")
             
             # Crea la configurazione
             config_dict = config_data.model_dump()
@@ -43,13 +45,31 @@ class FedexConfigurationService(IFedexConfigurationService):
 
     async def update_configuration(self, id_carrier_api: int, config_data: FedexConfigurationUpdateSchema) -> FedexConfigurationResponseSchema:
         try:
-            # Verifica se esiste la configurazione
-            existing_config = self._fedex_configuration_repository.get_by_carrier_api_id(id_carrier_api)
+            # Determina lo scope: se fornito nell'update, usalo; altrimenti cerca la prima configurazione esistente
+            update_data = config_data.model_dump(exclude_unset=True)
+            scope = update_data.get('scope')
+            
+            if scope:
+                # Se lo scope è fornito, cerca la configurazione con quello scope
+                scope_enum = FedexScopeEnum(scope) if isinstance(scope, str) else scope
+                existing_config = self._fedex_configuration_repository.get_by_carrier_api_id_and_scope(id_carrier_api, scope_enum)
+            else:
+                # Altrimenti, cerca la prima configurazione esistente (per retrocompatibilità)
+                existing_config = self._fedex_configuration_repository.get_by_carrier_api_id(id_carrier_api)
+            
             if not existing_config:
-                raise BusinessRuleException(f"Fedex configuration not found for carrier_api {id_carrier_api}")
+                raise BusinessRuleException(f"Fedex configuration not found for carrier_api {id_carrier_api}" + (f" with scope {scope}" if scope else ""))
+            
+            # Se lo scope viene cambiato, verifica che non esista già una configurazione con il nuovo scope
+            if 'scope' in update_data:
+                new_scope = FedexScopeEnum(update_data['scope']) if isinstance(update_data['scope'], str) else update_data['scope']
+                if existing_config.scope != new_scope:
+                    # Verifica che non esista già una configurazione con il nuovo scope
+                    conflicting_config = self._fedex_configuration_repository.get_by_carrier_api_id_and_scope(id_carrier_api, new_scope)
+                    if conflicting_config:
+                        raise BusinessRuleException(f"Fedex configuration already exists for carrier_api {id_carrier_api} with scope {new_scope.value}")
             
             # Aggiorna solo i campi forniti
-            update_data = config_data.model_dump(exclude_unset=True)
             if not update_data:
                 return FedexConfigurationResponseSchema.model_validate(existing_config)
             

@@ -25,7 +25,9 @@ class CarrierApi(Base):
     carrier_assignments = relationship("CarrierAssignment", back_populates="carrier_api")
     carrier_prices = relationship("CarrierPrice", back_populates="carrier_api")
     
-    # 1:1 relationships with configurations
+    # Relationships with configurations
+    # BRT and DHL: 1:1 relationship
     brt_configuration = relationship("BrtConfiguration", back_populates="carrier_api", uselist=False, cascade="all, delete-orphan")
-    fedex_configuration = relationship("FedexConfiguration", back_populates="carrier_api", uselist=False, cascade="all, delete-orphan")
     dhl_configuration = relationship("DhlConfiguration", back_populates="carrier_api", uselist=False, cascade="all, delete-orphan")
+    # FedEx: 1:N relationship 
+    fedex_configurations = relationship("FedexConfiguration", back_populates="carrier_api", uselist=True, cascade="all, delete-orphan")

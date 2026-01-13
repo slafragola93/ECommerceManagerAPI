@@ -1,15 +1,57 @@
 """
 FedEx status mapping to internal shipping states
 
-This mapping will be used when implementing tracking functionality (Phase 2).
-For now, it's prepared for future use.
+Maps FedEx derivedCode to internal shipping state codes.
+The derivedCode is found in output.completeTrackResults[0].trackResults[0].derivedCode
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+else:
+    Session = None
 
 # Default internal state id used when the FedEx status is unknown/not mapped
 DEFAULT_STATE_ID: int = 12  # Stato Sconosciuto
 
-# Mapping FedEx status descriptions to internal shipping state codes
+# Mapping FedEx derivedCode to internal shipping state codes
+FEDEX_DERIVED_CODE_MAPPING: Dict[str, int] = {
+    # --- Pre-shipment ---
+    "OC": 2,   # Order Created → Tracking Assegnato
+    "AP": 2,   # At Pickup / Label Created → Tracking Assegnato
+
+    # --- Pickup ---
+    "PU": 3,   # Picked Up → Spedizione Presa In Carico
+
+    # --- Transit ---
+    "AR": 5,   # At FedEx Location → In Transito
+    "DP": 5,   # Departed FedEx Location → In Transito
+    "IT": 5,   # In Transit → In Transito
+    "CC": 5,   # Clearance Complete → In Transito
+
+    # --- Customs ---
+    "CD": 9,   # Clearance Delay → In Dogana
+
+    # --- Out for delivery ---
+    "OD": 7,   # Out for Delivery → In Consegna
+
+    # --- Delivered ---
+    "DL": 8,   # Delivered → Consegnata
+
+    # --- Exceptions / Delays ---
+    "DO": 10,  # Delivery Exception → Bloccata
+    "DE": 10,  # Delivery Exception
+    "CA": 10,  # Customer not available → Bloccata
+    "HL": 6,   # Held at Location → In Giacenza
+    "LD": 6,   # Local Delay → In Giacenza
+    "WE": 10,  # Weather Exception → Bloccata
+
+    # --- Returns ---
+    "RT": 11,  # Returned → Annullata
+    "RS": 11,  # Return to Shipper → Annullata
+}
+
+# Legacy mapping for backward compatibility (if derivedCode is not available)
 FEDEX_STATUS_MAPPING: Dict[str, int] = {
     # "Il tuo collo è in transito" → 5 (In Transito)
     "Il tuo collo è in transito": 5,
@@ -83,9 +125,27 @@ FEDEX_STATUS_MAPPING: Dict[str, int] = {
 }
 
 
+def map_fedex_derived_code_to_internal(derived_code: str) -> Optional[int]:
+    """
+    Map FedEx derivedCode to internal shipping state code
+    
+    Args:
+        derived_code: FedEx derivedCode (e.g., "OC", "PU", "DL", etc.)
+        
+    Returns:
+        Internal shipping state code or None if not found
+    """
+    if not derived_code:
+        return None
+    
+    # Try exact match (case-insensitive)
+    code_upper = derived_code.upper().strip()
+    return FEDEX_DERIVED_CODE_MAPPING.get(code_upper)
+
+
 def map_fedex_status_to_internal(fedex_status: str) -> Optional[int]:
     """
-    Map FedEx status description to internal shipping state code
+    Map FedEx status description to internal shipping state code (legacy method)
     
     Args:
         fedex_status: FedEx status description (case-insensitive)
@@ -110,16 +170,26 @@ def map_fedex_status_to_internal(fedex_status: str) -> Optional[int]:
     return None
 
 
-def get_internal_state_name(state_code: int) -> str:
+def get_internal_state_name(state_code: int, db: Optional['Session'] = None) -> str:
     """
-    Get internal state name from code
+    Get internal state name from code.
+    Recupera il nome dello stato dal database se disponibile, altrimenti usa un fallback.
     
     Args:
         state_code: Internal shipping state code
+        db: Optional database session. Se fornito, recupera il nome dal DB.
         
     Returns:
         State name
     """
+    # Se abbiamo una sessione DB, recupera dal database
+    if db is not None:
+        from src.services.ecommerce.shipments.shipping_state_utils import get_shipping_state_name
+        db_name = get_shipping_state_name(db, state_code)
+        if db_name:
+            return db_name
+    
+    # Fallback hardcoded se DB non disponibile o stato non trovato
     state_names = {
         1: "In Preparazione",
         2: "Tracking Assegnato",

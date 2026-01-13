@@ -1,13 +1,23 @@
-from sqlalchemy import Integer, Column, String, Text, ForeignKey, Numeric
+from sqlalchemy import Integer, Column, String, Text, ForeignKey, Numeric, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from src.database import Base
+import enum
+
+
+class FedexScopeEnum(str, enum.Enum):
+    SHIP = "SHIP"
+    TRACK = "TRACK"
 
 
 class FedexConfiguration(Base):
     __tablename__ = "fedex_configurations"
+    __table_args__ = (
+        UniqueConstraint('id_carrier_api', 'scope', name='uq_fedex_config_carrier_scope'),
+    )
     
     id_fedex_config = Column(Integer, primary_key=True, index=True)
-    id_carrier_api = Column(Integer, ForeignKey('carriers_api.id_carrier_api', ondelete='CASCADE'), unique=True, index=True)
+    id_carrier_api = Column(Integer, ForeignKey('carriers_api.id_carrier_api', ondelete='CASCADE'), index=True)
+    scope = Column(Enum(FedexScopeEnum), nullable=False, default=FedexScopeEnum.SHIP)
     
     # Campi specifici Fedex
     description = Column(String(255))
@@ -50,5 +60,5 @@ class FedexConfiguration(Base):
     format = Column(String(20), nullable=True)  # Legacy label format
     notes_field = Column(String(10), nullable=True)
     
-    # Relationship 1:1
-    carrier_api = relationship("CarrierApi", back_populates="fedex_configuration")
+    # Relationship N:1 (many FedEx configurations can belong to one CarrierApi)
+    carrier_api = relationship("CarrierApi", back_populates="fedex_configurations")

@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlalchemy.orm import Session
-from src.models.fedex_configuration import FedexConfiguration
+from src.models.fedex_configuration import FedexConfiguration, FedexScopeEnum
 from src.repository.interfaces.fedex_configuration_repository_interface import IFedexConfigurationRepository
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
@@ -11,9 +11,20 @@ class FedexConfigurationRepository(BaseRepository[FedexConfiguration, int], IFed
         super().__init__(session, FedexConfiguration)
     
     def get_by_carrier_api_id(self, id_carrier_api: int) -> Optional[FedexConfiguration]:
+        """Ritorna la prima configurazione trovata per id_carrier_api (per retrocompatibilità)"""
         try:
             return self._session.query(FedexConfiguration).filter(
                 FedexConfiguration.id_carrier_api == id_carrier_api
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Error retrieving FedEx configuration: {str(e)}")
+    
+    def get_by_carrier_api_id_and_scope(self, id_carrier_api: int, scope: FedexScopeEnum) -> Optional[FedexConfiguration]:
+        """Ritorna la configurazione per id_carrier_api e scope specificato"""
+        try:
+            return self._session.query(FedexConfiguration).filter(
+                FedexConfiguration.id_carrier_api == id_carrier_api,
+                FedexConfiguration.scope == scope
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Error retrieving FedEx configuration: {str(e)}")
