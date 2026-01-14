@@ -169,6 +169,212 @@ class FedexMapper:
         logger.debug(f"FedEx Shipment Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
         return payload
     
+    def build_mps_shipment_request(
+        self,
+        order_data: Row,
+        fedex_config: FedexConfiguration,
+        receiver_address: Row,
+        receiver_country_iso: str,
+        package: Row,
+        sequence_number: int,
+        total_package_count: int,
+        master_tracking_id: Optional[str] = None,
+        reference: Optional[str] = None,
+        shipping_price_tax_incl: Optional[float] = None,
+        order_details: Optional[List] = None,
+        total_weight_all_packages: Optional[float] = None,
+        shipping_total_weight: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Build FedEx MPS (Multiple-Piece Shipping) shipment request payload for "One label at a time" mode
+        
+        Args:
+            order_data: Order row with shipment data
+            fedex_config: FedEx configuration
+            receiver_address: Receiver address row
+            receiver_country_iso: Receiver country ISO code (2 letters)
+            package: Single package row for this piece
+            sequence_number: Sequence number for this piece (1 for master, 2+ for additional pieces)
+            total_package_count: Total number of packages in the shipment
+            master_tracking_id: Master tracking ID (required for pieces 2+, None for master)
+            reference: Order reference (optional)
+            shipping_price_tax_incl: Shipping price with tax included (optional)
+            order_details: List of order details for commodities (optional)
+            
+        Returns:
+            FedEx MPS API payload dict
+        """
+        # Get account number
+        account_number = str(fedex_config.account_number) if fedex_config.account_number else ""
+        
+        # Build shipper contact and address
+        shipper_contact = self._build_shipper_contact(fedex_config)
+        shipper_address = self._build_shipper_address(fedex_config)
+        
+        # Build recipient contact and address
+        recipient_contact = self._build_recipient_contact(receiver_address)
+        recipient_address = self._build_recipient_address(receiver_address, receiver_country_iso)
+        
+        # Build single package line item with sequenceNumber
+        package_weight = float(getattr(package, 'weight', None) or fedex_config.default_weight or 1.0)
+        
+        package_line_item = {
+            "sequenceNumber": sequence_number,
+            "weight": {
+                "units": "KG",
+                "value": round(package_weight, 2)
+            }
+        }
+        
+        # Add dimensions if available
+        length = getattr(package, 'length', None) or fedex_config.package_depth
+        width = getattr(package, 'width', None) or fedex_config.package_width
+        height = getattr(package, 'height', None) or fedex_config.package_height
+        
+        if length and width and height:
+            package_line_item["dimensions"] = {
+                "length": int(length),
+                "width": int(width),
+                "height": int(height),
+                "units": "CM"
+            }
+        
+        # Get total weight for totalWeight field
+        # For MPS, use the sum of all packages weights
+        if total_weight_all_packages and total_weight_all_packages > 0:
+            total_weight = total_weight_all_packages
+        else:
+            # Fallback: try order_data.total_weight
+            total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
+            if total_weight <= 0:
+                # Last fallback: use package weight (will be approximate for MPS)
+                total_weight = package_weight
+        
+        # Get service type and packaging type from config
+        service_type = fedex_config.service_type
+        if not service_type:
+            raise ValidationException(
+                "service_type is required in FedEx configuration",
+                details={"field": "service_type", "config_id": fedex_config.id_fedex_configuration if hasattr(fedex_config, 'id_fedex_configuration') else None}
+            )
+        packaging_type = fedex_config.packaging_type or "YOUR_PACKAGING"
+        pickup_type = fedex_config.pickup_type or "DROPOFF_AT_FEDEX_LOCATION"
+        payment_type = fedex_config.customs_charges or "SENDER"
+        
+        # Get label specification
+        label_spec = self._build_label_specification(fedex_config)
+        
+        # Ship date (today or tomorrow)
+        ship_datestamp = datetime.now().strftime("%Y-%m-%d")
+        
+        # Build customsClearanceDetail (only for master piece, or all pieces if needed)
+        customs_clearance_detail = None
+        if order_details:
+            # Get order_id from order_data
+            order_id = getattr(order_data, 'id_order', None)
+            
+            # Build dutiesPayment
+            duties_payment = self._build_duties_payment(fedex_config)
+            
+            # Build commercialInvoice
+            commercial_invoice = self._build_commercial_invoice(
+                fedex_config=fedex_config,
+                order_data=order_data,
+                order_id=order_id
+            )
+            
+            # Build commodities from order details
+            # For MPS, calculate commodities weight proportionally to this package's weight
+            # Use shipping_total_weight (order_data.total_weight) distributed proportionally
+            package_weight = float(getattr(package, 'weight', None) or fedex_config.default_weight or 1.0)
+            
+            # Calculate proportional weight for this package's commodities
+            if shipping_total_weight and shipping_total_weight > 0 and total_weight_all_packages and total_weight_all_packages > 0:
+                # Distribute shipping weight proportionally: (package_weight / total_weight_all_packages) * shipping_total_weight
+                commodities_weight_for_package = (package_weight / total_weight_all_packages) * shipping_total_weight
+            else:
+                # Fallback: use package weight
+                commodities_weight_for_package = package_weight
+            
+            commodities = self._build_commodities(
+                order_details=order_details,
+                packages=[package],  # Single package for this piece
+                shipping_price_tax_incl=shipping_price_tax_incl or 0.0,
+                fedex_config=fedex_config,
+                receiver_country_iso=receiver_country_iso,
+                total_weight_for_commodities=commodities_weight_for_package
+            )
+            
+            # Get products_total_price_with_tax from order_data
+            products_total_price_with_tax = float(getattr(order_data, 'products_total_price_with_tax', None) or 0.0)
+            
+            customs_clearance_detail = {
+                "dutiesPayment": duties_payment,
+                "commercialInvoice": commercial_invoice,
+                "commodities": commodities,
+                "totalCustomsValue": {
+                    "amount": round(products_total_price_with_tax, 2),
+                    "currency": "EUR"
+                }
+            }
+        
+        # Build shipperDetails and receiverDetails
+        shipper_details = self._build_shipper_details(fedex_config)
+        receiver_details = self._build_receiver_details(receiver_address, receiver_country_iso)
+        
+        # Build requestedShipment with MPS fields
+        requested_shipment = {
+            "oneLabelAtATime": True,
+            "totalPackageCount": total_package_count,
+            "requestedPackageLineItems": [package_line_item],
+            "shipper": {
+                "contact": shipper_contact,
+                "address": shipper_address
+            },
+            "recipients": [{
+                "contact": recipient_contact,
+                "address": recipient_address
+            }],
+            "shipperDetails": shipper_details,
+            "receiverDetails": receiver_details,
+            "shipDatestamp": ship_datestamp,
+            "serviceType": service_type,
+            "packagingType": packaging_type,
+            "pickupType": pickup_type,
+            "totalWeight": round(total_weight, 2),
+            "blockInsightVisibility": False,
+            "shippingChargesPayment": {
+                "paymentType": payment_type
+            },
+            "labelSpecification": label_spec
+        }
+        
+        # Add masterTrackingId for pieces 2+ (not for master)
+        if master_tracking_id and sequence_number > 1:
+            requested_shipment["masterTrackingId"] = {
+                "trackingIdType": "FEDEX",
+                "trackingNumber": master_tracking_id
+            }
+        
+        # Add customsClearanceDetail if available (typically only for master)
+        if customs_clearance_detail:
+            requested_shipment["customsClearanceDetail"] = customs_clearance_detail
+        
+        # Build payload
+        payload = {
+            "labelResponseOptions": "URL_ONLY",
+            "requestedShipment": requested_shipment,
+            "accountNumber": {
+                "value": account_number
+            }
+        }
+        
+        # Validate required fields
+        self._validate_required_fields(payload)
+        
+        logger.debug(f"FedEx MPS Shipment Payload (sequence {sequence_number}): {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        return payload
+    
     def build_validate_request(
         self,
         order_data: Row,
@@ -624,13 +830,17 @@ class FedexMapper:
         packages: List[Row],
         shipping_price_tax_incl: float,
         fedex_config: FedexConfiguration,
-        receiver_country_iso: str
+        receiver_country_iso: str,
+        total_weight_for_commodities: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Build commodities array for customsClearanceDetail
         
         If order_details are available, create one commodity per product.
         Otherwise, create one commodity per package.
+        
+        Args:
+            total_weight_for_commodities: Total weight of all packages (for MPS, to match totalWeight)
         """
         commodities = []
         
@@ -662,6 +872,10 @@ class FedexMapper:
             # If no order details, use shipping price as total value
             total_value = shipping_price_tax_incl
         
+        # For MPS, use the provided total_weight_for_commodities to match totalWeight
+        if total_weight_for_commodities and total_weight_for_commodities > 0:
+            total_weight = total_weight_for_commodities
+        
         # If total_weight is 0, use default
         if total_weight == 0:
             total_weight = float(fedex_config.default_weight or 1.0)
@@ -671,6 +885,17 @@ class FedexMapper:
         
         # Build commodities
         if order_details:
+            # Calculate total weight from order details (before scaling)
+            calculated_total_weight = sum(
+                float(getattr(detail, 'product_weight', None) or 0.0) * int(getattr(detail, 'product_qty', None) or 1)
+                for detail in order_details
+            )
+            
+            # Scale factor to match total_weight_for_commodities if provided
+            weight_scale_factor = 1.0
+            if total_weight_for_commodities and total_weight_for_commodities > 0 and calculated_total_weight > 0:
+                weight_scale_factor = total_weight_for_commodities / calculated_total_weight
+            
             # Create one commodity per product
             for detail in order_details:
                 product_name = getattr(detail, 'product_name', None) or 'Product'
@@ -680,6 +905,9 @@ class FedexMapper:
                 # Use total_price_with_tax directly from OrderDetail
                 total_price_with_tax = float(getattr(detail, 'total_price_with_tax', None) or 0.0)
                 product_weight = float(getattr(detail, 'product_weight', None) or 0.0)
+                
+                # Scale weight to match total_weight_for_commodities
+                commodity_weight = (product_weight * product_qty) * weight_scale_factor
                 
                 commodity = {
                     "description": product_name[:200],  # Limit to 200 chars
@@ -697,7 +925,7 @@ class FedexMapper:
                     },
                     "weight": {
                         "units": "KG",
-                        "value": round(product_weight * product_qty, 2)
+                        "value": round(commodity_weight, 2)
                     },
                     "purpose": "BUSINESS"
                 }

@@ -14,6 +14,7 @@ from src.models import Order, Address, FiscalDocument, FiscalDocumentDetail, Ord
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.tax_repository import TaxRepository
 from src.services.external.province_service import province_service
+from src.services.external.fatturapa_validator import FatturaPAValidator
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class FatturaPAService:
         self.company_contact = self._get_config_value("company_info", "account_holder")
         self.company_iban = self._get_config_value("company_info", "iban")
         self.company_bank_name = self._get_config_value("company_info",  "bank_name")
+        
+        # Inizializza validatore
+        self.validator = FatturaPAValidator()
     
     def _get_config_value(self, category: str, name: str, default: str = None) -> str:
         """Recupera un valore dalla configurazione"""
@@ -798,6 +802,33 @@ class FatturaPAService:
             # Determina se includere spese di spedizione dal campo includes_shipping del documento
             # Usa il valore salvato nel FiscalDocument (gestito al momento della creazione)
             include_shipping = fiscal_doc.includes_shipping
+            
+            # Prepara company_data per validazione
+            company_data = {
+                'vat_number': self.vat_number,
+                'fiscal_code': self._get_config_value("company_info", "fiscal_code"),
+                'company_name': self.company_name,
+                'address': self.company_address,
+                'civic_number': self.company_civic,
+                'postal_code': self.company_cap,
+                'city': self.company_city,
+                'province': self.company_province,
+                'phone': self.company_phone,
+                'email': self.company_email,
+                'fax': self._get_config_value("company_info", "fax"),
+                'account_holder': self.company_contact,
+                'tax_regime': self._get_config_value("electronic_invoicing", "tax_regime", "RF01")
+            }
+            
+            # Valida dati prima di generare XML
+            validation_result = self.validator.validate(order_data, line_items, company_data)
+            
+            if not validation_result['valid']:
+                logger.error(f"Validazione XML FatturaPA fallita per fiscal document {id_fiscal_document}: {len(validation_result['errors'])} errori")
+                return {
+                    "status": "validation_error",
+                    "errors": validation_result['errors']
+                }
             
             # Genera XML
             xml_content = self._generate_xml(order_data, line_items, fiscal_doc.document_number, include_shipping=include_shipping)

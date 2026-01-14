@@ -74,6 +74,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             document_type='invoice',
             tipo_documento_fe=tipo_documento_fe,
             id_order=id_order,
+            id_store=order.id_store,  # Porta id_store dall'ordine
             document_number=document_number,
             is_electronic=is_electronic,
             status=initial_status,
@@ -91,9 +92,10 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 
         for od in order_details:
             # Usa i nuovi campi se disponibili, altrimenti calcola da product_price per retrocompatibilità
-            unit_price_net = od.unit_price_net or od.product_price or 0.0
-            unit_price_with_tax = od.unit_price_with_tax or 0.0
-            quantity = od.product_qty or 0
+            # Converti Decimal in float per evitare errori di tipo
+            unit_price_net = float(od.unit_price_net or od.product_price or 0.0)
+            unit_price_with_tax = float(od.unit_price_with_tax or 0.0)
+            quantity = int(od.product_qty or 0)
             
             # Se unit_price_with_tax non è disponibile, calcolalo da unit_price_net usando id_tax
             if unit_price_with_tax == 0.0 and unit_price_net > 0 and od.id_tax:
@@ -109,10 +111,12 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             
             # Applica sconti
             if od.reduction_percent and od.reduction_percent > 0:
-                sconto = calculate_amount_with_percentage(total_base, od.reduction_percent)
+                reduction_percent = float(od.reduction_percent)
+                sconto = calculate_amount_with_percentage(total_base, reduction_percent)
                 total_price_net = total_base - sconto
             elif od.reduction_amount and od.reduction_amount > 0:
-                total_price_net = total_base - od.reduction_amount
+                reduction_amount = float(od.reduction_amount)
+                total_price_net = total_base - reduction_amount
             else:
                 total_price_net = total_base
             
@@ -492,6 +496,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             document_type='credit_note',
             tipo_documento_fe=tipo_documento_fe,
             id_order=invoice.id_order,
+            id_store=invoice.id_store,  # Porta id_store dalla fattura di riferimento
             id_fiscal_document_ref=id_invoice,
             document_number=document_number,
             is_electronic=is_electronic,
@@ -767,6 +772,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         return_doc = FiscalDocument(
             document_type='return',
             id_order=id_order,
+            id_store=order.id_store,  # Porta id_store dall'ordine
             document_number=str(document_number),
             status='issued',
             is_electronic=False,  # I resi non sono elettronici per ora

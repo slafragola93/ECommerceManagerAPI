@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 import logging
 import httpx
+from sqlalchemy.engine import Row
 
 from src.core.settings import get_cache_settings
 from src.core.exceptions import NotFoundException, BusinessRuleException, InfrastructureException, ValidationException
@@ -21,7 +22,7 @@ from src.repository.interfaces.order_detail_repository_interface import IOrderDe
 from src.services.ecommerce.shipments.fedex_client import FedexClient
 from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
 from src.models.shipment_document import ShipmentDocument
-from src.models.fedex_configuration import FedexScopeEnum
+from src.models.fedex_configuration import FedexScopeEnum, FedexConfiguration
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,10 @@ class FedexShipmentService(IFedexShipmentService):
             shipping = self.shipping_repository.get_by_id(order_data.id_shipping)
             shipping_price_tax_incl = float(shipping.price_tax_incl or 0.0) if shipping else 0.0
             
-            # 3. Recupero la configurazione FedEx
-            fedex_config = self.fedex_config_repository.get_by_carrier_api_id(carrier_api_id)
+            # 3. Recupero la configurazione FedEx con scope SHIP per creazione spedizioni
+            fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.SHIP)
             if not fedex_config:
-                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id})
+                raise NotFoundException("FedexConfiguration", carrier_api_id, {"carrier_api_id": carrier_api_id, "scope": "SHIP"})
             
             # 4. Recupero credenziali FedEx
             credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
@@ -96,164 +97,185 @@ class FedexShipmentService(IFedexShipmentService):
             
             # 8. Recupero internal_reference dell'ordine
             internal_reference = order_data.internal_reference or str(order_id)
-            # 9. Costruzione FedEx payload
-            fedex_payload = self.fedex_mapper.build_shipment_request(
-                order_data=order_data,
-                fedex_config=fedex_config,
-                receiver_address=receiver_address,
-                receiver_country_iso=receiver_country_iso,
-                packages=packages,
-                reference=internal_reference,
-                shipping_price_tax_incl=shipping_price_tax_incl,
-                order_details=order_details
-            )
             
-            # 9.1. Validazione payload prima della creazione
-            logger.info(f"Validating FedEx shipment payload for order {order_id}")
-            try:
-                validation_response = await self.fedex_client.validate_shipment(
-                    payload=fedex_payload,
+            # 9. Controllo se è MPS (Multiple-Piece Shipping)
+            package_count = len(packages) if packages else 0
+            is_mps = package_count > 1
+            
+            if is_mps:
+                # MPS Mode: creazione sequenziale "One label at a time"
+                return await self._create_mps_shipment(
+                    order_id=order_id,
+                    order_data=order_data,
+                    fedex_config=fedex_config,
+                    receiver_address=receiver_address,
+                    receiver_country_iso=receiver_country_iso,
+                    packages=packages,
+                    order_details=order_details,
+                    internal_reference=internal_reference,
+                    shipping_price_tax_incl=shipping_price_tax_incl,
                     credentials=credentials,
-                    fedex_config=fedex_config
+                    carrier_api_id=carrier_api_id
                 )
-                # Se la validazione passa (200 OK), non ci sono eccezioni
-                logger.info(f"FedEx shipment validation passed for order {order_id}")
+            else:
+                # Single package mode: comportamento attuale
+                # 9. Costruzione FedEx payload
+                fedex_payload = self.fedex_mapper.build_shipment_request(
+                    order_data=order_data,
+                    fedex_config=fedex_config,
+                    receiver_address=receiver_address,
+                    receiver_country_iso=receiver_country_iso,
+                    packages=packages,
+                    reference=internal_reference,
+                    shipping_price_tax_incl=shipping_price_tax_incl,
+                    order_details=order_details
+                )
                 
-                # Controlla se ci sono errori o warnings nella risposta (anche se status 200)
-                errors = validation_response.get("errors", [])
-                warnings = validation_response.get("warnings", [])
-                
-                if errors:
-                    # Anche con status 200, se ci sono errori nella risposta, fallisce
-                    error_messages = [f"{e.get('code', 'UNKNOWN')}: {e.get('message', 'Unknown error')}" for e in errors]
-                    combined_errors = " | ".join(error_messages)
-                    raise ValidationException(
-                        f"FedEx validation failed: {combined_errors}",
-                        details={
-                            "order_id": order_id,
-                            "errors": errors,
-                            "warnings": warnings,
-                            "transaction_id": validation_response.get("transactionId")
-                        }
+                # 9.1. Validazione payload prima della creazione
+                logger.info(f"Validating FedEx shipment payload for order {order_id}")
+                try:
+                    validation_response = await self.fedex_client.validate_shipment(
+                        payload=fedex_payload,
+                        credentials=credentials,
+                        fedex_config=fedex_config
                     )
-                
-                if warnings:
-                    logger.warning(f"FedEx validation warnings for order {order_id}: {warnings}")
+                    # Se la validazione passa (200 OK), non ci sono eccezioni
                     
-            except ValueError as e:
-                # Handle FedEx client validation errors (400, 401, 403, 404, 422)
-                error_str = str(e)
-                logger.error(f"FedEx Validation Error for order {order_id}: {error_str}")
+                    # Controlla se ci sono errori o warnings nella risposta (anche se status 200)
+                    errors = validation_response.get("errors", [])
+                    warnings = validation_response.get("warnings", [])
+                    
+                    if errors:
+                        # Anche con status 200, se ci sono errori nella risposta, fallisce
+                        error_messages = [f"{e.get('code', 'UNKNOWN')}: {e.get('message', 'Unknown error')}" for e in errors]
+                        combined_errors = " | ".join(error_messages)
+                        raise ValidationException(
+                            f"FedEx validation failed: {combined_errors}",
+                            details={
+                                "order_id": order_id,
+                                "errors": errors,
+                                "warnings": warnings,
+                                "transaction_id": validation_response.get("transactionId")
+                            }
+                        )
+                    
+                    if warnings:
+                        logger.warning(f"FedEx validation warnings for order {order_id}: {warnings}")
+                        
+                except ValueError as e:
+                    # Handle FedEx client validation errors (400, 401, 403, 404, 422)
+                    error_str = str(e)
+                    logger.error(f"FedEx Validation Error for order {order_id}: {error_str}")
+                    
+                    # Check error type for more specific handling
+                    if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
+                        raise ValidationException(
+                            f"FedEx authentication error during validation: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "authentication"}
+                        )
+                    elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
+                        raise ValidationException(
+                            f"FedEx access denied during validation: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "forbidden"}
+                        )
+                    elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
+                        raise ValidationException(
+                            f"FedEx resource not found during validation: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "not_found"}
+                        )
+                    else:
+                        # Validation errors (400, 422)
+                        raise ValidationException(
+                            f"FedEx validation error: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "validation"}
+                        )
+                except RuntimeError as e:
+                    # Handle FedEx server errors during validation (500, 503)
+                    error_str = str(e)
+                    logger.error(f"FedEx Server Error during validation for order {order_id}: {error_str}")
+                    
+                    if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
+                        raise InfrastructureException(
+                            f"FedEx service unavailable during validation: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
+                        )
+                    else:
+                        raise InfrastructureException(
+                            f"FedEx server error during validation: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "server_error"}
+                        )
+                except Exception as e:
+                    # Handle other validation errors
+                    error_str = str(e)
+                    logger.error(f"FedEx validation error for order {order_id}: {error_str}")
+                    raise ValidationException(
+                        f"FedEx validation failed: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "unknown"}
+                    )
                 
-                # Check error type for more specific handling
-                if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
-                    raise ValidationException(
-                        f"FedEx authentication error during validation: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "authentication"}
+                # 10. Chiama a API FedEx per creare la spedizione (solo se validazione OK)
+                logger.info(f"Creating FedEx shipment for order {order_id} (validation passed)")
+                try:
+                    fedex_response = await self.fedex_client.create_shipment(
+                        payload=fedex_payload,
+                        credentials=credentials,
+                        fedex_config=fedex_config
                     )
-                elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
-                    raise ValidationException(
-                        f"FedEx access denied during validation: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "forbidden"}
-                    )
-                elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
-                    raise ValidationException(
-                        f"FedEx resource not found during validation: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "not_found"}
-                    )
-                else:
-                    # Validation errors (400, 422)
-                    raise ValidationException(
-                        f"FedEx validation error: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "validation"}
-                    )
-            except RuntimeError as e:
-                # Handle FedEx server errors during validation (500, 503)
-                error_str = str(e)
-                logger.error(f"FedEx Server Error during validation for order {order_id}: {error_str}")
-                
-                if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
+                except ValueError as e:
+                    # Handle FedEx client errors (400, 401, 403, 404, 422)
+                    error_str = str(e)
+                    logger.error(f"FedEx Client Error for order {order_id}: {error_str}")
+                    
+                    # Check error type for more specific handling
+                    if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
+                        # Authentication/Authorization error
+                        raise ValidationException(
+                            f"FedEx authentication error: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "authentication"}
+                        )
+                    elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
+                        # Forbidden - permissions issue
+                        raise ValidationException(
+                            f"FedEx access denied: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "forbidden"}
+                        )
+                    elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
+                        # Resource not found
+                        raise ValidationException(
+                            f"FedEx resource not found: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "not_found"}
+                        )
+                    else:
+                        # Validation errors (400, 422)
+                        raise ValidationException(
+                            f"FedEx validation error: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "validation"}
+                        )
+                except RuntimeError as e:
+                    # Handle FedEx server errors (500, 503)
+                    error_str = str(e)
+                    logger.error(f"FedEx Server Error for order {order_id}: {error_str}")
+                    
+                    # Check if it's a service unavailable error
+                    if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
+                        raise InfrastructureException(
+                            f"FedEx service unavailable: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
+                        )
+                    else:
+                        # Internal server error (500)
+                        raise InfrastructureException(
+                            f"FedEx server error: {error_str}",
+                            details={"order_id": order_id, "error": error_str, "type": "server_error"}
+                        )
+                except Exception as e:
+                    # Handle other FedEx API errors
+                    error_str = str(e)
+                    logger.error(f"FedEx API Error for order {order_id}: {error_str}")
                     raise InfrastructureException(
-                        f"FedEx service unavailable during validation: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
+                        f"FedEx API error: {error_str}",
+                        details={"order_id": order_id, "error": error_str, "type": "unknown"}
                     )
-                else:
-                    raise InfrastructureException(
-                        f"FedEx server error during validation: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "server_error"}
-                    )
-            except Exception as e:
-                # Handle other validation errors
-                error_str = str(e)
-                logger.error(f"FedEx validation error for order {order_id}: {error_str}")
-                raise ValidationException(
-                    f"FedEx validation failed: {error_str}",
-                    details={"order_id": order_id, "error": error_str, "type": "unknown"}
-                )
-            
-            # 10. Chiama a API FedEx per creare la spedizione (solo se validazione OK)
-            logger.info(f"Creating FedEx shipment for order {order_id} (validation passed)")
-            try:
-                fedex_response = await self.fedex_client.create_shipment(
-                    payload=fedex_payload,
-                    credentials=credentials,
-                    fedex_config=fedex_config
-                )
-            except ValueError as e:
-                # Handle FedEx client errors (400, 401, 403, 404, 422)
-                error_str = str(e)
-                logger.error(f"FedEx Client Error for order {order_id}: {error_str}")
-                
-                # Check error type for more specific handling
-                if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
-                    # Authentication/Authorization error
-                    raise ValidationException(
-                        f"FedEx authentication error: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "authentication"}
-                    )
-                elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
-                    # Forbidden - permissions issue
-                    raise ValidationException(
-                        f"FedEx access denied: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "forbidden"}
-                    )
-                elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
-                    # Resource not found
-                    raise ValidationException(
-                        f"FedEx resource not found: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "not_found"}
-                    )
-                else:
-                    # Validation errors (400, 422)
-                    raise ValidationException(
-                        f"FedEx validation error: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "validation"}
-                    )
-            except RuntimeError as e:
-                # Handle FedEx server errors (500, 503)
-                error_str = str(e)
-                logger.error(f"FedEx Server Error for order {order_id}: {error_str}")
-                
-                # Check if it's a service unavailable error
-                if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
-                    raise InfrastructureException(
-                        f"FedEx service unavailable: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
-                    )
-                else:
-                    # Internal server error (500)
-                    raise InfrastructureException(
-                        f"FedEx server error: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "server_error"}
-                    )
-            except Exception as e:
-                # Handle other FedEx API errors
-                error_str = str(e)
-                logger.error(f"FedEx API Error for order {order_id}: {error_str}")
-                raise InfrastructureException(
-                    f"FedEx API error: {error_str}",
-                    details={"order_id": order_id, "error": error_str, "type": "unknown"}
-                )
             
             # 11. Estrazione tracking numbers e label
             tracking_numbers = self.fedex_mapper.extract_tracking_from_response(fedex_response)
@@ -370,6 +392,227 @@ class FedexShipmentService(IFedexShipmentService):
             logger.error(f"Error creating FedEx shipment for order {order_id}: {str(e)}")
             raise
     
+    async def _create_mps_shipment(
+        self,
+        order_id: int,
+        order_data: Row,
+        fedex_config: FedexConfiguration,
+        receiver_address: Row,
+        receiver_country_iso: str,
+        packages: List[Row],
+        order_details: Optional[List],
+        internal_reference: str,
+        shipping_price_tax_incl: float,
+        credentials: Row,
+        carrier_api_id: int
+    ) -> Dict[str, Any]:
+        """
+        Crea spedizione FedEx MPS (Multiple-Piece Shipping) in modalità "One label at a time"
+        
+        Args:
+            order_id: ID ordine
+            order_data: Order row con dati spedizione
+            fedex_config: Configurazione FedEx
+            receiver_address: Indirizzo destinatario
+            receiver_country_iso: Codice ISO paese destinatario
+            packages: Lista di package rows
+            order_details: Dettagli ordine per commodities
+            internal_reference: Riferimento interno ordine
+            shipping_price_tax_incl: Prezzo spedizione con IVA
+            credentials: Credenziali FedEx
+            carrier_api_id: ID carrier API
+            
+        Returns:
+            Dict con dettagli spedizione (awb, tracking_numbers, etc.)
+        """
+        total_package_count = len(packages)
+        master_tracking = None
+        all_tracking_numbers = []
+        all_pdf_bytes = []
+        master_awb = None
+        
+        # Calcola il peso totale di tutti i colli
+        total_weight_all_packages = sum(
+            float(getattr(pkg, 'weight', None) or fedex_config.default_weight or 1.0)
+            for pkg in packages
+        )
+        
+        # Recupera il peso shipping (order_data.total_weight) - questo è il peso corretto per le commodities
+        shipping_total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
+        if shipping_total_weight <= 0:
+            # Fallback: usa il peso totale dei colli se shipping weight non disponibile
+            shipping_total_weight = total_weight_all_packages
+        
+        # Validazione solo del master (primo collo) prima di iniziare
+        logger.info(f"Validating FedEx MPS master piece for order {order_id}")
+        master_package = packages[0]
+        master_validation_payload = self.fedex_mapper.build_mps_shipment_request(
+            order_data=order_data,
+            fedex_config=fedex_config,
+            receiver_address=receiver_address,
+            receiver_country_iso=receiver_country_iso,
+            package=master_package,
+            sequence_number=1,
+            total_package_count=total_package_count,
+            master_tracking_id=None,  # Master non ha masterTrackingId
+            reference=internal_reference,
+            shipping_price_tax_incl=shipping_price_tax_incl,
+            order_details=order_details,
+            total_weight_all_packages=total_weight_all_packages,
+            shipping_total_weight=shipping_total_weight
+        )
+        
+        try:
+            validation_response = await self.fedex_client.validate_shipment(
+                payload=master_validation_payload,
+                credentials=credentials,
+                fedex_config=fedex_config
+            )
+            
+            errors = validation_response.get("errors", [])
+            warnings = validation_response.get("warnings", [])
+            
+            if errors:
+                error_messages = [f"{e.get('code', 'UNKNOWN')}: {e.get('message', 'Unknown error')}" for e in errors]
+                combined_errors = " | ".join(error_messages)
+                raise ValidationException(
+                    f"FedEx MPS validation failed: {combined_errors}",
+                    details={
+                        "order_id": order_id,
+                        "errors": errors,
+                        "warnings": warnings,
+                        "transaction_id": validation_response.get("transactionId")
+                    }
+                )
+            
+            if warnings:
+                logger.warning(f"FedEx MPS validation warnings for order {order_id}: {warnings}")
+                
+        except Exception as e:
+            logger.error(f"FedEx MPS validation error for order {order_id}: {str(e)}")
+            raise ValidationException(
+                f"FedEx MPS validation failed: {str(e)}",
+                details={"order_id": order_id, "error": str(e)}
+            )
+        
+        # Creazione sequenziale di tutti i colli
+        for sequence_number, package in enumerate(packages, start=1):
+            logger.info(f"Creating FedEx MPS piece {sequence_number}/{total_package_count} for order {order_id}")
+            
+            try:
+                # Costruisci payload MPS per questo collo
+                # Per MPS, tutti i colli devono avere customsClearanceDetail identico
+                mps_payload = self.fedex_mapper.build_mps_shipment_request(
+                    order_data=order_data,
+                    fedex_config=fedex_config,
+                    receiver_address=receiver_address,
+                    receiver_country_iso=receiver_country_iso,
+                    package=package,
+                    sequence_number=sequence_number,
+                    total_package_count=total_package_count,
+                    master_tracking_id=master_tracking,  # None per master, tracking per colli successivi
+                    reference=internal_reference,
+                    shipping_price_tax_incl=shipping_price_tax_incl,
+                    order_details=order_details,  # Sempre incluso per tutti i colli MPS
+                    total_weight_all_packages=total_weight_all_packages,
+                    shipping_total_weight=shipping_total_weight
+                )
+                
+                # Log payload per colli successivi al master
+                if sequence_number > 1:
+                    import json
+                    logger.info(f"FedEx MPS payload for piece {sequence_number}/{total_package_count} (order {order_id}): {json.dumps(mps_payload, indent=2, ensure_ascii=False)}")
+                
+                # Crea spedizione per questo collo
+                fedex_response = await self.fedex_client.create_shipment(
+                    payload=mps_payload,
+                    credentials=credentials,
+                    fedex_config=fedex_config
+                )
+                
+                # Estrai tracking numbers
+                tracking_numbers = self.fedex_mapper.extract_tracking_from_response(fedex_response)
+                all_tracking_numbers.extend(tracking_numbers)
+                
+                # Estrai master tracking dalla prima risposta
+                if sequence_number == 1:
+                    output = fedex_response.get("output", {})
+                    transaction_shipments = output.get("transactionShipments", [])
+                    if transaction_shipments:
+                        master_tracking = transaction_shipments[0].get("masterTrackingNumber")
+                        master_awb = master_tracking or (tracking_numbers[0] if tracking_numbers else None)
+                        logger.info(f"FedEx MPS master tracking: {master_tracking}")
+                
+                # Estrai label da packageDocuments
+                package_document_urls = self.fedex_mapper.extract_package_documents_urls(fedex_response)
+                
+                if package_document_urls:
+                    # Download PDF per questo collo
+                    for url in package_document_urls:
+                        pdf_bytes = await self._download_pdf_from_url(url)
+                        if pdf_bytes:
+                            all_pdf_bytes.append(pdf_bytes)
+                            logger.debug(f"Downloaded PDF for piece {sequence_number} from {url}, size: {len(pdf_bytes)} bytes")
+                
+            except Exception as e:
+                logger.error(f"Error creating FedEx MPS piece {sequence_number} for order {order_id}: {str(e)}", exc_info=True)
+                # Per MPS, se un collo fallisce, interrompiamo tutto
+                raise InfrastructureException(
+                    f"FedEx MPS piece {sequence_number} creation failed: {str(e)}",
+                    details={
+                        "order_id": order_id,
+                        "sequence_number": sequence_number,
+                        "total_package_count": total_package_count,
+                        "error": str(e)
+                    }
+                )
+        
+        # Unisci tutte le label PDF in un unico PDF
+        merged_label_b64 = None
+        if all_pdf_bytes:
+            try:
+                if len(all_pdf_bytes) > 1:
+                    logger.info(f"Merging {len(all_pdf_bytes)} PDFs into one for MPS shipment {master_awb}")
+                    merged_pdf_bytes = self._merge_pdf_labels(all_pdf_bytes)
+                else:
+                    merged_pdf_bytes = all_pdf_bytes[0]
+                
+                # Converti in base64
+                merged_label_b64 = base64.b64encode(merged_pdf_bytes).decode('utf-8')
+                logger.info(f"Successfully merged {len(all_pdf_bytes)} PDF(s) for MPS shipment {master_awb}, total size: {len(merged_pdf_bytes)} bytes")
+            except Exception as e:
+                logger.error(f"Error merging PDFs for MPS shipment {master_awb}: {str(e)}", exc_info=True)
+                # Continua anche se il merge fallisce
+        
+        # Salva PDF label unificato
+        if master_awb and merged_label_b64:
+            try:
+                result = await self._save_documents(
+                    awb=master_awb,
+                    label_b64=merged_label_b64,
+                    order_id=order_id,
+                    carrier_api_id=carrier_api_id
+                )
+                if result:
+                    logger.info(f"FedEx MPS document saved successfully for AWB {master_awb}, SHA256: {result.get('sha256_hash', 'N/A')}")
+            except Exception as e:
+                logger.error(f"Error saving FedEx MPS document for AWB {master_awb}: {str(e)}", exc_info=True)
+        
+        # Aggiorna tracking e stato (2 = Tracking Assegnato)
+        if master_awb:
+            try:
+                self.shipping_repository.update_tracking_and_state(order_data.id_shipping, master_awb, 2)
+            except Exception:
+                # fallback: almeno salva il tracking
+                self.shipping_repository.update_tracking(order_data.id_shipping, master_awb)
+        
+        return {
+            "awb": master_awb or "",
+            "tracking_numbers": all_tracking_numbers,
+            "master_tracking_number": master_tracking,
+            "transaction_id": None  # MPS può avere multiple transaction IDs, non restituiamo uno specifico
+        }
+    
     async def validate_shipment(self, order_id: int) -> Dict[str, Any]:
         """
         Valida spedizione FedEx prima della creazione
@@ -409,16 +652,44 @@ class FedexShipmentService(IFedexShipmentService):
             # 8. Recupero internal_reference dell'ordine
             internal_reference = order_data.internal_reference or str(order_id)
             
-            # 9. Costruzione FedEx validation payload
-            validation_payload = self.fedex_mapper.build_validate_request(
-                order_data=order_data,
-                fedex_config=fedex_config,
-                receiver_address=receiver_address,
-                receiver_country_iso=receiver_country_iso,
-                packages=packages,
-                reference=internal_reference,
-                order_details=order_details
-            )
+            # 9. Recupero price_tax_incl dalla spedizione per totalCustomsValue
+            shipping = self.shipping_repository.get_by_id(order_data.id_shipping)
+            shipping_price_tax_incl = float(shipping.price_tax_incl or 0.0) if shipping else 0.0
+            
+            # 9.1. Controllo se è MPS (Multiple-Piece Shipping)
+            package_count = len(packages) if packages else 0
+            is_mps = package_count > 1
+            
+            # 9.2. Costruzione FedEx validation payload
+            if is_mps:
+                # MPS: validare solo il master (primo collo)
+                logger.info(f"Validating FedEx MPS master piece for order {order_id}")
+                master_package = packages[0]
+                validation_payload = self.fedex_mapper.build_mps_shipment_request(
+                    order_data=order_data,
+                    fedex_config=fedex_config,
+                    receiver_address=receiver_address,
+                    receiver_country_iso=receiver_country_iso,
+                    package=master_package,
+                    sequence_number=1,
+                    total_package_count=package_count,
+                    master_tracking_id=None,  # Master non ha masterTrackingId
+                    reference=internal_reference,
+                    shipping_price_tax_incl=shipping_price_tax_incl,
+                    order_details=order_details
+                )
+            else:
+                # Single package: comportamento attuale
+                validation_payload = self.fedex_mapper.build_validate_request(
+                    order_data=order_data,
+                    fedex_config=fedex_config,
+                    receiver_address=receiver_address,
+                    receiver_country_iso=receiver_country_iso,
+                    packages=packages,
+                    reference=internal_reference,
+                    shipping_price_tax_incl=shipping_price_tax_incl,
+                    order_details=order_details
+                )
             
             # 10. Chiama a API FedEx per validazione
             logger.info(f"Validating FedEx shipment for order {order_id}")

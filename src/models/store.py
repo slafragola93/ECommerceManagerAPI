@@ -54,4 +54,26 @@ class Store(Base):
         Returns None se non esiste.
         """
         return next((c for c in self.company_fiscal_infos if c.is_default), None)
+    
+    def get_logo_path(self) -> Optional[str]:
+        """
+        Recupera il path del logo dello store.
+        
+        Se il campo logo contiene un path standardizzato (media/logos/stores/{id_store}/logo.png),
+        restituisce quel path. Altrimenti, se il campo logo è configurato, restituisce il valore
+        per retrocompatibilità. Se non configurato, restituisce None.
+        
+        Returns:
+            Optional[str]: Path del logo o None se non configurato
+        """
+        if not self.logo:
+            return None
+        
+        # Se il logo è già nel formato standardizzato, restituiscilo
+        if self.logo.startswith('media/logos/stores/'):
+            return self.logo
+        
+        # Per retrocompatibilità, se il logo è un path assoluto o altro formato,
+        # restituiscilo comunque
+        return self.logo
 

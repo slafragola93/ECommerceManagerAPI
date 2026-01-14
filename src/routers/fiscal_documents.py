@@ -464,6 +464,56 @@ async def generate_xml(
     # Genera XML
     result = fatturapa_service.generate_xml_from_fiscal_document(id_fiscal_document)
     
+    if result['status'] == 'validation_error':
+        # Restituisce errori di validazione dettagliati
+        errors = result.get('errors', [])
+        
+        # Raggruppa errori per campo per evitare duplicati
+        errors_by_field = {}
+        for err in errors:
+            field = err.get('field', 'Campo sconosciuto')
+            if field not in errors_by_field:
+                errors_by_field[field] = []
+            errors_by_field[field].append({
+                "message": err.get('message', 'Errore di validazione'),
+                "rule": err.get('rule', 'unknown'),
+                "value": err.get('value')
+            })
+        
+        # Crea messaggio principale
+        error_count = len(errors)
+        main_message = f"Validazione XML FatturaPA fallita: {error_count} errore/i trovato/i"
+        
+        # Formatta errori in modo leggibile
+        formatted_errors = []
+        for field, field_errors in errors_by_field.items():
+            for field_err in field_errors:
+                formatted_errors.append({
+                    "field": field,
+                    "message": field_err["message"],
+                    "rule": field_err["rule"],
+                    "value": field_err["value"]
+                })
+        
+        # Usa BaseApplicationException per formattare correttamente la risposta
+        from src.core.exceptions import BaseApplicationException, ErrorCode
+        from fastapi.responses import JSONResponse
+        
+        exc = BaseApplicationException(
+            message=main_message,
+            error_code=ErrorCode.VALIDATION_ERROR,
+            details={
+                "error_count": error_count,
+                "errors": formatted_errors
+            },
+            status_code=422
+        )
+        
+        return JSONResponse(
+            status_code=422,
+            content=exc.to_dict()
+        )
+    
     if result['status'] == 'error':
         raise HTTPException(status_code=400, detail=result.get('message', 'Errore generazione XML'))
     

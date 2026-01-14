@@ -195,15 +195,32 @@ class DDTService:
         # Recupera dati mittente
         sender_config = self.order_doc_service.get_sender_config()
         
-        # Recupera il logo dalla configurazione company_logo
-        company_logo_config = self.db.query(AppConfiguration).filter(
-            and_(
-                AppConfiguration.category == "company_info",
-                AppConfiguration.name == "company_logo"
-            )
-        ).first()
+        # Recupera il logo: prima prova logo store, poi fallback a logo aziendale
+        logo_path = None
+        if ddt.id_store:
+            from src.models.store import Store
+            from src.services.media.media_utils import get_store_logo_path
+            store = self.db.query(Store).filter(Store.id_store == ddt.id_store).first()
+            if store:
+                # Recupera logo aziendale come fallback
+                company_logo_config = self.db.query(AppConfiguration).filter(
+                    and_(
+                        AppConfiguration.category == "company_info",
+                        AppConfiguration.name == "company_logo"
+                    )
+                ).first()
+                fallback_logo = company_logo_config.value if company_logo_config else None
+                logo_path = get_store_logo_path(store, fallback_path=fallback_logo)
         
-        logo_path = company_logo_config.value if company_logo_config else None
+        # Se non c'è store o logo store non disponibile, usa logo aziendale
+        if not logo_path:
+            company_logo_config = self.db.query(AppConfiguration).filter(
+                and_(
+                    AppConfiguration.category == "company_info",
+                    AppConfiguration.name == "company_logo"
+                )
+            ).first()
+            logo_path = company_logo_config.value if company_logo_config else None
         
         sender_schema = DDTSenderSchema(
             company_name=sender_config.get("ddt_sender_company_name", ""),

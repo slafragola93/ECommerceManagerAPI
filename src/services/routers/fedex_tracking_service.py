@@ -45,7 +45,14 @@ class FedexTrackingService(IFedexTrackingService):
             # Get FedEx configuration with scope TRACK
             fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.TRACK)
             if not fedex_config:
-                raise ValueError(f"FedEx configuration not found for carrier_api_id {carrier_api_id} with scope TRACK")
+                # Fallback: try to use SHIP scope if TRACK doesn't exist (for backward compatibility)
+                logger.warning(f"FedEx configuration with scope TRACK not found for carrier_api_id {carrier_api_id}, trying SHIP scope as fallback")
+                fedex_config = self.fedex_config_repository.get_by_carrier_api_id_and_scope(carrier_api_id, FedexScopeEnum.SHIP)
+                if not fedex_config:
+                    raise ValueError(
+                        f"FedEx configuration not found for carrier_api_id {carrier_api_id} with scope TRACK or SHIP. "
+                        f"Please create a FedEx configuration with scope TRACK for tracking operations."
+                    )
             
             # Call FedEx API
             logger.info(f"Getting FedEx tracking for {len(tracking_numbers)} shipments")

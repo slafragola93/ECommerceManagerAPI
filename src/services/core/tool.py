@@ -446,3 +446,40 @@ def convert_decimals_to_float(obj: Any) -> Any:
         return [convert_decimals_to_float(item) for item in obj]
     else:
         return obj
+
+
+def valida_piva(piva: str) -> tuple[bool, str | None]:
+    """
+    Valida una Partita IVA italiana usando l'algoritmo di controllo del check digit
+    
+    Args:
+        piva: Stringa contenente la P.IVA da validare
+    
+    Returns:
+        tuple[bool, str | None]: (True, None) se valida, (False, messaggio_errore) se non valida
+    
+    Esempio:
+        valida_piva("12345678901") → (True, None) se valida
+        valida_piva("12345678900") → (False, "P.IVA non valida: check digit errato")
+    """
+    if not piva or not piva.isdigit() or len(piva) != 11:
+        return False, "P.IVA deve contenere 11 cifre"
+
+    digits = [int(d) for d in piva]
+
+    somma = 0
+    for i in range(10):
+        d = digits[i]
+        # posizioni: 1-based
+        if (i + 1) % 2 == 0:  # pari
+            d *= 2
+            if d > 9:
+                d -= 9
+        somma += d
+
+    check_calcolato = (10 - (somma % 10)) % 10
+
+    if check_calcolato != digits[10]:
+        return False, "P.IVA non valida: check digit errato"
+
+    return True, None

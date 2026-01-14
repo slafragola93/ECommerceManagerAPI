@@ -8,6 +8,7 @@ from io import BytesIO
 import os
 
 from src.services.pdf.base_pdf_service import BasePDFService
+from src.services.media.media_utils import get_store_logo_path
 
 
 class FiscalDocumentPDFService(BasePDFService):
@@ -54,8 +55,13 @@ class FiscalDocumentPDFService(BasePDFService):
             doc_number = fiscal_document.document_number or fiscal_document.internal_number or "N/A"
             doc_date = fiscal_document.date_add.strftime("%d/%m/%Y") if fiscal_document.date_add else ""
             
-            # Recupera logo
+            # Recupera logo: prima prova logo store, poi fallback a logo aziendale
             logo_path = company_config.get('company_logo', 'media/logos/logo.png')
+            if fiscal_document.id_store and db:
+                from src.models.store import Store
+                store = db.query(Store).filter(Store.id_store == fiscal_document.id_store).first()
+                if store:
+                    logo_path = get_store_logo_path(store, fallback_path=logo_path)
             
             # Inizializza PDF
             pdf = self.create_pdf(margin=15)

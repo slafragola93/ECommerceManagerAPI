@@ -125,20 +125,77 @@ class ConditionalGetMiddleware(BaseHTTPMiddleware):
             return response
         
         # Process request normally
-        response = await call_next(request)
-        
-        # Add caching headers to successful responses
-        if isinstance(response, JSONResponse) and response.status_code == 200:
-            response.headers["etag"] = etag
-            response.headers["cache-control"] = f"public, max-age={self.cache_control_ttl}"
-            response.headers["vary"] = "Accept, Authorization"
+        try:
+            response = await call_next(request)
             
-            # Add last-modified if available
-            last_modified = self._get_last_modified(request)
-            if last_modified:
-                response.headers["last-modified"] = last_modified
-        
-        return response
+            # Check if response is None (should not happen, but handle gracefully)
+            if response is None:
+                logger.error(
+                    f"None response returned for {request.method} {request.url.path}",
+                    extra={
+                        "method": request.method,
+                        "path": str(request.url.path)
+                    }
+                )
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error_code": "NO_RESPONSE",
+                        "message": "No response returned from route handler",
+                        "details": {
+                            "path": str(request.url.path),
+                            "method": request.method
+                        },
+                        "status_code": 500
+                    }
+                )
+            
+            # Add caching headers to successful responses
+            if isinstance(response, JSONResponse) and response.status_code == 200:
+                response.headers["etag"] = etag
+                response.headers["cache-control"] = f"public, max-age={self.cache_control_ttl}"
+                response.headers["vary"] = "Accept, Authorization"
+                
+                # Add last-modified if available
+                last_modified = self._get_last_modified(request)
+                if last_modified:
+                    response.headers["last-modified"] = last_modified
+            
+            return response
+            
+        except (RuntimeError, ValueError, TypeError) as e:
+            # Handle "No response returned" and similar errors from call_next
+            error_message = str(e).lower()
+            if any(keyword in error_message for keyword in ["no response returned", "no response", "response returned", "endofstream"]):
+                logger.error(
+                    f"No response returned for {request.method} {request.url.path}: {type(e).__name__} - {str(e)}",
+                    extra={
+                        "method": request.method,
+                        "path": str(request.url.path),
+                        "error_type": type(e).__name__,
+                        "error": str(e)
+                    },
+                    exc_info=True
+                )
+                # Return a proper error response instead of letting the exception propagate
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error_code": "NO_RESPONSE",
+                        "message": "No response returned from route handler",
+                        "details": {
+                            "path": str(request.url.path),
+                            "method": request.method,
+                            "error_type": type(e).__name__
+                        },
+                        "status_code": 500
+                    }
+                )
+            # Re-raise other exceptions of these types
+            raise
+        except Exception as e:
+            # Re-raise other exceptions to be handled by exception handlers
+            raise
     
     def _is_cacheable_endpoint(self, request: Request) -> bool:
         """Check if endpoint should be cached"""
@@ -253,29 +310,78 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Add cache control headers"""
         
-        response = await call_next(request)
-        
-        # Add default cache headers for successful GET requests
-        if (request.method == "GET" and 
-            response.status_code == 200 and 
-            isinstance(response, JSONResponse)):
+        try:
+            response = await call_next(request)
             
-            # Check if Cache-Control is already set
-            if "cache-control" not in response.headers:
-                response.headers["cache-control"] = f"public, max-age={self.settings.cache_default_ttl}"
+            if response is None:
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error_code": "NO_RESPONSE",
+                        "message": "No response returned from route handler",
+                        "details": {
+                            "path": str(request.url.path),
+                            "method": request.method
+                        },
+                        "status_code": 500
+                    }
+                )
             
-            # Add Vary header for proper caching
-            if "vary" not in response.headers:
-                response.headers["vary"] = "Accept, Authorization"
-        
-        # Add no-cache headers for non-GET requests and error responses
-        elif (request.method != "GET" or 
-              response.status_code >= 400):
+            # Add default cache headers for successful GET requests
+            if (request.method == "GET" and 
+                response.status_code == 200 and 
+                isinstance(response, JSONResponse)):
+                
+                # Check if Cache-Control is already set
+                if "cache-control" not in response.headers:
+                    response.headers["cache-control"] = f"public, max-age={self.settings.cache_default_ttl}"
+                
+                # Add Vary header for proper caching
+                if "vary" not in response.headers:
+                    response.headers["vary"] = "Accept, Authorization"
             
-            if "cache-control" not in response.headers:
-                response.headers["cache-control"] = "no-cache, no-store, must-revalidate"
-        
-        return response
+            # Add no-cache headers for non-GET requests and error responses
+            elif (request.method != "GET" or 
+                  response.status_code >= 400):
+                
+                if "cache-control" not in response.headers:
+                    response.headers["cache-control"] = "no-cache, no-store, must-revalidate"
+            
+            return response
+            
+        except (RuntimeError, ValueError, TypeError) as exc:
+            # Handle "No response returned" and similar errors from call_next
+            error_message = str(exc).lower()
+            if any(keyword in error_message for keyword in ["no response returned", "no response", "response returned", "endofstream"]):
+                logger.error(
+                    f"No response returned for {request.method} {request.url.path}: {type(exc).__name__} - {str(exc)}",
+                    extra={
+                        "method": request.method,
+                        "path": str(request.url.path),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)
+                    },
+                    exc_info=True
+                )
+                # Return a proper error response instead of letting the exception propagate
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error_code": "NO_RESPONSE",
+                        "message": "No response returned from route handler",
+                        "details": {
+                            "path": str(request.url.path),
+                            "method": request.method,
+                            "error_type": type(exc).__name__
+                        },
+                        "status_code": 500
+                    }
+                )
+            # Re-raise other exceptions of these types
+            raise
+        except Exception as exc:
+            # Re-raise other exceptions to be handled by exception handlers
+            raise
 
 
 def setup_conditional_middleware(app, cache_control_ttl: int = 300):
