@@ -14,7 +14,6 @@ from .platform import Platform
 from .lang import Lang
 from .sectional import Sectional
 from .message import Message
-from .configuration import Configuration
 from .app_configuration import AppConfiguration
 from .payment import Payment
 from .tax import Tax

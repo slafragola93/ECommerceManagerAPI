@@ -8,6 +8,7 @@ from src.models.order_detail import OrderDetail
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
+from src.models.order_document import OrderDocument
 from src.schemas.order_detail_schema import OrderDetailSchema
 
 class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailRepository):
@@ -146,6 +147,83 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
             "note": order_detail.note,
             "img_url": img_url
         }
+    
+    def get_by_order_detail_and_order(self, id_order_detail: int, id_order: int) -> Optional[OrderDetail]:
+        """
+        Ottiene un OrderDetail per id_order_detail e id_order
+        
+        Args:
+            id_order_detail: ID dell'OrderDetail
+            id_order: ID dell'ordine
+            
+        Returns:
+            OrderDetail se trovato, None altrimenti
+        """
+        return self._session.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == id_order_detail,
+                OrderDetail.id_order == id_order
+            ).first()
+    
+    def check_order_detail(self, id_order_detail: int, id_order: int) -> Optional[OrderDetail]:
+        """
+        Verifica e ottiene un OrderDetail per id_order_detail e id_order.
+        Alias di get_by_order_detail_and_order per compatibilità.
+        
+        Args:
+            id_order_detail: ID dell'OrderDetail
+            id_order: ID dell'ordine
+            
+        Returns:
+            OrderDetail se trovato, None altrimenti
+        """
+        return self.get_by_order_detail_and_order(id_order_detail, id_order)
+    
+    def get_first_order_detail_by_id(self, id_order_detail: int) -> Optional[OrderDetail]:
+        """
+        Ottiene il primo OrderDetail per id_order_detail
+        
+        Args:
+            id_order_detail: ID dell'OrderDetail
+            
+        Returns:
+            OrderDetail se trovato, None altrimenti
+        """
+        return self._session.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == id_order_detail
+            ).first()
+    
+    def get_by_id_order_detail(self, id_order_detail: int) -> Optional[OrderDetail]:
+        """
+        Ottiene un OrderDetail per id_order_detail.
+        Alias di get_first_order_detail_by_id per compatibilità.
+        
+        Args:
+            id_order_detail: ID dell'OrderDetail
+            
+        Returns:
+            OrderDetail se trovato, None altrimenti
+        """
+        return self.get_first_order_detail_by_id(id_order_detail)
+    
+    
+    def get_by_order_document_and_order_zero(
+        self, 
+        id_order_document: int
+    ) -> List[OrderDetail]:
+        """
+        Ottiene tutti gli OrderDetail per un documento ordine con id_order=0
+        (solo righe documento, non righe ordine)
+        
+        Args:
+            id_order_document: ID del documento ordine
+            
+        Returns:
+            Lista di OrderDetail
+        """
+        return self._session.query(OrderDetail).filter(
+                OrderDetail.id_order_document == id_order_document,
+                OrderDetail.id_order == 0
+            ).all()
     
     def bulk_create_csv_import(self, data_list: List[OrderDetailSchema], batch_size: int = 1000) -> int:
         """

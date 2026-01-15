@@ -11,6 +11,7 @@ from src.models.order_document import OrderDocument
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
+from src.repository.tax_repository import TaxRepository
 from src.schemas.shipping_schema import ShippingSchema
 import logging
 
@@ -21,6 +22,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
     
     def __init__(self, session: Session):
         super().__init__(session, Shipping)
+        self._tax_repository = TaxRepository(session)
     
     def get_all(self, **filters) -> List[Shipping]:
         """Ottiene tutte le entità con filtri opzionali"""
@@ -58,21 +60,31 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         Crea un shipping e restituisce l'ID.
         IMPORTANTE: Questo metodo viene chiamato solo quando necessario durante la creazione dell'ordine.
         """
-        import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id chiamato - id_order: {id_order}")
         
         try:
-            # Converti ShippingSchema in dict se necessario
+            # Converti ShippingSchema o Shipping in dict se necessario
             if isinstance(data, ShippingSchema):
                 shipping_data = data.model_dump()
+            elif isinstance(data, Shipping):
+                # Se è un oggetto Shipping, convertilo in dict
+                shipping_data = {
+                    "id_carrier_api": data.id_carrier_api,
+                    "id_shipping_state": data.id_shipping_state,
+                    "weight": data.weight,
+                    "price_tax_incl": data.price_tax_incl,
+                    "price_tax_excl": data.price_tax_excl,
+                    "shipping_message": data.shipping_message,
+                    "tracking": data.tracking if hasattr(data, 'tracking') else None,
+                    "id_tax": data.id_tax if hasattr(data, 'id_tax') else None
+                }
             else:
                 shipping_data = data
             
             # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
             if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
                 from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
-                from src.repository.tax_repository import TaxRepository
                 
                 tax_percentage = None
                 # Se shipping è collegato a un ordine, recupera id_country da address_delivery dell'ordine
@@ -84,8 +96,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
                 
                 # Se non trovato, usa percentuale default da app_configuration
                 if tax_percentage is None:
-                    tax_repo = TaxRepository(self._session)
-                    tax_percentage = tax_repo.get_default_tax_percentage_from_app_config(default=22.0)
+                    tax_percentage = self._tax_repository.get_default_tax_percentage_from_app_config(default=22.0)
                 
                 shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
             
@@ -122,6 +133,35 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             return result
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving carrier info: {str(e)}")
+    
+
+        """
+        Imposta il tracking number e aggiorna lo stato a 2 (Tracking Assegnato) se è in stato 1.
+        
+        Args:
+            id_shipping: ID della spedizione
+            tracking: Numero di tracking (AWB)
+        """
+        try:
+            shipping = self._session.query(Shipping).filter(
+                Shipping.id_shipping == id_shipping
+            ).first()
+            
+            if not shipping:
+                raise InfrastructureException(f"Shipping {id_shipping} not found")
+            
+            shipping.tracking = tracking
+            
+            # Aggiorna lo stato solo se è in stato 1 (In preparazione)
+            if shipping.id_shipping_state == 1:
+                shipping.id_shipping_state = 2  # Tracking Assegnato
+            
+            self._session.commit()
+        except InfrastructureException:
+            raise
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(f"Database error setting tracking: {str(e)}")
     
     def update_tracking(self, id_shipping: int, tracking: str) -> None:
         """Update tracking field"""
@@ -163,7 +203,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         Args:
             tracking: Tracking number
             state_id: New shipping state ID
-            carrier_type: Optional carrier type (BRT, DHL, FEDEX) for source enum
+            carrier_type: Optional carrier type (BRT, DHL, FEDEX) 
             event_code: Optional tracking event code
             event_description: Optional tracking event description
         """
@@ -183,36 +223,6 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             if old_state_id == state_id:
                 return 0
             
-            # Determina il source enum in base al carrier_type
-            from src.models.shipments_history import SourceEnum
-            source = SourceEnum.API_UPDATE  # Default
-            
-            if carrier_type:
-                carrier_type_upper = carrier_type.upper()
-                if carrier_type_upper == "BRT":
-                    source = SourceEnum.BRT_TRACKING
-                elif carrier_type_upper == "DHL":
-                    source = SourceEnum.DHL_TRACKING
-                elif carrier_type_upper == "FEDEX":
-                    source = SourceEnum.FEDEX_TRACKING
-            else:
-                # Prova a recuperare il carrier_type dal carrier_api
-                try:
-                    from src.models.carrier_api import CarrierApi
-                    carrier = self._session.query(CarrierApi).filter(
-                        CarrierApi.id_carrier_api == shipping.id_carrier_api
-                    ).first()
-                    if carrier:
-                        carrier_type_upper = carrier.carrier_type.value.upper()
-                        if carrier_type_upper == "BRT":
-                            source = SourceEnum.BRT_TRACKING
-                        elif carrier_type_upper == "DHL":
-                            source = SourceEnum.DHL_TRACKING
-                        elif carrier_type_upper == "FEDEX":
-                            source = SourceEnum.FEDEX_TRACKING
-                except Exception:
-                    pass  # Usa default se non riesce a recuperare
-            
             # Aggiorna lo stato
             stmt = update(Shipping).where(
                 Shipping.tracking == tracking
@@ -229,8 +239,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
                 id_shipping_state_previous=old_state_id,
                 tracking_event_code=event_code,
                 tracking_event_description=event_description,
-                changed_at=datetime.now(),
-                source=source
+                changed_at=datetime.now()
             )
             self._session.add(history_record)
             
@@ -385,3 +394,83 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error checking tracking events: {str(e)}")
     
+    def get_carrier_id_by_tracking(self, tracking: str) -> Optional[int]:
+        """
+        Recupera id_carrier_api da Shipping usando il tracking number.
+        
+        Args:
+            tracking: Numero di tracking (AWB) della spedizione
+            
+        Returns:
+            id_carrier_api se trovato, None altrimenti
+        """
+        try:
+            stmt = select(Shipping.id_carrier_api).where(Shipping.tracking == tracking)
+            result = self._session.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving carrier by tracking: {str(e)}")
+    
+    def get_shipped_quantity_by_product(
+        self,
+        id_order: int,
+        id_product: Optional[int],
+        product_reference: Optional[str]
+    ) -> int:
+        """
+        Calcola la quantità già spedita per un prodotto in un ordine.
+        Cerca in OrderDocument type=shipping per lo stesso ordine.
+        
+        Args:
+            id_order: ID dell'ordine
+            id_product: ID del prodotto (opzionale)
+            product_reference: Riferimento prodotto (opzionale)
+            
+        Returns:
+            Quantità già spedita (int)
+        """
+        from src.models.order_detail import OrderDetail
+            
+        query = self._session.query(func.coalesce(func.sum(OrderDetail.product_qty), 0)).join(
+            OrderDocument, OrderDetail.id_order_document == OrderDocument.id_order_document
+        ).filter(
+            OrderDocument.type_document == "shipping",
+            OrderDocument.id_order == id_order,
+            OrderDetail.id_order == 0  # Solo righe documento, non ordine
+        )
+        
+        if id_product:
+            query = query.filter(OrderDetail.id_product == id_product)
+        if product_reference:
+            query = query.filter(OrderDetail.product_reference == product_reference)
+        
+        result = query.scalar()
+        return int(result) if result else 0
+    
+    def get_by_id_or_raise(self, id_shipping: int) -> Shipping:
+        """
+        Ottiene uno Shipping per ID o solleva NotFoundException se non trovato.
+        
+        Args:
+            id_shipping: ID della spedizione
+            
+        Returns:
+            Shipping se trovato
+            
+        Raises:
+            NotFoundException: Se lo shipping non viene trovato
+        """
+        try:
+            shipping = self._session.query(Shipping).filter(
+                Shipping.id_shipping == id_shipping
+            ).first()
+            
+            if not shipping:
+                from src.core.exceptions import NotFoundException
+                raise NotFoundException("Shipping", id_shipping)
+            
+            return shipping
+        except NotFoundException:
+            raise
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving shipping {id_shipping}: {str(e)}")

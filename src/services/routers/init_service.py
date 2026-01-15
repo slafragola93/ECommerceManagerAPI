@@ -306,10 +306,11 @@ class InitService:
             
             result = []
             for s in stores:
+                logo_path = s.get_logo_path() if s.logo else None
                 store_dict = {
                     "id_store": s.id_store,
                     "name": s.name,
-                    "logo": s.logo
+                    "logo": logo_path
                 }
                 result.append(store_dict)
             return result

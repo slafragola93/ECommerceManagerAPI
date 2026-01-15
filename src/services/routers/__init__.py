@@ -14,7 +14,6 @@ from .brand_service import BrandService
 from .carrier_assignment_service import CarrierAssignmentService
 from .carrier_service import CarrierService
 from .category_service import CategoryService
-from .configuration_service import ConfigurationService
 from .country_service import CountryService
 from .customer_service import CustomerService
 from .ddt_service import DDTService
@@ -45,7 +44,6 @@ __all__ = [
     "CarrierAssignmentService",
     "CarrierService",
     "CategoryService",
-    "ConfigurationService",
     "CountryService",
     "CustomerService",
     "DDTService",

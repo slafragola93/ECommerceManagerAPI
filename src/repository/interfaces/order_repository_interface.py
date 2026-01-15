@@ -124,3 +124,8 @@ class IOrderRepository(ABC):
     def get_shipment_data(self, order_id: int) -> Row:
         """Recupera solo i campi necessari per la creazione della spedizione (query idratata)"""
         pass
+    
+    @abstractmethod
+    def get_id_shipping_by_order_id(self, order_id: int) -> Optional[int]:
+        """Recupera l'ID della spedizione associata a un ordine"""
+        pass

@@ -1,15 +1,6 @@
-from sqlalchemy import Integer, Column, String, Text, ForeignKey, DateTime, Enum
+from sqlalchemy import Integer, Column, String, Text, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from src.database import Base
-import enum
-
-
-class SourceEnum(str, enum.Enum):
-    MANUAL = "manual"
-    DHL_TRACKING = "dhl_tracking"
-    BRT_TRACKING = "brt_tracking"
-    FEDEX_TRACKING = "fedex_tracking"
-    API_UPDATE = "api_update"
 
 
 class ShipmentsHistory(Base):
@@ -22,7 +13,6 @@ class ShipmentsHistory(Base):
     tracking_event_code = Column(String(10), nullable=True)  # typeCode DHL (PU, OK, ecc.)
     tracking_event_description = Column(Text, nullable=True)
     changed_at = Column(DateTime, nullable=False, index=True)
-    source = Column(Enum(SourceEnum), nullable=False, default=SourceEnum.DHL_TRACKING)
     
     # Relationships
     shipping = relationship("Shipping")

@@ -238,7 +238,5 @@ async def get_live_price(
     product_service: IProductService = Depends(get_product_service)
 ):
     """Recupera il prezzo live di un prodotto demandando la logica al service applicativo."""
-
     price = await product_service.get_live_price(id_origin)
-
     return {"ecommerce_price": price}

@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, Query, Path, Body
 from typing import List, Optional
 import logging
 from sqlalchemy.orm import Session
-
-from sqlalchemy import select
 from src.core.container_config import get_configured_container
 from src.factories.services.carrier_service_factory import CarrierServiceFactory
+from src.repository.api_carrier_repository import ApiCarrierRepository
 from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
+from src.repository.interfaces.order_repository_interface import IOrderRepository
+from src.repository.interfaces.shipment_document_repository_interface import IShipmentDocumentRepository
+from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.schemas.dhl_tracking_schema import NormalizedTrackingResponseSchema
 from src.schemas.shipment_schema import (
     BulkShipmentCreateRequestSchema,
@@ -14,8 +16,17 @@ from src.schemas.shipment_schema import (
     BulkShipmentCreateSuccess,
     BulkShipmentCreateError
 )
+from src.models.order_document import OrderDocument
+from sqlalchemy.orm import joinedload, selectinload
+from src.schemas.shipping_schema import (
+    MultiShippingDocumentCreateRequestSchema,
+    MultiShippingDocumentResponseSchema,
+    OrderShipmentStatusResponseSchema,
+    MultiShippingDocumentListResponseSchema
+)
 from src.database import get_db
 from src.repository.shipping_repository import ShippingRepository
+from src.services.routers.shipping_service import ShippingService
 from src.repository.shipment_document_repository import ShipmentDocumentRepository
 from src.core.exceptions import (
     NotFoundException,
@@ -33,6 +44,53 @@ from src.repository.order_repository import OrderRepository
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/shippings", tags=["Shipments"])
+
+def get_repository(db: Session = Depends(get_db)) -> IOrderRepository:
+    """Dependency injection per Order Repository."""
+    return OrderRepository(db)
+
+def get_shipping_repository(db: Session = Depends(get_db)) -> IShippingRepository:
+    """Dependency injection per Shipping Repository."""
+    return ShippingRepository(db)
+
+def get_shipment_document_repository(db: Session = Depends(get_db)) -> IShipmentDocumentRepository:
+    """Dependency injection per Shipment Document Repository."""
+    return ShipmentDocumentRepository(db)
+
+def get_carrier_repository(db: Session = Depends(get_db)) -> IApiCarrierRepository:
+    """Dependency injection per Carrier Repository."""
+    return ApiCarrierRepository(db)
+
+def _create_bulk_shipment_error(
+    order_id: int,
+    exception: Exception,
+    error_type: str,
+    default_category: Optional[str] = None
+) -> BulkShipmentCreateError:
+    """
+    Crea un BulkShipmentCreateError da un'eccezione.
+    Segue il principio Single Responsibility: una funzione per creare l'errore.
+    
+    Args:
+        order_id: ID dell'ordine
+        exception: L'eccezione da cui estrarre i dettagli
+        error_type: Tipo di errore (es. "NOT_FOUND", "BUSINESS_RULE_ERROR")
+        default_category: Categoria di errore di default se non presente nei details
+        
+    Returns:
+        BulkShipmentCreateError configurato
+    """
+    error_details = _extract_carrier_error_details(exception, default_category)
+    
+    return BulkShipmentCreateError(
+        order_id=order_id,
+        error_type=error_type,
+        error_message=str(exception),
+        carrier_error_code=error_details.get("carrier_error_code"),
+        carrier_error_description=error_details.get("carrier_error_description"),
+        carrier_name=error_details.get("carrier_name"),
+        error_category=error_details.get("error_category", default_category)
+    )
 
 
 def _extract_carrier_error_details(exception: Exception, default_category: Optional[str] = None) -> dict:
@@ -102,6 +160,9 @@ def get_carrier_service_factory(
 @router.post("/{order_id}/create", response_model=dict)
 async def create_shipment(
     order_id: int,
+    or_repo: OrderRepository = Depends(get_repository),
+    shipping_repo: ShippingRepository = Depends(get_shipping_repository),
+    id_order_document: Optional[int] = Query(None, description="ID OrderDocument type=shipping"),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
@@ -112,28 +173,52 @@ async def create_shipment(
     Il sistema determina automaticamente quale corriere usare in base a
     Shipping.id_carrier_api associato all'ordine.
     
+    Se id_order_document è fornito, usa i dati del documento di spedizione multipla.
+    
     Args:
         order_id: ID dell'ordine per cui creare la spedizione
+        id_order_document: ID opzionale del OrderDocument type=shipping
         factory: Factory per selezionare il service corretto
         db: Database session
         
     Returns:
         Dict con dettagli spedizione (deve includere 'awb')
     """
-    # 1. Recupera id_carrier_api da Shipping tramite Order
-    from src.models.order import Order
-    
-    stmt = select(Order.id_shipping).where(Order.id_order == order_id)
-    result = db.execute(stmt)
-    id_shipping = result.scalar_one_or_none()
-    
-    if not id_shipping:
-        raise NotFoundException("Order", order_id, {"order_id": order_id, "reason": "Order has no shipping"})
-    
-    # 2. Recupera Shipping per ottenere id_carrier_api
-    shipping_repo = ShippingRepository(db)
-    shipping_info = shipping_repo.get_carrier_info(id_shipping)
-    carrier_api_id = shipping_info.id_carrier_api
+
+    if id_order_document:
+        # Usa OrderDocument per recuperare i dati
+        order_doc = db.query(OrderDocument).options(
+            joinedload(OrderDocument.shipping),
+            joinedload(OrderDocument.address_delivery),
+            selectinload(OrderDocument.order_packages)
+        ).filter(
+            OrderDocument.id_order_document == id_order_document,
+            OrderDocument.type_document == "shipping"
+        ).first()
+        
+        if not order_doc:
+            raise NotFoundException("OrderDocument", id_order_document)
+        
+        id_shipping = order_doc.id_shipping
+        if not id_shipping:
+            raise NotFoundException("Shipping", None, {"id_order_document": id_order_document, "reason": "OrderDocument has no shipping"})
+        
+        # Recupera Shipping per ottenere id_carrier_api
+        shipping_info = shipping_repo.get_carrier_info(id_shipping)
+        carrier_api_id = shipping_info.id_carrier_api
+        
+        # Usa id_order dal documento invece del parametro
+        order_id = order_doc.id_order
+    else:
+        # Comportamento esistente: usa Order.id_shipping
+        id_shipping = or_repo.get_id_shipping_by_order_id(order_id)
+        
+        if not id_shipping:
+            raise NotFoundException("Order", order_id, {"order_id": order_id, "reason": "Order has no shipping"})
+        
+        # Recupera Shipping per ottenere id_carrier_api
+        shipping_info = shipping_repo.get_carrier_info(id_shipping)
+        carrier_api_id = shipping_info.id_carrier_api
     
     if not carrier_api_id:
         raise BusinessRuleException(
@@ -147,10 +232,15 @@ async def create_shipment(
     # 4. Crea spedizione
     logger.info(f"Creating shipment for order {order_id} with carrier_api_id {carrier_api_id}")
     result = await shipment_service.create_shipment(order_id)
+    awb = result.get("awb", "") 
+    # 4.1. Se id_order_document è presente, aggiorna il tracking dello shipping dell'OrderDocument
+    # (i servizi aggiornano lo shipping dell'ordine, ma qui dobbiamo aggiornare quello del documento)
+    if id_order_document and id_shipping:
+        if awb:
+            shipping_repo.update_tracking(id_shipping, awb)
     
     # 5. Emetti evento per creazione spedizione
     try:
-        awb = result.get("awb", "") if isinstance(result, dict) else ""
         event = Event(
             event_type=EventType.SHIPMENT_CREATED.value,
             data={
@@ -161,7 +251,8 @@ async def create_shipment(
             },
             metadata={
                 "source": "shipments.create_shipment",
-                "id_order": order_id
+                "id_order": order_id,
+                "id_order_document": id_order_document if 'id_order_document' in locals() else None
             }
         )
         emit_event(event)
@@ -172,7 +263,7 @@ async def create_shipment(
     
     # 6. Aggiorna stato ordine a 4 ("Spedizione Confermata")
     try:
-        order_service = OrderService(OrderRepository(db))
+        order_service = OrderService(or_repo)
         await order_service.update_order_status(order_id, 4)
         logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
     except Exception as e:
@@ -185,6 +276,8 @@ async def create_shipment(
 @router.post("/bulk-create", response_model=BulkShipmentCreateResponseSchema)
 async def bulk_create_shipments(
     request: BulkShipmentCreateRequestSchema = Body(...),
+    or_repo: IOrderRepository = Depends(get_repository),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
@@ -209,7 +302,7 @@ async def bulk_create_shipments(
         - failed: Lista di errori (order_id, error_type, error_message)
         - summary: Riepilogo (total, successful_count, failed_count)
     """
-    from src.models.order import Order
+    
     
     successful = []
     failed = []
@@ -220,9 +313,7 @@ async def bulk_create_shipments(
     for order_id in request.order_ids:
         try:
             # 1. Recupera id_shipping da Order
-            stmt = select(Order.id_shipping).where(Order.id_order == order_id)
-            result = db.execute(stmt)
-            id_shipping = result.scalar_one_or_none()
+            id_shipping = or_repo.get_id_shipping_by_order_id(order_id)
             
             if not id_shipping:
                 failed.append(BulkShipmentCreateError(
@@ -234,7 +325,6 @@ async def bulk_create_shipments(
                 continue
             
             # 2. Recupera Shipping per ottenere id_carrier_api
-            shipping_repo = ShippingRepository(db)
             shipping_info = shipping_repo.get_carrier_info(id_shipping)
             carrier_api_id = shipping_info.id_carrier_api
             
@@ -294,101 +384,32 @@ async def bulk_create_shipments(
                 logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id} in bulk operation: {str(e)}", exc_info=True)
             
             # Aggiorna stato ordine a 4 ("Spedizione Confermata")
-            try:
-                order_service = OrderService(OrderRepository(db))
-                await order_service.update_order_status(order_id, 4)
-                logger.info(f"Order {order_id} status updated to 4 (Spedito) after shipment creation in bulk operation")
-            except Exception as e:
-                # Non bloccare il processing in caso di errori nell'aggiornamento dello stato
-                logger.warning(f"Failed to update order {order_id} status to 4 in bulk operation: {str(e)}", exc_info=True)
+            # Il service gestisce le eccezioni internamente
+            order_service = OrderService(or_repo)
+            result = await order_service.update_order_status(order_id, 4)
+
+        except (NotFoundException, BusinessRuleException, ValidationException, 
+                AuthenticationException, InfrastructureException) as e:
+            # Mapping tra eccezioni e configurazioni di errore
+            error_config = {
+                NotFoundException: ("NOT_FOUND", "not_found", logger.warning),
+                BusinessRuleException: ("BUSINESS_RULE_ERROR", "business", logger.warning),
+                ValidationException: ("VALIDATION_ERROR", "validation", logger.warning),
+                AuthenticationException: ("AUTHENTICATION_ERROR", "authentication", logger.warning),
+                InfrastructureException: ("INFRASTRUCTURE_ERROR", "infrastructure", logger.warning)
+            }
             
-        except NotFoundException as e:
-            # Extract carrier error details in generic way
-            error_details = _extract_carrier_error_details(e, "not_found")
-            
-            failed.append(BulkShipmentCreateError(
-                order_id=order_id,
-                error_type="NOT_FOUND",
-                error_message=str(e),
-                carrier_error_code=error_details.get("carrier_error_code"),
-                carrier_error_description=error_details.get("carrier_error_description"),
-                carrier_name=error_details.get("carrier_name"),
-                error_category="not_found"
-            ))
-            logger.warning(f"Order {order_id}: NotFoundException - {str(e)}")
-            
-        except BusinessRuleException as e:
-            # Extract carrier error details in generic way
-            error_details = _extract_carrier_error_details(e, "business")
-            
-            failed.append(BulkShipmentCreateError(
-                order_id=order_id,
-                error_type="BUSINESS_RULE_ERROR",
-                error_message=str(e),
-                carrier_error_code=error_details.get("carrier_error_code"),
-                carrier_error_description=error_details.get("carrier_error_description"),
-                carrier_name=error_details.get("carrier_name"),
-                error_category=error_details.get("error_category", "business")
-            ))
-            logger.warning(f"Order {order_id}: BusinessRuleException - {str(e)}")
-            
-        except ValidationException as e:
-            # Extract carrier error details in generic way
-            error_details = _extract_carrier_error_details(e, "validation")
-            
-            failed.append(BulkShipmentCreateError(
-                order_id=order_id,
-                error_type="VALIDATION_ERROR",
-                error_message=str(e),
-                carrier_error_code=error_details.get("carrier_error_code"),
-                carrier_error_description=error_details.get("carrier_error_description"),
-                carrier_name=error_details.get("carrier_name"),
-                error_category="validation"
-            ))
-            logger.warning(f"Order {order_id}: ValidationException - {str(e)}")
-            
-        except AuthenticationException as e:
-            # Extract carrier error details in generic way
-            error_details = _extract_carrier_error_details(e, "authentication")
-            
-            failed.append(BulkShipmentCreateError(
-                order_id=order_id,
-                error_type="AUTHENTICATION_ERROR",
-                error_message=str(e),
-                carrier_error_code=error_details.get("carrier_error_code"),
-                carrier_error_description=error_details.get("carrier_error_description"),
-                carrier_name=error_details.get("carrier_name"),
-                error_category="authentication"
-            ))
-            logger.warning(f"Order {order_id}: AuthenticationException - {str(e)}")
-            
-        except InfrastructureException as e:
-            # Extract carrier error details in generic way
-            error_details = _extract_carrier_error_details(e, "infrastructure")
-            
-            failed.append(BulkShipmentCreateError(
-                order_id=order_id,
-                error_type="INFRASTRUCTURE_ERROR",
-                error_message=str(e),
-                carrier_error_code=error_details.get("carrier_error_code"),
-                carrier_error_description=error_details.get("carrier_error_description"),
-                carrier_name=error_details.get("carrier_name"),
-                error_category="infrastructure"
-            ))
-            logger.warning(f"Order {order_id}: InfrastructureException - {str(e)}")
+            error_type, default_category, log_func = error_config[type(e)]
+            failed.append(_create_bulk_shipment_error(order_id, e, error_type, default_category))
+            log_func(f"Order {order_id}: {type(e).__name__} - {str(e)}")
             
         except Exception as e:
-            # Extract carrier error details in generic way (for any other exception)
-            error_details = _extract_carrier_error_details(e, None)
-            
-            failed.append(BulkShipmentCreateError(
-                order_id=order_id,
-                error_type="UNKNOWN_ERROR",
-                error_message=f"Error creating shipment: {str(e)}",
-                carrier_error_code=error_details.get("carrier_error_code"),
-                carrier_error_description=error_details.get("carrier_error_description"),
-                carrier_name=error_details.get("carrier_name"),
-                error_category=error_details.get("error_category")
+            # Gestione generica per tutte le altre eccezioni
+            failed.append(_create_bulk_shipment_error(
+                order_id, 
+                e, 
+                "UNKNOWN_ERROR", 
+                None
             ))
             logger.error(f"Order {order_id}: Unexpected error - {str(e)}", exc_info=True)
     
@@ -415,6 +436,8 @@ async def bulk_create_shipments(
 async def get_tracking(
     id_carrier_api: int = Path(..., description="Carrier API ID for authentication"),
     tracking: str = Query(..., description="Comma-separated list of tracking numbers"),
+    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repository),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
@@ -441,43 +464,19 @@ async def get_tracking(
     
     # Usa factory per ottenere il tracking service corretto
     tracking_service = factory.get_tracking_service(id_carrier_api, db)
-    logger.info(f"Getting tracking for {len(tracking_list)} shipments with carrier_api_id {id_carrier_api}")
     
     result = await tracking_service.get_tracking(tracking_list, id_carrier_api)
+    
     # Aggiorna lo stato shipment in base al tracking (se presente)
-    try:
-        # Recupera il carrier_type dal carrier_api
-        from src.repository.api_carrier_repository import ApiCarrierRepository
-        carrier_repo = ApiCarrierRepository(db)
-        carrier = carrier_repo.get_by_id(id_carrier_api)
-        carrier_type = carrier.carrier_type.value if carrier else None
-        
-        repo = ShippingRepository(db)
-        for item in result:
-            tn = item.get("tracking_number")
-            state_id = item.get("current_internal_state_id")
-            if tn and isinstance(state_id, int):
-                # Estrai informazioni evento se disponibili
-                events = item.get("events", [])
-                event_code = None
-                event_description = None
-                if events:
-                    # Prendi l'ultimo evento (più recente)
-                    last_event = events[-1] if events else None
-                    if last_event:
-                        event_code = last_event.get("code")
-                        event_description = last_event.get("description")
-                
-                repo.update_state_by_tracking(
-                    tn, 
-                    state_id,
-                    carrier_type=carrier_type,
-                    event_code=event_code,
-                    event_description=event_description
-                )
-    except Exception as _:
-        # Non bloccare la risposta in caso di problemi di aggiornamento
-        logger.warning("Errore in aggiornamento stato spedizione", exc_info=True)
+    # Il service gestisce le eccezioni internamente
+    carrier = carrier_repo.get_by_id(id_carrier_api)
+    carrier_type = carrier.carrier_type.value if carrier else None
+    
+    shipping_service = ShippingService(shipping_repo)
+    await shipping_service.sync_shipping_states_from_tracking_results(
+        result,
+        carrier_type=carrier_type
+    )
     
     return result
 
@@ -486,6 +485,8 @@ async def get_tracking(
 async def download_shipment_label(
     awb: str,
     user: dict = Depends(get_current_user),
+    shipment_document_repo: IShipmentDocumentRepository = Depends(get_shipment_document_repository),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
 ):
@@ -509,8 +510,7 @@ async def download_shipment_label(
     logger.info(f"Downloading label for AWB: {awb}")
     
     # 1. Cerca documento nel database per ottenere carrier_api_id
-    document_repo = ShipmentDocumentRepository(db)
-    documents = document_repo.get_by_awb(awb)
+    documents = shipment_document_repo.get_by_awb(awb)
     
     carrier_api_id = None
     if documents:
@@ -518,11 +518,7 @@ async def download_shipment_label(
     
     # 2. Se non trovato, cerca in Shipping.tracking
     if not carrier_api_id:
-        from src.models.shipping import Shipping
-        
-        stmt = select(Shipping.id_carrier_api).where(Shipping.tracking == awb)
-        result = db.execute(stmt)
-        carrier_api_id = result.scalar_one_or_none()
+        carrier_api_id = shipping_repo.get_carrier_id_by_tracking(awb)
     
     if not carrier_api_id:
         raise NotFoundException(
@@ -551,6 +547,8 @@ async def download_shipment_label(
 async def cancel_shipment(
     order_id: int,
     user: dict = Depends(get_current_user),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    order_repo: IOrderRepository = Depends(get_repository),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
 ):
@@ -569,18 +567,9 @@ async def cancel_shipment(
         Dict con risultato cancellazione
     """
     # 1. Recupera id_carrier_api da Shipping tramite Order
-    from src.models.order import Order
-    
-    stmt = select(Order.id_shipping).where(Order.id_order == order_id)
-    result = db.execute(stmt)
-    id_shipping = result.scalar_one_or_none()
-    
-    if not id_shipping:
-        raise NotFoundException("Order", order_id, {"order_id": order_id, "reason": "Order has no shipping"})
-    
+    order = order_repo.get_by_id_or_raise(order_id)
     # 2. Recupera Shipping per ottenere id_carrier_api
-    shipping_repo = ShippingRepository(db)
-    shipping_info = shipping_repo.get_carrier_info(id_shipping)
+    shipping_info = shipping_repo.get_carrier_info(order.id_shipping)
     carrier_api_id = shipping_info.id_carrier_api
     
     if not carrier_api_id:
@@ -597,3 +586,79 @@ async def cancel_shipment(
     result = await shipment_service.cancel_shipment(order_id)
     
     return result
+
+
+@router.post("/create-multi-shipments", response_model=MultiShippingDocumentResponseSchema)
+async def create_multi_shipments(
+    request: MultiShippingDocumentCreateRequestSchema,
+    user: dict = Depends(get_current_user),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    db: Session = Depends(get_db)
+):
+    """
+    Crea un documento di spedizione multipla con articoli selezionati.
+    
+    Crea un OrderDocument con type_document="shipping" e un Shipping associato,
+    permettendo di spedire solo alcuni prodotti dell'ordine con un corriere specifico.
+    
+    Args:
+        request: Dati per creare il documento spedizione
+        user: Utente autenticato
+        db: Database session
+        
+    Returns:
+        MultiShippingDocumentResponseSchema con dati idratati
+    """
+    shipping_service = ShippingService(shipping_repo)
+    return await shipping_service.create_multi_shipment(request, user.get("id", 0), db)
+
+
+@router.get("/orders/{order_id}/shipment-status", response_model=OrderShipmentStatusResponseSchema)
+async def get_order_shipment_status(
+    order_id: int = Path(..., description="ID dell'ordine"),
+    user: dict = Depends(get_current_user),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    db: Session = Depends(get_db)
+):
+    """
+    Recupera lo stato di spedizione per ogni articolo dell'ordine.
+    
+    Mostra per ogni prodotto:
+    - Quantità totale nell'ordine
+    - Quantità già spedita
+    - Quantità rimanente da spedire
+    
+    Args:
+        order_id: ID dell'ordine
+        user: Utente autenticato
+        db: Database session
+        
+    Returns:
+        OrderShipmentStatusResponseSchema con stato per ogni articolo
+    """
+    shipping_service = ShippingService(shipping_repo)
+    return await shipping_service.get_order_shipment_status(order_id, db)
+
+
+@router.get("/orders/{order_id}/multi-shipments", response_model=MultiShippingDocumentListResponseSchema)
+async def get_order_multi_shipments(
+    order_id: int = Path(..., description="ID dell'ordine"),
+    user: dict = Depends(get_current_user),
+    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    db: Session = Depends(get_db)
+):
+    """
+    Recupera lista di spedizioni multiple per un ordine.
+    
+    Restituisce tutti gli OrderDocument con type_document="shipping" per l'ordine specificato.
+    
+    Args:
+        order_id: ID dell'ordine
+        user: Utente autenticato
+        db: Database session
+        
+    Returns:
+        MultiShippingDocumentListResponseSchema con lista spedizioni
+    """
+    shipping_service = ShippingService(shipping_repo)
+    return await shipping_service.get_multi_shipments_by_order(order_id, db)

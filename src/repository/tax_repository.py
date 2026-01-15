@@ -104,7 +104,36 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
         except Exception:
             return default
     
-    def get_tax_info_by_country(self, id_country: Optional[int]) -> Optional[dict]:
+    def get_tax_by_id(self, id_tax: int) -> Optional[Tax]:
+        """
+        Ottiene una Tax per ID
+        
+        Args:
+            id_tax: ID della tassa
+            
+        Returns:
+            Tax se trovata, None altrimenti
+        """
+        return self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
+    
+    def get_tax_by_id_country(self, id_country: int) -> Optional[Tax]:
+        """
+        Ottiene una Tax basata su id_country
+        
+        Args:
+            id_country: ID del paese
+            
+        Returns:
+            Tax se trovata per il paese specificato, None altrimenti
+        """
+        if id_country is None or id_country <= 0:
+                return None
+            
+        return self._session.query(Tax).filter(
+            Tax.id_country == id_country
+        ).first()
+    
+    def get_tax_info_by_country(self, id_country: int) -> Optional[dict]:
         """
         Recupera informazioni sulla tassa (percentage e id_tax) basata su id_country.
         
@@ -120,44 +149,32 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
         Returns:
             dict con {"percentage": float, "id_tax": int} o None se id_country non fornito
         """
-        if id_country is None:
-            return None
+
+        # 1. Cerca tax per id_country specifico
+        tax = self.get_tax_by_id_country(id_country)
         
-        try:
-            # 1. Cerca tax per id_country specifico
-            tax = self._session.query(Tax).filter(
-                Tax.id_country == id_country
-            ).first()
-            
-            if tax and tax.percentage is not None:
-                return {
-                    "percentage": float(tax.percentage),
-                    "id_tax": tax.id_tax
-                }
-            
-            # 2. Se non trovata, cerca tax default
-            default_tax = self._session.query(Tax).filter(
-                Tax.is_default == 1
-            ).first()
-            
-            if default_tax and default_tax.percentage is not None:
-                return {
-                    "percentage": float(default_tax.percentage),
-                    "id_tax": default_tax.id_tax
-                }
-            
-            # 3. Se non trovata, recupera percentage da app_configuration
-            default_percentage = self.get_default_tax_percentage_from_app_config(22.0)
-            
-            # 4. Fallback finale: usa 22% e id_tax=1
+        if tax and tax.percentage is not None:
             return {
-                "percentage": default_percentage,
-                "id_tax": 1
+                "percentage": float(tax.percentage),
+                "id_tax": tax.id_tax
             }
-            
-        except Exception as e:
-            # In caso di errore, ritorna fallback
+        
+        # 2. Se non trovata, cerca tax default
+        default_tax = self._session.query(Tax).filter(
+            Tax.is_default == 1
+        ).first()
+        
+        if default_tax and default_tax.percentage is not None:
             return {
-                "percentage": 22.0,
-                "id_tax": 1
+                "percentage": float(default_tax.percentage),
+                "id_tax": default_tax.id_tax
             }
+        
+        # 3. Se non trovata, recupera percentage da app_configuration
+        default_percentage = self.get_default_tax_percentage_from_app_config(22.0)
+        
+        # 4. Fallback finale: usa 22% e id_tax=1
+        return {
+            "percentage": default_percentage,
+            "id_tax": 1
+        }

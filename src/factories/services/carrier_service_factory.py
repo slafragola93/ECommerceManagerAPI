@@ -47,6 +47,7 @@ class CarrierServiceFactory:
             )
         
         # Resolve service based on carrier_type
+        # TODO: automatizzare in base a carriertypeenum
         if carrier.carrier_type == CarrierTypeEnum.DHL:
             from src.services.interfaces.dhl_shipment_service_interface import IDhlShipmentService
             service = self.container.resolve_with_session(IDhlShipmentService, db)

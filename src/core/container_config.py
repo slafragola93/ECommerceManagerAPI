@@ -14,10 +14,6 @@ from src.repository.interfaces.role_repository_interface import IRoleRepository
 from src.repository.role_repository import RoleRepository
 from src.services.interfaces.role_service_interface import IRoleService
 from src.services.routers.role_service import RoleService
-from src.repository.interfaces.configuration_repository_interface import IConfigurationRepository
-from src.repository.configuration_repository import ConfigurationRepository
-from src.services.interfaces.configuration_service_interface import IConfigurationService
-from src.services.routers.configuration_service import ConfigurationService
 from src.repository.interfaces.app_configuration_repository_interface import IAppConfigurationRepository
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.services.interfaces.app_configuration_service_interface import IAppConfigurationService
@@ -98,7 +94,6 @@ def configure_container():
     container.register_transient(ICustomerRepository, CustomerRepository)
     container.register_transient(IUserRepository, UserRepository)
     container.register_transient(IRoleRepository, RoleRepository)
-    container.register_transient(IConfigurationRepository, ConfigurationRepository)
     container.register_transient(IAppConfigurationRepository, AppConfigurationRepository)
     container.register_transient(ILangRepository, LangRepository)
     container.register_transient(ICategoryRepository, CategoryRepository)
@@ -163,7 +158,6 @@ def configure_container():
     container.register_transient(ICustomerService, CustomerService)
     container.register_transient(IUserService, UserService)
     container.register_transient(IRoleService, RoleService)
-    container.register_transient(IConfigurationService, ConfigurationService)
     container.register_transient(IAppConfigurationService, AppConfigurationService)
     container.register_transient(ILangService, LangService)
     container.register_transient(ICategoryService, CategoryService)

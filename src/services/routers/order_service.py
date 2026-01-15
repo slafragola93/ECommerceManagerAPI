@@ -669,27 +669,28 @@ class OrderService(IOrderService):
     ) -> Dict[str, Any]:
         """
         Aggiorna lo stato di un ordine e crea record in orders_history.
+        Gestisce le eccezioni internamente per non bloccare il flusso.
         
         Args:
             order_id: ID dell'ordine
             new_status_id: Nuovo stato dell'ordine
             
         Returns:
-            Dict con message, order_id, new_status_id, old_state_id
-            
-        Raises:
-            ValueError: Se l'ordine non esiste o se lo stato non esiste nella tabella order_states
+            Dict con message, order_id, new_status_id, old_state_id se successo,
+            None se errore (gestito silenziosamente)
         """
         order = self._order_repository.get_by_id(_id=order_id)
         if order is None:
-            raise ValueError(f"Ordine {order_id} non trovato")
+            logger.warning(f"Ordine {order_id} non trovato durante aggiornamento stato")
+            return None
 
         # Valida che l'id_order_state esista
         order_state = self._order_repository.session.query(OrderState).filter(
             OrderState.id_order_state == new_status_id
         ).first()
         if not order_state:
-            raise ValueError(f"Stato ordine {new_status_id} non esiste nella tabella order_states")
+            logger.warning(f"Stato ordine {new_status_id} non esiste nella tabella order_states")
+            return None
 
         old_state_id = order.id_order_state
         if old_state_id == new_status_id:
@@ -720,6 +721,7 @@ class OrderService(IOrderService):
             "new_status_id": new_status_id,
             "old_state_id": old_state_id,
         }
+
     
     @emit_event_on_success(
         event_type=EventType.ORDER_STATUS_CHANGED,

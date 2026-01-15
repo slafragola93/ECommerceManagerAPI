@@ -20,7 +20,7 @@ if sys.platform == 'win32':
     print("DEBUG: Using ProactorEventLoop for Windows to handle more file descriptors")
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
-    api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, configuration, app_configuration, payment, tax, user, \
+    api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
     order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt
 from src.database import Base, engine
 
@@ -449,7 +449,6 @@ except Exception as e:
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(role.router)
-app.include_router(configuration.router)
 app.include_router(app_configuration.router)
 app.include_router(lang.router)
 app.include_router(customer.router)

@@ -2,7 +2,7 @@
 Interfaccia per Shipping Service seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from src.core.interfaces import IBaseService
 from src.schemas.shipping_schema import ShippingSchema, ShippingResponseSchema
 from src.models.shipping import Shipping
@@ -38,4 +38,22 @@ class IShippingService(IBaseService):
     @abstractmethod
     async def get_shippings_count(self, **filters) -> int:
         """Ottiene il numero totale di shipping con filtri"""
+        pass
+    
+    @abstractmethod
+    async def sync_shipping_states_from_tracking_results(
+        self, 
+        tracking_results: List[Dict[str, Any]], 
+        carrier_type: Optional[str] = None
+    ) -> int:
+        """
+        Sincronizza lo stato delle spedizioni dai risultati del tracking.
+        
+        Args:
+            tracking_results: Lista di risultati normalizzati dal tracking service
+            carrier_type: Tipo carrier (BRT, DHL, FEDEX)
+            
+        Returns:
+            Numero di spedizioni aggiornate
+        """
         pass

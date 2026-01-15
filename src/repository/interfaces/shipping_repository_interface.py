@@ -25,7 +25,7 @@ class IShippingRepository(IRepository[Shipping, int]):
     def get_carrier_info(self, id_shipping: int) -> Row:
         """Get id_carrier_api from shipping"""
         pass
-    
+
     @abstractmethod  
     def update_tracking(self, id_shipping: int, tracking: str) -> None:
         """Update tracking field"""
@@ -69,5 +69,23 @@ class IShippingRepository(IRepository[Shipping, int]):
     @abstractmethod
     def has_tracking_events(self, tracking_number: str) -> bool:
         """Verifica se una spedizione ha eventi in shipments_history"""
+        pass
+    
+    @abstractmethod
+    def get_carrier_id_by_tracking(self, tracking: str) -> Optional[int]:
+        """Recupera id_carrier_api da Shipping usando il tracking number"""
+        pass
+    
+    @abstractmethod
+    def get_shipped_quantity_by_product(
+        self,
+        id_order: int,
+        id_product: Optional[int],
+        product_reference: Optional[str]
+    ) -> int:
+        """
+        Calcola la quantità già spedita per un prodotto in un ordine.
+        Cerca in OrderDocument type=shipping per lo stesso ordine.
+        """
         pass
     

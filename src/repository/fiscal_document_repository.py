@@ -21,11 +21,13 @@ from src.services.core.tool import (
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
+from src.repository.tax_repository import TaxRepository
 
 
 class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocumentRepository):
     def __init__(self, session: Session):
         super().__init__(session, FiscalDocument)
+        self._tax_repository = TaxRepository(session)
     
     # ==================== FATTURE ====================
     
@@ -99,7 +101,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             
             # Se unit_price_with_tax non è disponibile, calcolalo da unit_price_net usando id_tax
             if unit_price_with_tax == 0.0 and unit_price_net > 0 and od.id_tax:
-                tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == od.id_tax).scalar()
+                tax = self._tax_repository.get_tax_by_id(od.id_tax)
+                tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
                 if tax_percentage is not None:
                     tax_percentage = float(tax_percentage)
                     unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
@@ -123,7 +126,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             # Calcola total_price_with_tax usando la percentuale di id_tax
             total_price_with_tax = total_price_net
             if od.id_tax:
-                tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == od.id_tax).scalar()
+                tax = self._tax_repository.get_tax_by_id(od.id_tax)
+                tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
                 if tax_percentage is not None:
                     tax_percentage = float(tax_percentage)
                     total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
@@ -565,8 +569,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         first_tax_id = tax_ids[0]
         
         # Recupera la percentuale dalla tabella Tax
-        from src.models.tax import Tax
-        tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == first_tax_id).scalar()
+        tax = self._tax_repository.get_tax_by_id(first_tax_id)
+        tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
         
         if tax_percentage is not None:
             return float(tax_percentage)
@@ -587,8 +591,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             return 22.0  # Default 22%
         
         # Recupera la percentuale dalla tabella Tax
-        from src.models.tax import Tax
-        tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == shipping.id_tax).scalar()
+        tax = self._tax_repository.get_tax_by_id(shipping.id_tax)
+        tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
         
         if tax_percentage is not None:
             return float(tax_percentage)
@@ -799,14 +803,14 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             # Calcola total_price_with_tax usando la percentuale di id_tax
             total_price_with_tax = total_price_net
             if id_tax:
-                tax = self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
+                tax = self._tax_repository.get_tax_by_id(id_tax)
                 if tax and tax.percentage is not None:
                     tax_percentage = float(tax.percentage)
                     total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
             
             # Se unit_price_with_tax non è fornito, calcolalo
             if unit_price_with_tax == 0.0 and unit_price_net > 0 and id_tax:
-                tax = self._session.query(Tax).filter(Tax.id_tax == id_tax).first()
+                tax = self._tax_repository.get_tax_by_id(id_tax)
                 if tax and tax.percentage is not None:
                     tax_percentage = float(tax.percentage)
                     unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
@@ -853,7 +857,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         # Calcola total_price_with_tax usando la percentuale di id_tax
         detail.total_price_with_tax = detail.total_price_net
         if detail.id_tax:
-            tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).scalar()
+            tax = self._tax_repository.get_tax_by_id(detail.id_tax)
+            tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
             if tax_percentage is not None:
                 tax_percentage = float(tax_percentage)
                 detail.total_price_with_tax = calculate_price_with_tax(detail.total_price_net, tax_percentage, quantity=1)
@@ -911,9 +916,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 # Retrocompatibilità: se total_amount è senza IVA, calcola con IVA
                 total_amount = float(detail.total_amount)
                 if detail.id_tax:
-                    tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == detail.id_tax).scalar()
+                    tax = self._tax_repository.get_tax_by_id(detail.id_tax)
+                    tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
                     if tax_percentage is not None:
-                        tax_percentage = float(tax_percentage)
                         total_products += calculate_price_with_tax(total_amount, tax_percentage, quantity=1)
                     else:
                         total_products += total_amount
@@ -1065,7 +1070,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             # Applica l'IVA se presente (per il totale del documento fiscale)
             line_total_with_tax = line_total_net
             if id_tax:
-                tax_percentage = self._session.query(Tax.percentage).filter(Tax.id_tax == id_tax).scalar()
+                tax = self._tax_repository.get_tax_by_id(id_tax)
+                tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
                 if tax_percentage is not None:
                     tax_percentage = float(tax_percentage)
                     line_total_with_tax = calculate_price_with_tax(line_total_net, tax_percentage, quantity=1)

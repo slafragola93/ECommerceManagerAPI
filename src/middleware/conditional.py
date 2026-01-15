@@ -50,8 +50,6 @@ class ConditionalGetMiddleware(BaseHTTPMiddleware):
             "GET /api/v1/carriers/{carrier_id}",
             "GET /api/v1/categories/",
             "GET /api/v1/categories/{category_id}",
-            "GET /api/v1/configurations/",
-            "GET /api/v1/configurations/{configuration_id}",
             "GET /api/v1/countries/",
             "GET /api/v1/countries/{country_id}",
             "GET /api/v1/customers/",
@@ -102,7 +100,38 @@ class ConditionalGetMiddleware(BaseHTTPMiddleware):
         
         # Check if endpoint is cacheable
         if not self._is_cacheable_endpoint(request):
-            return await call_next(request)
+            try:
+                return await call_next(request)
+            except (RuntimeError, ValueError, TypeError) as e:
+                # Handle "No response returned" and similar errors from call_next
+                error_message = str(e).lower()
+                if any(keyword in error_message for keyword in ["no response returned", "no response", "response returned", "endofstream"]):
+                    logger.error(
+                        f"No response returned for {request.method} {request.url.path}: {type(e).__name__} - {str(e)}",
+                        extra={
+                            "method": request.method,
+                            "path": str(request.url.path),
+                            "error_type": type(e).__name__,
+                            "error": str(e)
+                        },
+                        exc_info=True
+                    )
+                    # Return a proper error response instead of letting the exception propagate
+                    return JSONResponse(
+                        status_code=500,
+                        content={
+                            "error_code": "NO_RESPONSE",
+                            "message": "No response returned from route handler",
+                            "details": {
+                                "path": str(request.url.path),
+                                "method": request.method,
+                                "error_type": type(e).__name__
+                            },
+                            "status_code": 500
+                        }
+                    )
+                # Re-raise other exceptions of these types
+                raise
         
         # Initialize cache manager if needed
         if not self._cache_manager:

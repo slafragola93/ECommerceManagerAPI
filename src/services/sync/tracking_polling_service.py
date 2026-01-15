@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.engine import Row
 
 from src.repository.shipping_repository import ShippingRepository
+from src.services.routers.shipping_service import ShippingService
 from src.factories.services.carrier_service_factory import CarrierServiceFactory
 from src.repository.api_carrier_repository import ApiCarrierRepository
 from src.models.carrier_api import CarrierTypeEnum
@@ -135,36 +136,18 @@ async def poll_tracking_periodic(db: Session):
                 try:
                     results = await tracking_service.get_tracking(tracking_numbers_to_poll, carrier_api_id)
                     
-                    # Aggiorna stati spedizioni
-                    updated_count = 0
+                    # Aggiorna stati spedizioni usando ShippingService
+                    shipping_service = ShippingService(shipping_repo)
+                    updated_count = await shipping_service.sync_shipping_states_from_tracking_results(
+                        results,
+                        carrier_type=carrier_type
+                    )
+                    
+                    # Aggiorna timestamp rate limiting per tutti i tracking aggiornati
                     for item in results:
                         tn = item.get("tracking_number")
-                        state_id = item.get("current_internal_state_id")
-                        if tn and isinstance(state_id, int):
-                            try:
-                                # Estrai informazioni evento se disponibili
-                                events = item.get("events", [])
-                                event_code = None
-                                event_description = None
-                                if events:
-                                    # Prendi l'ultimo evento (più recente)
-                                    last_event = events[-1] if events else None
-                                    if last_event:
-                                        event_code = last_event.get("code")
-                                        event_description = last_event.get("description")
-                                
-                                shipping_repo.update_state_by_tracking(
-                                    tn, 
-                                    state_id,
-                                    carrier_type=carrier_type,
-                                    event_code=event_code,
-                                    event_description=event_description
-                                )
-                                updated_count += 1
-                                # Aggiorna timestamp rate limiting
-                                _update_rate_limit_timestamp(carrier_type, tn)
-                            except Exception as e:
-                                logger.warning(f"Error updating state for tracking {tn}: {str(e)}")
+                        if tn:
+                            _update_rate_limit_timestamp(carrier_type, tn)
                     
                     logger.info(f"Updated {updated_count} shipment states for carrier {carrier_type}")
                     

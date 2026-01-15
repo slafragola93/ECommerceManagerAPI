@@ -32,12 +32,13 @@ from src.schemas.customer_schema import *
 from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
 from ..services import QueryUtils
 from ..repository.interfaces.order_repository_interface import IOrderRepository
+from src.core.base_repository import BaseRepository
 
 
 logger = logging.getLogger(__name__)
 
 
-class OrderRepository(IOrderRepository):
+class OrderRepository(BaseRepository[Order, int], IOrderRepository):
     def __init__(self, session: Session):
         """
         Inizializza la repository con la sessione del DB
@@ -45,6 +46,8 @@ class OrderRepository(IOrderRepository):
         Args:
             session (Session): Sessione del DB
         """
+        super().__init__(session, Order)
+        # Mantieni self.session per retrocompatibilità con il codice esistente
         self.session = session
 
         self.address_repository = AddressRepository(session)
@@ -265,6 +268,19 @@ class OrderRepository(IOrderRepository):
         return self.session.query(Order).options(
             joinedload(Order.ecommerce_order_state)
         ).filter(Order.id_order == _id).first()
+    
+    def get_first_order_by_id(self, order_id: int) -> Optional[Order]:
+        """
+        Ottiene il primo ordine per ID
+        
+        Args:
+            order_id: ID dell'ordine
+            
+        Returns:
+            Order se trovato, None altrimenti
+        """
+
+        return self.session.query(Order).filter(Order.id_order == order_id).first()
 
     def get_order_history_by_id_order(self, id_order: int) -> list[dict]:
         """Restituisce la cronologia dell'ordine in formato [{state, data}]."""
@@ -1133,6 +1149,20 @@ class OrderRepository(IOrderRepository):
             raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
         
         return result
+    
+    def get_id_shipping_by_order_id(self, order_id: int) -> Optional[int]:
+        """
+        Recupera l'ID della spedizione associata a un ordine.
+        
+        Args:
+            order_id: ID dell'ordine
+            
+        Returns:
+            ID della spedizione se trovato, None altrimenti
+        """
+        stmt = select(Order.id_shipping).where(Order.id_order == order_id)
+        result = self.session.execute(stmt)
+        return result.scalar_one_or_none()
     
     def _handle_order_packages_smart_merge(self, id_order: int, packages: List) -> None:
         """
