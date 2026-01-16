@@ -50,12 +50,15 @@ class BrtShipmentService(IBrtShipmentService):
         self.brt_mapper = brt_mapper
         self.settings = get_cache_settings()
     
-    async def create_shipment(self, order_id: int) -> Dict[str, Any]:
+    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
         """
         Creazione spedizione BRT per ordine
         
         Args:
             order_id: ID ordine per creare spedizione
+            id_shipping: Optional shipping ID to use instead of retrieving from order.
+                        If provided, this shipping will be used instead of order.id_shipping.
+                        Useful when creating shipments for OrderDocument (multi-shipment).
             
         Returns:
             Dict con dettagli spedizione (awb)
@@ -63,12 +66,15 @@ class BrtShipmentService(IBrtShipmentService):
         # 1. Recupero informazioni Ordine
         order_data = self.order_repository.get_shipment_data(order_id)
         
-        # 2. Recupero info di spedizione per poi recuperare id_carrier_api
-        shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+        # 2. Determina quale shipping usare: se id_shipping è fornito, usalo; altrimenti usa quello dell'Order
+        shipping_id_to_use = id_shipping if id_shipping is not None else order_data.id_shipping
+        
+        # 3. Recupero info di spedizione per poi recuperare id_carrier_api
+        shipping_info = self.shipping_repository.get_carrier_info(shipping_id_to_use)
         carrier_api_id = shipping_info.id_carrier_api
         
-        # 2.1. Recupero shipping_message dalla spedizione
-        shipping_message = self.shipping_repository.get_message_shipping(order_data.id_shipping) or ""
+        # 2.1. Recupero shipping_message dalla spedizione (usa shipping_id_to_use)
+        shipping_message = self.shipping_repository.get_message_shipping(shipping_id_to_use) or ""
         
         # 3. Recupero la configurazione BRT
         brt_config = self.brt_config_repository.get_by_carrier_api_id(carrier_api_id)
@@ -189,7 +195,7 @@ class BrtShipmentService(IBrtShipmentService):
             
         # 13. Aggiornamento tracking e stato (2 = Presa In Carico)
         if tracking:
-            self.shipping_repository.update_tracking_and_state(order_data.id_shipping, tracking, 2)
+            self.shipping_repository.update_tracking_and_state(shipping_id_to_use, tracking, 2)
         
         return {
             "awb": tracking or ""

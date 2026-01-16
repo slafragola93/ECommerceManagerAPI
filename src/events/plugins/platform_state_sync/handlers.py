@@ -29,10 +29,14 @@ class PlatformStateSyncHandler(BaseEventHandler):
     
     async def handle(self, event: Event) -> None:
         """Handle ORDER_STATUS_CHANGED o SHIPPING_STATUS_CHANGED event."""
-        if event.event_type == EventType.ORDER_STATUS_CHANGED.value:
-            await self._sync_order_state(event)
-        elif event.event_type == EventType.SHIPPING_STATUS_CHANGED.value:
-            await self._sync_shipping_state(event)
+        try:
+            if event.event_type == EventType.ORDER_STATUS_CHANGED.value:
+                await self._sync_order_state(event)
+            elif event.event_type == EventType.SHIPPING_STATUS_CHANGED.value:
+                await self._sync_shipping_state(event)
+        except Exception as e:
+            logger.error(f"Errore in PlatformStateSyncHandler.handle: {str(e)}", exc_info=True)
+            raise
     
     async def _sync_order_state(self, event: Event) -> None:
         """

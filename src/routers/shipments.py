@@ -230,8 +230,8 @@ async def create_shipment(
     shipment_service = factory.get_shipment_service(carrier_api_id, db)
     
     # 4. Crea spedizione
-    logger.info(f"Creating shipment for order {order_id} with carrier_api_id {carrier_api_id}")
-    result = await shipment_service.create_shipment(order_id)
+    # Passa id_shipping se disponibile (quando viene usato id_order_document)
+    result = await shipment_service.create_shipment(order_id, id_shipping=id_shipping if 'id_shipping' in locals() else None)
     awb = result.get("awb", "") 
     # 4.1. Se id_order_document è presente, aggiorna il tracking dello shipping dell'OrderDocument
     # (i servizi aggiornano lo shipping dell'ordine, ma qui dobbiamo aggiornare quello del documento)

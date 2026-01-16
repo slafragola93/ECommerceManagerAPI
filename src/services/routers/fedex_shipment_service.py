@@ -55,7 +55,7 @@ class FedexShipmentService(IFedexShipmentService):
         self.fedex_mapper = fedex_mapper
         self.settings = get_cache_settings()
     
-    async def create_shipment(self, order_id: int) -> Dict[str, Any]:
+    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
         """
         Creazione spedizione FedEx per ordine
         
@@ -69,12 +69,15 @@ class FedexShipmentService(IFedexShipmentService):
             # 1. Recupero informazioni Ordine
             order_data = self.order_repository.get_shipment_data(order_id)
             
-            # 2. Recupero info di spedizione per poi recuperare id_carrier_api
-            shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+            # 2. Determina quale shipping usare: se id_shipping è fornito, usalo; altrimenti usa quello dell'Order
+            shipping_id_to_use = id_shipping if id_shipping is not None else order_data.id_shipping
+            
+            # 4. Recupero info di spedizione per poi recuperare id_carrier_api
+            shipping_info = self.shipping_repository.get_carrier_info(shipping_id_to_use)
             carrier_api_id = shipping_info.id_carrier_api
             
-            # 2.1. Recupero price_tax_incl dalla spedizione per totalCustomsValue
-            shipping = self.shipping_repository.get_by_id(order_data.id_shipping)
+            # 4.1. Recupero price_tax_incl dalla spedizione per totalCustomsValue
+            shipping = self.shipping_repository.get_by_id(shipping_id_to_use)
             shipping_price_tax_incl = float(shipping.price_tax_incl or 0.0) if shipping else 0.0
             
             # 3. Recupero la configurazione FedEx con scope SHIP per creazione spedizioni
@@ -373,7 +376,7 @@ class FedexShipmentService(IFedexShipmentService):
             # 12. Aggiornamento tracking e stato (2 = Tracking Assegnato)
             if awb:
                 try:
-                    self.shipping_repository.update_tracking_and_state(order_data.id_shipping, awb, 2)
+                    self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
                 except Exception:
                     # fallback: almeno salva il tracking
                     self.shipping_repository.update_tracking(order_data.id_shipping, awb)

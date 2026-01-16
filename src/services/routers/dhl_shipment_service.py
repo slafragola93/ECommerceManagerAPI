@@ -50,7 +50,7 @@ class DhlShipmentService(IDhlShipmentService):
         self.dhl_mapper = dhl_mapper
         self.settings = get_cache_settings()
     
-    async def create_shipment(self, order_id: int) -> Dict[str, Any]:
+    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
         """
         Creazione spedizione DHL per ordine
         
@@ -64,8 +64,11 @@ class DhlShipmentService(IDhlShipmentService):
             # 1. Recupero informazioni Ordine
             order_data = self.order_repository.get_shipment_data(order_id)
             
-            # 2. Recupero info di spedizione per poi recuperare id_carrier_api
-            shipping_info = self.shipping_repository.get_carrier_info(order_data.id_shipping)
+            # 2. Determina quale shipping usare: se id_shipping è fornito, usalo; altrimenti usa quello dell'Order
+            shipping_id_to_use = id_shipping if id_shipping is not None else order_data.id_shipping
+            
+            # 3. Recupero info di spedizione per poi recuperare id_carrier_api
+            shipping_info = self.shipping_repository.get_carrier_info(shipping_id_to_use)
             carrier_api_id = shipping_info.id_carrier_api
             
             # 3. Recupero la configurazione DHL
@@ -146,10 +149,10 @@ class DhlShipmentService(IDhlShipmentService):
             # 13. Aggiornamento tracking e stato (2 = Presa In Carico)
             if awb:
                 try:
-                    self.shipping_repository.update_tracking_and_state(order_data.id_shipping, awb, 2)
+                    self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
                 except Exception:
                     # fallback: almeno salva il tracking
-                    self.shipping_repository.update_tracking(order_data.id_shipping, awb)
+                    self.shipping_repository.update_tracking(shipping_id_to_use, awb)
             
             # 14. Aggiorno stato spedizione e tracking se AWB è valido
             if awb:
