@@ -129,3 +129,8 @@ class IOrderRepository(ABC):
     def get_id_shipping_by_order_id(self, order_id: int) -> Optional[int]:
         """Recupera l'ID della spedizione associata a un ordine"""
         pass
+    
+    @abstractmethod
+    def set_multishipping(self, order_id: int, value: int) -> bool:
+        """Imposta il flag is_multishipping per un ordine"""
+        pass

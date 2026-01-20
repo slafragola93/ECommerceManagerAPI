@@ -82,6 +82,10 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             else:
                 shipping_data = data
             
+            # Se id_shipping_state non fornito, imposta default a 1
+            if 'id_shipping_state' not in shipping_data or shipping_data.get('id_shipping_state') is None:
+                shipping_data['id_shipping_state'] = 1
+            
             # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
             if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
                 from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
@@ -446,6 +450,23 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         
         result = query.scalar()
         return int(result) if result else 0
+    
+    def count_active_shipments(self, order_id: int) -> int:
+        """
+        Conta le spedizioni attive (non annullate) per un ordine.
+        
+        Args:
+            order_id: ID dell'ordine
+            
+        Returns:
+            Numero di spedizioni attive
+        """
+        return self._session.query(OrderDocument).filter(
+                OrderDocument.id_order == order_id,
+                OrderDocument.type_document == "shipping"
+            ).join(Shipping, OrderDocument.id_shipping == Shipping.id_shipping).filter(
+                Shipping.id_shipping_state != 11  # 11 = Annullato
+            ).count()
     
     def get_by_id_or_raise(self, id_shipping: int) -> Shipping:
         """

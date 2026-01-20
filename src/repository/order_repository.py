@@ -1,11 +1,47 @@
+# Standard library imports
 import logging
-from typing import Optional, List
-from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
 from datetime import datetime
+from typing import Optional, List
+
+# Third-party imports
 from fastapi import HTTPException
-from sqlalchemy import desc, func, select, or_, String
+from sqlalchemy import desc, func, select, or_, String, and_, text
 from sqlalchemy.engine import Row
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
+
+# Local application imports - Core
+from src.core.base_repository import BaseRepository
+from src.models.order_package import OrderPackage
+from src.models.tax import Tax
+from src.services.core.tool import (
+    calculate_order_totals,
+    calculate_price_without_tax,
+    format_datetime_ddmmyyyy_hhmmss,
+    get_tax_percentage_by_address_delivery_id
+)
+from src.services import QueryUtils
+from src.services.routers.order_document_service import OrderDocumentService
+
+# Local application imports - Models
+from ..models import Order, OrderState, Shipping, Address
+from ..models.shipments_history import ShipmentsHistory
+from ..models.shipment_document import ShipmentDocument
+from ..models.customer import Customer
+from ..models.payment import Payment
+from ..models.product import Product
+from ..models.order_detail import OrderDetail as OrderDetailModel
+from ..models.order_document import OrderDocument
+from ..models.relations.relations import orders_history
+
+# Local application imports - Schemas
+from ..schemas.order_schema import (
+    OrderSchema,
+    OrderUpdateSchema
+)
+from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
+from src.schemas.customer_schema import CustomerSchema
+
+# Local application imports - Repositories
 from .address_repository import AddressRepository
 from .api_carrier_repository import ApiCarrierRepository
 from .customer_repository import CustomerRepository
@@ -20,19 +56,10 @@ from .shipping_repository import ShippingRepository
 from .shipping_state_repository import ShippingStateRepository
 from .tax_repository import TaxRepository
 from .app_configuration_repository import AppConfigurationRepository
-from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
-from ..models import Order, OrderState, Shipping, Address
-from ..models.customer import Customer
-from ..models.payment import Payment
-from ..models.product import Product
-from ..models.order_detail import OrderDetail as OrderDetailModel
-from ..models.carrier import Carrier
-from ..models.relations.relations import orders_history
-from src.schemas.customer_schema import *
-from ..schemas.order_schema import OrderSchema, OrderResponseSchema, AllOrderResponseSchema, OrderIdSchema, OrderUpdateSchema
-from ..services import QueryUtils
+
+from src.core.exceptions import InfrastructureException
+# Local application imports - Interfaces
 from ..repository.interfaces.order_repository_interface import IOrderRepository
-from src.core.base_repository import BaseRepository
 
 
 logger = logging.getLogger(__name__)
@@ -375,13 +402,11 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
 
         # Gestione shipping: distingue tra None/0, int (ID esistente), e ShippingSchema (nuovo)
         # IMPORTANTE: Verifica esplicita per evitare creazioni multiple
-        logger.warning(f"[DEBUG] create order - data.shipping type: {type(data.shipping)}, value: {data.shipping}")
         
         if isinstance(data.shipping, ShippingSchema):
             # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
             shipping_data = data.shipping.model_dump()
             if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
-                from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
                 if order.id_address_delivery:
                     tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
                     shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
@@ -463,10 +488,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 created_order_details.append(created_detail)
         
         # Calcola i totali se non sono stati passati e ci sono order_details
-        if created_order_details:
-            from src.services.core.tool import calculate_order_totals
-            from src.models.tax import Tax
-            
+        if created_order_details:       
             # Raccogli gli ID delle tasse dagli order details
             tax_ids = set()
             for detail in created_order_details:
@@ -541,8 +563,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         
         # Aggiorna peso spedizione automaticamente (solo se ordine in stato 1)
         if created_order_details:
-            logger.warning(f"[DEBUG] OrderRepository.create - aggiornando peso spedizione per order {order.id_order}")
-            from src.services.routers.order_document_service import OrderDocumentService
             order_doc_service = OrderDocumentService(self.session)
             order_doc_service.update_shipping_weight_from_articles(
                 id_order=order.id_order,
@@ -594,9 +614,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         return edited_order
 
     def set_price(self, id_order: int, order_details: list[OrderDetail]):
-        from src.services.core.tool import calculate_order_totals
-        from src.models.tax import Tax
-        
         order = self.get_by_id(_id=id_order)
 
         if order is None:
@@ -618,7 +635,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         order.total_price_with_tax = totals['total_price_with_tax']
         # Calcola total_price_net se necessario
         if order.total_price_net is None or order.total_price_net == 0:
-            from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
             if order.id_address_delivery:
                 tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
                 order.total_price_net = calculate_price_without_tax(order.total_price_with_tax, tax_percentage) if order.total_price_with_tax > 0 else 0.0
@@ -642,9 +658,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         # Allinea il peso della spedizione se presente
         try:
             if getattr(order, 'id_shipping', None):
-                from src.repository.shipping_repository import ShippingRepository
-                shipping_repo = ShippingRepository(self.session)
-                shipping_repo.update_weight(order.id_shipping, order.total_weight)
+                self.shipping_repository.update_weight(order.id_shipping, order.total_weight)
 
         except Exception:
             # Non bloccare il flusso per errori non critici di sync peso
@@ -696,8 +710,92 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
 
     def delete(self, order: Order) -> bool:
         """
-        Elimina un ordine dal database
+        Elimina un ordine dal database insieme a OrderDetail, OrderPackage e Shipping collegati.
+        
+        NOTA: Questo metodo NON verifica lo stato dell'ordine o l'esistenza di FiscalDocument.
+        Queste validazioni devono essere fatte a livello service.
+        
+        Elimina:
+        - OrderDetail collegati (tramite id_order)
+        - OrderPackage collegati (tramite id_order)
+        - Record in orders_history (relazione many-to-many)
+        - ShipmentDocument collegati (tramite order_id)
+        - Shipping collegati:
+          * Shipping collegato tramite Order.id_shipping (solo se non usato da altri ordini)
+          * Shipping collegati tramite OrderDocument.id_shipping per questo ordine (solo se non usati da altri OrderDocument)
+        - Record in shipments_history per gli shipping eliminati
+        - Order
+        
+        Non elimina:
+        - FiscalDocument (lasciati intatti, ma verifica che non esistano prima di chiamare questo metodo)
+        - OrderDocument (lasciati intatti, id_order diventerà NULL)
         """
+        order_id = order.id_order
+        
+        # 1. Elimina OrderDetail collegati
+        self.session.query(OrderDetailModel).filter(
+            OrderDetailModel.id_order == order_id
+        ).delete()
+        
+        # 2. Elimina OrderPackage collegati
+        self.session.query(OrderPackage).filter(
+            OrderPackage.id_order == order_id
+        ).delete()
+        
+        # 3. Elimina record in orders_history (tabella di relazione many-to-many)
+        self.session.execute(
+            orders_history.delete().where(orders_history.c.id_order == order_id)
+        )
+        
+        # 4. Raccogli tutti gli id_shipping collegati all'ordine
+        shipping_ids_to_delete = set()
+        
+        # 4a. Shipping collegato tramite Order.id_shipping
+        if order.id_shipping:
+            # Verifica se è usato da altri ordini
+            other_orders_count = self.session.query(Order).filter(
+                Order.id_shipping == order.id_shipping,
+                Order.id_order != order_id
+            ).count()
+            
+            if other_orders_count == 0:
+                shipping_ids_to_delete.add(order.id_shipping)
+        
+        # 4b. Shipping collegati tramite OrderDocument.id_shipping per questo ordine
+        order_documents = self.session.query(OrderDocument).filter(
+            OrderDocument.id_order == order_id,
+            OrderDocument.id_shipping.isnot(None)
+        ).all()
+        
+        for order_doc in order_documents:
+            if order_doc.id_shipping:
+                # Verifica se è usato da altri OrderDocument
+                other_docs_count = self.session.query(OrderDocument).filter(
+                    OrderDocument.id_shipping == order_doc.id_shipping,
+                    OrderDocument.id_order_document != order_doc.id_order_document
+                ).count()
+                
+                if other_docs_count == 0:
+                    shipping_ids_to_delete.add(order_doc.id_shipping)
+        
+        # 5. Elimina ShipmentDocument collegati all'ordine (etichette, documenti spedizione)
+        self.session.query(ShipmentDocument).filter(
+            ShipmentDocument.order_id == order_id
+        ).delete()
+        
+        # 6. Elimina record in shipments_history per gli shipping da eliminare
+        if shipping_ids_to_delete:
+            self.session.query(ShipmentsHistory).filter(
+                ShipmentsHistory.id_shipping.in_(shipping_ids_to_delete)
+            ).delete(synchronize_session=False)
+        
+        # 7. Elimina Shipping (solo quelli non usati da altri ordini/OrderDocument)
+        if shipping_ids_to_delete:
+            self.session.query(Shipping).filter(
+                Shipping.id_shipping.in_(shipping_ids_to_delete)
+            ).delete(synchronize_session=False)
+        
+        # 8. Elimina Order
         self.session.delete(order)
         self.session.commit()
         return True
@@ -717,10 +815,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         if not data_list:
             return 0
         
-        try:
-            from sqlalchemy import and_, text
-            from src.models.order import Order
-            
+        try:  
             # Get existing (id_origin, id_store) pairs
             origin_ids = [data.id_origin for data in data_list if hasattr(data, 'id_origin') and data.id_origin]
             
@@ -756,7 +851,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             
         except Exception as e:
             self.session.rollback()
-            from src.core.exceptions import InfrastructureException
             raise InfrastructureException(f"Database error bulk creating orders: {str(e)}")
 
     def formatted_output(self, order: Order, show_details: bool = False, include_order_history: bool = True):
@@ -958,7 +1052,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             product_ids = [detail.id_product for detail in order_details if detail.id_product]
             images_map = {}
             if product_ids:
-                from src.models.product import Product
                 products = self.session.query(Product.id_product, Product.img_url).filter(
                     Product.id_product.in_(product_ids)
                 ).all()
@@ -1004,7 +1097,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         def format_order_packages(order_id):
             if not order_id:
                 return []
-            from src.models.order_package import OrderPackage
             packages = self.session.query(
                 OrderPackage.id_order_package,
                 OrderPackage.height,
@@ -1078,6 +1170,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "general_note": order.general_note,
             "delivery_date": order.delivery_date,
             "date_add": order.date_add,
+            "is_multishipping": order.is_multishipping or 0,
             "ecommerce_order_state": format_ecommerce_order_state(order),
             "ecommerce_carrier": format_ecommerce_carrier(order)
         }
@@ -1110,9 +1203,91 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 "order_packages": format_order_packages(order.id_order),
                 "ecommerce_order_state": format_ecommerce_order_state(order)
             })
+            
+            # Se is_multishipping=1, aggiungi lista multishippings
+            if order.is_multishipping == 1:
+                response["multishippings"] = self._get_multishippings(order.id_order)
 
         
         return response
+    
+    def _get_multishippings(self, order_id: int) -> List[dict]:
+        """
+        Recupera le spedizioni multiple per un ordine.
+        
+        Args:
+            order_id: ID dell'ordine
+            
+        Returns:
+            Lista di spedizioni multiple formattate
+        """
+        
+        try:
+            # Query OrderDocument type=shipping con Shipping e OrderDetail
+            shipments = self.session.query(OrderDocument).options(
+                joinedload(OrderDocument.shipping),
+                selectinload(OrderDocument.order_packages)
+            ).filter(
+                OrderDocument.id_order == order_id,
+                OrderDocument.type_document == "shipping"
+            ).all()
+            
+            result = []
+            for shipment in shipments:
+                # Conta items
+                items_count = self.session.query(func.count(OrderDetail.id_order_detail)).filter(
+                    OrderDetail.id_order_document == shipment.id_order_document,
+                    OrderDetail.id_order == 0
+                ).scalar() or 0
+                
+                # Recupera carrier name usando il repository
+                carrier_name = None
+                if shipment.shipping and shipment.shipping.id_carrier_api:
+                    carrier = self.api_carrier_repository.get_by_id(shipment.shipping.id_carrier_api)
+                    if carrier:
+                        carrier_name = carrier.name
+                
+                # Recupera shipping state name
+                shipping_state_name = None
+                if shipment.shipping and shipment.shipping.id_shipping_state:
+                    shipping_state = self.shipping_state_repository.get_by_id(shipment.shipping.id_shipping_state)
+                    if shipping_state:
+                        shipping_state_name = shipping_state.name
+                
+                # Recupera items essenziali
+                items = []
+                order_details = self.session.query(OrderDetail).filter(
+                    OrderDetail.id_order_document == shipment.id_order_document,
+                    OrderDetail.id_order == 0
+                ).all()
+                for detail in order_details:
+                    items.append({
+                        "product_name": detail.product_name,
+                        "product_reference": detail.product_reference,
+                        "quantity": detail.product_qty
+                    })
+                
+                result.append({
+                    "id_order_document": shipment.id_order_document,
+                    "document_number": shipment.document_number,
+                    "date_add": shipment.date_add.isoformat() if shipment.date_add else None,
+                    "note": shipment.note,
+                    "id_shipping": shipment.id_shipping,
+                    "id_carrier_api": shipment.shipping.id_carrier_api if shipment.shipping else None,
+                    "carrier_name": carrier_name,
+                    "tracking": shipment.shipping.tracking if shipment.shipping else None,
+                    "id_shipping_state": shipment.shipping.id_shipping_state if shipment.shipping else None,
+                    "shipping_state_name": shipping_state_name,
+                    "weight": float(shipment.shipping.weight) if shipment.shipping and shipment.shipping.weight else None,
+                    "items_count": items_count,
+                    "packages_count": len(shipment.order_packages) if shipment.order_packages else 0,
+                    "items": items
+                })
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving multishippings for order {order_id}: {str(e)}", exc_info=True)
+            return []
     
     def get_by_origin_id(self, id_origin: int) -> Optional[Order]:
         """Get order by origin ID (PrestaShop ID)"""
@@ -1164,6 +1339,25 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         result = self.session.execute(stmt)
         return result.scalar_one_or_none()
     
+    def set_multishipping(self, order_id: int, value: int) -> bool:
+        """
+        Imposta il flag is_multishipping per un ordine.
+        
+        Args:
+            order_id: ID dell'ordine
+            value: 1 per attivare multishipping, 0 per disattivare
+            
+        Returns:
+            True se aggiornato con successo, False altrimenti
+        """
+        order = self.get_by_id(order_id)
+        if not order:
+            return False
+        
+        order.is_multishipping = value
+        self.session.commit()
+        return True
+    
     def _handle_order_packages_smart_merge(self, id_order: int, packages: List) -> None:
         """
         Smart merge per order_packages:
@@ -1171,7 +1365,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         2. Identifica packages da CREATE (id_order_package null nella lista)
         3. Identifica packages da DELETE (esistenti nel DB ma non nella lista)
         """
-        from src.models.order_package import OrderPackage
         
         # Recupera packages esistenti per questo ordine
         existing_packages = self.session.query(OrderPackage).filter(

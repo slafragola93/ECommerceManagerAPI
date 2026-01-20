@@ -89,3 +89,16 @@ class IShippingRepository(IRepository[Shipping, int]):
         """
         pass
     
+    @abstractmethod
+    def count_active_shipments(self, order_id: int) -> int:
+        """
+        Conta le spedizioni attive (non annullate) per un ordine.
+        
+        Args:
+            order_id: ID dell'ordine
+            
+        Returns:
+            Numero di spedizioni attive
+        """
+        pass
+    

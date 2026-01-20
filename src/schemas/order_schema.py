@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Dict, Any
 
 from pydantic import BaseModel, ConfigDict, Field, validator
 
@@ -82,6 +82,34 @@ class OrderUpdateSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
 
+class OrderMultishippingItemSchema(BaseModel):
+    """Schema per singola spedizione in contesto multishipping"""
+    # Dati OrderDocument
+    id_order_document: int
+    document_number: int
+    date_add: Optional[str]
+    note: Optional[str]
+    
+    # Dati Shipping
+    id_shipping: int
+    id_carrier_api: Optional[int]
+    carrier_name: Optional[str]
+    tracking: Optional[str]
+    id_shipping_state: int
+    shipping_state_name: Optional[str]
+    weight: Optional[float]
+    
+    # Conteggi
+    items_count: int
+    packages_count: int
+    
+    # Prodotti spediti (dettagli essenziali)
+    items: Optional[List[Dict[str, Any]]] = None
+
+    class ConfigDict:
+        from_attributes = True
+
+
 class OrderSimpleResponseSchema(BaseModel):
     """Schema per risposta semplice degli ordini (solo ID)"""
     id_order: int
@@ -113,6 +141,7 @@ class OrderSimpleResponseSchema(BaseModel):
     general_note: Optional[str]
     delivery_date: Optional[datetime]
     date_add: Optional[datetime] = None
+    is_multishipping: int = 0  # Solo il flag
 
     @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
@@ -164,6 +193,8 @@ class OrderResponseSchema(BaseModel):
     order_state: Optional[OrderStateResponseSchema] = None
     order_details: Optional[list] = None 
     order_history: Optional[list[OrderHistorySchema]] = None
+    is_multishipping: int = 0
+    multishippings: Optional[List[OrderMultishippingItemSchema]] = None  # Solo se is_multishipping=1
 
     @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
@@ -206,6 +237,8 @@ class OrderIdSchema(BaseModel):
     order_details: Optional[list] = None 
     order_packages: Optional[list] = None
     order_history: Optional[list] = None
+    is_multishipping: int = 0
+    multishippings: Optional[List[OrderMultishippingItemSchema]] = None  # Solo se is_multishipping=1
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 

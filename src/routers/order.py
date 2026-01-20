@@ -304,20 +304,28 @@ async def update_order(
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
 async def delete_order(order_id: int = Path(gt=0),
                       user: dict = Depends(get_current_user),
-                      or_repo: OrderRepository = Depends(get_repository)):
+                      order_service: IOrderService = Depends(get_order_service)):
     """
     Elimina un ordine dal sistema per l'ID specificato.
+    
+    L'ordine può essere eliminato solo se:
+    - È in stato iniziale (id_order_state = 1, "In Preparazione")
+    - Non ha documenti fiscali collegati
+    
+    Vengono eliminati:
+    - Order
+    - OrderDetail collegati
+    - OrderPackage collegati
+    
+    Vengono lasciati intatti:
+    - FiscalDocument (se presenti, l'eliminazione fallisce)
+    - OrderDocument (id_order diventerà NULL)
 
     Parametri:
     - `user`: Dipendenza dell'utente autenticato.
     - `order_id`: ID dell'ordine da eliminare.
     """
-    order = or_repo.get_by_id(_id=order_id)
-
-    if order is None:
-        raise HTTPException(status_code=404, detail="Ordine non trovato")
-
-    or_repo.delete(order=order)
+    await order_service.delete_order(order_id, user=user)
 
 
 

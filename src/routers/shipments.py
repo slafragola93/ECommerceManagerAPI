@@ -26,6 +26,7 @@ from src.schemas.shipping_schema import (
 )
 from src.database import get_db
 from src.repository.shipping_repository import ShippingRepository
+from src.services.interfaces.shipping_service_interface import IShippingService
 from src.services.routers.shipping_service import ShippingService
 from src.repository.shipment_document_repository import ShipmentDocumentRepository
 from src.core.exceptions import (
@@ -60,6 +61,10 @@ def get_shipment_document_repository(db: Session = Depends(get_db)) -> IShipment
 def get_carrier_repository(db: Session = Depends(get_db)) -> IApiCarrierRepository:
     """Dependency injection per Carrier Repository."""
     return ApiCarrierRepository(db)
+
+def get_shipping_service(db: Session = Depends(get_db)) -> IShippingService:
+    """Dependency injection per Shipping Service."""
+    return ShippingService(db)
 
 def _create_bulk_shipment_error(
     order_id: int,
@@ -164,6 +169,7 @@ async def create_shipment(
     shipping_repo: ShippingRepository = Depends(get_shipping_repository),
     id_order_document: Optional[int] = Query(None, description="ID OrderDocument type=shipping"),
     user: dict = Depends(get_current_user),
+    shipping_service: IShippingService = Depends(get_shipping_service),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
 ):
@@ -261,14 +267,27 @@ async def create_shipment(
         # Non bloccare la risposta in caso di errori nell'emissione dell'evento
         logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id}: {str(e)}", exc_info=True)
     
-    # 6. Aggiorna stato ordine a 4 ("Spedizione Confermata")
+    # 6. Aggiorna stato ordine in base al flag is_multishipping
     try:
         order_service = OrderService(or_repo)
-        await order_service.update_order_status(order_id, 4)
-        logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
+        order = or_repo.get_by_id(order_id)
+        
+        if order.is_multishipping == 0:
+            # Spedizione normale -> sempre stato 4
+            await order_service.update_order_status(order_id, 4)
+            logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
+        else:
+            # Multispedizione -> verifica se tutto spedito
+            all_shipped = await shipping_service.check_all_products_shipped(order_id, db)
+            if all_shipped:
+                await order_service.update_order_status(order_id, 4)  # SPEDIZIONE CONFERMATA
+                logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) - all products shipped")
+            else:
+                await order_service.update_order_status(order_id, 7)  # MULTISPEDIZIONE
+                logger.info(f"Order {order_id} status updated to 7 (Multispedizione) - not all products shipped")
     except Exception as e:
         # Non bloccare la risposta in caso di errori nell'aggiornamento dello stato
-        logger.warning(f"Failed to update order {order_id} status to 4: {str(e)}", exc_info=True)
+        logger.warning(f"Failed to update order {order_id} status: {str(e)}", exc_info=True)
     
     return result
 
@@ -278,6 +297,7 @@ async def bulk_create_shipments(
     request: BulkShipmentCreateRequestSchema = Body(...),
     or_repo: IOrderRepository = Depends(get_repository),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    shipping_service: IShippingService = Depends(get_shipping_service),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
@@ -383,10 +403,24 @@ async def bulk_create_shipments(
                 # Non bloccare il processing in caso di errori nell'emissione dell'evento
                 logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id} in bulk operation: {str(e)}", exc_info=True)
             
-            # Aggiorna stato ordine a 4 ("Spedizione Confermata")
+            # Aggiorna stato ordine in base al flag is_multishipping
             # Il service gestisce le eccezioni internamente
             order_service = OrderService(or_repo)
-            result = await order_service.update_order_status(order_id, 4)
+            order = or_repo.get_by_id(order_id)
+            
+            if order.is_multishipping == 0:
+                # Spedizione normale -> sempre stato 4
+                await order_service.update_order_status(order_id, 4)
+                logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
+            else:
+                # Multispedizione -> verifica se tutto spedito
+                all_shipped = await shipping_service.check_all_products_shipped(order_id, db)
+                if all_shipped:
+                    await order_service.update_order_status(order_id, 4)  # SPEDIZIONE CONFERMATA
+                    logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) - all products shipped")
+                else:
+                    await order_service.update_order_status(order_id, 7)  # MULTISPEDIZIONE
+                    logger.info(f"Order {order_id} status updated to 7 (Multispedizione) - not all products shipped")
 
         except (NotFoundException, BusinessRuleException, ValidationException, 
                 AuthenticationException, InfrastructureException) as e:
@@ -438,6 +472,7 @@ async def get_tracking(
     tracking: str = Query(..., description="Comma-separated list of tracking numbers"),
     carrier_repo: IApiCarrierRepository = Depends(get_carrier_repository),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    shipping_service: IShippingService = Depends(get_shipping_service),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
@@ -472,7 +507,6 @@ async def get_tracking(
     carrier = carrier_repo.get_by_id(id_carrier_api)
     carrier_type = carrier.carrier_type.value if carrier else None
     
-    shipping_service = ShippingService(shipping_repo)
     await shipping_service.sync_shipping_states_from_tracking_results(
         result,
         carrier_type=carrier_type
@@ -549,6 +583,7 @@ async def cancel_shipment(
     user: dict = Depends(get_current_user),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
     order_repo: IOrderRepository = Depends(get_repository),
+    shipping_service: IShippingService = Depends(get_shipping_service),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
     db: Session = Depends(get_db)
 ):
@@ -585,6 +620,15 @@ async def cancel_shipment(
     logger.info(f"Cancelling shipment for order {order_id} with carrier_api_id {carrier_api_id}")
     result = await shipment_service.cancel_shipment(order_id)
     
+    # 5. Dopo l'annullamento, verifica se ci sono ancora spedizioni attive
+    # usando la funzione del service (che usa il repository)
+    active_count = shipping_service.get_active_shipments_count(order_id)
+    
+    if active_count == 0:
+        # Nessuna spedizione attiva -> reset flag is_multishipping
+        order_repo.set_multishipping(order_id, 0)
+        logger.info(f"Reset is_multishipping flag for order {order_id} - no active shipments")
+    
     return result
 
 
@@ -593,6 +637,7 @@ async def create_multi_shipments(
     request: MultiShippingDocumentCreateRequestSchema,
     user: dict = Depends(get_current_user),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    shipping_service: IShippingService = Depends(get_shipping_service),
     db: Session = Depends(get_db)
 ):
     """
@@ -609,7 +654,6 @@ async def create_multi_shipments(
     Returns:
         MultiShippingDocumentResponseSchema con dati idratati
     """
-    shipping_service = ShippingService(shipping_repo)
     return await shipping_service.create_multi_shipment(request, user.get("id", 0), db)
 
 
@@ -644,7 +688,7 @@ async def get_order_shipment_status(
 async def get_order_multi_shipments(
     order_id: int = Path(..., description="ID dell'ordine"),
     user: dict = Depends(get_current_user),
-    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+    shipping_service: IShippingService = Depends(get_shipping_service),
     db: Session = Depends(get_db)
 ):
     """
@@ -660,5 +704,4 @@ async def get_order_multi_shipments(
     Returns:
         MultiShippingDocumentListResponseSchema con lista spedizioni
     """
-    shipping_service = ShippingService(shipping_repo)
     return await shipping_service.get_multi_shipments_by_order(order_id, db)

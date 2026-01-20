@@ -455,8 +455,7 @@ class ShippingService(IShippingService):
             # 5. Genera numero documento automaticamente
             from src.services.routers.order_document_service import OrderDocumentService
             order_doc_service = OrderDocumentService(db)
-            document_number = order_doc_service.get_next_document_number("SHIP")
-            print(f"document_number: {document_number}")
+            document_number = order_doc_service.get_next_document_number("shipping")
             # 6. Crea OrderDocument(type_document="shipping", id_shipping=...)
             new_order_doc = OrderDocument(
                 type_document="shipping",
@@ -578,6 +577,9 @@ class ShippingService(IShippingService):
             order_doc_service.update_document_totals(new_order_doc.id_order_document, "shipping")
             
             db.commit()
+            
+            # 11. Imposta flag is_multishipping = 1 usando la funzione del repository
+            order_repository.set_multishipping(request.id_order, 1)
             
             # Ricarica con relazioni per risposta
             order_doc = db.query(OrderDocument).options(
@@ -777,6 +779,20 @@ class ShippingService(IShippingService):
                 details={"order_id": order_id, "original_error": str(e)}
             )
     
+    async def check_all_products_shipped(self, order_id: int, db: Session) -> bool:
+        """
+        Verifica se tutti i prodotti dell'ordine sono stati spediti.
+        
+        Args:
+            order_id: ID dell'ordine
+            db: Database session
+            
+        Returns:
+            True se tutti i prodotti sono stati spediti, False altrimenti
+        """
+        status = await self.get_order_shipment_status(order_id, db)
+        return status.all_shipped
+    
     async def get_multi_shipments_by_order(
         self,
         order_id: int,
@@ -929,3 +945,15 @@ class ShippingService(IShippingService):
                 continue
         
         return updated_count
+    
+    def get_active_shipments_count(self, order_id: int) -> int:
+        """
+        Restituisce il numero di spedizioni attive per un ordine.
+        
+        Args:
+            order_id: ID dell'ordine
+            
+        Returns:
+            Numero di spedizioni attive (non annullate)
+        """
+        return self._shipping_repository.count_active_shipments(order_id)

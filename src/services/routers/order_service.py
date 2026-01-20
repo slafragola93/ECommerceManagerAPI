@@ -11,6 +11,7 @@ from src.models.order_detail import OrderDetail
 from src.models.order_state import OrderState
 from src.models.shipping import Shipping
 from src.models.tax import Tax
+from src.models.fiscal_document import FiscalDocument
 from src.models.relations.relations import orders_history
 from src.schemas.order_schema import (
     OrderUpdateSchema,
@@ -21,7 +22,8 @@ from src.schemas.order_schema import (
 )
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
-from src.events.extractors import extract_order_created_data
+from src.events.extractors import extract_order_created_data, extract_order_deleted_data
+from src.core.exceptions import BusinessRuleException, NotFoundException
 from src.services.core.tool import calculate_order_totals, calculate_price_without_tax,calculate_amount_with_percentage
 from src.repository.tax_repository import TaxRepository
 from src.services.routers.order_document_service import OrderDocumentService
@@ -883,3 +885,74 @@ class OrderService(IOrderService):
                 "failed_count": failed_count
             }
         )
+    
+    @emit_event_on_success(
+        event_type=EventType.ORDER_DELETED,
+        data_extractor=extract_order_deleted_data,
+        source="order_service.delete_order"
+    )
+    async def delete_order(self, order_id: int, user: dict = None) -> bool:
+        """
+        Elimina un ordine solo se in stato iniziale (id_order_state = 1).
+        
+        Validazioni:
+        - L'ordine deve essere in stato iniziale (id_order_state = 1)
+        - Non devono esistere FiscalDocument collegati
+        
+        Elimina:
+        - Order
+        - OrderDetail collegati
+        - OrderPackage collegati
+        
+        Non elimina:
+        - FiscalDocument (lasciati intatti, ma verifica che non esistano)
+        - OrderDocument (lasciati intatti, id_order diventerà NULL)
+        
+        Args:
+            order_id: ID dell'ordine da eliminare
+            user: Contesto utente per eventi
+            
+        Returns:
+            True se eliminato con successo
+            
+        Raises:
+            BusinessRuleException: Se l'ordine non è in stato iniziale o ha FiscalDocument collegati
+        """
+        # 1. Recupera l'ordine
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise NotFoundException("Order", order_id, {"order_id": order_id})
+        
+        # 2. Verifica che l'ordine sia in stato iniziale (id_order_state = 1)
+        if order.id_order_state != 1:
+            raise BusinessRuleException(
+                f"L'ordine può essere eliminato solo se è in stato iniziale (In Preparazione). Stato attuale: {order.id_order_state}",
+                details={
+                    "order_id": order_id,
+                    "current_state": order.id_order_state,
+                    "required_state": 1
+                }
+            )
+        
+        # 3. Verifica che non esistano FiscalDocument collegati
+        session = self._order_repository.session
+        fiscal_docs_count = session.query(FiscalDocument).filter(
+            FiscalDocument.id_order == order_id
+        ).count()
+        
+        if fiscal_docs_count > 0:
+            raise BusinessRuleException(
+                f"Impossibile eliminare l'ordine: esistono {fiscal_docs_count} documento/i fiscale/i collegato/i",
+                details={
+                    "order_id": order_id,
+                    "fiscal_documents_count": fiscal_docs_count
+                }
+            )
+        
+        # 4. Elimina l'ordine (il repository elimina anche OrderDetail e OrderPackage)
+        result = self._order_repository.delete(order)
+        
+        # Passa l'ordine al decorator tramite kwargs per l'estrazione dati evento
+        # Il decorator riceverà result=True, ma abbiamo bisogno dell'ordine per i dati
+        # Quindi passiamo order_id che verrà usato dall'extractor
+        return result

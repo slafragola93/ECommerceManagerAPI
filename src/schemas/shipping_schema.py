@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, validator
 
 class ShippingSchema(BaseModel):
     id_carrier_api: Optional[int] = Field(None, gt=0)
-    id_shipping_state: int = Field(..., gt=0)
+    id_shipping_state: Optional[int] = Field(default=1, gt=0)  # Default a 1 se non specificato
     id_tax: Optional[int] = Field(default=1, gt=0)  # Default a 1 se non specificato
     tracking: Optional[str] = None
     weight: Optional[float] = Field(default=0.0, ge=0)

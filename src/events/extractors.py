@@ -902,3 +902,49 @@ def extract_shipping_status_from_order_update(*args, result=None, **kwargs) -> O
         logger.error(f"Errore estrazione dati shipping status from order update: {e}")
         return None
 
+
+def extract_order_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
+    """
+    Estrae dati completi per evento ORDER_DELETED.
+    
+    Args:
+        result: Order eliminato o order_id (int)
+        kwargs: Contiene 'user' per contesto
+    
+    Returns:
+        Dictionary con dati dell'ordine eliminato
+    """
+    try:
+        order_id = None
+        order_data = {}
+        
+        if result:
+            if isinstance(result, int):
+                order_id = result
+            elif hasattr(result, 'id_order'):
+                order_id = result.id_order
+                # Estrai dati rilevanti dall'ordine prima dell'eliminazione
+                order_data = {
+                    "id_origin": getattr(result, 'id_origin', None),
+                    "id_customer": getattr(result, 'id_customer', None),
+                    "id_order_state": getattr(result, 'id_order_state', None),
+                    "reference": getattr(result, 'reference', None),
+                    "internal_reference": getattr(result, 'internal_reference', None),
+                    "total_price_with_tax": float(getattr(result, 'total_price_with_tax', 0) or 0),
+                }
+        
+        if order_id is None:
+            # Prova a estrarre da args o kwargs
+            order_id = kwargs.get('order_id') or (args[0] if args else None)
+        
+        if not order_id:
+            return None
+        
+        return {
+            "id_order": order_id,
+            **order_data,
+            "deleted_by": kwargs.get('user', {}).get('id')
+        }
+    except Exception as e:
+        logger.error(f"Errore estrazione dati order deleted: {e}")
+        return None

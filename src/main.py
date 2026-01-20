@@ -1,6 +1,7 @@
 import sys
 import asyncio
 import logging
+import os
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -141,21 +142,26 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         print(f"WARNING: Failed to start order states sync task: {e}")
     
-    # Start periodic tracking polling task
-    try:
-        # Verifica se il task è già in esecuzione
-        if _tracking_polling_task is None or _tracking_polling_task.done():
-            from src.database import SessionLocal
-            from src.services.sync.tracking_polling_service import run_tracking_polling_task
-            
-            # Crea una sessione DB per la task periodica
-            db = SessionLocal()
-            
-            # Avvia la task periodica in background
-            _tracking_polling_task = asyncio.create_task(run_tracking_polling_task(db))
-            print("Tracking polling periodic task started")
-    except Exception as e:
-        print(f"WARNING: Failed to start tracking polling task: {e}")
+    # Start periodic tracking polling task (se abilitato)
+    TRACKING_POLLING_ENABLED = os.getenv("TRACKING_POLLING_ENABLED", "true").lower() == "true"
+    
+    if TRACKING_POLLING_ENABLED:
+        try:
+            # Verifica se il task è già in esecuzione
+            if _tracking_polling_task is None or _tracking_polling_task.done():
+                from src.database import SessionLocal
+                from src.services.sync.tracking_polling_service import run_tracking_polling_task
+                
+                # Crea una sessione DB per la task periodica
+                db = SessionLocal()
+                
+                # Avvia la task periodica in background
+                _tracking_polling_task = asyncio.create_task(run_tracking_polling_task(db))
+                print("Tracking polling periodic task started")
+        except Exception as e:
+            print(f"WARNING: Failed to start tracking polling task: {e}")
+    else:
+        print("Tracking polling task disabled by TRACKING_POLLING_ENABLED environment variable")
 
     yield
     

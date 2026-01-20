@@ -11,7 +11,7 @@ class Shipping(Base):
 
     id_shipping = Column(Integer, primary_key=True, index=True)
     id_carrier_api = Column(Integer, index=True, default=None)
-    id_shipping_state = Column(Integer, index=True, default=None)
+    id_shipping_state = Column(Integer, index=True, default=1, nullable=False)
     id_tax = Column(Integer)
     tracking = Column(String(100), default=None, index=True)
     weight = Column(Numeric(10, 5), default=0)

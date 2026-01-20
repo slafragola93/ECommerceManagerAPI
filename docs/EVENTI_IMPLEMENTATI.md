@@ -13,6 +13,7 @@ Questo documento elenca tutti gli eventi che sono attualmente **triggerabili** (
 |--------|--------|-----------------|-------------|
 | `ORDER_STATUS_CHANGED` | `order_status_changed` | `src/services/routers/order_service.py` | Emesso quando cambia lo stato di un ordine |
 | `ORDER_CREATED` | `order_created` | `src/services/routers/order_service.py` | Emesso quando viene creato un nuovo ordine |
+| `ORDER_DELETED` | `order_deleted` | `src/services/routers/order_service.py` | Emesso quando viene eliminato un ordine (solo se in stato iniziale) |
 
 ### 📦 SPEDIZIONI
 | Evento | Valore | Implementato in | Descrizione |
@@ -51,9 +52,9 @@ Questo documento elenca tutti gli eventi che sono attualmente **triggerabili** (
 
 ## 📊 Riepilogo
 
-**Totale eventi implementati: 15**
+**Totale eventi implementati: 16**
 
-- **Ordini**: 2 eventi
+- **Ordini**: 3 eventi
 - **Spedizioni**: 2 eventi
 - **Documenti**: 5 eventi
 - **Clienti**: 3 eventi

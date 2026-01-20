@@ -47,6 +47,7 @@ class Order(Base):
     delivery_date = Column(Date, nullable=True)
     date_add = Column(DateTime, default=datetime.now)
     updated_at = Column(String(19), nullable=True)  # Formato: DD-MM-YYYY hh:mm:ss
+    is_multishipping = Column(Integer, default=0, nullable=False, comment="1 se ordine in multispedizione")
 
     # Relazioni
     platform = relationship("Platform", back_populates="orders")
