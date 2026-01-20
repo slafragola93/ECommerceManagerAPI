@@ -17,7 +17,7 @@ class IShippingRepository(IRepository[Shipping, int]):
         pass
     
     @abstractmethod
-    def create_and_get_id(self, data: Union[ShippingSchema, dict]) -> int:
+    def create_and_get_id(self, data: Union[ShippingSchema, dict], id_order: int = None, id_order_document: int = None) -> int:
         """Crea un shipping e restituisce l'ID"""
         pass
     

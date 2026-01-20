@@ -25,6 +25,7 @@ class ApiCarrierInitSchema(BaseModel):
     """Schema per gli API carrier nei dati di inizializzazione"""
     id_carrier_api: int = Field(..., description="ID dell'API carrier")
     name: str = Field(..., description="Nome dell'API carrier")
+    logo: Optional[str] = Field(None, description="URL o percorso del logo del corriere")
 
 
 class StoreInitSchema(BaseModel):

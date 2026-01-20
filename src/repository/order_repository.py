@@ -1097,26 +1097,65 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         def format_order_packages(order_id):
             if not order_id:
                 return []
-            packages = self.session.query(
+            
+            # 1. Packages collegati direttamente all'ordine (spedizione classica)
+            packages_from_order = self.session.query(
                 OrderPackage.id_order_package,
+                OrderPackage.id_order,
+                OrderPackage.id_order_document,
                 OrderPackage.height,
                 OrderPackage.width,
                 OrderPackage.depth,
+                OrderPackage.length,
                 OrderPackage.weight,
                 OrderPackage.value
             ).filter(
                 OrderPackage.id_order == order_id
             ).all()
-            if not packages:
+            
+            # 2. Packages collegati a OrderDocument di tipo "shipping" (multispedizione)
+            packages_from_documents = self.session.query(
+                OrderPackage.id_order_package,
+                OrderPackage.id_order,
+                OrderPackage.id_order_document,
+                OrderPackage.height,
+                OrderPackage.width,
+                OrderPackage.depth,
+                OrderPackage.length,
+                OrderPackage.weight,
+                OrderPackage.value
+            ).join(
+                OrderDocument,
+                OrderPackage.id_order_document == OrderDocument.id_order_document
+            ).filter(
+                OrderDocument.id_order == order_id,
+                OrderDocument.type_document == "shipping"
+            ).all()
+            
+            # 3. Unisci i risultati (rimuovi duplicati se necessario usando set di id_order_package)
+            all_packages_dict = {}
+            for pkg in packages_from_order:
+                all_packages_dict[pkg.id_order_package] = pkg
+            for pkg in packages_from_documents:
+                all_packages_dict[pkg.id_order_package] = pkg
+            
+            all_packages = list(all_packages_dict.values())
+            
+            if not all_packages:
                 return []
+            
+            # 4. Formatta la risposta includendo id_order e id_order_document
             return [{
                 "id_order_package": pkg.id_order_package,
-                "height": pkg.height,
-                "width": pkg.width,
-                "depth": pkg.depth,
-                "weight": pkg.weight,
-                "value": pkg.value
-            } for pkg in packages]
+                "id_order": pkg.id_order,
+                "id_order_document": pkg.id_order_document,
+                "height": float(pkg.height) if pkg.height else None,
+                "width": float(pkg.width) if pkg.width else None,
+                "depth": float(pkg.depth) if pkg.depth else None,
+                "length": float(pkg.length) if pkg.length else None,
+                "weight": float(pkg.weight) if pkg.weight else None,
+                "value": float(pkg.value) if pkg.value else None
+            } for pkg in all_packages]
         
         # Helper per formattare lo stato e-commerce
         def format_ecommerce_order_state(order):
@@ -1175,6 +1214,9 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "ecommerce_carrier": format_ecommerce_carrier(order)
         }
         
+        # Aggiungi order_packages anche per la lista ordini
+        response["order_packages"] = format_order_packages(order.id_order)
+        
         # Aggiungi order_history solo se richiesto
         if include_order_history:
             response["order_history"] = format_order_history(order.id_order)
@@ -1200,7 +1242,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 "sectional": format_sectional(order.id_sectional),
                 "order_state": format_order_state(order.id_order_state),
                 "order_details": format_order_details(order.id_order),
-                "order_packages": format_order_packages(order.id_order),
+                # order_packages già incluso nella risposta base, non serve includerlo di nuovo
                 "ecommerce_order_state": format_ecommerce_order_state(order)
             })
             
@@ -1267,6 +1309,11 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                         "quantity": detail.product_qty
                     })
                 
+                # Conta packages collegati a questo OrderDocument
+                packages_count = self.session.query(func.count(OrderPackage.id_order_package)).filter(
+                    OrderPackage.id_order_document == shipment.id_order_document
+                ).scalar() or 0
+                
                 result.append({
                     "id_order_document": shipment.id_order_document,
                     "document_number": shipment.document_number,
@@ -1280,7 +1327,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                     "shipping_state_name": shipping_state_name,
                     "weight": float(shipment.shipping.weight) if shipment.shipping and shipment.shipping.weight else None,
                     "items_count": items_count,
-                    "packages_count": len(shipment.order_packages) if shipment.order_packages else 0,
+                    "packages_count": packages_count,
                     "items": items
                 })
             

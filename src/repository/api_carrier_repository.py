@@ -73,29 +73,36 @@ class ApiCarrierRepository(BaseRepository[CarrierApi, int], IApiCarrierRepositor
     
     def get_active_carriers_for_init(self) -> List[dict]:
         """
-        Query idratata: recupera solo id_carrier_api e name per carrier attivi.
+        Query idratata: recupera id_carrier_api, name e carrier_type per carrier attivi.
         Utilizzato per endpoint init.
         
         Returns:
-            Lista di dict con id_carrier_api e name
+            Lista di dict con id_carrier_api, name e carrier_type
         """
         try:
             from sqlalchemy import text
             result = self._session.execute(
                 text("""
-                    SELECT id_carrier_api, name 
+                    SELECT id_carrier_api, name, carrier_type 
                     FROM carriers_api 
                     WHERE is_active = 1
                     ORDER BY id_carrier_api
                 """)
             ).fetchall()
-            carriers = [
-                {
+            carriers = []
+            for row in result:
+                # Gestisci Enum: se è un Enum, usa .value, altrimenti usa str()
+                carrier_type_value = row.carrier_type
+                if hasattr(carrier_type_value, 'value'):
+                    carrier_type_str = carrier_type_value.value
+                else:
+                    carrier_type_str = str(carrier_type_value)
+                
+                carriers.append({
                     "id_carrier_api": int(row.id_carrier_api),
-                    "name": str(row.name)
-                }
-                for row in result
-            ]
+                    "name": str(row.name),
+                    "carrier_type": carrier_type_str
+                })
             return carriers
         except Exception as e:
             print(f"[ERROR] Errore query carriers: {e}")

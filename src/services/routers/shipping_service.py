@@ -1,12 +1,16 @@
 """
 Shipping Service rifattorizzato seguendo i principi SOLID con gestione errori intelligente
 """
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload, load_only
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, NoResultFound
-
+from src.services.routers.order_service import OrderService
+from src.models.order_document import OrderDocument
+from src.models.shipping import Shipping
+from src.services.routers.order_document_service import OrderDocumentService
 from src.core.exceptions import (
     BusinessRuleException,
     ErrorCode,
@@ -41,6 +45,8 @@ from src.schemas.shipping_schema import (
     ShippingUpdateSchema,
 )
 from src.services.interfaces.shipping_service_interface import IShippingService
+
+logger = logging.getLogger(__name__)
 
 
 class ShippingService(IShippingService):
@@ -453,7 +459,6 @@ class ShippingService(IShippingService):
   
             
             # 5. Genera numero documento automaticamente
-            from src.services.routers.order_document_service import OrderDocumentService
             order_doc_service = OrderDocumentService(db)
             document_number = order_doc_service.get_next_document_number("shipping")
             # 6. Crea OrderDocument(type_document="shipping", id_shipping=...)
@@ -581,6 +586,13 @@ class ShippingService(IShippingService):
             # 11. Imposta flag is_multishipping = 1 usando la funzione del repository
             order_repository.set_multishipping(request.id_order, 1)
             
+            # 12. Aggiorna stato ordine e storico
+            # Quando si crea una multi-spedizione, lo stato deve sempre essere 7 (Multispedizione)
+            # Lo stato 4 (Spedizione Confermata) viene impostato solo quando si crea una spedizione normale
+            # e tutti i prodotti sono stati spediti
+            order_service = OrderService(order_repository)
+            await order_service.update_order_status(request.id_order, 7)  # MULTISPEDIZIONE
+            
             # Ricarica con relazioni per risposta
             order_doc = db.query(OrderDocument).options(
                 joinedload(OrderDocument.shipping),
@@ -704,11 +716,31 @@ class ShippingService(IShippingService):
                 OrderDetail.id_order_document.is_(None)  # Solo righe ordine, non documento
             ).all()
             
+            # Se non ci sono OrderDetail originali, verifica se esistono OrderDetail spediti
+            # Se tutti gli OrderDetail sono già stati associati a OrderDocument, significa che sono tutti spediti
             if not order_details:
-                raise NotFoundException(
-                    "OrderDetails",
-                    details={"id_order": order_id, "message": "No order details found for this order"}
-                )
+                # Verifica se esistono OrderDetail spediti per questo ordine
+                shipped_details = db.query(OrderDetail).join(
+                    OrderDocument, OrderDetail.id_order_document == OrderDocument.id_order_document
+                ).filter(
+                    OrderDocument.type_document == "shipping",
+                    OrderDocument.id_order == order_id,
+                    OrderDetail.id_order == 0  # Solo righe documento
+                ).all()
+                
+                if shipped_details:
+                    # Tutti gli OrderDetail sono stati spediti
+                    return OrderShipmentStatusResponseSchema(
+                        order_id=order_id,
+                        all_shipped=True,
+                        items=[]
+                    )
+                else:
+                    # Non ci sono OrderDetail né originali né spediti - ordine senza dettagli
+                    raise NotFoundException(
+                        "OrderDetails",
+                        details={"id_order": order_id, "message": "No order details found for this order"}
+                    )
             
             items = []
             all_shipped = True
@@ -793,6 +825,38 @@ class ShippingService(IShippingService):
         status = await self.get_order_shipment_status(order_id, db)
         return status.all_shipped
     
+    async def check_all_shipments_have_labels(self, order_id: int, db: Session) -> bool:
+        """
+        Verifica se tutte le spedizioni di un ordine hanno l'etichetta generata (tracking/AWB).
+        Utilizzato per multi-spedizioni: lo stato può passare a 4 solo se tutte le spedizioni hanno l'etichetta.
+        
+        Args:
+            order_id: ID dell'ordine
+            db: Database session
+            
+        Returns:
+            True se tutte le spedizioni hanno tracking/AWB, False altrimenti
+        """
+        
+        # Query ottimizzata: idrata Shipping e seleziona solo il campo tracking
+        shipments = db.query(OrderDocument).options(
+            joinedload(OrderDocument.shipping).load_only(Shipping.tracking)
+        ).filter(
+            OrderDocument.id_order == order_id,
+            OrderDocument.type_document == "shipping"
+        ).all()
+        
+        if not shipments:
+            # Se non ci sono spedizioni, non possiamo dire che tutte hanno l'etichetta
+            return False
+        
+        # Verifica che tutte le spedizioni abbiano tracking/AWB
+        for shipment in shipments:
+            if not shipment.shipping or not shipment.shipping.tracking:
+                return False
+        
+        return True
+    
     async def get_multi_shipments_by_order(
         self,
         order_id: int,
@@ -833,6 +897,11 @@ class ShippingService(IShippingService):
                         OrderDetail.id_order == 0
                     ).scalar()
                     
+                    # Conta packages collegati a questo OrderDocument
+                    packages_count = db.query(func.count(OrderPackage.id_order_package)).filter(
+                        OrderPackage.id_order_document == shipment.id_order_document
+                    ).scalar() or 0
+                    
                     shipment_list.append(MultiShippingDocumentListItemSchema(
                         id_order_document=shipment.id_order_document,
                         id_shipping=shipment.id_shipping,
@@ -841,7 +910,7 @@ class ShippingService(IShippingService):
                         total_weight=float(shipment.total_weight) if shipment.total_weight else None,
                         date_add=shipment.date_add.isoformat() if shipment.date_add else "",
                         items_count=items_count or 0,
-                        packages_count=len(shipment.order_packages)
+                        packages_count=packages_count
                     ))
                     
                 except SQLAlchemyError as e:
@@ -936,7 +1005,6 @@ class ShippingService(IShippingService):
                     
             except Exception as e:
                 # Log errore ma continua con gli altri risultati
-                import logging
                 logger = logging.getLogger(__name__)
                 logger.error(
                     f"Error syncing shipping state for tracking {result.get('tracking_number', 'unknown')}: {str(e)}",

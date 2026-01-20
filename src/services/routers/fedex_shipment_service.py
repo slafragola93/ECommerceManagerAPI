@@ -374,12 +374,14 @@ class FedexShipmentService(IFedexShipmentService):
                         # Continue even if document record save fails
             
             # 12. Aggiornamento tracking e stato (2 = Tracking Assegnato)
+            # Usa shipping_id_to_use che può essere quello passato come parametro (multi-spedizione) 
+            # o quello dell'ordine (spedizione normale)
             if awb:
                 try:
                     self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
                 except Exception:
                     # fallback: almeno salva il tracking
-                    self.shipping_repository.update_tracking(order_data.id_shipping, awb)
+                    self.shipping_repository.update_tracking(shipping_id_to_use, awb)
             
             # Get transaction ID
             transaction_id = fedex_response.get("transactionId")

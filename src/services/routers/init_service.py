@@ -289,9 +289,18 @@ class InitService:
             return []
     
     def _get_api_carriers(self) -> List[Dict[str, Any]]:
-        """Ottiene gli API carrier attivi (solo id_carrier_api e name)"""
+        """Ottiene gli API carrier attivi con logo"""
         try:
             result = self.api_carrier_repo.get_active_carriers_for_init()
+            
+            # Aggiungi logo basato su carrier_type
+            for carrier in result:
+                carrier_type = carrier.get("carrier_type", "")
+                if carrier_type:
+                    # Costruisci il path del logo: /media/logos/carriers/{carrier_type.lower()}.png
+                    carrier["logo"] = f"/media/logos/carriers/{carrier_type.lower()}.png"
+                else:
+                    carrier["logo"] = None
             return result
         except Exception as e:
             return []

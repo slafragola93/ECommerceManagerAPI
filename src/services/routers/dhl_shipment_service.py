@@ -146,47 +146,17 @@ class DhlShipmentService(IDhlShipmentService):
                     carrier_api_id=carrier_api_id
                 )
             
-            # 13. Aggiornamento tracking e stato (2 = Presa In Carico)
+            # 13. Aggiornamento tracking e stato (2 = Tracking Assegnato)
+            # Usa shipping_id_to_use che può essere quello passato come parametro (multi-spedizione) 
+            # o quello dell'ordine (spedizione normale)
             if awb:
                 try:
                     self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
+                    logger.info(f"Tracking spedizione {shipping_id_to_use} aggiornato a {awb} (stato 2)")
                 except Exception:
                     # fallback: almeno salva il tracking
                     self.shipping_repository.update_tracking(shipping_id_to_use, awb)
-            
-            # 14. Aggiorno stato spedizione e tracking se AWB è valido
-            if awb:
-                try:
-                    # Recupero solo id_shipping dall'ordine (query ottimizzata)
-                    from sqlalchemy import select
-                    from src.models.order import Order
-                    
-                    stmt = select(Order.id_shipping).where(Order.id_order == order_id)
-                    result = self.order_repository.session.execute(stmt)
-                    id_shipping = result.scalar_one_or_none()
-                    
-                    if id_shipping:
-                        # Recupero la spedizione tramite id_shipping
-                        shipping = self.shipping_repository.get_by_id(id_shipping)
-                        if shipping:
-                            # Aggiorno sempre il tracking con il nuovo AWB
-                            shipping.tracking = awb
-                            
-                            # Aggiorno lo stato solo se è in stato 1
-                            if shipping.id_shipping_state == 1:
-                                shipping.id_shipping_state = 2  # Cambia a "Tracking Assegnato"
-                                logger.info(f"Spedizione {shipping.id_shipping} aggiornata allo stato 2 (Tracking Assegnato)")
-                            
-                            # Salvo le modifiche
-                            self.shipping_repository.update(shipping)
-                            logger.info(f"Tracking spedizione {shipping.id_shipping} aggiornato a {awb}")
-                        else:
-                            logger.warning(f"Nessuna spedizione trovata per l'ordine {order_id}")
-                    else:
-                        logger.warning(f"Nessun id_shipping trovato per l'ordine {order_id}")
-                except Exception as e:
-                    logger.error(f"Impossibile aggiornare la spedizione per l'ordine {order_id}: {str(e)}")
-                    # Non sollevo eccezione per non bloccare la creazione spedizione
+                    logger.warning(f"Tracking spedizione {shipping_id_to_use} aggiornato a {awb} (fallback, stato non aggiornato)")
             
             return {
                 "awb": awb

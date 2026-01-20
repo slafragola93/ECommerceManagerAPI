@@ -55,14 +55,13 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving shipping by name: {str(e)}")
     
-    def create_and_get_id(self, data: Union[ShippingSchema, dict], id_order: int = None) -> int:
+    def create_and_get_id(self, data: Union[ShippingSchema, dict], id_order: int = None, id_order_document: int = None) -> int:
         """
         Crea un shipping e restituisce l'ID.
         IMPORTANTE: Questo metodo viene chiamato solo quando necessario durante la creazione dell'ordine.
         """
         logger = logging.getLogger(__name__)
-        logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id chiamato - id_order: {id_order}")
-        
+ 
         try:
             # Converti ShippingSchema o Shipping in dict se necessario
             if isinstance(data, ShippingSchema):
