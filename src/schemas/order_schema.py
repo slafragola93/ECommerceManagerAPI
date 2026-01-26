@@ -115,7 +115,8 @@ class OrderSimpleResponseSchema(BaseModel):
     """Schema per risposta semplice degli ordini (solo ID)"""
     id_order: int
     id_origin: Optional[int]
-    reference: Optional[str]
+    internal_reference: Optional[str]
+    ecommerce_reference: Optional[str] = None
     id_address_delivery: Optional[int]
     id_address_invoice: Optional[int]
     id_customer: Optional[int]
@@ -158,7 +159,8 @@ class OrderResponseSchema(BaseModel):
     """Schema per risposta completa degli ordini (con dettagli)"""
     id_order: int
     id_origin: Optional[int]
-    reference: Optional[str]
+    internal_reference: Optional[str]
+    ecommerce_reference: Optional[str] = None
     id_address_delivery: Optional[int]
     id_address_invoice: Optional[int]
     id_customer: Optional[int]
@@ -211,7 +213,8 @@ class OrderIdSchema(BaseModel):
     """Schema per la risposta di get_order_by_id con relazioni popolate"""
     id_order: int
     id_origin: Optional[int]
-    reference: Optional[str]
+    internal_reference: Optional[str]
+    ecommerce_reference: Optional[str] = None
     # Campi dati
     is_invoice_requested: bool
     is_payed: Optional[bool]
@@ -299,3 +302,21 @@ class BulkOrderStatusUpdateResponseSchema(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
+
+
+class OrderStateSyncSchema(BaseModel):
+    """Schema per la richiesta di sincronizzazione stato ordine con ecommerce platform"""
+    id_ecommerce_order_state: int = Field(gt=0, description="ID stato ecommerce locale (PK di ecommerce_order_states)")
+
+    model_config = ConfigDict(from_attributes=True, extra='ignore')
+
+
+class OrderStateSyncResponseSchema(BaseModel):
+    """Schema per la risposta di sincronizzazione stato ordine con ecommerce platform"""
+    order_id: int = Field(description="ID dell'ordine sincronizzato")
+    id_platform_state: Optional[int] = Field(None, description="ID stato sulla piattaforma ecommerce. None se non trovato.")
+    id_ecommerce_order_state: Optional[int] = Field(None, description="ID stato ecommerce locale (PK di ecommerce_order_states). None se non trovato.")
+    success: bool = Field(description="Indica se la sincronizzazione è riuscita")
+    message: str = Field(description="Messaggio descrittivo del risultato")
+
+    model_config = ConfigDict(from_attributes=True, extra='ignore')

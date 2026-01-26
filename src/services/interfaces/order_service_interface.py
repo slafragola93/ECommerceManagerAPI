@@ -9,7 +9,8 @@ from src.schemas.order_schema import (
     OrderUpdateSchema,
     OrderIdSchema,
     OrderStatusUpdateItem,
-    BulkOrderStatusUpdateResponseSchema
+    BulkOrderStatusUpdateResponseSchema,
+    OrderStateSyncResponseSchema
 )
 
 
@@ -76,4 +77,26 @@ class IOrderService(IBaseService):
     @abstractmethod
     def recalculate_totals_for_order(self, order_id: int) -> None:
         """Ricalcola e persiste i totali di un ordine (imponibile e ivato)."""
+        pass
+    
+    @abstractmethod
+    async def sync_order_state_to_ecommerce(
+        self,
+        order_id: int,
+        id_ecommerce_order_state: int
+    ) -> OrderStateSyncResponseSchema:
+        """
+        Sincronizza lo stato di un ordine con la piattaforma ecommerce remota.
+        
+        Args:
+            order_id: ID dell'ordine da sincronizzare
+            id_ecommerce_order_state: ID stato ecommerce locale (PK di ecommerce_order_states)
+            
+        Returns:
+            OrderStateSyncResponseSchema con risultato della sincronizzazione
+            
+        Raises:
+            NotFoundException: Se ordine non trovato o EcommerceOrderState non trovato
+            BusinessRuleException: Se ordine senza id_store o id_platform == 0
+        """
         pass

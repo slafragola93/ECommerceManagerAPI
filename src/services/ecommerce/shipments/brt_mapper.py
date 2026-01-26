@@ -109,6 +109,7 @@ class BrtMapper:
         packages: List[Row],
         reference: str,
         receiver_country_iso: str,
+        id_shipping: int,
         normalized_address: Optional[Dict[str, Any]] = None,
         service_type: Optional[str] = None,
         number_of_parcels: Optional[int] = None,
@@ -122,7 +123,9 @@ class BrtMapper:
             brt_config: BRT configuration
             receiver_address: Receiver address row
             packages: List of package rows
-            reference: Order reference (internal_reference)
+            reference: Order reference (internal_reference) - used for notes, not for sender references
+            receiver_country_iso: ISO country code
+            id_shipping: Shipping ID to use for unique sender references
             normalized_address: Normalized address from routing (optional)
             service_type: Service type code (defaults to brt_config.rate_code)
             
@@ -186,22 +189,11 @@ class BrtMapper:
         if hasattr(receiver_address, 'email') and receiver_address.email:
             email = str(receiver_address.email)
         
-        # Numeric reference (use reference if numeric, otherwise use order_id as fallback)
-        try:
-            numeric_ref = int(reference) if reference and reference.isdigit() else None
-        except (ValueError, AttributeError):
-            numeric_ref = None
-        
-        if numeric_ref is None:
-            # Use order_id as fallback instead of timestamp for consistency
-            if order_id:
-                numeric_ref = order_id
-            else:
-                # Last resort: use timestamp only if order_id is not available
-                import time
-                numeric_ref = int(time.time())
-        
-        alphanumeric_ref = reference or str(numeric_ref)
+        # Use id_shipping for unique sender references to avoid conflicts with BRT
+        # numericSenderReference: id_shipping (e.g., 10)
+        # alphanumericSenderReference: "BRT" + id_shipping (e.g., "BRT10")
+        numeric_ref = id_shipping
+        alphanumeric_ref = f"BRT{id_shipping}"
         
         # Calculate number of parcels: use explicit count if provided, otherwise use len(packages)
         if number_of_parcels is not None:

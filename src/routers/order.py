@@ -29,7 +29,6 @@ from ..schemas.order_schema import (
 )
 from src.services.routers.order_service import OrderService
 from src.services.interfaces.order_service_interface import IOrderService
-from ..schemas.preventivo_schema import ArticoloPreventivoUpdateSchema
 from ..schemas.order_detail_schema import OrderDetailCreateSchema, OrderDetailUpdateSchema, OrderDetailResponseSchema
 from ..schemas.return_schema import (
     AllReturnsResponseSchema,
@@ -263,7 +262,7 @@ async def create_order(
     return {
         "message": "Ordine creato con successo",
         "id_order": created_order.id_order,
-        "reference": created_order.reference,
+        "internal_reference": created_order.internal_reference,
         "total_price_with_tax": float(created_order.total_price_with_tax or 0)
     }
 

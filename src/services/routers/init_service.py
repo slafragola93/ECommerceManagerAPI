@@ -173,19 +173,26 @@ class InitService:
             ) from e
     
     def _get_platforms(self) -> List[Dict[str, Any]]:
-        """Ottiene le piattaforme (senza API key)"""
+        """Ottiene le piattaforme"""
         try:
             # Usa un limite alto per ottenere tutti i dati
             platforms = self.platform_repo.get_all(limit=10000)
             # Rimuovi API key per sicurezza
-            return [
-                {
+            result = []
+            for p in platforms:
+                platform_dict = {
                     "id_platform": p.id_platform,
                     "name": p.name,
                     "is_default": p.is_default
                 }
-                for p in platforms
-            ]
+                # Aggiungi logo basato su platform name
+                if p.name:
+                    # Costruisci il path del logo: /media/logos/platforms/{platform_name.lower()}.png
+                    platform_dict["logo"] = f"/media/logos/platforms/{p.name.lower()}.png"
+                else:
+                    platform_dict["logo"] = None
+                result.append(platform_dict)
+            return result
         except Exception as e:
             return []
     

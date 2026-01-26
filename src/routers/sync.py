@@ -2,11 +2,12 @@
 Synchronization endpoints for e-commerce platforms
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Path, Body
 from starlette import status
 from sqlalchemy.orm import Session
 from typing import Dict, Any
 import asyncio
+import logging
 
 from src.database import get_db
 from src.services.routers.auth_service import db_dependency, get_current_user
@@ -15,10 +16,14 @@ from src.services.routers.auth_service import authorize
 from src.repository.platform_repository import PlatformRepository
 from src.repository.store_repository import StoreRepository
 from src.repository.product_repository import ProductRepository
-from src.models.platform import Platform
-from src.models.store import Store
+from src.repository.order_repository import OrderRepository
 from src.routers.dependencies import get_ecommerce_service
+from src.services.routers.order_service import OrderService
+from src.services.interfaces.order_service_interface import IOrderService
+from src.schemas.order_schema import OrderStateSyncSchema, OrderStateSyncResponseSchema
 import time
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix='/api/v1/sync',
@@ -32,6 +37,12 @@ def get_platform_repository(db: db_dependency) -> PlatformRepository:
 
 def get_store_repository(db: db_dependency) -> StoreRepository:
     return StoreRepository(db)
+
+
+def get_order_service(db: Session = Depends(get_db)) -> IOrderService:
+    """Dependency injection per Order Service."""
+    order_repo = OrderRepository(db)
+    return OrderService(order_repo)
 
 def get_default_store(sr: StoreRepository = Depends(get_store_repository)):
     """
@@ -695,4 +706,48 @@ async def _run_details_sync(db: Session, store_id: int, store_name: str):
         error_msg = f"Error in product details synchronization: {str(e)}"
         print(f"❌ {error_msg}")
         raise
+
+
+@router.post("/orders/{order_id}/sync-state",
+             status_code=status.HTTP_200_OK,
+             summary="Sincronizza stato ordine con ecommerce",
+             description="Sincronizza lo stato di un ordine sia localmente (order.id_ecommerce_state) che sulla piattaforma ecommerce remota (PrestaShop, Magento, ecc.)",
+             response_description="Risultato della sincronizzazione",
+             response_model=OrderStateSyncResponseSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
+async def sync_order_state_to_ecommerce(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine da sincronizzare"),
+    sync_data: OrderStateSyncSchema = Body(..., description="Dati di sincronizzazione"),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service)
+):
+    """
+    Sincronizza lo stato di un ordine con la piattaforma ecommerce remota.
+    
+    **Flusso:**
+    1. Recupera l'ordine tramite OrderRepository
+    2. Verifica che l'ordine abbia id_store e id_platform != 0
+    3. Cerca EcommerceOrderState con id_ecommerce_order_state e id_store
+    4. Estrae id_platform_state da EcommerceOrderState
+    5. Crea il service ecommerce appropriato (PrestaShopService, MagentoService, ecc.)
+    6. Sincronizza lo stato con la piattaforma remota usando id_platform_state
+    7. Se successo, aggiorna order.id_ecommerce_state localmente usando id_ecommerce_order_state
+    
+    **Validazioni:**
+    - order_id > 0
+    - id_ecommerce_order_state > 0
+    - Ordine deve avere id_store valido
+    - Ordine deve avere id_platform != 0
+    - EcommerceOrderState deve esistere per id_ecommerce_order_state + id_store
+    
+    **Errori:**
+    - 404: Ordine non trovato o EcommerceOrderState non trovato
+    - 400: Ordine senza id_store, id_platform == 0, o service ecommerce non supportato
+    - 500: Errore durante sincronizzazione con piattaforma
+    """
+    return await order_service.sync_order_state_to_ecommerce(
+        order_id=order_id,
+        id_ecommerce_order_state=sync_data.id_ecommerce_order_state
+    )
          

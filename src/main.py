@@ -72,129 +72,187 @@ except ImportError:
 EVENT_CONFIG_PATH = Path("config/event_handlers.yaml")
 
 # Global task tracker per evitare duplicati
-_order_states_sync_task = None
-_tracking_polling_task = None
+_background_tasks = {
+    "order_states_sync": None,
+    "tracking_polling": None
+}
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    global _order_states_sync_task, _tracking_polling_task
+async def start_background_task(
+    task_name: str,
+    task_function,
+    db_session,
+    enabled: bool = True
+) -> None:
+    """
+    Avvia una task in background in modo sicuro.
     
-    # Initialize new cache system
+    Args:
+        task_name: Nome identificativo della task
+        task_function: Funzione async da eseguire
+        db_session: Sessione DB da passare alla task
+        enabled: Se False, la task non viene avviata
+    """
+    if not enabled:
+        print(f"{task_name} disabled by configuration")
+        return
+    
     try:
-        settings = get_cache_settings()
-        print(f"Cache system initialized: {settings.cache_backend} backend, enabled: {settings.cache_enabled}")
+        # Verifica se il task è già in esecuzione
+        if _background_tasks[task_name] is None or _background_tasks[task_name].done():
+            _background_tasks[task_name] = asyncio.create_task(task_function(db_session))
     except Exception as e:
-        print(f"WARNING: Cache initialization failed: {e}")
+        print(f"✗ Failed to start {task_name}: {e}")
+
+
+async def stop_background_task(task_name: str) -> None:
+    """
+    Ferma una task in background in modo sicuro.
     
-    # Initialize legacy cache for compatibility
-    if REDIS_AVAILABLE:
+    Args:
+        task_name: Nome identificativo della task
+    """
+    task = _background_tasks.get(task_name)
+    
+    if task and not task.done():
+        task.cancel()
         try:
-            redis = aioredis.from_url("redis://localhost")
-            FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
-            print("Legacy Redis cache initialized")
-        except Exception as e:
-            print(f"WARNING: Legacy Redis connection failed: {e}")
+            await task
+        except asyncio.CancelledError:
+            pass
+        print(f"✓ {task_name} cancelled")
     
-    # Initialize event system
+    _background_tasks[task_name] = None
+
+
+def initialize_event_system() -> None:
+    """
+    Inizializza il sistema di eventi con configurazione e plugin.
+    Centralizza la logica di inizializzazione per migliore manutenibilità.
+    """
     try:
         config_loader = EventConfigLoader(EVENT_CONFIG_PATH)
+        
+        # Carica o crea configurazione di default
         try:
             event_config = config_loader.load()
         except FileNotFoundError:
-            default_config = EventConfig(
+            event_config = EventConfig(
                 plugin_directories=["src/events/plugins", "/opt/custom_plugins"],
                 enabled_handlers=[],
                 disabled_handlers=[],
                 routes={"order_status_changed": {}},
             )
-            config_loader.save(default_config)
-            event_config = default_config
-
+            config_loader.save(event_config)
+        
+        # Inizializza componenti del sistema eventi
         event_bus = EventBus()
         plugin_loader = PluginLoader(event_config.plugin_directories)
         plugin_manager = PluginManager(event_bus, config_loader, plugin_loader)
         marketplace_client = MarketplaceClient(event_config.marketplace)
-
+        
+        # Registra componenti nel runtime globale
         set_event_bus(event_bus)
         set_plugin_manager(plugin_manager)
         set_config_loader(config_loader)
         set_marketplace_client(marketplace_client)
-
-        await plugin_manager.initialise()
-        print("Event system initialised")
+        
+        return plugin_manager
+        
     except Exception as e:
-        print(f"WARNING: Event system initialisation failed: {e}")
-    
-    # Start periodic order states sync task
+        print(f"✗ Event system initialization failed: {e}")
+        raise
+
+
+def initialize_cache_system() -> None:
+    """Inizializza il sistema di cache (nuovo e legacy)."""
+    # New cache system
     try:
-        # Verifica se il task è già in esecuzione
-        if _order_states_sync_task is None or _order_states_sync_task.done():
-            from src.database import SessionLocal
-            from src.services.sync.order_state_sync_service import run_order_states_sync_task
-            
-            # Crea una sessione DB per la task periodica
-            db = SessionLocal()
-            
-            # Avvia la task periodica in background
-            _order_states_sync_task = asyncio.create_task(run_order_states_sync_task(db))
-            print("Order states sync periodic task started (runs every hour)")
+        settings = get_cache_settings()
+        print(f"✓ Cache system: {settings.cache_backend} backend (enabled: {settings.cache_enabled})")
     except Exception as e:
-        print(f"WARNING: Failed to start order states sync task: {e}")
+        print(f"⚠ Cache initialization warning: {e}")
     
-    # Start periodic tracking polling task (se abilitato)
-    TRACKING_POLLING_ENABLED = os.getenv("TRACKING_POLLING_ENABLED", "true").lower() == "true"
-    
-    if TRACKING_POLLING_ENABLED:
+    # Legacy Redis cache for compatibility
+    if REDIS_AVAILABLE:
         try:
-            # Verifica se il task è già in esecuzione
-            if _tracking_polling_task is None or _tracking_polling_task.done():
-                from src.database import SessionLocal
-                from src.services.sync.tracking_polling_service import run_tracking_polling_task
-                
-                # Crea una sessione DB per la task periodica
-                db = SessionLocal()
-                
-                # Avvia la task periodica in background
-                _tracking_polling_task = asyncio.create_task(run_tracking_polling_task(db))
-                print("Tracking polling periodic task started")
+            redis = aioredis.from_url("redis://localhost")
+            FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+            print("✓ Legacy Redis cache initialized")
         except Exception as e:
-            print(f"WARNING: Failed to start tracking polling task: {e}")
-    else:
-        print("Tracking polling task disabled by TRACKING_POLLING_ENABLED environment variable")
+            print(f"⚠ Legacy Redis connection warning: {e}")
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """
+    Gestisce il ciclo di vita dell'applicazione FastAPI.
+    Startup: inizializza cache, eventi e background tasks.
+    Shutdown: chiude risorse e cancella tasks.
+    """
+    # ========== STARTUP ==========
+    
+    # 1. Inizializza cache
+    initialize_cache_system()
+    
+    # 2. Inizializza event system
+    try:
+        plugin_manager = initialize_event_system()
+        await plugin_manager.initialise()
+        print("✓ Event system initialized with all plugins")
+    except Exception as e:
+        print(f"⚠ Event system warning: {e}")
+    
+    # 3. Avvia background tasks
+    from src.database import SessionLocal
+    
+    # Task: Order States Sync (ogni ora)
+    try:
+        from src.services.sync.order_state_sync_service import run_order_states_sync_task
+        db = SessionLocal()
+        await start_background_task(
+            "order_states_sync",
+            run_order_states_sync_task,
+            db,
+            enabled=True
+        )
+    except Exception as e:
+        print(f"⚠ Order states sync warning: {e}")
+    
+    # Task: Tracking Polling (se abilitato)
+    tracking_enabled = os.getenv("TRACKING_POLLING_ENABLED", "true").lower() == "true"
+    try:
+        from src.services.sync.tracking_polling_service import run_tracking_polling_task
+        db = SessionLocal()
+        await start_background_task(
+            "tracking_polling",
+            run_tracking_polling_task,
+            db,
+            enabled=tracking_enabled
+        )
+    except Exception as e:
+        print(f"⚠ Tracking polling warning: {e}")
+    
+    print("✅ Startup completed\n")
+    
     yield
     
-    # Cleanup
-    try:
-        # Cancella il task di sincronizzazione se in esecuzione
-        if _order_states_sync_task and not _order_states_sync_task.done():
-            _order_states_sync_task.cancel()
-            try:
-                await _order_states_sync_task
-            except asyncio.CancelledError:
-                pass
-            print("Order states sync task cancelled")
-    except Exception as e:
-        print(f"WARNING: Error cancelling sync task: {e}")
+    # ========== SHUTDOWN ==========
+    print("\n🛑 Shutting down Elettronew API...")
     
-    try:
-        # Cancella il task di polling tracking se in esecuzione
-        if _tracking_polling_task and not _tracking_polling_task.done():
-            _tracking_polling_task.cancel()
-            try:
-                await _tracking_polling_task
-            except asyncio.CancelledError:
-                pass
-            print("Tracking polling task cancelled")
-    except Exception as e:
-        print(f"WARNING: Error cancelling tracking polling task: {e}")
+    # Ferma tutte le background tasks
+    for task_name in list(_background_tasks.keys()):
+        await stop_background_task(task_name)
     
+    # Chiudi cache
     try:
         await close_cache_manager()
-        print("Cache system closed")
+        print("✓ Cache system closed")
     except Exception as e:
-        print(f"WARNING: Cache cleanup failed: {e}")
+        print(f"⚠ Cache cleanup warning: {e}")
+    
+    print("✅ Shutdown completed\n")
+
 
 app = FastAPI(
     title="Elettronew API",
@@ -220,7 +278,6 @@ else:
         return 1
 
 
-
 # CORS configuration - più permissiva per sviluppo
 origins = [
     "http://localhost:4200",
@@ -233,14 +290,11 @@ origins = [
 ]
 
 # Add CORS middleware - DEVE essere il primo middleware
-# Nota: allow_credentials=True non può essere usato con allow_origins=["*"]
-# Per il frontend in locale, specifichiamo le origini esplicite
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:4200",      # Angular default
+        "http://localhost:4200",
         "http://127.0.0.1:4200",
-        # Aggiungi qui altre origini se necessario (es. produzione)
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -386,7 +440,6 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         "method": request.method
     })
     
-    # Format errors using the standardized formatter
     formatted_error = PydanticErrorFormatter.format(
         pydantic_errors,
         error_code=ErrorCode.VALIDATION_ERROR.value
@@ -437,7 +490,6 @@ async def general_exception_handler(request: Request, exc: Exception):
 # ============================================================================
 # STATIC FILES MOUNT (must be before routers)
 # ============================================================================
-# Mount static files directory for media
 try:
     media_path = Path("media")
     if media_path.exists():
@@ -484,15 +536,10 @@ app.include_router(fiscal_documents.router)
 app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
-# Unified shipments router (supports all carriers: DHL, BRT, FedEx)
 app.include_router(shipments.router)
-
-# Deprecated: DHL-specific router (kept for backward compatibility)
-# Use /api/v1/shippings/* endpoints instead
 app.include_router(events.router)
 app.include_router(csv_import.router)
 
-# CORS preflight handler per tutti gli endpoint
 @app.options("/{full_path:path}")
 async def options_handler(request: Request, full_path: str):
     """Handle CORS preflight requests"""
@@ -512,7 +559,10 @@ async def options_handler(request: Request, full_path: str):
 def startup_event():
     Base.metadata.create_all(bind=engine)
 
-# Cache management endpoints
+# ============================================================================
+# CACHE & MONITORING ENDPOINTS
+# ============================================================================
+
 @app.get("/health/cache")
 async def cache_health():
     """Cache health check endpoint"""
@@ -538,20 +588,16 @@ async def metrics():
         metrics = get_metrics()
         stats = metrics.get_stats()
         
-        # Format for Prometheus
         prometheus_metrics = []
         
-        # Cache hit rate
         hit_rate = stats.get("hit_rates", {}).get("overall", 0)
         prometheus_metrics.append(f"cache_hit_rate {hit_rate}")
         
-        # Memory cache size
         memory_stats = stats.get("memory", {})
         if memory_stats:
             size = memory_stats.get("size", 0)
             prometheus_metrics.append(f"cache_memory_size {size}")
         
-        # Redis stats
         redis_stats = stats.get("redis", {})
         if redis_stats and "connected_clients" in redis_stats:
             clients = redis_stats["connected_clients"]
@@ -561,11 +607,9 @@ async def metrics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Metrics error: {str(e)}")
 
-# Admin cache endpoints (require ADMIN role)
 @app.delete("/api/v1/cache")
 async def clear_cache_pattern(pattern: str = "*"):
     """Clear cache by pattern (Admin only)"""
-    # TODO: Add admin authentication check
     try:
         cache_manager = await get_cache_manager()
         deleted = await cache_manager.delete_pattern(pattern)
@@ -576,7 +620,6 @@ async def clear_cache_pattern(pattern: str = "*"):
 @app.post("/api/v1/cache/reset")
 async def reset_all_cache():
     """Reset all cache (Admin only - use with caution)"""
-    # TODO: Add admin authentication check
     try:
         from src.core.invalidation import invalidate_all_cache
         await invalidate_all_cache()
@@ -587,17 +630,12 @@ async def reset_all_cache():
 @app.get("/api/v1/cache/stats")
 async def cache_stats():
     """Get detailed cache statistics (Admin only)"""
-    # TODO: Add admin authentication check
     try:
         from src.core.observability import get_metrics
         metrics = get_metrics()
         return metrics.get_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Stats error: {str(e)}")
-
-# ============================================================================
-# PERFORMANCE MONITORING ENDPOINTS
-# ============================================================================
 
 @app.get("/api/v1/monitoring/performance")
 async def get_performance_metrics():
@@ -624,14 +662,13 @@ async def get_health_status():
         monitor = get_performance_monitor()
         performance = monitor.get_performance_summary()
         
-        # Calcola lo stato di salute
         error_rate = performance.get("error_rate", 0)
         avg_response_time = performance.get("average_response_time", 0)
         
         health_status = "healthy"
-        if error_rate > 0.1:  # Più del 10% di errori
+        if error_rate > 0.1:
             health_status = "degraded"
-        elif avg_response_time > 2.0:  # Più di 2 secondi di risposta media
+        elif avg_response_time > 2.0:
             health_status = "slow"
         
         return {
@@ -650,4 +687,3 @@ async def get_health_status():
             "timestamp": datetime.now().isoformat(),
             "error": str(e)
         }
-

@@ -133,6 +133,7 @@ class BrtShipmentService(IBrtShipmentService):
             packages=packages,
             reference=internal_reference,
             receiver_country_iso=receiver_country_iso,
+            id_shipping=shipping_id_to_use,
             normalized_address=normalized_address,
             number_of_parcels=number_of_parcels,
             shipping_message=shipping_message,

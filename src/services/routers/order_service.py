@@ -18,12 +18,15 @@ from src.schemas.order_schema import (
     OrderStatusUpdateItem,
     BulkOrderStatusUpdateResponseSchema,
     OrderStatusUpdateResult,
-    OrderStatusUpdateError
+    OrderStatusUpdateError,
+    OrderStateSyncResponseSchema
 )
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
 from src.events.extractors import extract_order_created_data, extract_order_deleted_data
 from src.core.exceptions import BusinessRuleException, NotFoundException
+from src.models.ecommerce_order_state import EcommerceOrderState
+from src.services.ecommerce.service_factory import create_ecommerce_service
 from src.services.core.tool import calculate_order_totals, calculate_price_without_tax,calculate_amount_with_percentage
 from src.repository.tax_repository import TaxRepository
 from src.services.routers.order_document_service import OrderDocumentService
@@ -885,6 +888,182 @@ class OrderService(IOrderService):
                 "failed_count": failed_count
             }
         )
+    
+    # ============================================================================
+    # Synchronization
+    # ============================================================================
+    
+    async def sync_order_state_to_ecommerce(
+        self,
+        order_id: int,
+        id_ecommerce_order_state: int
+    ) -> OrderStateSyncResponseSchema:
+        """
+        Sincronizza lo stato di un ordine con la piattaforma ecommerce remota.
+        
+        Il metodo:
+        1. Recupera l'ordine tramite OrderRepository
+        2. Verifica che l'ordine abbia id_store e id_platform != 0
+        3. Cerca EcommerceOrderState con id_ecommerce_order_state e id_store
+        4. Estrae id_platform_state da EcommerceOrderState
+        5. Crea il service ecommerce appropriato tramite create_ecommerce_service
+        6. Chiama sync_order_state_to_platform per sincronizzare con la piattaforma usando id_platform_state
+        7. Se successo, aggiorna order.id_ecommerce_state localmente usando id_ecommerce_order_state
+        8. Restituisce il risultato
+        
+        Args:
+            order_id: ID dell'ordine da sincronizzare
+            id_ecommerce_order_state: ID stato ecommerce locale (PK di ecommerce_order_states)
+            
+        Returns:
+            OrderStateSyncResponseSchema con risultato della sincronizzazione (sempre, anche in caso di errore)
+        """
+        id_platform_state = None
+        try:
+            # 1. Validazione input
+            if order_id <= 0:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"order_id deve essere maggiore di 0, ricevuto: {order_id}"
+                )
+            if id_ecommerce_order_state <= 0:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"id_ecommerce_order_state deve essere maggiore di 0, ricevuto: {id_ecommerce_order_state}"
+                )
+            
+            # 2. Recupera l'ordine tramite OrderRepository
+            order = self._order_repository.get_by_id(order_id)
+            if not order:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"Ordine {order_id} non trovato"
+                )
+            
+            # 3. Validazione ordine: verifica id_store
+            if not order.id_store:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"Ordine {order_id} non ha id_store associato. Impossibile determinare la piattaforma ecommerce."
+                )
+            
+            # 4. Validazione ordine: verifica id_platform != 0 (come da logica trigger esistente)
+            if not order.id_platform or order.id_platform == 0:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"Ordine {order_id} ha id_platform={order.id_platform}. La sincronizzazione richiede id_platform != 0."
+                )
+            
+            # 5. Cerca EcommerceOrderState con id_ecommerce_order_state e id_store
+            session = self._order_repository.session
+            ecommerce_order_state = session.query(EcommerceOrderState).filter(
+                EcommerceOrderState.id_ecommerce_order_state == id_ecommerce_order_state,
+                EcommerceOrderState.id_store == order.id_store
+            ).first()
+            if not ecommerce_order_state:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"Stato ecommerce non trovato"
+                )
+            
+            # Estrae id_platform_state da EcommerceOrderState
+            id_platform_state = ecommerce_order_state.id_platform_state
+            
+            # 6. Crea il service ecommerce appropriato
+            try:
+                ecommerce_service = create_ecommerce_service(
+                    store_id=order.id_store,
+                    db=session
+                )
+            except BusinessRuleException as e:
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"Impossibile creare il service ecommerce per lo store {order.id_store}: {str(e)}"
+                )
+            
+            # 7. Sincronizza con la piattaforma ecommerce
+            try:
+                async with ecommerce_service:
+                    sync_success = await ecommerce_service.sync_order_state_to_platform(
+                        order_id=order_id,
+                        platform_state_id=id_platform_state
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Errore durante sincronizzazione stato ordine {order_id} con piattaforma: {str(e)}",
+                    exc_info=True
+                )
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message=f"Errore durante sincronizzazione: {str(e)}"
+                )
+            
+            # 8. Se sincronizzazione riuscita, aggiorna order.id_ecommerce_state localmente
+            if sync_success:
+                order.id_ecommerce_state = id_ecommerce_order_state
+                session.commit()
+                session.refresh(order)
+                logger.info(
+                    f"Sincronizzazione riuscita: order={order_id}, store={order.id_store}, "
+                    f"platform_state={id_platform_state}, ecommerce_state={id_ecommerce_order_state}"
+                )
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=True,
+                    message="Stato ordine sincronizzato con successo con la piattaforma ecommerce"
+                )
+            else:
+                logger.warning(
+                    f"Sincronizzazione fallita: order={order_id}, store={order.id_store}, "
+                    f"platform_state={id_platform_state}"
+                )
+                return OrderStateSyncResponseSchema(
+                    order_id=order_id,
+                    id_platform_state=id_platform_state,
+                    id_ecommerce_order_state=id_ecommerce_order_state,
+                    success=False,
+                    message="Sincronizzazione con la piattaforma ecommerce fallita"
+                )
+        
+        except Exception as e:
+            # Gestione errori imprevisti
+            logger.error(
+                f"Errore imprevisto durante sincronizzazione stato ordine {order_id}: {str(e)}",
+                exc_info=True
+            )
+            return OrderStateSyncResponseSchema(
+                order_id=order_id,
+                id_platform_state=id_platform_state,
+                id_ecommerce_order_state=id_ecommerce_order_state,
+                success=False,
+                message=f"Errore imprevisto durante sincronizzazione: {str(e)}"
+            )
     
     @emit_event_on_success(
         event_type=EventType.ORDER_DELETED,

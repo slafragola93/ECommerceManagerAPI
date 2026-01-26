@@ -783,20 +783,31 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             ShipmentDocument.order_id == order_id
         ).delete()
         
-        # 6. Elimina record in shipments_history per gli shipping da eliminare
+        # 6. Prima di eliminare gli shipping, rimuovi i riferimenti dall'ordine
+        # Imposta id_shipping a NULL per evitare vincoli di foreign key
+        if order.id_shipping:
+            order.id_shipping = None
+            # Flush per applicare la modifica senza commit (rimuove il vincolo FK)
+            self.session.flush()
+        
+        # 7. Elimina Order PRIMA degli shipping per evitare vincoli di foreign key
+        self.session.delete(order)
+        # Flush per applicare l'eliminazione senza commit
+        self.session.flush()
+        
+        # 8. Ora elimina record in shipments_history per gli shipping da eliminare
         if shipping_ids_to_delete:
             self.session.query(ShipmentsHistory).filter(
                 ShipmentsHistory.id_shipping.in_(shipping_ids_to_delete)
             ).delete(synchronize_session=False)
         
-        # 7. Elimina Shipping (solo quelli non usati da altri ordini/OrderDocument)
+        # 9. Elimina Shipping (solo quelli non usati da altri ordini/OrderDocument)
         if shipping_ids_to_delete:
             self.session.query(Shipping).filter(
                 Shipping.id_shipping.in_(shipping_ids_to_delete)
             ).delete(synchronize_session=False)
         
-        # 8. Elimina Order
-        self.session.delete(order)
+        # 10. Commit finale per confermare tutte le eliminazioni
         self.session.commit()
         return True
     
@@ -971,7 +982,8 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 "tracking": shipping.tracking,
                 "weight": shipping.weight,
                 "price_tax_incl": shipping.price_tax_incl,
-                "price_tax_excl": shipping.price_tax_excl
+                "price_tax_excl": shipping.price_tax_excl,
+                "shipping_message": shipping.shipping_message
             }
         
         # Helper per formattare il sectional
@@ -1186,10 +1198,11 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         response = {
             "id_order": order.id_order,
             "id_origin": order.id_origin,
-            "reference": order.reference,
+            "internal_reference": order.internal_reference,
             "id_address_delivery": order.id_address_delivery,
             "id_address_invoice": order.id_address_invoice,
             "id_customer": order.id_customer,
+            "id_platform": order.id_platform,
             "id_store": order.id_store,
             "id_payment": order.id_payment,
             "id_shipping": order.id_shipping,
@@ -1202,6 +1215,8 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "total_weight": order.total_weight,
             "total_price_with_tax": order.total_price_with_tax,
             "total_price_net": order.total_price_net,
+            "products_total_price_net": order.products_total_price_net,
+            "products_total_price_with_tax": order.products_total_price_with_tax,
             "total_discounts": order.total_discounts,
             "cash_on_delivery": order.cash_on_delivery,
             "insured_value": order.insured_value,
@@ -1210,8 +1225,10 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "delivery_date": order.delivery_date,
             "date_add": order.date_add,
             "is_multishipping": order.is_multishipping or 0,
-            "ecommerce_order_state": format_ecommerce_order_state(order),
-            "ecommerce_carrier": format_ecommerce_carrier(order)
+            "ecommerce_id_state": order.id_ecommerce_state or None,
+            "ecommerce_reference": order.reference or None,
+            "ecommerce_order_state": format_ecommerce_order_state(order) or None,
+            "ecommerce_carrier": format_ecommerce_carrier(order) or None
         }
         
         # Aggiungi order_packages anche per la lista ordini

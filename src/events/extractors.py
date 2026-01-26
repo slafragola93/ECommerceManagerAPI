@@ -752,7 +752,7 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
             "id_payment": order.id_payment,
             "id_carrier": order.id_carrier,
             "id_order_state": order.id_order_state,
-            "reference": order.reference,
+            "ecommerce_reference": order.reference,
             "total_price_with_tax": order.total_price_with_tax,  # ex total_with_tax, ex total_paid
             "total_weight": order.total_weight,
             "order_details": order_details_data,
@@ -928,7 +928,7 @@ def extract_order_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[st
                     "id_origin": getattr(result, 'id_origin', None),
                     "id_customer": getattr(result, 'id_customer', None),
                     "id_order_state": getattr(result, 'id_order_state', None),
-                    "reference": getattr(result, 'reference', None),
+                    "ecommerce_reference": getattr(result, 'reference', None),
                     "internal_reference": getattr(result, 'internal_reference', None),
                     "total_price_with_tax": float(getattr(result, 'total_price_with_tax', 0) or 0),
                 }

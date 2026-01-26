@@ -846,6 +846,11 @@ class ShippingService(IShippingService):
             OrderDocument.type_document == "shipping"
         ).all()
         
+        # Forza il refresh degli oggetti Shipping per assicurarsi di vedere i dati aggiornati
+        for shipment in shipments:
+            if shipment.shipping:
+                db.refresh(shipment.shipping)
+        
         if not shipments:
             # Se non ci sono spedizioni, non possiamo dire che tutte hanno l'etichetta
             return False

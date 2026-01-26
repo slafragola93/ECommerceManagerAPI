@@ -17,6 +17,7 @@ from src.schemas.shipment_schema import (
     BulkShipmentCreateError
 )
 from src.models.order_document import OrderDocument
+from src.models.shipping import Shipping
 from sqlalchemy.orm import joinedload, selectinload
 from src.schemas.shipping_schema import (
     MultiShippingDocumentCreateRequestSchema,
@@ -239,13 +240,56 @@ async def create_shipment(
     # 4. Crea spedizione
     # Passa id_shipping se disponibile (quando viene usato id_order_document)
     result = await shipment_service.create_shipment(order_id, id_shipping=id_shipping if 'id_shipping' in locals() else None)
-    awb = result.get("awb", "") 
+    awb = result.get("awb", "")
+    
     # 4.1. Se id_order_document è presente, aggiorna il tracking dello shipping dell'OrderDocument
     # (i servizi aggiornano lo shipping dell'ordine, ma qui dobbiamo aggiornare quello del documento)
     if id_order_document and id_shipping:
         if awb:
             shipping_repo.update_tracking(id_shipping, awb)
             # Commit esplicito per assicurarsi che il tracking sia salvato prima di verificare le etichette
+            db.commit()
+    elif awb:
+        # Se non c'è id_order_document ma c'è un AWB, verifica se l'ordine è in multispedizione
+        # Se sì, trova l'OrderDocument corrispondente allo shipping e aggiorna il tracking
+        order = or_repo.get_by_id(order_id)
+        if order and order.is_multishipping == 1:
+            # Trova l'OrderDocument che corrisponde allo shipping passato
+            order_doc = db.query(OrderDocument).options(
+                joinedload(OrderDocument.shipping)
+            ).filter(
+                OrderDocument.id_order == order_id,
+                OrderDocument.type_document == "shipping",
+                OrderDocument.id_shipping == id_shipping
+            ).first()
+            
+            if order_doc:
+                # Il tracking è già stato aggiornato dal servizio di shipment sullo shipping corretto
+                # Basta fare commit
+                db.commit()
+            else:
+                # Se non trova l'OrderDocument corrispondente allo shipping passato,
+                # trova il primo OrderDocument senza tracking e aggiorna quello
+                order_doc_no_tracking = db.query(OrderDocument).options(
+                    joinedload(OrderDocument.shipping)
+                ).filter(
+                    OrderDocument.id_order == order_id,
+                    OrderDocument.type_document == "shipping"
+                ).join(Shipping, OrderDocument.id_shipping == Shipping.id_shipping).filter(
+                    (Shipping.tracking.is_(None)) | (Shipping.tracking == "")
+                ).first()
+                
+                if order_doc_no_tracking:
+                    # Aggiorna il tracking sullo shipping dell'OrderDocument trovato
+                    shipping_repo.update_tracking(order_doc_no_tracking.id_shipping, awb)
+                    db.commit()
+                else:
+                    # Se non trova OrderDocument senza tracking, i servizi hanno già aggiornato il tracking
+                    # ma dobbiamo fare commit per assicurarci che sia visibile al controllo
+                    db.commit()
+        else:
+            # Se non c'è id_order_document ma c'è un AWB, i servizi hanno già aggiornato il tracking
+            # ma dobbiamo fare commit per assicurarci che sia visibile al controllo
             db.commit()
     
     # 5. Emetti evento per creazione spedizione
@@ -281,6 +325,10 @@ async def create_shipment(
             logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
         else:
             # Multispedizione -> verifica se tutto spedito E se tutte le spedizioni hanno l'etichetta
+            # Commit esplicito e refresh sessione per assicurarsi che la query veda i dati aggiornati
+            db.commit()
+            db.expire_all()  # Forza il refresh di tutti gli oggetti nella sessione
+            
             all_shipped = await shipping_service.check_all_products_shipped(order_id, db)
             all_have_labels = await shipping_service.check_all_shipments_have_labels(order_id, db)
             

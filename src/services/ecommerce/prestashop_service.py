@@ -5,7 +5,6 @@ PrestaShop synchronization service
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import aiohttp
-from fastapi.datastructures import Address
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import base64
@@ -15,13 +14,19 @@ from datetime import datetime
 import os
 from tenacity import retry, stop_after_attempt, wait_exponential
 from src.schemas.order_schema import OrderUpdateSchema
-from src.services.core.tool import safe_int, safe_float, sql_value,get_tax_percentage_by_country, calculate_price_without_tax, calculate_price_with_tax,get_tax_percentage_by_address_delivery_id
+from src.services.core.tool import safe_int, safe_float, sql_value,get_tax_percentage_by_country, generate_internal_reference, calculate_price_without_tax, calculate_price_with_tax,get_tax_percentage_by_address_delivery_id
 from src.services.external.province_service import province_service
 from src.services.media.image_service import ImageService
 from src.services.media.image_cache_service import get_image_cache_service
 from src.repository.customer_repository import CustomerRepository
 from src.schemas.customer_schema import CustomerSchema
 from .base_ecommerce_service import BaseEcommerceService
+from src.repository.country_repository import CountryRepository
+from src.repository.app_configuration_repository import AppConfigurationRepository
+from src.repository.payment_repository import PaymentRepository
+from src.repository.shipping_repository import ShippingRepository
+from src.repository.tax_repository import TaxRepository
+from src.schemas.shipping_schema import ShippingSchema
 
 logger = logging.getLogger(__name__)
 
@@ -3326,10 +3331,7 @@ class PrestaShopService(BaseEcommerceService):
         """Process all orders and create SQL file for bulk insert"""
         try:
             
-            from datetime import date
-            from src.repository.shipping_repository import ShippingRepository
-            from src.repository.tax_repository import TaxRepository
-            from src.schemas.shipping_schema import ShippingSchema
+            
             
             # Initialize repositories (una volta all'inizio)
             shipping_repo = ShippingRepository(self.db)
@@ -3481,9 +3483,9 @@ class PrestaShopService(BaseEcommerceService):
             total_errors = 0
             
             # Initialize payment repository once for all orders
-            from src.repository.payment_repository import PaymentRepository
             payment_repo = PaymentRepository(self.db)
-            
+            app_config_repo = AppConfigurationRepository(self.db)
+            country_repo = CountryRepository(self.db)
             for order in all_orders:
                 try:
                     # Get order data
@@ -3563,10 +3565,33 @@ class PrestaShopService(BaseEcommerceService):
                         else:
                             print(f"⚠️ Order {order_id_origin}: Carrier origin {carrier_origin} NOT found in DB")
 
+                    # Genera internal_reference se l'ordine ha un indirizzo di consegna
+                    internal_reference = None
+                    if delivery_address_id:
+                        try:
+                         
+                            # Recupera country ISO code dall'indirizzo di consegna
+                            id_country_for_ref = address_to_country.get(delivery_address_id)
+                            if id_country_for_ref:
+                                country = country_repo.get_by_id(id_country_for_ref)
+                                if country and hasattr(country, 'iso_code'):
+                                    country_iso = country.iso_code
+                                else:
+                                    country_iso = "IT"  # Default
+                            else:
+                                country_iso = "IT"  # Default
+                            
+                            # Genera internal_reference
+                            internal_reference = generate_internal_reference(country_iso, app_config_repo)
+                        except Exception as e:
+                            print(f"⚠️ Warning: Could not generate internal_reference for order {order_id_origin}: {str(e)}")
+                            # Continua senza internal_reference
+
                     # Prepare complete order data
                     order_data = {
                         'id_origin': order_id_origin,
                         'reference': reference,
+                        'internal_reference': internal_reference,
                         'address_delivery': delivery_address_id,
                         'address_invoice': invoice_address_id,
                         'customer': customer_id,
@@ -3716,11 +3741,11 @@ class PrestaShopService(BaseEcommerceService):
             orders_sql_file = "temp_orders_insert.sql"
             with open(orders_sql_file, 'w', encoding='utf-8') as f:
                 f.write("-- Orders bulk insert\n")
-                f.write("INSERT INTO orders (id_origin, reference, id_address_delivery, id_address_invoice, id_customer, id_store, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_with_tax, total_price_net, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
+                f.write("INSERT INTO orders (id_origin, reference, internal_reference, id_address_delivery, id_address_invoice, id_customer, id_store, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, total_price_with_tax, total_price_net, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, date_add) VALUES\n")
                 
                 for i, order_data in enumerate(valid_order_data):
                     comma = "," if i < len(valid_order_data) - 1 else ";"
-                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data.get('id_store', 'NULL')}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_with_tax']}, {sql_value(order_data.get('total_price_net', 0))}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data.get('internal_reference'))}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data.get('id_store', 'NULL')}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['total_price_with_tax']}, {sql_value(order_data.get('total_price_net', 0))}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
             with open(orders_sql_file, 'r', encoding='utf-8') as f:

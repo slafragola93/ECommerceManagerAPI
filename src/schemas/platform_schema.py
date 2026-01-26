@@ -11,6 +11,7 @@ class PlatformResponseSchema(BaseModel):
     id_platform: int
     name: str
     is_default: bool
+    logo: Optional[str] = None
 
 
 class AllPlatformsResponseSchema(BaseModel):
