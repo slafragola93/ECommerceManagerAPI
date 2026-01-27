@@ -29,6 +29,8 @@ class Store(Base):
     app_configurations = relationship("AppConfiguration", back_populates="store")
     company_fiscal_infos = relationship("CompanyFiscalInfo", back_populates="store", cascade="all, delete-orphan")
     carrier_assignments = relationship("CarrierAssignment", back_populates="store")
+    carriers = relationship("Carrier", back_populates="store")
+    payments = relationship("Payment", back_populates="store")
     state_triggers = relationship("PlatformStateTrigger", back_populates="store", cascade="all, delete-orphan")
     ecommerce_order_states = relationship("EcommerceOrderState", back_populates="store", cascade="all, delete-orphan")
     

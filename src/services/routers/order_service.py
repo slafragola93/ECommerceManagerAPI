@@ -956,7 +956,7 @@ class OrderService(IOrderService):
                     id_platform_state=id_platform_state,
                     id_ecommerce_order_state=id_ecommerce_order_state,
                     success=False,
-                    message=f"Ordine {order_id} non ha id_store associato. Impossibile determinare la piattaforma ecommerce."
+                    message=f"Ordine {order_id} non ha uno store associato. Impossibile determinare la piattaforma ecommerce."
                 )
             
             # 4. Validazione ordine: verifica id_platform != 0 (come da logica trigger esistente)
@@ -966,7 +966,7 @@ class OrderService(IOrderService):
                     id_platform_state=id_platform_state,
                     id_ecommerce_order_state=id_ecommerce_order_state,
                     success=False,
-                    message=f"Ordine {order_id} ha id_platform={order.id_platform}. La sincronizzazione richiede id_platform != 0."
+                    message=f"Ordine {order_id} non ha una piattaforma associata. Impossibile determinare la piattaforma ecommerce."
                 )
             
             # 5. Cerca EcommerceOrderState con id_ecommerce_order_state e id_store

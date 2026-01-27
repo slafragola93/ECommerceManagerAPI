@@ -61,7 +61,7 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
         IMPORTANTE: Questo metodo viene chiamato solo quando necessario durante la creazione dell'ordine.
         """
         logger = logging.getLogger(__name__)
- 
+
         try:
             # Converti ShippingSchema o Shipping in dict se necessario
             if isinstance(data, ShippingSchema):

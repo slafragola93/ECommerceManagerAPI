@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, validator
 
 class CarrierSchema(BaseModel):
     id_origin: Optional[int] = None
+    id_store: Optional[int] = None
     name: str = Field(..., max_length=200)
 
 

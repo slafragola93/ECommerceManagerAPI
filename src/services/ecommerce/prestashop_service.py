@@ -27,6 +27,8 @@ from src.repository.payment_repository import PaymentRepository
 from src.repository.shipping_repository import ShippingRepository
 from src.repository.tax_repository import TaxRepository
 from src.schemas.shipping_schema import ShippingSchema
+from src.repository.address_repository import AddressRepository
+from src.schemas.address_schema import AddressSchema
 
 logger = logging.getLogger(__name__)
 
@@ -752,7 +754,8 @@ class PrestaShopService(BaseEcommerceService):
             for carrier in new_carriers:
                 carrier_data = {
                     'id_origin': carrier.get('id', ''),
-                    'name': carrier.get('name', '')
+                    'name': carrier.get('name', ''),
+                    'id_store': self.store_id
                 }
                 carrier_data_list.append(carrier_data)
             
@@ -1729,7 +1732,8 @@ class PrestaShopService(BaseEcommerceService):
             for payment_method in payment_methods:
                 payment_data = {
                     'payment_name': payment_method,
-                    'is_complete_payment': 1
+                    'is_complete_payment': 1,
+                    'id_store': self.store_id
                 }
                 payment_data_list.append(payment_data)
             
@@ -2372,6 +2376,7 @@ class PrestaShopService(BaseEcommerceService):
             # Create CarrierSchema
             carrier_schema = CarrierSchema(
                 id_origin=data.get('id_origin', 0),
+                id_store=data.get('id_store'),
                 name=carrier_name
             )
             
@@ -2467,7 +2472,8 @@ class PrestaShopService(BaseEcommerceService):
             # Create PaymentSchema
             payment_schema = PaymentSchema(
                 name=payment_name,
-                is_complete_payment=is_complete
+                is_complete_payment=is_complete,
+                id_store=data.get('id_store')
             )
             
             # Create payment in database
@@ -2481,8 +2487,7 @@ class PrestaShopService(BaseEcommerceService):
     async def _upsert_address(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Upsert address record"""
         try:
-            from src.repository.address_repository import AddressRepository
-            from src.schemas.address_schema import AddressSchema
+            
             
             address_repo = AddressRepository(self.db)
             

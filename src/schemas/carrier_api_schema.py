@@ -7,7 +7,6 @@ class CarrierApiSchema(BaseModel):
     name: str = Field(..., max_length=200)
     carrier_type: CarrierTypeEnum = Field(...)
     is_active: Optional[bool] = True
-    api_key: Optional[str] = Field(None, max_length=200)
     
     # Generic authentication fields
     use_sandbox: Optional[bool] = False
@@ -18,7 +17,6 @@ class CarrierApiResponseSchema(BaseModel):
     name: str
     carrier_type: CarrierTypeEnum
     is_active: bool
-    api_key: Optional[str]
     
     # Generic authentication fields
     use_sandbox: Optional[bool]
@@ -29,7 +27,6 @@ class CarrierApiResponseSchema(BaseModel):
 class CarrierApiUpdateSchema(BaseModel):
     name: Optional[str] = Field(None, max_length=200)
     is_active: Optional[bool] = None
-    api_key: Optional[str] = Field(None, max_length=200)
     
     # Generic authentication fields
     use_sandbox: Optional[bool] = None

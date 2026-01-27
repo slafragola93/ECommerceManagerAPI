@@ -17,7 +17,6 @@ class CarrierApi(Base):
     name = Column(String(200), nullable=False)
     carrier_type = Column(Enum(CarrierTypeEnum), nullable=False, index=True)
     is_active = Column(Boolean, default=True)
-    api_key = Column(String(200), default="")
     
     # Generic authentication fields
     use_sandbox = Column(Boolean, default=False, nullable=False)
