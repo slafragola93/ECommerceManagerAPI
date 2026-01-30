@@ -8,8 +8,9 @@ from typing import AsyncGenerator, Generator, Dict, Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -226,16 +227,16 @@ def test_app(db_session: Session, event_bus_spy: EventBusSpy):
 # HTTP Clients
 # ============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 def client(test_app) -> TestClient:
     """Client HTTP sincrono per test semplici"""
     return TestClient(test_app)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def async_client(test_app) -> AsyncGenerator[AsyncClient, None]:
     """Client HTTP asincrono"""
-    async with AsyncClient(app=test_app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
 
 
@@ -298,27 +299,27 @@ def user_client(test_app, user_user) -> TestClient:
 # Async Client con Ruoli Predefiniti
 # ============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def admin_client_async(test_app, admin_user) -> AsyncGenerator[AsyncClient, None]:
     """Client async con utente admin"""
     test_app.dependency_overrides[get_current_user] = lambda: admin_user
-    async with AsyncClient(app=test_app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def ordini_client_async(test_app, ordini_user) -> AsyncGenerator[AsyncClient, None]:
     """Client async con utente ordini"""
     test_app.dependency_overrides[get_current_user] = lambda: ordini_user
-    async with AsyncClient(app=test_app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def user_client_async(test_app, user_user) -> AsyncGenerator[AsyncClient, None]:
     """Client async con utente base"""
     test_app.dependency_overrides[get_current_user] = lambda: user_user
-    async with AsyncClient(app=test_app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
 
 

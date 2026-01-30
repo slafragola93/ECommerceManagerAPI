@@ -9,6 +9,8 @@ import asyncio
 import aiohttp
 from datetime import datetime
 
+from src.core.exceptions import EcommerceApiResponseError
+
 
 class BaseEcommerceService(ABC):
     """
@@ -227,6 +229,13 @@ class BaseEcommerceService(ABC):
                     
                     if 'application/json' in content_type:
                         return await response.json()
+                    elif 'text/html' in content_type:
+                        # API ha restituito HTML (pagina errore, manutenzione, URL errato): non fare retry
+                        text_content = await response.text()
+                        raise EcommerceApiResponseError(
+                            f"Errore API e-commerce. ",
+                            details={"url": str(url), "preview": (text_content[:300] + "...") if len(text_content) > 300 else text_content}
+                        )
                     elif 'text/xml' in content_type or 'application/xml' in content_type:
                         # Handle XML response (fallback if output_format=JSON doesn't work)
                         xml_text = await response.text()
@@ -246,12 +255,13 @@ class BaseEcommerceService(ABC):
                         except (json.JSONDecodeError, ValueError):
                             raise ValueError(f"Expected JSON but received XML: {xml_text[:200]}...")
                     else:
-                        # Try to parse as JSON anyway
-                        try:
-                            return await response.json()
-                        except:
-                            text_content = await response.text()
-                            raise ValueError(f"Unexpected content type '{content_type}': {text_content[:200]}...")
+                        # Content-type non JSON/XML: evita response.json() che solleva ContentTypeError
+                        text_content = await response.text()
+                        raise EcommerceApiResponseError(
+                            f"API e-commerce ha restituito tipo inatteso '{content_type}' invece di JSON. "
+                            "Verificare URL store o disponibilità del sito.",
+                            details={"url": str(url), "preview": (text_content[:300] + "...") if len(text_content) > 300 else text_content}
+                        )
                             
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 error_msg = str(e).lower()

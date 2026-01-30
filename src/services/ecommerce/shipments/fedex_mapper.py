@@ -27,9 +27,10 @@ class FedexMapper:
         receiver_address: Row,
         receiver_country_iso: str,
         packages: List[Row],
-        reference: Optional[str] = None,
         shipping_price_tax_incl: Optional[float] = None,
-        order_details: Optional[List] = None
+        order_details: Optional[List] = None,
+        total_customs_value: Optional[float] = None,
+        mps: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Build FedEx shipment request payload from order and configuration data
@@ -56,18 +57,17 @@ class FedexMapper:
         recipient_contact = self._build_recipient_contact(receiver_address)
         recipient_address = self._build_recipient_address(receiver_address, receiver_country_iso)
         
-        # Build package line items (without customsValue - it goes in commodities)
+        # Build package line items (without customsValue - it goes in commodities)        
         package_line_items = self._build_package_line_items(packages, fedex_config)
-        
-        # Get total weight from order_data, fallback to sum of packages if not available
-        total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
-
+            
+        # Total weight: somma dei weight degli order_package collegati all'ordine/documento
+        total_weight = sum(
+            float(item.get("weight", {}).get("value", 0))
+            for item in package_line_items
+        )
         if total_weight <= 0:
-            # Fallback: calculate from package line items
-            total_weight = sum(
-                float(item.get("weight", {}).get("value", 0))
-                for item in package_line_items
-            )
+            # Fallback: order_data.total_weight
+            total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
         
         # Get service type and packaging type from config
         service_type = fedex_config.service_type  # Required field from fedex_configurations.service_type
@@ -111,15 +111,18 @@ class FedexMapper:
                 receiver_country_iso=receiver_country_iso
             )
             
-            # Get products_total_price_with_tax from order_data
-            products_total_price_with_tax = float(getattr(order_data, 'products_total_price_with_tax', None) or 0.0)
+            # totalCustomsValue: use provided value (e.g. per-document in multishipping) or order_data
+            if total_customs_value is not None and total_customs_value >= 0:
+                customs_amount = round(float(total_customs_value), 2)
+            else:
+                customs_amount = round(float(getattr(order_data, 'products_total_price_with_tax', None) or 0.0), 2)
             
             customs_clearance_detail = {
                 "dutiesPayment": duties_payment,
                 "commercialInvoice": commercial_invoice,
                 "commodities": commodities,
                 "totalCustomsValue": {
-                    "amount": round(products_total_price_with_tax, 2),
+                    "amount": customs_amount,
                     "currency": "EUR"
                 }
             }
@@ -127,7 +130,8 @@ class FedexMapper:
         # Build shipperDetails and receiverDetails
         shipper_details = self._build_shipper_details(fedex_config)
         receiver_details = self._build_receiver_details(receiver_address, receiver_country_iso)
-        
+        # MPS: se il chiamante passa mps, usarlo (oneLabelAtATime, totalPackageCount, requestedPackageLineItems, opz. masterTrackingId)
+        use_mps_from_param = mps is not None
         # Build payload
         payload = {
             "labelResponseOptions": "URL_ONLY",
@@ -146,7 +150,7 @@ class FedexMapper:
                 "serviceType": service_type,
                 "packagingType": packaging_type,
                 "pickupType": pickup_type,
-                "totalWeight": round(total_weight, 2),
+                "totalWeight": round(float(total_weight), 2),
                 "blockInsightVisibility": False,
                 "shippingChargesPayment": {
                     "paymentType": payment_type
@@ -158,6 +162,16 @@ class FedexMapper:
                 "value": account_number
             }
         }
+        if use_mps_from_param and mps:
+            # Dentro requestedShipment: oneLabelAtATime, totalPackageCount
+            payload["requestedShipment"]["oneLabelAtATime"] = mps.get("oneLabelAtATime", True)
+            payload["requestedShipment"]["totalPackageCount"] = mps.get("totalPackageCount", 1)
+            # In requestedShipment: 1 solo requestedPackageLineItems (dal mps)
+            if "requestedPackageLineItems" in mps:
+                payload["requestedShipment"]["requestedPackageLineItems"] = mps["requestedPackageLineItems"]
+            # masterTrackingId in requestedShipment (solo per colli 2+)
+            if mps.get("masterTrackingId"):
+                payload["requestedShipment"]["masterTrackingId"] = {"trackingNumber": mps["masterTrackingId"]}
         
         # Add customsClearanceDetail if available
         if customs_clearance_detail:
@@ -166,213 +180,6 @@ class FedexMapper:
         # Validate required fields
         self._validate_required_fields(payload)
         
-        logger.debug(f"FedEx Shipment Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
-        return payload
-    
-    def build_mps_shipment_request(
-        self,
-        order_data: Row,
-        fedex_config: FedexConfiguration,
-        receiver_address: Row,
-        receiver_country_iso: str,
-        package: Row,
-        sequence_number: int,
-        total_package_count: int,
-        master_tracking_id: Optional[str] = None,
-        reference: Optional[str] = None,
-        shipping_price_tax_incl: Optional[float] = None,
-        order_details: Optional[List] = None,
-        total_weight_all_packages: Optional[float] = None,
-        shipping_total_weight: Optional[float] = None
-    ) -> Dict[str, Any]:
-        """
-        Build FedEx MPS (Multiple-Piece Shipping) shipment request payload for "One label at a time" mode
-        
-        Args:
-            order_data: Order row with shipment data
-            fedex_config: FedEx configuration
-            receiver_address: Receiver address row
-            receiver_country_iso: Receiver country ISO code (2 letters)
-            package: Single package row for this piece
-            sequence_number: Sequence number for this piece (1 for master, 2+ for additional pieces)
-            total_package_count: Total number of packages in the shipment
-            master_tracking_id: Master tracking ID (required for pieces 2+, None for master)
-            reference: Order reference (optional)
-            shipping_price_tax_incl: Shipping price with tax included (optional)
-            order_details: List of order details for commodities (optional)
-            
-        Returns:
-            FedEx MPS API payload dict
-        """
-        # Get account number
-        account_number = str(fedex_config.account_number) if fedex_config.account_number else ""
-        
-        # Build shipper contact and address
-        shipper_contact = self._build_shipper_contact(fedex_config)
-        shipper_address = self._build_shipper_address(fedex_config)
-        
-        # Build recipient contact and address
-        recipient_contact = self._build_recipient_contact(receiver_address)
-        recipient_address = self._build_recipient_address(receiver_address, receiver_country_iso)
-        
-        # Build single package line item with sequenceNumber
-        package_weight = float(getattr(package, 'weight', None) or fedex_config.default_weight or 1.0)
-        
-        package_line_item = {
-            "sequenceNumber": sequence_number,
-            "weight": {
-                "units": "KG",
-                "value": round(package_weight, 2)
-            }
-        }
-        
-        # Add dimensions if available
-        length = getattr(package, 'length', None) or fedex_config.package_depth
-        width = getattr(package, 'width', None) or fedex_config.package_width
-        height = getattr(package, 'height', None) or fedex_config.package_height
-        
-        if length and width and height:
-            package_line_item["dimensions"] = {
-                "length": int(length),
-                "width": int(width),
-                "height": int(height),
-                "units": "CM"
-            }
-        
-        # Get total weight for totalWeight field
-        # For MPS, use the sum of all packages weights
-        if total_weight_all_packages and total_weight_all_packages > 0:
-            total_weight = total_weight_all_packages
-        else:
-            # Fallback: try order_data.total_weight
-            total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
-            if total_weight <= 0:
-                # Last fallback: use package weight (will be approximate for MPS)
-                total_weight = package_weight
-        
-        # Get service type and packaging type from config
-        service_type = fedex_config.service_type
-        if not service_type:
-            raise ValidationException(
-                "service_type is required in FedEx configuration",
-                details={"field": "service_type", "config_id": fedex_config.id_fedex_configuration if hasattr(fedex_config, 'id_fedex_configuration') else None}
-            )
-        packaging_type = fedex_config.packaging_type or "YOUR_PACKAGING"
-        pickup_type = fedex_config.pickup_type or "DROPOFF_AT_FEDEX_LOCATION"
-        payment_type = fedex_config.customs_charges or "SENDER"
-        
-        # Get label specification
-        label_spec = self._build_label_specification(fedex_config)
-        
-        # Ship date (today or tomorrow)
-        ship_datestamp = datetime.now().strftime("%Y-%m-%d")
-        
-        # Build customsClearanceDetail (only for master piece, or all pieces if needed)
-        customs_clearance_detail = None
-        if order_details:
-            # Get order_id from order_data
-            order_id = getattr(order_data, 'id_order', None)
-            
-            # Build dutiesPayment
-            duties_payment = self._build_duties_payment(fedex_config)
-            
-            # Build commercialInvoice
-            commercial_invoice = self._build_commercial_invoice(
-                fedex_config=fedex_config,
-                order_data=order_data,
-                order_id=order_id
-            )
-            
-            # Build commodities from order details
-            # For MPS, calculate commodities weight proportionally to this package's weight
-            # Use shipping_total_weight (order_data.total_weight) distributed proportionally
-            package_weight = float(getattr(package, 'weight', None) or fedex_config.default_weight or 1.0)
-            
-            # Calculate proportional weight for this package's commodities
-            if shipping_total_weight and shipping_total_weight > 0 and total_weight_all_packages and total_weight_all_packages > 0:
-                # Distribute shipping weight proportionally: (package_weight / total_weight_all_packages) * shipping_total_weight
-                commodities_weight_for_package = (package_weight / total_weight_all_packages) * shipping_total_weight
-            else:
-                # Fallback: use package weight
-                commodities_weight_for_package = package_weight
-            
-            commodities = self._build_commodities(
-                order_details=order_details,
-                packages=[package],  # Single package for this piece
-                shipping_price_tax_incl=shipping_price_tax_incl or 0.0,
-                fedex_config=fedex_config,
-                receiver_country_iso=receiver_country_iso,
-                total_weight_for_commodities=commodities_weight_for_package
-            )
-            
-            # Get products_total_price_with_tax from order_data
-            products_total_price_with_tax = float(getattr(order_data, 'products_total_price_with_tax', None) or 0.0)
-            
-            customs_clearance_detail = {
-                "dutiesPayment": duties_payment,
-                "commercialInvoice": commercial_invoice,
-                "commodities": commodities,
-                "totalCustomsValue": {
-                    "amount": round(products_total_price_with_tax, 2),
-                    "currency": "EUR"
-                }
-            }
-        
-        # Build shipperDetails and receiverDetails
-        shipper_details = self._build_shipper_details(fedex_config)
-        receiver_details = self._build_receiver_details(receiver_address, receiver_country_iso)
-        
-        # Build requestedShipment with MPS fields
-        requested_shipment = {
-            "oneLabelAtATime": True,
-            "totalPackageCount": total_package_count,
-            "requestedPackageLineItems": [package_line_item],
-            "shipper": {
-                "contact": shipper_contact,
-                "address": shipper_address
-            },
-            "recipients": [{
-                "contact": recipient_contact,
-                "address": recipient_address
-            }],
-            "shipperDetails": shipper_details,
-            "receiverDetails": receiver_details,
-            "shipDatestamp": ship_datestamp,
-            "serviceType": service_type,
-            "packagingType": packaging_type,
-            "pickupType": pickup_type,
-            "totalWeight": round(total_weight, 2),
-            "blockInsightVisibility": False,
-            "shippingChargesPayment": {
-                "paymentType": payment_type
-            },
-            "labelSpecification": label_spec
-        }
-        
-        # Add masterTrackingId for pieces 2+ (not for master)
-        if master_tracking_id and sequence_number > 1:
-            requested_shipment["masterTrackingId"] = {
-                "trackingIdType": "FEDEX",
-                "trackingNumber": master_tracking_id
-            }
-        
-        # Add customsClearanceDetail if available (typically only for master)
-        if customs_clearance_detail:
-            requested_shipment["customsClearanceDetail"] = customs_clearance_detail
-        
-        # Build payload
-        payload = {
-            "labelResponseOptions": "URL_ONLY",
-            "requestedShipment": requested_shipment,
-            "accountNumber": {
-                "value": account_number
-            }
-        }
-        
-        # Validate required fields
-        self._validate_required_fields(payload)
-        
-        logger.debug(f"FedEx MPS Shipment Payload (sequence {sequence_number}): {json.dumps(payload, indent=2, ensure_ascii=False)}")
         return payload
     
     def build_validate_request(

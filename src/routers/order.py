@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body
 from sqlalchemy.orm import Session
 from starlette import status
 
+from src.core.exceptions import BusinessRuleException
 from src.database import get_db
 from src.repository.order_detail_repository import OrderDetailRepository
 from src.repository.product_repository import ProductRepository
@@ -145,46 +146,50 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `/orders?customers_ids=1,2&show_details=true` - Ordini di clienti specifici con dettagli
     - `/orders?is_payed=true&date_from=2024-01-01` - Ordini pagati dal 1 gennaio 2024
     """
-    orders = or_repo.get_all(orders_ids=orders_ids,
-                            customers_ids=customers_ids,
-                            order_states_ids=order_states_ids,
-                            shipping_states_ids=shipping_states_ids,
-                            delivery_countries_ids=delivery_countries_ids,
-                            platforms_ids=platforms_ids,
-                            store_ids=stores_ids,
-                            payments_ids=payments_ids,
-                            ecommerce_states_ids=ecommerce_states_ids,
-                            search=search,
-                            is_payed=is_payed,
-                            is_invoice_requested=is_invoice_requested,
-                            date_from=date_from,
-                            date_to=date_to,
-                            show_details=show_details == "true",
-                            page=page,
-                            limit=limit)
-    
-    if not orders:
-        raise HTTPException(status_code=404, detail="Nessun ordine trovato")
+    try:
+        orders = or_repo.get_all(orders_ids=orders_ids,
+                                customers_ids=customers_ids,
+                                order_states_ids=order_states_ids,
+                                shipping_states_ids=shipping_states_ids,
+                                delivery_countries_ids=delivery_countries_ids,
+                                platforms_ids=platforms_ids,
+                                store_ids=stores_ids,
+                                payments_ids=payments_ids,
+                                ecommerce_states_ids=ecommerce_states_ids,
+                                search=search,
+                                is_payed=is_payed,
+                                is_invoice_requested=is_invoice_requested,
+                                date_from=date_from,
+                                date_to=date_to,
+                                show_details=show_details == "true",
+                                page=page,
+                                limit=limit)
+        
+        if not orders:
+            return {"orders": [], "total": 0, "page": page, "limit": limit}
 
-    total_count = or_repo.get_count(orders_ids=orders_ids,
-                                   customers_ids=customers_ids,
-                                   order_states_ids=order_states_ids,
-                                   shipping_states_ids=shipping_states_ids,
-                                   delivery_countries_ids=delivery_countries_ids,
-                                   platforms_ids=platforms_ids,
-                                   store_ids=stores_ids,
-                                   payments_ids=payments_ids,
-                                   ecommerce_states_ids=ecommerce_states_ids,
-                                   search=search,
-                                   is_payed=is_payed,
-                                   is_invoice_requested=is_invoice_requested,
-                                   date_from=date_from,
-                                   date_to=date_to)
+        total_count = or_repo.get_count(orders_ids=orders_ids,
+                                       customers_ids=customers_ids,
+                                       order_states_ids=order_states_ids,
+                                       shipping_states_ids=shipping_states_ids,
+                                       delivery_countries_ids=delivery_countries_ids,
+                                       platforms_ids=platforms_ids,
+                                       store_ids=stores_ids,
+                                       payments_ids=payments_ids,
+                                       ecommerce_states_ids=ecommerce_states_ids,
+                                       search=search,
+                                       is_payed=is_payed,
+                                       is_invoice_requested=is_invoice_requested,
+                                       date_from=date_from,
+                                       date_to=date_to)
 
-    results = []
-    for order in orders:
-        results.append(or_repo.formatted_output(order, show_details=show_details == "true", include_order_history=False))
-    return {"orders": results, "total": total_count, "page": page, "limit": limit}
+        results = []
+        for order in orders:
+            results.append(or_repo.formatted_output(order, show_details=show_details == "true", include_order_history=False))
+        return {"orders": results, "total": total_count, "page": page, "limit": limit}
+    except Exception as e:
+        logger.error(f"Error in get_all_orders: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Errore durante il recupero degli ordini: {str(e)}")
 
 
 @router.get("/{order_id}", status_code=status.HTTP_200_OK, response_model=OrderIdSchema)
@@ -346,6 +351,9 @@ async def update_order_status(
     - `order_id`: ID dell'ordine da aggiornare.
     - `new_status_id`: ID del nuovo stato dell'ordine.
     
+    Regole di validazione:
+    - Il cambio a stato 5 è permesso solo se lo stato corrente è 1, 2, 3 o 6
+    
     La funzione aggiorna lo stato dell'ordine nella tabella orders e crea
     un nuovo record nella tabella orders_history per tracciare il cambio di stato.
     
@@ -356,6 +364,8 @@ async def update_order_status(
         return await order_service.update_order_status(order_id, new_status_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except BusinessRuleException as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/bulk-status", 
@@ -375,10 +385,14 @@ async def bulk_update_order_status(
     Parametri:
     - `updates`: Lista di aggiornamenti stato con `id_order` e `id_order_state`
     
+    Regole di validazione:
+    - Il cambio a stato 5 è permesso solo se lo stato corrente è 1, 2, 3 o 6
+    
     Per ogni ordine nella lista:
     - Verifica esistenza ordine
     - Verifica che lo stato sia diverso da quello corrente
     - Valida che lo stato esista nella tabella order_states
+    - Valida transizioni di stato (es. cambio a 5 solo da 1,2,3,6)
     - Se valido: aggiorna stato, crea record in orders_history, emette evento ORDER_STATUS_CHANGED
     - Se non valido: aggiunge a lista errori
     
@@ -395,6 +409,7 @@ async def bulk_update_order_status(
     Gli eventi ORDER_STATUS_CHANGED vengono emessi automaticamente dal decorator
     nel service per ogni cambio stato valido.
     """
+    logger.info(f"Bulk status update received: {len(updates)} updates - {[{'id_order': u.id_order, 'id_order_state': u.id_order_state} for u in updates]}")
     return await order_service.bulk_update_order_status(updates)
 
 

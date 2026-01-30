@@ -50,7 +50,12 @@ class BrtShipmentService(IBrtShipmentService):
         self.brt_mapper = brt_mapper
         self.settings = get_cache_settings()
     
-    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
+    async def create_shipment(
+        self,
+        order_id: int,
+        id_shipping: Optional[int] = None,
+        id_order_document: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Creazione spedizione BRT per ordine
         
@@ -59,7 +64,9 @@ class BrtShipmentService(IBrtShipmentService):
             id_shipping: Optional shipping ID to use instead of retrieving from order.
                         If provided, this shipping will be used instead of order.id_shipping.
                         Useful when creating shipments for OrderDocument (multi-shipment).
-            
+            id_order_document: Optional OrderDocument ID (type=shipping). If provided, only packages
+                              of this document are used (multi-shipment). BRT currently uses order-level packages.
+        
         Returns:
             Dict con dettagli spedizione (awb)
         """

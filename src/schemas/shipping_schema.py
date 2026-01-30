@@ -30,7 +30,7 @@ class ShippingUpdateSchema(BaseModel):
 class ShippingResponseSchema(BaseModel):
     id_carrier_api: Optional[int] = None
     id_shipping_state: int
-    id_tax: int
+    id_tax: Optional[int] = None
     tracking: str | None
     weight: float
     price_tax_incl: float

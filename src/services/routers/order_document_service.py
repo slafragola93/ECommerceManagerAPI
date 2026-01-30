@@ -163,11 +163,11 @@ class OrderDocumentService:
     
     def get_articoli_order_document(self, id_order_document: int, document_type: str) -> List[OrderDetail]:
         """
-        Recupera articoli di un documento (preventivo o DDT)
+        Recupera articoli di un documento (preventivo, DDT o shipping)
         
         Args:
             id_order_document: ID del documento
-            document_type: Tipo documento ("preventivo" o "DDT")
+            document_type: Tipo documento ("preventivo", "DDT" o "shipping")
             
         Returns:
             List[OrderDetail]: Lista degli articoli
@@ -186,6 +186,13 @@ class OrderDocumentService:
                 and_(
                     OrderDetail.id_order_document == id_order_document,
                     OrderDetail.id_order > 0
+                )
+            ).all()
+        elif document_type == "shipping":
+            # Per shipping (multispedizione): articoli con id_order = 0 (collegati al documento, non all'ordine)
+            return self.db.query(OrderDetail).filter(
+                and_(
+                    OrderDetail.id_order_document == id_order_document
                 )
             ).all()
         else:

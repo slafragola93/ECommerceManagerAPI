@@ -8,10 +8,10 @@ from sqlalchemy.engine import Row
 import logging
 
 from src.core.settings import get_carrier_integration_settings
+from src.core.exceptions import CarrierApiError
 from src.services.core.tool import convert_decimals_to_float
 
 logger = logging.getLogger(__name__)
-
 
 class FedexClient:
     """FedEx Ship API HTTP client with OAuth 2.0 authentication support"""
@@ -152,8 +152,6 @@ class FedexClient:
         # Convert Decimal objects to float for JSON serialization
         payload_serializable = convert_decimals_to_float(payload)
         
-        logger.info(f"FedEx Create Shipment Request URL: {url}")
-        logger.info(f"FedEx Create Shipment Request Method: POST")
         logger.info(f"FedEx Create Shipment Request Payload: {json.dumps(payload_serializable, indent=2, ensure_ascii=False)}")
         
         async with httpx.AsyncClient(timeout=45.0) as client:
@@ -162,8 +160,6 @@ class FedexClient:
             )
         
         response_data = response.json()
-        logger.info(f"FedEx Create Shipment Response Status: {response.status_code}")
-        logger.info(f"FedEx Create Shipment Response JSON: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
         
         # Check for errors
         self._check_fedex_errors(response_data, response.status_code)
@@ -196,8 +192,6 @@ class FedexClient:
         # Convert Decimal objects to float for JSON serialization
         payload_serializable = convert_decimals_to_float(payload)
         
-        logger.info(f"FedEx Validate Shipment Request URL: {url}")
-        logger.info(f"FedEx Validate Shipment Request Method: POST")
         logger.info(f"FedEx Validate Shipment Request Payload: {json.dumps(payload_serializable, indent=2, ensure_ascii=False)}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -206,8 +200,6 @@ class FedexClient:
             )
         
         response_data = response.json()
-        logger.info(f"FedEx Validate Shipment Response Status: {response.status_code}")
-        logger.info(f"FedEx Validate Shipment Response JSON: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
         
         # Check for errors
         self._check_fedex_errors(response_data, response.status_code)
@@ -397,95 +389,51 @@ class FedexClient:
         return headers
     
     def _check_fedex_errors(self, response_data: Dict[str, Any], status_code: int) -> None:
-        """
-        Check for FedEx API errors in response and raise appropriate exceptions
-        
-        Args:
-            response_data: FedEx API response dict
-            status_code: HTTP status code
-            
-        Raises:
-            ValueError: For client errors (400, 401, 403, 404, 422)
-            RuntimeError: For server errors (500, 503)
-        """
+ 
         if status_code < 400:
-            return  # No errors
+            return
         
         errors = response_data.get("errors", [])
         transaction_id = response_data.get("transactionId", "N/A")
+        details: Dict[str, Any] = {"transaction_id": transaction_id}
         
         if not errors:
-            # No error details, use generic message
-            if status_code == 400:
-                raise ValueError(f"FedEx Bad Request (400): Invalid request format")
-            elif status_code == 401:
-                raise ValueError(f"FedEx Unauthorized (401): Authentication failed")
-            elif status_code == 403:
-                raise ValueError(f"FedEx Forbidden (403): Access denied")
-            elif status_code == 404:
-                raise ValueError(f"FedEx Not Found (404): Resource not found")
-            elif status_code == 500:
-                raise RuntimeError(f"FedEx Internal Server Error (500): Server error")
-            elif status_code == 503:
-                raise RuntimeError(f"FedEx Service Unavailable (503): Service temporarily unavailable")
-            else:
-                raise RuntimeError(f"FedEx API Error ({status_code}): Unknown error")
-            return
+            code_message_map = {
+                400: ("FEDEX.BAD_REQUEST", "Invalid request format"),
+                401: ("FEDEX.UNAUTHORIZED", "Authentication failed"),
+                403: ("FEDEX.FORBIDDEN", "Access denied"),
+                404: ("FEDEX.NOT_FOUND", "Resource not found"),
+                422: ("FEDEX.UNPROCESSABLE", "Validation error"),
+                500: ("FEDEX.INTERNAL_ERROR", "Server error"),
+                503: ("FEDEX.SERVICE_UNAVAILABLE", "Service temporarily unavailable"),
+            }
+            code, message = code_message_map.get(
+                status_code, (f"FEDEX.ERROR.{status_code}", "Unknown error")
+            )
+            raise CarrierApiError(
+                message=message,
+                carrier_name="FedEx",
+                carrier_error_code=code,
+                http_status_code=status_code,
+                details=details
+            )
         
-        # Collect all error messages
-        error_messages = []
-        error_codes = []
-        
-        for error in errors:
-            error_code = error.get("code", "UNKNOWN_ERROR")
-            error_message = error.get("message", "Unknown error")
-            error_codes.append(error_code)
-            error_messages.append(f"{error_code}: {error_message}")
-        
-        # Build combined error message
-        combined_message = " | ".join(error_messages)
-        
-        # Map status codes to appropriate exceptions
-        if status_code == 400:
-            # Bad Request - Validation errors
-            # Common codes: ACCOUNTNUMBER.REGISTRATION.REQUIRED, etc.
-            raise ValueError(f"FedEx Validation Error (400): {combined_message} [TransactionId: {transaction_id}]")
-        
-        elif status_code == 401:
-            # Unauthorized - Authentication failed
-            # Common code: NOT.AUTHORIZED.ERROR
-            raise ValueError(f"FedEx Authorization Error (401): {combined_message} [TransactionId: {transaction_id}]")
-        
-        elif status_code == 403:
-            # Forbidden - Access denied
-            # Common code: FORBIDDEN.ERROR
-            raise ValueError(f"FedEx Forbidden (403): {combined_message} [TransactionId: {transaction_id}]")
-        
-        elif status_code == 404:
-            # Not Found - Resource not available
-            # Common code: NOT.FOUND.ERROR
-            raise ValueError(f"FedEx Not Found (404): {combined_message} [TransactionId: {transaction_id}]")
-        
-        elif status_code == 422:
-            # Unprocessable Entity - Validation errors
-            raise ValueError(f"FedEx Validation Error (422): {combined_message} [TransactionId: {transaction_id}]")
-        
-        elif status_code == 500:
-            # Internal Server Error
-            # Common code: INTERNAL.SERVER.ERROR
-            raise RuntimeError(f"FedEx Internal Server Error (500): {combined_message} [TransactionId: {transaction_id}]")
-        
-        elif status_code == 503:
-            # Service Unavailable
-            # Common code: SERVICE.UNAVAILABLE.ERROR
-            raise RuntimeError(f"FedEx Service Unavailable (503): {combined_message} [TransactionId: {transaction_id}]")
-        
-        else:
-            # Other 4xx/5xx errors
-            if 400 <= status_code < 500:
-                raise ValueError(f"FedEx Client Error ({status_code}): {combined_message} [TransactionId: {transaction_id}]")
-            else:
-                raise RuntimeError(f"FedEx Server Error ({status_code}): {combined_message} [TransactionId: {transaction_id}]")
+        # Un'unica eccezione: primo errore come codice e messaggio, eventuali altri in details
+        first = errors[0]
+        carrier_code = first.get("code", "UNKNOWN_ERROR")
+        carrier_message = first.get("message", "Unknown error")
+        if len(errors) > 1:
+            details["errors"] = [
+                {"code": e.get("code", "UNKNOWN_ERROR"), "message": e.get("message", "Unknown error")}
+                for e in errors
+            ]
+        raise CarrierApiError(
+            message=carrier_message,
+            carrier_name="FedEx",
+            carrier_error_code=carrier_code,
+            http_status_code=status_code,
+            details=details
+        )
     
     async def _make_request_with_retry(
         self,

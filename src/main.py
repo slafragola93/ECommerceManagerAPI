@@ -41,6 +41,7 @@ from src.core.exceptions import (
     AuthenticationException,
     AuthorizationException,
     AlreadyExistsError,
+    CarrierApiError,
     ErrorCode
 )
 from src.core.pydantic_error_formatter import PydanticErrorFormatter
@@ -427,6 +428,19 @@ async def infrastructure_exception_handler(request: Request, exc: Infrastructure
     
     return JSONResponse(
         status_code=500,
+        content=exc.to_dict()
+    )
+
+@app.exception_handler(CarrierApiError)
+async def carrier_api_exception_handler(request: Request, exc: CarrierApiError):
+    """Handler per errori API corrieri (FedEx, DHL, UPS, etc.): risposta con error_code e message."""
+    logger.warning(f"{exc.carrier_name} API error: {exc.carrier_error_code} - {exc.message}", extra={
+        "path": str(request.url),
+        "carrier": exc.carrier_name,
+        "details": exc.details
+    })
+    return JSONResponse(
+        status_code=exc.status_code,
         content=exc.to_dict()
     )
 

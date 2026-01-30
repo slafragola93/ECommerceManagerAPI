@@ -50,13 +50,21 @@ class DhlShipmentService(IDhlShipmentService):
         self.dhl_mapper = dhl_mapper
         self.settings = get_cache_settings()
     
-    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
+    async def create_shipment(
+        self,
+        order_id: int,
+        id_shipping: Optional[int] = None,
+        id_order_document: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Creazione spedizione DHL per ordine
         
         Args:
             order_id: ID ordine per creare spedizione
-            
+            id_shipping: Optional shipping ID (multi-shipment).
+            id_order_document: Optional OrderDocument ID (type=shipping). If provided, only packages
+                              of this document are used. DHL currently uses order-level packages.
+        
         Returns:
             Dict con dettagli spedizione (awb, label_path, estimated_delivery, etc.)
         """

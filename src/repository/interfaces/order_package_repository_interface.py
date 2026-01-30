@@ -19,3 +19,8 @@ class IOrderPackageRepository(IRepository[OrderPackage, int]):
     def get_dimensions_by_order(self, id_order: int) -> list[Row]:
         """Get package dimensions/weight for order"""
         pass
+    
+    @abstractmethod
+    def get_dimensions_by_order_documents(self, id_order_documents: List[int]) -> list[Row]:
+        """Get package dimensions/weight for multiple order documents"""
+        pass

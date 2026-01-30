@@ -6,7 +6,6 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 import logging
 import httpx
-from sqlalchemy.engine import Row
 
 from src.core.settings import get_cache_settings
 from src.core.exceptions import NotFoundException, BusinessRuleException, InfrastructureException, ValidationException
@@ -22,9 +21,14 @@ from src.repository.interfaces.order_detail_repository_interface import IOrderDe
 from src.services.ecommerce.shipments.fedex_client import FedexClient
 from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
 from src.models.shipment_document import ShipmentDocument
-from src.models.fedex_configuration import FedexScopeEnum, FedexConfiguration
-
+from src.models.fedex_configuration import FedexScopeEnum
+from src.models.order_document import OrderDocument
+from src.repository.order_document_repository import OrderDocumentRepository
+from collections import namedtuple
 logger = logging.getLogger(__name__)
+
+# Namedtuple per rappresentare un package con peso corretto
+PackageRow = namedtuple('PackageRow', ['id_order_package', 'id_order_document', 'weight', 'length', 'width', 'height'])
 
 
 class FedexShipmentService(IFedexShipmentService):
@@ -55,12 +59,131 @@ class FedexShipmentService(IFedexShipmentService):
         self.fedex_mapper = fedex_mapper
         self.settings = get_cache_settings()
     
-    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
+    def _get_shipping_document_minimal(self, id_order_document: int) -> Optional[Any]:
+        """
+        Recupera solo i campi necessari di un OrderDocument di tipo "shipping" (query idratata)
+        
+        Args:
+            id_order_document: ID del documento
+            
+        Returns:
+            SimpleNamespace con id_order_document, id_order, id_shipping, total_weight
+            o None se non trovato
+        """
+        from sqlalchemy import select
+        from types import SimpleNamespace
+        
+        result = self.order_repository.session.execute(
+            select(
+                OrderDocument.id_order_document,
+                OrderDocument.id_order,
+                OrderDocument.id_shipping,
+                OrderDocument.total_weight
+            ).where(
+                OrderDocument.id_order_document == id_order_document,
+                OrderDocument.type_document == "shipping"
+            )
+        ).first()
+        
+        if not result:
+            return None
+        
+        return SimpleNamespace(
+            id_order_document=result.id_order_document,
+            id_order=result.id_order,
+            id_shipping=result.id_shipping,
+            total_weight=result.total_weight
+        )
+    
+    def _calculate_document_weights(self, order_documents: List[OrderDocument]) -> Dict[int, float]:
+        """
+        Calcola il peso per ogni OrderDocument.
+        Priorità: Shipping.weight > OrderDocument.total_weight > calcolato da order_details
+        
+        Args:
+            order_documents: Lista di OrderDocument
+            
+        Returns:
+            Dict con id_order_document -> peso
+        """
+        doc_weight_map = {}
+        for order_doc in order_documents:
+            doc_weight = None
+            # 1. Prova a recuperare il peso dallo Shipping collegato
+            if order_doc.id_shipping:
+                doc_weight = self.shipping_repository.get_weight(order_doc.id_shipping)
+            
+            # 2. Fallback: usa total_weight del documento
+            if not doc_weight and order_doc.total_weight:
+                doc_weight = float(order_doc.total_weight)
+            
+            # 3. Fallback: calcola dagli order_details
+            if not doc_weight:
+                doc_details = self.order_detail_repository.get_by_order_document_id(order_doc.id_order_document)
+                if doc_details:
+                    doc_weight = sum(
+                        float(getattr(detail, 'product_weight', 0) or 0.0) * int(getattr(detail, 'product_qty', 1) or 1)
+                        for detail in doc_details
+                    )
+            
+            if doc_weight:
+                doc_weight_map[order_doc.id_order_document] = doc_weight
+        
+        return doc_weight_map
+    
+    def _package_line_item(
+        self,
+        pkg: Any,
+        sequence_number: int,
+        fedex_config: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """Costruisce un singolo requestedPackageLineItem per MPS (sequenceNumber, weight, dimensions)."""
+        weight = float(getattr(pkg, 'weight', None) or (getattr(fedex_config, 'default_weight', None) if fedex_config else None) or 1.0)
+        item: Dict[str, Any] = {
+            "sequenceNumber": sequence_number,
+            "weight": {"units": "KG", "value": round(weight, 2)}
+        }
+        length = getattr(pkg, 'length', None) or (getattr(fedex_config, 'package_depth', None) if fedex_config else None)
+        width = getattr(pkg, 'width', None) or (getattr(fedex_config, 'package_width', None) if fedex_config else None)
+        height = getattr(pkg, 'height', None) or (getattr(fedex_config, 'package_height', None) if fedex_config else None)
+        if length is not None and width is not None and height is not None:
+            item["dimensions"] = {
+                "length": int(length),
+                "width": int(width),
+                "height": int(height),
+                "units": "CM"
+            }
+        return item
+    
+    async def _validate_fedex_payload(
+        self,
+        payload: Dict[str, Any],
+        order_id: int,
+        credentials: Any,
+        fedex_config: Any
+    ) -> None:
+        """Valida il payload FedEx tramite API validate prima della create."""
+        await self.fedex_client.validate_shipment(
+            payload=payload,
+            credentials=credentials,
+            fedex_config=fedex_config
+        )
+    
+    async def create_shipment(
+        self,
+        order_id: int,
+        id_shipping: Optional[int] = None,
+        id_order_document: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Creazione spedizione FedEx per ordine
         
         Args:
             order_id: ID ordine per creare spedizione
+            order_id: ID ordine per creare spedizione
+            id_shipping: ID shipping opzionale (per multispedizione)
+            id_order_document: ID OrderDocument opzionale (se fornito, crea la label solo per quel documento
+                               con payload di spedizione singola)
             
         Returns:
             Dict con dettagli spedizione (awb, tracking_numbers, etc.)
@@ -69,8 +192,17 @@ class FedexShipmentService(IFedexShipmentService):
             # 1. Recupero informazioni Ordine
             order_data = self.order_repository.get_shipment_data(order_id)
             
-            # 2. Determina quale shipping usare: se id_shipping è fornito, usalo; altrimenti usa quello dell'Order
-            shipping_id_to_use = id_shipping if id_shipping is not None else order_data.id_shipping
+            # 2. Determina quale shipping usare
+            specific_doc = None
+            if id_order_document is not None:
+                specific_doc = self._get_shipping_document_minimal(id_order_document)
+                if not specific_doc:
+                    raise NotFoundException("OrderDocument", id_order_document)
+                shipping_id_to_use = getattr(specific_doc, "id_shipping", None) or id_shipping or order_data.id_shipping
+                if not shipping_id_to_use:
+                    raise NotFoundException("Shipping", None, {"id_order_document": id_order_document, "reason": "Spedizione non trovata"})
+            else:
+                shipping_id_to_use = id_shipping if id_shipping is not None else order_data.id_shipping
             
             # 4. Recupero info di spedizione per poi recuperare id_carrier_api
             shipping_info = self.shipping_repository.get_carrier_info(shipping_id_to_use)
@@ -92,531 +224,185 @@ class FedexShipmentService(IFedexShipmentService):
             receiver_address = self.address_repository.get_delivery_data(order_data.id_address_delivery)
             receiver_country_iso = self.country_repository.get_iso_code(receiver_address.id_country)
             
-            # 6. Recupero dimensioni dei colli
-            packages = self.order_package_repository.get_dimensions_by_order(order_id)
-            
-            # 7. Recupero dettagli ordine per commodities
-            order_details = self.order_detail_repository.get_by_order_id(order_id)
+            # 6. Recupero dimensioni dei colli e order_details
+            # Se id_order_document è fornito: packages e order_details solo del documento; total_customs_value del documento
+            # Se id_shipping è fornito (senza id_order_document), recupera TUTTI gli OrderDocument e aggrega tutto
+            total_customs_value = None
+            if id_order_document is not None:
+                # Multishipping: un documento = una spedizione con payload singolo
+                packages = self.order_package_repository.get_dimensions_by_order_documents([id_order_document])
+                order_details = self.order_detail_repository.get_by_order_document_id(id_order_document)
+                # totalCustomsValue limitato al documento
+                total_customs_doc = 0.0
+                if order_details:
+                    for detail in order_details:
+                        total_customs_doc += float(getattr(detail, 'total_price_with_tax', 0) or 0.0)
+                total_customs_value = total_customs_doc if total_customs_doc > 0 else None
+            elif id_shipping is not None:
+                # Recupera TUTTI gli OrderDocument di tipo "shipping" per questo ordine (multispedizione)
+                order_document_repository = OrderDocumentRepository(self.order_repository.session)
+                order_documents = order_document_repository.get_shipping_documents_by_order_id(order_id)
+                
+                if order_documents:
+                    # Recupera packages di TUTTI i documenti
+                    id_order_documents = [doc.id_order_document for doc in order_documents]
+                    packages = self.order_package_repository.get_dimensions_by_order_documents(id_order_documents)
+                    
+                    # Recupera order_details di TUTTI i documenti e aggrega
+                    all_order_details = []
+                    total_customs = 0.0
+                    for order_doc in order_documents:
+                        doc_details = self.order_detail_repository.get_by_order_document_id(order_doc.id_order_document)
+                        if doc_details:
+                            all_order_details.extend(doc_details)
+                            for detail in doc_details:
+                                total_price = float(getattr(detail, 'total_price_with_tax', 0) or 0.0)
+                                total_customs += total_price
+                    
+                    order_details = all_order_details
+                    total_customs_value = total_customs if total_customs > 0 else None
+                else:
+                    order_details = self.order_detail_repository.get_by_order_id(order_id)
+                    packages = self.order_package_repository.get_dimensions_by_order(order_id) or []
+            else:
+                order_details = self.order_detail_repository.get_by_order_id(order_id)
+                packages = self.order_package_repository.get_dimensions_by_order(order_id) or []
             
             # 8. Recupero internal_reference dell'ordine
             internal_reference = order_data.internal_reference or str(order_id)
             
-            # 9. Controllo se è MPS (Multiple-Piece Shipping)
-            package_count = len(packages) if packages else 0
-            is_mps = package_count > 1
-            
-            if is_mps:
-                # MPS Mode: creazione sequenziale "One label at a time"
-                return await self._create_mps_shipment(
-                    order_id=order_id,
-                    order_data=order_data,
-                    fedex_config=fedex_config,
-                    receiver_address=receiver_address,
-                    receiver_country_iso=receiver_country_iso,
-                    packages=packages,
-                    order_details=order_details,
-                    internal_reference=internal_reference,
-                    shipping_price_tax_incl=shipping_price_tax_incl,
-                    credentials=credentials,
-                    carrier_api_id=carrier_api_id
+            # 9. Costruzione payload FedEx (sempre payload singolo; multishipping = N chiamate, una per documento)
+            if id_order_document is not None and (not packages or len(packages) == 0):
+                raise ValidationException(
+                    "Nessun package per il documento di spedizione",
+                    details={"id_order_document": id_order_document}
                 )
-            else:
-                # Single package mode: comportamento attuale
-                # 9. Costruzione FedEx payload
-                fedex_payload = self.fedex_mapper.build_shipment_request(
-                    order_data=order_data,
-                    fedex_config=fedex_config,
-                    receiver_address=receiver_address,
-                    receiver_country_iso=receiver_country_iso,
-                    packages=packages,
-                    reference=internal_reference,
-                    shipping_price_tax_incl=shipping_price_tax_incl,
-                    order_details=order_details
-                )
-                
-                # 9.1. Validazione payload prima della creazione
-                logger.info(f"Validating FedEx shipment payload for order {order_id}")
-                try:
-                    validation_response = await self.fedex_client.validate_shipment(
-                        payload=fedex_payload,
-                        credentials=credentials,
-                        fedex_config=fedex_config
+
+            # MPS: > 1 collo = una request per collo; primo = master (no masterTrackingId), dal secondo masterTrackingId dalla prima risposta
+            total_colli = len(packages)
+            if total_colli > 1:
+                master_tracking_id = None
+                all_pdf_bytes = []
+                all_tracking_numbers = []
+                #await self._validate_fedex_payload(first_payload, order_id, credentials, fedex_config)
+                # Una request per ogni collo
+                for sequence_number in range(1, total_colli + 1):
+                    pkg = packages[sequence_number - 1]
+                    mps_dict = {
+                        "oneLabelAtATime": True,
+                        "totalPackageCount": total_colli,
+                        "requestedPackageLineItems": [self._package_line_item(pkg, sequence_number, fedex_config)]
+                    }
+                    if sequence_number > 1 and master_tracking_id:
+                        mps_dict["masterTrackingId"] = master_tracking_id
+                    fedex_payload = self.fedex_mapper.build_shipment_request(
+                        order_data=order_data,
+                        fedex_config=fedex_config,
+                        receiver_address=receiver_address,
+                        receiver_country_iso=receiver_country_iso,
+                        packages=[pkg],
+                        shipping_price_tax_incl=shipping_price_tax_incl,
+                        order_details=order_details,
+                        total_customs_value=total_customs_value,
+                        mps=mps_dict
                     )
-                    # Se la validazione passa (200 OK), non ci sono eccezioni
-                    
-                    # Controlla se ci sono errori o warnings nella risposta (anche se status 200)
-                    errors = validation_response.get("errors", [])
-                    warnings = validation_response.get("warnings", [])
-                    
-                    if errors:
-                        # Anche con status 200, se ci sono errori nella risposta, fallisce
-                        error_messages = [f"{e.get('code', 'UNKNOWN')}: {e.get('message', 'Unknown error')}" for e in errors]
-                        combined_errors = " | ".join(error_messages)
-                        raise ValidationException(
-                            f"FedEx validation failed: {combined_errors}",
-                            details={
-                                "order_id": order_id,
-                                "errors": errors,
-                                "warnings": warnings,
-                                "transaction_id": validation_response.get("transactionId")
-                            }
-                        )
-                    
-                    if warnings:
-                        logger.warning(f"FedEx validation warnings for order {order_id}: {warnings}")
-                        
-                except ValueError as e:
-                    # Handle FedEx client validation errors (400, 401, 403, 404, 422)
-                    error_str = str(e)
-                    logger.error(f"FedEx Validation Error for order {order_id}: {error_str}")
-                    
-                    # Check error type for more specific handling
-                    if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
-                        raise ValidationException(
-                            f"FedEx authentication error during validation: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "authentication"}
-                        )
-                    elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
-                        raise ValidationException(
-                            f"FedEx access denied during validation: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "forbidden"}
-                        )
-                    elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
-                        raise ValidationException(
-                            f"FedEx resource not found during validation: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "not_found"}
-                        )
-                    else:
-                        # Validation errors (400, 422)
-                        raise ValidationException(
-                            f"FedEx validation error: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "validation"}
-                        )
-                except RuntimeError as e:
-                    # Handle FedEx server errors during validation (500, 503)
-                    error_str = str(e)
-                    logger.error(f"FedEx Server Error during validation for order {order_id}: {error_str}")
-                    
-                    if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
-                        raise InfrastructureException(
-                            f"FedEx service unavailable during validation: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
-                        )
-                    else:
-                        raise InfrastructureException(
-                            f"FedEx server error during validation: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "server_error"}
-                        )
-                except Exception as e:
-                    # Handle other validation errors
-                    error_str = str(e)
-                    logger.error(f"FedEx validation error for order {order_id}: {error_str}")
-                    raise ValidationException(
-                        f"FedEx validation failed: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "unknown"}
-                    )
-                
-                # 10. Chiama a API FedEx per creare la spedizione (solo se validazione OK)
-                logger.info(f"Creating FedEx shipment for order {order_id} (validation passed)")
-                try:
                     fedex_response = await self.fedex_client.create_shipment(
                         payload=fedex_payload,
                         credentials=credentials,
                         fedex_config=fedex_config
                     )
-                except ValueError as e:
-                    # Handle FedEx client errors (400, 401, 403, 404, 422)
-                    error_str = str(e)
-                    logger.error(f"FedEx Client Error for order {order_id}: {error_str}")
-                    
-                    # Check error type for more specific handling
-                    if "401" in error_str or "NOT.AUTHORIZED.ERROR" in error_str:
-                        # Authentication/Authorization error
-                        raise ValidationException(
-                            f"FedEx authentication error: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "authentication"}
-                        )
-                    elif "403" in error_str or "FORBIDDEN.ERROR" in error_str:
-                        # Forbidden - permissions issue
-                        raise ValidationException(
-                            f"FedEx access denied: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "forbidden"}
-                        )
-                    elif "404" in error_str or "NOT.FOUND.ERROR" in error_str:
-                        # Resource not found
-                        raise ValidationException(
-                            f"FedEx resource not found: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "not_found"}
-                        )
-                    else:
-                        # Validation errors (400, 422)
-                        raise ValidationException(
-                            f"FedEx validation error: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "validation"}
-                        )
-                except RuntimeError as e:
-                    # Handle FedEx server errors (500, 503)
-                    error_str = str(e)
-                    logger.error(f"FedEx Server Error for order {order_id}: {error_str}")
-                    
-                    # Check if it's a service unavailable error
-                    if "503" in error_str or "SERVICE.UNAVAILABLE.ERROR" in error_str:
-                        raise InfrastructureException(
-                            f"FedEx service unavailable: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "service_unavailable"}
-                        )
-                    else:
-                        # Internal server error (500)
-                        raise InfrastructureException(
-                            f"FedEx server error: {error_str}",
-                            details={"order_id": order_id, "error": error_str, "type": "server_error"}
-                        )
-                except Exception as e:
-                    # Handle other FedEx API errors
-                    error_str = str(e)
-                    logger.error(f"FedEx API Error for order {order_id}: {error_str}")
-                    raise InfrastructureException(
-                        f"FedEx API error: {error_str}",
-                        details={"order_id": order_id, "error": error_str, "type": "unknown"}
-                    )
-            
-            # 11. Estrazione tracking numbers e label
+                    if sequence_number == 1:
+                        out = fedex_response.get("output", {})
+                        tx = out.get("transactionShipments", [])
+                        if tx:
+                            master_tracking_id = tx[0].get("masterTrackingNumber")
+                    all_tracking_numbers.extend(self.fedex_mapper.extract_tracking_from_response(fedex_response))
+                    urls = self.fedex_mapper.extract_package_documents_urls(fedex_response)
+                    if urls:
+                        for url in urls:
+                            pdf_bytes = await self._download_pdf_from_url(url)
+                            if pdf_bytes:
+                                all_pdf_bytes.append(pdf_bytes)
+                awb = master_tracking_id or (all_tracking_numbers[0] if all_tracking_numbers else None)
+                if all_pdf_bytes:
+                    merged_pdf = self._merge_pdf_labels(all_pdf_bytes) if len(all_pdf_bytes) > 1 else all_pdf_bytes[0]
+                    label_b64 = base64.b64encode(merged_pdf).decode("utf-8")
+                else:
+                    label_b64 = None
+                if awb and label_b64:
+                    try:
+                        await self._save_documents(awb=awb, label_b64=label_b64, order_id=order_id, carrier_api_id=carrier_api_id)
+                    except Exception as e:
+                        logger.error(f"Error saving FedEx MPS document for AWB {awb}: {str(e)}", exc_info=True)
+                if awb:
+                    self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
+                return {"awb": awb or "", "tracking_numbers": all_tracking_numbers, "transaction_id": None}
+            # Singolo collo: payload classico, una sola request
+            fedex_payload = self.fedex_mapper.build_shipment_request(
+                order_data=order_data,
+                fedex_config=fedex_config,
+                receiver_address=receiver_address,
+                receiver_country_iso=receiver_country_iso,
+                packages=packages,
+                shipping_price_tax_incl=shipping_price_tax_incl,
+                order_details=order_details,
+                total_customs_value=total_customs_value,
+                mps=None
+            )
+            await self._validate_fedex_payload(fedex_payload, order_id, credentials, fedex_config)
+            logger.info(f"Creating FedEx shipment for order {order_id} (validation passed)")
+            fedex_response = await self.fedex_client.create_shipment(
+                payload=fedex_payload,
+                credentials=credentials,
+                fedex_config=fedex_config
+            )
             tracking_numbers = self.fedex_mapper.extract_tracking_from_response(fedex_response)
-            master_tracking = None
-            
-            # Get master tracking number
             output = fedex_response.get("output", {})
             transaction_shipments = output.get("transactionShipments", [])
-            if transaction_shipments:
-                master_tracking = transaction_shipments[0].get("masterTrackingNumber")
-            
-            # Use master tracking as primary AWB, fallback to first tracking number
+            master_tracking = transaction_shipments[0].get("masterTrackingNumber") if transaction_shipments else None
             awb = master_tracking or (tracking_numbers[0] if tracking_numbers else None)
-            
-            # Extract label - try both base64 content and packageDocuments URLs
             label_b64 = self.fedex_mapper.extract_label_from_response(fedex_response)
             package_document_urls = self.fedex_mapper.extract_package_documents_urls(fedex_response)
-            
-            # If we have packageDocuments URLs, download and merge all PDFs
             if package_document_urls and not label_b64:
                 try:
-                    # Download all PDFs from URLs
                     pdf_bytes_list = []
                     for url in package_document_urls:
                         pdf_bytes = await self._download_pdf_from_url(url)
                         if pdf_bytes:
                             pdf_bytes_list.append(pdf_bytes)
-                            logger.debug(f"Downloaded PDF from {url}, size: {len(pdf_bytes)} bytes")
-                    
                     if pdf_bytes_list:
-                        # Merge all PDFs into one
-                        if len(pdf_bytes_list) > 1:
-                            logger.info(f"Merging {len(pdf_bytes_list)} PDFs into one for AWB {awb}")
-                            merged_pdf_bytes = self._merge_pdf_labels(pdf_bytes_list)
-                        else:
-                            merged_pdf_bytes = pdf_bytes_list[0]
-                        
-                        # Convert merged PDF to base64
-                        label_b64 = base64.b64encode(merged_pdf_bytes).decode('utf-8')
-                        logger.info(f"Successfully downloaded and merged {len(pdf_bytes_list)} PDF(s) for AWB {awb}, total size: {len(merged_pdf_bytes)} bytes")
-                    else:
-                        logger.warning(f"Failed to download any PDFs from packageDocuments URLs for AWB {awb}")
-                        label_b64 = None
+                        merged_pdf_bytes = self._merge_pdf_labels(pdf_bytes_list) if len(pdf_bytes_list) > 1 else pdf_bytes_list[0]
+                        label_b64 = base64.b64encode(merged_pdf_bytes).decode("utf-8")
                 except Exception as e:
-                    logger.error(f"Error downloading/merging PDFs from packageDocuments URLs: {str(e)}", exc_info=True)
-                    label_b64 = None
-            # Fallback: try single URL (backward compatibility)
+                    logger.error(f"Error downloading/merging PDFs: {str(e)}", exc_info=True)
             elif not label_b64:
                 label_url = self.fedex_mapper.extract_label_url_from_response(fedex_response)
                 if label_url:
-                    logger.info(f"Downloading label from single URL for AWB {awb}")
                     try:
                         label_b64 = await self._download_label_from_url(label_url)
-                        if label_b64:
-                            logger.info(f"Successfully downloaded label from URL for AWB {awb}")
-                        else:
-                            logger.warning(f"Failed to download label from URL for AWB {awb}")
                     except Exception as e:
-                        logger.error(f"Error downloading label from URL {label_url}: {str(e)}")
-                        label_b64 = None
-            
-            logger.info(f"FedEx label extracted: {label_b64 is not None}, AWB: {awb}")
-            
-            # 12. Salva PDF label e documenti
-            if awb:
-                if label_b64:
-                    try:
-                        result = await self._save_documents(
-                            awb=awb,
-                            label_b64=label_b64,
-                            order_id=order_id,
-                            carrier_api_id=carrier_api_id
-                        )
-                        if result:
-                            logger.info(f"FedEx document saved successfully for AWB {awb}, SHA256: {result.get('sha256_hash', 'N/A')}")
-                        else:
-                            logger.warning(f"FedEx document save returned empty result for AWB {awb}")
-                    except Exception as e:
-                        logger.error(f"Error saving FedEx document for AWB {awb}: {str(e)}", exc_info=True)
-                        # Continue even if document save fails
-                else:
-                    logger.warning(f"No label found in FedEx response for AWB {awb}, saving document without label")
-                    # Save document record even without label (for tracking purposes)
-                    try:
-                        await self._save_document_record(
-                            awb=awb,
-                            order_id=order_id,
-                            carrier_api_id=carrier_api_id
-                        )
-                        logger.info(f"FedEx document record saved successfully for AWB {awb}")
-                    except Exception as e:
-                        logger.error(f"Error saving FedEx document record for AWB {awb}: {str(e)}")
-                        # Continue even if document record save fails
-            
-            # 12. Aggiornamento tracking e stato (2 = Tracking Assegnato)
-            # Usa shipping_id_to_use che può essere quello passato come parametro (multi-spedizione) 
-            # o quello dell'ordine (spedizione normale)
-            if awb:
+                        logger.error(f"Error downloading label from URL: {str(e)}")
+            if awb and label_b64:
                 try:
-                    self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
-                except Exception:
-                    # fallback: almeno salva il tracking
-                    self.shipping_repository.update_tracking(shipping_id_to_use, awb)
-            
-            # Get transaction ID
-            transaction_id = fedex_response.get("transactionId")
-            
+                    await self._save_documents(awb=awb, label_b64=label_b64, order_id=order_id, carrier_api_id=carrier_api_id)
+                except Exception as e:
+                    logger.error(f"Error saving FedEx document for AWB {awb}: {str(e)}", exc_info=True)
+            elif awb:
+                try:
+                    await self._save_document_record(awb=awb, order_id=order_id, carrier_api_id=carrier_api_id)
+                except Exception as e:
+                    logger.error(f"Error saving FedEx document record for AWB {awb}: {str(e)}")
+            if awb:
+                self.shipping_repository.update_tracking_and_state(shipping_id_to_use, awb, 2)
             return {
                 "awb": awb or "",
                 "tracking_numbers": tracking_numbers,
-                "master_tracking_number": master_tracking,
-                "transaction_id": transaction_id
+                "transaction_id": fedex_response.get("transactionId")
             }
             
         except Exception as e:
             logger.error(f"Error creating FedEx shipment for order {order_id}: {str(e)}")
             raise
-    
-    async def _create_mps_shipment(
-        self,
-        order_id: int,
-        order_data: Row,
-        fedex_config: FedexConfiguration,
-        receiver_address: Row,
-        receiver_country_iso: str,
-        packages: List[Row],
-        order_details: Optional[List],
-        internal_reference: str,
-        shipping_price_tax_incl: float,
-        credentials: Row,
-        carrier_api_id: int
-    ) -> Dict[str, Any]:
-        """
-        Crea spedizione FedEx MPS (Multiple-Piece Shipping) in modalità "One label at a time"
-        
-        Args:
-            order_id: ID ordine
-            order_data: Order row con dati spedizione
-            fedex_config: Configurazione FedEx
-            receiver_address: Indirizzo destinatario
-            receiver_country_iso: Codice ISO paese destinatario
-            packages: Lista di package rows
-            order_details: Dettagli ordine per commodities
-            internal_reference: Riferimento interno ordine
-            shipping_price_tax_incl: Prezzo spedizione con IVA
-            credentials: Credenziali FedEx
-            carrier_api_id: ID carrier API
-            
-        Returns:
-            Dict con dettagli spedizione (awb, tracking_numbers, etc.)
-        """
-        total_package_count = len(packages)
-        master_tracking = None
-        all_tracking_numbers = []
-        all_pdf_bytes = []
-        master_awb = None
-        
-        # Calcola il peso totale di tutti i colli
-        total_weight_all_packages = sum(
-            float(getattr(pkg, 'weight', None) or fedex_config.default_weight or 1.0)
-            for pkg in packages
-        )
-        
-        # Recupera il peso shipping (order_data.total_weight) - questo è il peso corretto per le commodities
-        shipping_total_weight = float(getattr(order_data, 'total_weight', None) or 0.0)
-        if shipping_total_weight <= 0:
-            # Fallback: usa il peso totale dei colli se shipping weight non disponibile
-            shipping_total_weight = total_weight_all_packages
-        
-        # Validazione solo del master (primo collo) prima di iniziare
-        logger.info(f"Validating FedEx MPS master piece for order {order_id}")
-        master_package = packages[0]
-        master_validation_payload = self.fedex_mapper.build_mps_shipment_request(
-            order_data=order_data,
-            fedex_config=fedex_config,
-            receiver_address=receiver_address,
-            receiver_country_iso=receiver_country_iso,
-            package=master_package,
-            sequence_number=1,
-            total_package_count=total_package_count,
-            master_tracking_id=None,  # Master non ha masterTrackingId
-            reference=internal_reference,
-            shipping_price_tax_incl=shipping_price_tax_incl,
-            order_details=order_details,
-            total_weight_all_packages=total_weight_all_packages,
-            shipping_total_weight=shipping_total_weight
-        )
-        
-        try:
-            validation_response = await self.fedex_client.validate_shipment(
-                payload=master_validation_payload,
-                credentials=credentials,
-                fedex_config=fedex_config
-            )
-            
-            errors = validation_response.get("errors", [])
-            warnings = validation_response.get("warnings", [])
-            
-            if errors:
-                error_messages = [f"{e.get('code', 'UNKNOWN')}: {e.get('message', 'Unknown error')}" for e in errors]
-                combined_errors = " | ".join(error_messages)
-                raise ValidationException(
-                    f"FedEx MPS validation failed: {combined_errors}",
-                    details={
-                        "order_id": order_id,
-                        "errors": errors,
-                        "warnings": warnings,
-                        "transaction_id": validation_response.get("transactionId")
-                    }
-                )
-            
-            if warnings:
-                logger.warning(f"FedEx MPS validation warnings for order {order_id}: {warnings}")
-                
-        except Exception as e:
-            logger.error(f"FedEx MPS validation error for order {order_id}: {str(e)}")
-            raise ValidationException(
-                f"FedEx MPS validation failed: {str(e)}",
-                details={"order_id": order_id, "error": str(e)}
-            )
-        
-        # Creazione sequenziale di tutti i colli
-        for sequence_number, package in enumerate(packages, start=1):
-            logger.info(f"Creating FedEx MPS piece {sequence_number}/{total_package_count} for order {order_id}")
-            
-            try:
-                # Costruisci payload MPS per questo collo
-                # Per MPS, tutti i colli devono avere customsClearanceDetail identico
-                mps_payload = self.fedex_mapper.build_mps_shipment_request(
-                    order_data=order_data,
-                    fedex_config=fedex_config,
-                    receiver_address=receiver_address,
-                    receiver_country_iso=receiver_country_iso,
-                    package=package,
-                    sequence_number=sequence_number,
-                    total_package_count=total_package_count,
-                    master_tracking_id=master_tracking,  # None per master, tracking per colli successivi
-                    reference=internal_reference,
-                    shipping_price_tax_incl=shipping_price_tax_incl,
-                    order_details=order_details,  # Sempre incluso per tutti i colli MPS
-                    total_weight_all_packages=total_weight_all_packages,
-                    shipping_total_weight=shipping_total_weight
-                )
-                
-                # Log payload per colli successivi al master
-                if sequence_number > 1:
-                    import json
-                    logger.info(f"FedEx MPS payload for piece {sequence_number}/{total_package_count} (order {order_id}): {json.dumps(mps_payload, indent=2, ensure_ascii=False)}")
-                
-                # Crea spedizione per questo collo
-                fedex_response = await self.fedex_client.create_shipment(
-                    payload=mps_payload,
-                    credentials=credentials,
-                    fedex_config=fedex_config
-                )
-                
-                # Estrai tracking numbers
-                tracking_numbers = self.fedex_mapper.extract_tracking_from_response(fedex_response)
-                all_tracking_numbers.extend(tracking_numbers)
-                
-                # Estrai master tracking dalla prima risposta
-                if sequence_number == 1:
-                    output = fedex_response.get("output", {})
-                    transaction_shipments = output.get("transactionShipments", [])
-                    if transaction_shipments:
-                        master_tracking = transaction_shipments[0].get("masterTrackingNumber")
-                        master_awb = master_tracking or (tracking_numbers[0] if tracking_numbers else None)
-                        logger.info(f"FedEx MPS master tracking: {master_tracking}")
-                
-                # Estrai label da packageDocuments
-                package_document_urls = self.fedex_mapper.extract_package_documents_urls(fedex_response)
-                
-                if package_document_urls:
-                    # Download PDF per questo collo
-                    for url in package_document_urls:
-                        pdf_bytes = await self._download_pdf_from_url(url)
-                        if pdf_bytes:
-                            all_pdf_bytes.append(pdf_bytes)
-                            logger.debug(f"Downloaded PDF for piece {sequence_number} from {url}, size: {len(pdf_bytes)} bytes")
-                
-            except Exception as e:
-                logger.error(f"Error creating FedEx MPS piece {sequence_number} for order {order_id}: {str(e)}", exc_info=True)
-                # Per MPS, se un collo fallisce, interrompiamo tutto
-                raise InfrastructureException(
-                    f"FedEx MPS piece {sequence_number} creation failed: {str(e)}",
-                    details={
-                        "order_id": order_id,
-                        "sequence_number": sequence_number,
-                        "total_package_count": total_package_count,
-                        "error": str(e)
-                    }
-                )
-        
-        # Unisci tutte le label PDF in un unico PDF
-        merged_label_b64 = None
-        if all_pdf_bytes:
-            try:
-                if len(all_pdf_bytes) > 1:
-                    logger.info(f"Merging {len(all_pdf_bytes)} PDFs into one for MPS shipment {master_awb}")
-                    merged_pdf_bytes = self._merge_pdf_labels(all_pdf_bytes)
-                else:
-                    merged_pdf_bytes = all_pdf_bytes[0]
-                
-                # Converti in base64
-                merged_label_b64 = base64.b64encode(merged_pdf_bytes).decode('utf-8')
-                logger.info(f"Successfully merged {len(all_pdf_bytes)} PDF(s) for MPS shipment {master_awb}, total size: {len(merged_pdf_bytes)} bytes")
-            except Exception as e:
-                logger.error(f"Error merging PDFs for MPS shipment {master_awb}: {str(e)}", exc_info=True)
-                # Continua anche se il merge fallisce
-        
-        # Salva PDF label unificato
-        if master_awb and merged_label_b64:
-            try:
-                result = await self._save_documents(
-                    awb=master_awb,
-                    label_b64=merged_label_b64,
-                    order_id=order_id,
-                    carrier_api_id=carrier_api_id
-                )
-                if result:
-                    logger.info(f"FedEx MPS document saved successfully for AWB {master_awb}, SHA256: {result.get('sha256_hash', 'N/A')}")
-            except Exception as e:
-                logger.error(f"Error saving FedEx MPS document for AWB {master_awb}: {str(e)}", exc_info=True)
-        
-        # Aggiorna tracking e stato (2 = Tracking Assegnato)
-        if master_awb:
-            try:
-                self.shipping_repository.update_tracking_and_state(order_data.id_shipping, master_awb, 2)
-            except Exception:
-                # fallback: almeno salva il tracking
-                self.shipping_repository.update_tracking(order_data.id_shipping, master_awb)
-        
-        return {
-            "awb": master_awb or "",
-            "tracking_numbers": all_tracking_numbers,
-            "master_tracking_number": master_tracking,
-            "transaction_id": None  # MPS può avere multiple transaction IDs, non restituiamo uno specifico
-        }
     
     async def validate_shipment(self, order_id: int) -> Dict[str, Any]:
         """
@@ -661,40 +447,17 @@ class FedexShipmentService(IFedexShipmentService):
             shipping = self.shipping_repository.get_by_id(order_data.id_shipping)
             shipping_price_tax_incl = float(shipping.price_tax_incl or 0.0) if shipping else 0.0
             
-            # 9.1. Controllo se è MPS (Multiple-Piece Shipping)
-            package_count = len(packages) if packages else 0
-            is_mps = package_count > 1
-            
-            # 9.2. Costruzione FedEx validation payload
-            if is_mps:
-                # MPS: validare solo il master (primo collo)
-                logger.info(f"Validating FedEx MPS master piece for order {order_id}")
-                master_package = packages[0]
-                validation_payload = self.fedex_mapper.build_mps_shipment_request(
-                    order_data=order_data,
-                    fedex_config=fedex_config,
-                    receiver_address=receiver_address,
-                    receiver_country_iso=receiver_country_iso,
-                    package=master_package,
-                    sequence_number=1,
-                    total_package_count=package_count,
-                    master_tracking_id=None,  # Master non ha masterTrackingId
-                    reference=internal_reference,
-                    shipping_price_tax_incl=shipping_price_tax_incl,
-                    order_details=order_details
-                )
-            else:
-                # Single package: comportamento attuale
-                validation_payload = self.fedex_mapper.build_validate_request(
-                    order_data=order_data,
-                    fedex_config=fedex_config,
-                    receiver_address=receiver_address,
-                    receiver_country_iso=receiver_country_iso,
-                    packages=packages,
-                    reference=internal_reference,
-                    shipping_price_tax_incl=shipping_price_tax_incl,
-                    order_details=order_details
-                )
+            # 9.2. Costruzione FedEx validation payload (sempre payload singolo)
+            validation_payload = self.fedex_mapper.build_validate_request(
+                order_data=order_data,
+                fedex_config=fedex_config,
+                receiver_address=receiver_address,
+                receiver_country_iso=receiver_country_iso,
+                packages=packages or [],
+                reference=internal_reference,
+                shipping_price_tax_incl=shipping_price_tax_incl,
+                order_details=order_details
+            )
             
             # 10. Chiama a API FedEx per validazione
             logger.info(f"Validating FedEx shipment for order {order_id}")

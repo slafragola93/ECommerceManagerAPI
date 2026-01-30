@@ -6,7 +6,12 @@ class IShipmentService(ABC):
     """Common interface for all shipment services (DHL, BRT, FedEx)"""
     
     @abstractmethod
-    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
+    async def create_shipment(
+        self,
+        order_id: int,
+        id_shipping: Optional[int] = None,
+        id_order_document: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Create shipment for order
         
@@ -15,7 +20,9 @@ class IShipmentService(ABC):
             id_shipping: Optional shipping ID to use instead of retrieving from order.
                         If provided, this shipping will be used instead of order.id_shipping.
                         Useful when creating shipments for OrderDocument (multi-shipment).
-            
+            id_order_document: Optional OrderDocument ID (type=shipping). If provided, only packages
+                              and details of this document are used (single document in multi-shipment).
+        
         Returns:
             Dict with shipment details, must include 'awb' key
         """

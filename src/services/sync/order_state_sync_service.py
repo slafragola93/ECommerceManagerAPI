@@ -6,9 +6,12 @@ import logging
 from typing import List
 from sqlalchemy.orm import Session
 
+from tenacity import RetryError
+
 from src.repository.store_repository import StoreRepository
 from src.services.ecommerce.service_factory import create_ecommerce_service
 from src.services.ecommerce.prestashop_service import PrestaShopOrderState
+from src.core.exceptions import EcommerceApiResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +65,37 @@ async def sync_order_states_periodic(db: Session):
                     # Verifica e aggiorna stati locali
                     await _update_local_order_states(db, order_states, store.id_store)
                     
+            except EcommerceApiResponseError:
+                logger.warning(
+                    "Store %s (%s): API ha restituito HTML o risposta non-JSON. Verificare URL store o disponibilità del sito.",
+                    store.id_store, store.name
+                )
+                continue
+            except RetryError as e:
+                # Dopo 3 tentativi: log pulito senza traceback
+                cause = None
+                if getattr(e, "last_attempt", None) is not None and hasattr(e.last_attempt, "exception"):
+                    try:
+                        cause = e.last_attempt.exception()
+                    except Exception:
+                        pass
+                cause = cause if cause is not None else e
+                if isinstance(cause, EcommerceApiResponseError):
+                    logger.warning(
+                        "Store %s (%s): API ha restituito HTML o risposta non-JSON. Verificare URL store o disponibilità del sito.",
+                        store.id_store, store.name
+                    )
+                else:
+                    logger.error(
+                        "Store %s (%s): sincronizzazione stati ordini fallita dopo 3 tentativi: %s",
+                        store.id_store, store.name, str(cause)
+                    )
+                continue
             except Exception as e:
-                logger.error(f"Error syncing order states for store {store.id_store}: {str(e)}", exc_info=True)
-                # Continua con il prossimo store anche in caso di errore
+                logger.error(
+                    "Store %s (%s): errore sincronizzazione stati ordini: %s",
+                    store.id_store, store.name, str(e)
+                )
                 continue
         
         logger.info("Periodic order states synchronization completed")

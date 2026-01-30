@@ -42,13 +42,13 @@ class IShippingRepository(IRepository[Shipping, int]):
         pass
 
     @abstractmethod
-    def update_weight(self, id_shipping: int, weight: float) -> None:
-        """Aggiorna il peso della spedizione"""
+    def get_weight(self, id_shipping: int) -> Optional[float]:
+        """Recupera il peso di una spedizione"""
         pass
 
     @abstractmethod
     def update_weight(self, id_shipping: int, weight: float) -> None:
-        """Aggiorna il peso della spedizione."""
+        """Aggiorna il peso della spedizione"""
         pass
     
     @abstractmethod

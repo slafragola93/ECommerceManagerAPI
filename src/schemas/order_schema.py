@@ -11,7 +11,7 @@ from src.schemas.shipping_schema import ShippingResponseSchema
 from src.schemas.sectional_schema import SectionalResponseSchema
 from src.schemas.order_state_schema import OrderStateResponseSchema
 from src.schemas.preventivo_schema import OrderPackageUpdateItemSchema
-from src.schemas.order_package_schema import OrderPackageResponseSchema
+from src.schemas.order_package_schema import OrderPackageResponseSchema, OrderPackageSchema
 
 
 class OrderHistorySchema(BaseModel):
@@ -46,7 +46,9 @@ class OrderSchema(BaseModel):
     total_price_net: Optional[float] = None  # ex total_without_tax
     total_discounts: Optional[float] = 0.0
     cash_on_delivery: Optional[float] = None
+    general_note: Optional[str] = None
     order_details: Optional[list[OrderDetailSchema]] = None
+    order_packages: Optional[list[OrderPackageSchema]] = None
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 
@@ -222,6 +224,8 @@ class OrderIdSchema(BaseModel):
     total_weight: Optional[float]
     total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float]  # ex total_without_tax
+    products_total_price_net: Optional[float] = None  
+    products_total_price_with_tax: Optional[float] = None  
     total_discounts: Optional[float]
     cash_on_delivery: Optional[float]
     insured_value: Optional[float]

@@ -578,7 +578,8 @@ class ShippingService(IShippingService):
                 shipping.weight = total_weight
                 self._shipping_repository.update(shipping)
             
-            # 10. Ricalcola totali documento
+            # 10. Ricalcola totali documento (prezzi, peso, ecc.)
+            # update_document_totals ora calcola correttamente il peso per documenti di tipo "shipping"
             order_doc_service.update_document_totals(new_order_doc.id_order_document, "shipping")
             
             db.commit()

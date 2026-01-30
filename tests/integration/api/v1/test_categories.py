@@ -160,17 +160,17 @@ async def test_get_all_categories_success(
     category_sample_data: dict,
     category_sample_data_2: dict
 ):
-    """✅ GET /categories/ - 200 con lista + total + page + limit"""
-    # Arrange
+    """GET /api/v1/categories/ - 200 con lista + total + page + limit"""
+
     test_app.dependency_overrides[get_category_service] = lambda: fake_category_service
     
     # Crea alcune categorie
     await fake_category_service.create_category(CategorySchema(**category_sample_data))
     await fake_category_service.create_category(CategorySchema(**category_sample_data_2))
     
-    # Act
+ 
     response = await admin_client_async.get("/api/v1/categories/", params={"page": 1, "limit": 10})
-    
+
     # Assert
     assert_success_response(response, status_code=status.HTTP_200_OK)
     data = response.json()

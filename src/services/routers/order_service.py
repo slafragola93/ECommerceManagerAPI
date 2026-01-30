@@ -33,7 +33,6 @@ from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.order_detail_schema import OrderDetailCreateSchema, OrderDetailUpdateSchema
 import logging
 
-from src.models.order_document import OrderDocument
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +198,24 @@ def _should_emit_bulk_order_status_event(*args, result=None, **kwargs):
     )
 
 
+def _check_order_if_is_voidable(old_state_id: int, new_state_id: int, order_id: int) -> bool:
+    """
+    Valida che il cambio di stato a "Annullato" sia permesso solo se lo stato corrente è 1, 2, 3 o 6.
+    
+    Args:
+        old_state_id: Stato corrente dell'ordine
+        new_state_id: Nuovo stato dell'ordine
+        order_id: ID dell'ordine (per messaggi di errore)
+        
+    Raises:
+        BusinessRuleException: Se si tenta di cambiare a stato 5 da uno stato non permesso
+    """
+    if new_state_id == 5 and old_state_id not in [1, 2, 3, 6]:
+        return False
+    return True
+
+
+
 @emit_event_on_success(
     event_type=EventType.ORDER_STATUS_CHANGED,
     data_extractor=_extract_bulk_order_status_data,
@@ -214,6 +231,9 @@ async def _update_single_order_status_in_bulk(
     Helper function per aggiornare lo stato di un singolo ordine nel contesto bulk.
     Usata dal bulk update per ogni ordine.
     
+    Regole di validazione:
+    - Il cambio a stato 5 è permesso solo se lo stato corrente è 1, 2, 3 o 6
+    
     Args:
         order_id: ID dell'ordine
         new_state_id: Nuovo stato dell'ordine
@@ -224,6 +244,7 @@ async def _update_single_order_status_in_bulk(
         
     Raises:
         ValueError: Se l'ordine non esiste, se lo stato non esiste, o se lo stato è già impostato
+        BusinessRuleException: Se si tenta di cambiare a stato 5 da uno stato non permesso
     """
     order = or_repo.get_by_id(_id=order_id)
     if order is None:
@@ -239,6 +260,12 @@ async def _update_single_order_status_in_bulk(
     old_state_id = order.id_order_state
     if old_state_id == new_state_id:
         raise ValueError(f"Ordine {order_id} è già nello stato {new_state_id}")
+    
+    # Valida transizione di stato (es. cambio a 5 solo da 1,2,3,6)
+    if not _check_order_if_is_voidable(old_state_id, new_state_id, order_id):
+        raise BusinessRuleException(
+            f"Impossibile cambiare lo stato dell'ordine poichè è in fase avanzata. "
+        )
     
     # Aggiornare stato
     order.id_order_state = new_state_id
@@ -676,6 +703,9 @@ class OrderService(IOrderService):
         Aggiorna lo stato di un ordine e crea record in orders_history.
         Gestisce le eccezioni internamente per non bloccare il flusso.
         
+        Regole di validazione:
+        - Il cambio a stato 5 è permesso solo se lo stato corrente è 1, 2, 3 o 6
+        
         Args:
             order_id: ID dell'ordine
             new_status_id: Nuovo stato dell'ordine
@@ -683,6 +713,9 @@ class OrderService(IOrderService):
         Returns:
             Dict con message, order_id, new_status_id, old_state_id se successo,
             None se errore (gestito silenziosamente)
+            
+        Raises:
+            BusinessRuleException: Se si tenta di cambiare a stato 5 da uno stato non permesso
         """
         order = self._order_repository.get_by_id(_id=order_id)
         if order is None:
@@ -704,6 +737,9 @@ class OrderService(IOrderService):
                 "order_id": order_id,
                 "new_status_id": new_status_id,
             }
+
+        # Valida transizione di stato (es. cambio a 5 solo da 1,2,3,6)
+        _check_order_if_is_voidable(old_state_id, new_status_id, order_id)
 
         order.id_order_state = new_status_id
         
@@ -742,12 +778,18 @@ class OrderService(IOrderService):
         """
         Aggiorna un ordine esistente.
         
+        Regole di validazione:
+        - Se viene aggiornato id_order_state, il cambio a stato 5 è permesso solo se lo stato corrente è 1, 2, 3 o 6
+        
         Args:
             order_id: ID dell'ordine
             order_schema: Schema con i campi da aggiornare
             
         Returns:
             Dict con message, order_id, e opzionalmente old_state_id, new_state_id
+            
+        Raises:
+            BusinessRuleException: Se si tenta di cambiare a stato 5 da uno stato non permesso
         """
         order = self._order_repository.get_by_id(_id=order_id)
         if order is None:
@@ -761,6 +803,10 @@ class OrderService(IOrderService):
         new_state_id = None
         if hasattr(order_schema, 'id_order_state') and order_schema.id_order_state is not None:
             new_state_id = order_schema.id_order_state
+            
+            # Valida transizione di stato (es. cambio a 5 solo da 1,2,3,6)
+            if new_state_id != old_state_id:
+                _check_order_if_is_voidable(old_state_id, new_state_id, order_id)
         
         updated_order = self._order_repository.update(edited_order=order, data=order_schema)
         if getattr(updated_order, "total_discounts", None) != old_total_discounts:
@@ -791,6 +837,7 @@ class OrderService(IOrderService):
         - Validazione stati nella tabella order_states
         - Verifica esistenza ordini
         - Verifica che lo stato sia diverso da quello corrente
+        - Validazione transizioni di stato (es. cambio a 5 solo da 1,2,3,6)
         - Aggiornamento stato e creazione record in orders_history
         - Emissione eventi ORDER_STATUS_CHANGED per ogni cambio valido
         
@@ -859,6 +906,14 @@ class OrderService(IOrderService):
                     id_order=item.id_order,
                     error=error_type,
                     reason=error_msg
+                ))
+                
+            except BusinessRuleException as e:
+                # Errore di regola business (es. transizione di stato non permessa)
+                failed.append(OrderStatusUpdateError(
+                    id_order=item.id_order,
+                    error="BUSINESS_RULE_VIOLATION",
+                    reason=str(e)
                 ))
                 
             except Exception as e:

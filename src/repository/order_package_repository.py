@@ -63,3 +63,23 @@ class OrderPackageRepository(BaseRepository[OrderPackage, int], IOrderPackageRep
             return list(result)
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving package dimensions: {str(e)}")
+    
+    def get_dimensions_by_order_documents(self, id_order_documents: List[int]) -> list[Row]:
+        """Get package dimensions/weight for multiple order documents"""
+        try:
+            if not id_order_documents:
+                return []
+            
+            stmt = select(
+                OrderPackage.id_order_package,
+                OrderPackage.id_order_document,
+                OrderPackage.weight,
+                OrderPackage.length,
+                OrderPackage.width,
+                OrderPackage.height
+            ).where(OrderPackage.id_order_document.in_(id_order_documents))
+            
+            result = self._session.execute(stmt).all()
+            return list(result)
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving package dimensions by order documents: {str(e)}")

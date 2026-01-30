@@ -22,6 +22,7 @@ from src.services.core.tool import (
 from src.services import QueryUtils
 from src.services.routers.order_document_service import OrderDocumentService
 
+from src.models.order_package import OrderPackage
 # Local application imports - Models
 from ..models import Order, OrderState, Shipping, Address
 from ..models.shipments_history import ShipmentsHistory
@@ -38,7 +39,7 @@ from ..schemas.order_schema import (
     OrderSchema,
     OrderUpdateSchema
 )
-from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderPackageSchema, OrderDetail
+from .. import AddressSchema, SectionalSchema, ShippingSchema, OrderDetail
 from src.schemas.customer_schema import CustomerSchema
 
 # Local application imports - Repositories
@@ -362,7 +363,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
 
     def create(self, data: OrderSchema):
         order = Order(
-            **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional', 'order_details']))
+            **data.model_dump(exclude=['address_delivery', 'address_invoice', 'customer', 'shipping', 'sectional', 'order_details', 'order_packages']))
 
         if isinstance(data.customer, CustomerSchema):
             # Controlla se esiste già un customer con questa email (case-insensitive)
@@ -549,17 +550,21 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             if order.id_shipping:
                 self.shipping_repository.update_customs_value_from_order(order.id_shipping)
         
-        # Creazione di Order Package
-        order_package_data = OrderPackageSchema(
-            id_order=order.id_order,
-            height=10.0,
-            width=10.0,
-            depth=10.0,
-            weight=10.0,
-            length=10.0,
-            value=10.0
-        )
-        self.order_package_repository.create(order_package_data.model_dump())
+        # Creazione di Order Packages solo se passati nella richiesta
+        if data.order_packages:
+            for package_data in data.order_packages:
+                order_package = OrderPackage(
+                    id_order=order.id_order,
+                    id_order_document=None,
+                    height=package_data.height,
+                    width=package_data.width,
+                    depth=package_data.depth,
+                    length=package_data.length,
+                    weight=package_data.weight,
+                    value=package_data.value
+                )
+                self.session.add(order_package)
+            self.session.commit()
         
         # Aggiorna peso spedizione automaticamente (solo se ordine in stato 1)
         if created_order_details:
@@ -569,7 +574,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 check_order_state=True
             )
         
-        logger.warning(f"[DEBUG] OrderRepository.create completato - order.id_order: {order.id_order}, order.id_shipping: {order.id_shipping}")
         
         return order.id_order
 
@@ -577,7 +581,6 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
 
         entity_updated = data.model_dump(exclude_unset=True)
         old_state_id = edited_order.id_order_state
-        state_changed = False
         
         # Estrai order_packages se presente (non è un campo dell'Order, va gestito separatamente)
         order_packages = entity_updated.pop('order_packages', None)

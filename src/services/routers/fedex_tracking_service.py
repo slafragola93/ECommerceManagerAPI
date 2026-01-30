@@ -107,6 +107,7 @@ class FedexTrackingService(IFedexTrackingService):
                     )
             
             # Normalize response
+            print(fedex_response)
             normalized_tracking = self.fedex_mapper.normalize_tracking_response(fedex_response)
             
             return normalized_tracking

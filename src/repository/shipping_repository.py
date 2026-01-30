@@ -103,7 +103,6 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
                 
                 shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
             
-            logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id - creando shipping con dati: {shipping_data}")
             
             # Crea l'istanza del modello
             shipping = Shipping(**shipping_data)
@@ -264,6 +263,25 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             self._session.rollback()
             raise InfrastructureException(f"Database error updating shipping to cancelled state: {str(e)}")
 
+    def get_weight(self, id_shipping: int) -> Optional[float]:
+        """
+        Recupera il peso di una spedizione con query diretta (solo campo weight)
+        
+        Args:
+            id_shipping: ID della spedizione
+            
+        Returns:
+            Peso della spedizione o None se non trovato
+        """
+        try:
+            stmt = select(Shipping.weight).where(Shipping.id_shipping == id_shipping)
+            result = self._session.execute(stmt).scalar_one_or_none()
+            if result is not None:
+                return float(result)
+            return None
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving shipping weight: {str(e)}")
+    
     def update_weight(self, id_shipping: int, weight: float) -> None:
         """Aggiorna il peso della spedizione, degli ordini e dei preventivi associati"""
         try:

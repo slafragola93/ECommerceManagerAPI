@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import datetime
 import os
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, retry_unless_exception_type, wait_exponential
 from src.schemas.order_schema import OrderUpdateSchema
 from src.services.core.tool import safe_int, safe_float, sql_value,get_tax_percentage_by_country, generate_internal_reference, calculate_price_without_tax, calculate_price_with_tax,get_tax_percentage_by_address_delivery_id
 from src.services.external.province_service import province_service
@@ -21,6 +21,7 @@ from src.services.media.image_cache_service import get_image_cache_service
 from src.repository.customer_repository import CustomerRepository
 from src.schemas.customer_schema import CustomerSchema
 from .base_ecommerce_service import BaseEcommerceService
+from src.core.exceptions import EcommerceApiResponseError
 from src.repository.country_repository import CountryRepository
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.payment_repository import PaymentRepository
@@ -4106,7 +4107,11 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error in carrier assignment logic: {str(e)}")
             return None  # Nessuna assegnazione in caso di errore
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        retry=retry_unless_exception_type(EcommerceApiResponseError),
+        wait=wait_exponential(multiplier=1, min=1, max=10)
+    )
     async def sync_order_states(self) -> List[PrestaShopOrderState]:
         """
         Recupera stati ordini da PrestaShop.

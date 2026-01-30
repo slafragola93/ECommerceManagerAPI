@@ -30,6 +30,8 @@ class ErrorCode(Enum):
     DATABASE_ERROR = "DATABASE_ERROR"
     EXTERNAL_SERVICE_ERROR = "EXTERNAL_SERVICE_ERROR"
     NETWORK_ERROR = "NETWORK_ERROR"
+    ECOMMERCE_API_NON_JSON = "ECOMMERCE_API_NON_JSON"
+    CARRIER_API_ERROR = "CARRIER_API_ERROR"
     
     # Authentication/Authorization errors
     UNAUTHORIZED = "UNAUTHORIZED"
@@ -131,6 +133,57 @@ class InfrastructureException(BaseApplicationException):
         details: Optional[Dict[str, Any]] = None
     ):
         super().__init__(message, error_code, details, 500)
+
+
+class EcommerceApiResponseError(InfrastructureException):
+    """
+    Errore quando l'API e-commerce restituisce una risposta non-JSON (es. HTML).
+    Non va fatto retry: di solito indica URL errato, pagina di errore o manutenzione.
+    """
+    
+    def __init__(
+        self,
+        message: str,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(message, ErrorCode.ECOMMERCE_API_NON_JSON, details)
+
+
+class CarrierApiError(BaseApplicationException):
+    """
+    Errore generico restituito dall'API di un corriere (FedEx, DHL, UPS, etc.).
+    In risposta espone il nome del corriere, il codice errore del corriere e il messaggio.
+    """
+    
+    def __init__(
+        self,
+        message: str,
+        carrier_name: str,
+        carrier_error_code: str,
+        http_status_code: int = 400,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        self.carrier_name = carrier_name
+        self.carrier_error_code = carrier_error_code
+        error_details = details or {}
+        error_details["carrier"] = carrier_name
+        super().__init__(
+            message,
+            ErrorCode.CARRIER_API_ERROR,
+            error_details,
+            http_status_code
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Risposta con codice errore del corriere e messaggio."""
+        return {
+            "error_code": self.carrier_error_code,
+            "message": self.message,
+            "carrier": self.carrier_name,
+            "details": self.details,
+            "status_code": self.status_code
+        }
+
 
 class AuthenticationException(BaseApplicationException):
     """Errori di autenticazione"""

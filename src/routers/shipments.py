@@ -209,7 +209,7 @@ async def create_shipment(
         
         id_shipping = order_doc.id_shipping
         if not id_shipping:
-            raise NotFoundException("Shipping", None, {"id_order_document": id_order_document, "reason": "OrderDocument has no shipping"})
+            raise NotFoundException("Shipping", None, {"id_order_document": id_order_document, "reason": "Spedizione non trovata"})
         
         # Recupera Shipping per ottenere id_carrier_api
         shipping_info = shipping_repo.get_carrier_info(id_shipping)
@@ -239,7 +239,12 @@ async def create_shipment(
     
     # 4. Crea spedizione
     # Passa id_shipping se disponibile (quando viene usato id_order_document)
-    result = await shipment_service.create_shipment(order_id, id_shipping=id_shipping if 'id_shipping' in locals() else None)
+    result = await shipment_service.create_shipment(
+        order_id=order_id, 
+        id_shipping=id_shipping if id_shipping else None,
+        id_order_document=id_order_document if id_order_document else None
+    )
+    
     awb = result.get("awb", "")
     
     # 4.1. Se id_order_document è presente, aggiorna il tracking dello shipping dell'OrderDocument

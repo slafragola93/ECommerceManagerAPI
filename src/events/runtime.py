@@ -10,7 +10,6 @@ from .core.event import Event
 from .core.event_bus import EventBus
 from .marketplace.marketplace_client import MarketplaceClient
 from .plugin_manager import PluginManager
-import logging
 
 _event_bus: Optional[EventBus] = None
 _plugin_manager: Optional[PluginManager] = None
@@ -42,9 +41,6 @@ def get_plugin_manager() -> PluginManager:
 
 def emit_event(event: Event) -> None:
     """Publish an event using the currently configured EventBus."""
-    logger = logging.getLogger(__name__)
-    logger.info(f"[RUNTIME] emit_event chiamato per evento: type={event.event_type}, data={event.data}")
-
     event_bus = get_event_bus()
     try:
         loop = asyncio.get_running_loop()
