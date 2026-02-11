@@ -58,7 +58,7 @@ class ReturnResponseSchema(BaseModel):
     internal_number: Optional[str]
     credit_note_reason: Optional[str]
     is_partial: bool
-    total_amount: Optional[float]
+    total_price_with_tax: Optional[float] = None
     includes_shipping: bool
     
     class Config:
@@ -70,10 +70,10 @@ class ReturnDetailResponseSchema(BaseModel):
     id_fiscal_document_detail: int
     id_fiscal_document: int
     id_order_detail: int
-    quantity: float
+    product_qty: float
     unit_price: float
-    total_amount: float
-    
+    total_price_with_tax: float
+
     class Config:
         from_attributes = True
 

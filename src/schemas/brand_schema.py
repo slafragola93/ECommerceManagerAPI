@@ -17,6 +17,7 @@ class BrandSchema(BaseModel):
     """
     id_origin: Optional[int] = 0
     id_platform: int = Field(default=0, ge=0)
+    id_store: int = Field(default=1, ge=0)
     name: str = Field(..., max_length=200)
     
     model_config = {"from_attributes": True}

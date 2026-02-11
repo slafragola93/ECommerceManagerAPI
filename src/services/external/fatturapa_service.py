@@ -938,7 +938,7 @@ class FatturaPAService:
             'provincia': provincia_abbreviation,
             'pec': address.pec,
             'sdi': address.sdi,
-            'total_price': fiscal_doc.total_amount or 0.0,
+            'total_price': fiscal_doc.total_price_with_tax or 0.0,
             'total_discounts': order.total_discounts or 0.0,
             'shipping_price_tax_excl': customer.get('shipping_price_tax_excl', 0.0),
             'shipping_tax_percentage': customer.get('shipping_tax_percentage', 22.0),
@@ -976,9 +976,9 @@ class FatturaPAService:
             if not od:
                 continue
             
-            # Calcola reduction dal confronto tra total_amount e prezzo base
-            prezzo_base = fdd.unit_price * fdd.quantity
-            sconto = prezzo_base - fdd.total_amount
+            # Calcola reduction dal confronto tra total_price_with_tax e prezzo base
+            prezzo_base = fdd.unit_price * fdd.product_qty
+            sconto = prezzo_base - fdd.total_price_with_tax
             
             # Determina se è percentuale o importo
             reduction_percent = 0.0
@@ -1010,7 +1010,7 @@ class FatturaPAService:
             
             details.append({
                 'product_name': od.product_name,
-                'product_qty': fdd.quantity,  
+                'product_qty': fdd.product_qty,  
                 'product_price': fdd.unit_price,
                 'reduction_percent': reduction_percent,
                 'reduction_amount': reduction_amount,

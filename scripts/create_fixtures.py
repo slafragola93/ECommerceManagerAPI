@@ -448,7 +448,7 @@ def create_fixtures():
                     internal_number=f"INV-{random.randint(1000, 9999)}",
                     is_electronic=is_electronic,
                     status=random.choice(['pending', 'generated', 'sent']),
-                    total_amount=order.total_price,
+                    total_price_with_tax=order.total_price,
                     filename=f"IT01234567890_{random.randint(1, 999):05d}.xml" if is_electronic else None
                 )
                 db.add(fiscal_doc)
@@ -477,7 +477,7 @@ def create_fixtures():
                         'Reso parziale'
                     ]),
                     is_partial=is_partial,
-                    total_amount=invoice.total_amount if not is_partial else invoice.total_amount * random.uniform(0.3, 0.7),
+                    total_price_with_tax=invoice.total_price_with_tax if not is_partial else invoice.total_price_with_tax * random.uniform(0.3, 0.7),
                     filename=f"IT01234567890_{random.randint(1, 999):05d}.xml" if invoice.is_electronic else None
                 )
                 db.add(credit_note)

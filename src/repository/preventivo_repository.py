@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func, and_, or_
+from sqlalchemy import func, and_, or_
 from src.models.order_document import OrderDocument
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
@@ -20,7 +20,7 @@ from src.schemas.preventivo_schema import (
     ArticoloPreventivoSchema
 )
 from src.schemas.address_schema import AddressSchema
-from src.services.core.tool import generate_preventivo_reference, calculate_order_totals, calculate_price_without_tax, calculate_price_with_tax, calculate_amount_with_percentage
+from src.services.core.tool import generate_preventivo_reference, calculate_order_totals, calculate_price_without_tax, calculate_price_with_tax
 from .order_repository import OrderRepository
 from .payment_repository import PaymentRepository
 from src.schemas.order_schema import OrderSchema
@@ -155,7 +155,6 @@ class PreventivoRepository:
         self.db.commit()
 
         # Ricalcola i totali usando il metodo centralizzato che include lo sconto totale
-        from src.services.routers.order_document_service import OrderDocumentService
         order_doc_service = OrderDocumentService(self.db)
         # Se il peso è stato passato (anche se è 0), non aggiornare il peso della shipping
         skip_shipping_weight_update = (preventivo_data.shipping and preventivo_data.shipping.weight is not None)
@@ -193,43 +192,17 @@ class PreventivoRepository:
             if tax and tax.percentage is not None:
                 tax_percentage = float(tax.percentage)
         
-        # total_price_with_tax è OBBLIGATORIO
+        reduction_percent = articolo.reduction_percent or 0.0
+        reduction_amount = articolo.reduction_amount or 0.0
+        # Preferire prezzi unitari quando forniti (escludono la spedizione); altrimenti derivare da totali riga
+
         total_price_with_tax = articolo.total_price_with_tax
-        
-        # Calcola total_price_net se non fornito
         if articolo.total_price_net is not None:
             total_price_net = articolo.total_price_net
         else:
-            # Calcola da total_price_with_tax usando la percentuale IVA
             total_price_net = calculate_price_without_tax(total_price_with_tax, tax_percentage)
-        
-        # Calcola unit_price_with_tax se non fornito
-        if articolo.unit_price_with_tax is not None:
-            unit_price_with_tax = articolo.unit_price_with_tax
-        else:
-            # Calcola da total_price_with_tax diviso per quantità
-            unit_price_with_tax = total_price_with_tax / product_qty
-        
-        # Calcola unit_price_net
+        unit_price_with_tax = articolo.unit_price_with_tax
         unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
-        
-        # Applica sconti se presenti (gli sconti vengono applicati al total_price_net)
-        reduction_percent = articolo.reduction_percent or 0.0
-        reduction_amount = articolo.reduction_amount or 0.0
-        
-        if reduction_percent > 0:
-            discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
-            total_price_net = total_price_net - discount
-            # Ricalcola total_price_with_tax dopo lo sconto
-            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-        elif reduction_amount > 0:
-            total_price_net = total_price_net - reduction_amount
-            # Ricalcola total_price_with_tax dopo lo sconto
-            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-        
-        # Ricalcola unit_price_net e unit_price_with_tax dopo gli sconti
-        unit_price_net = total_price_net / product_qty
-        unit_price_with_tax = total_price_with_tax / product_qty
         
         # Crea direttamente l'OrderDetail
         order_detail = OrderDetail(
@@ -309,10 +282,13 @@ class PreventivoRepository:
             if payments_ids:
                 query = QueryUtils.filter_by_id(query, OrderDocument, 'id_payment', payments_ids)
             
-            # Filtri per data
+            # Filtri per data (date_to solo data => fine giornata per includere tutto il giorno)
             if date_from:
                 query = query.filter(OrderDocument.date_add >= date_from)
             if date_to:
+                _date_to = date_to.strip()
+                if len(_date_to) == 10 and " " not in _date_to:
+                    date_to = _date_to + " 23:59:59.999999"
                 query = query.filter(OrderDocument.date_add <= date_to)
                 
         except ValueError:
@@ -365,6 +341,9 @@ class PreventivoRepository:
             if date_from:
                 query = query.filter(OrderDocument.date_add >= date_from)
             if date_to:
+                _date_to = date_to.strip()
+                if len(_date_to) == 10 and " " not in _date_to:
+                    date_to = _date_to + " 23:59:59.999999"
                 query = query.filter(OrderDocument.date_add <= date_to)
                 
         except ValueError:
@@ -1357,13 +1336,15 @@ class PreventivoRepository:
                 else:
                     # Se product_price non è fornito, usa un default
                     total_price_with_tax = 0.0
-                
+                product_qty = articolo_data.product_qty or 1
+                unit_price_with_tax = total_price_with_tax / product_qty if product_qty else 0.0
                 create_schema = ArticoloPreventivoSchema(
                     id_product=articolo_data.id_product,
                     product_name=articolo_data.product_name,
                     product_reference=articolo_data.product_reference,
-                    total_price_with_tax=total_price_with_tax,  # Obbligatorio
-                    product_qty=articolo_data.product_qty or 1,
+                    unit_price_with_tax=unit_price_with_tax,
+                    total_price_with_tax=total_price_with_tax,
+                    product_qty=product_qty,
                     id_tax=articolo_data.id_tax,
                     product_weight=articolo_data.product_weight or 0.0,
                     reduction_percent=articolo_data.reduction_percent or 0.0,

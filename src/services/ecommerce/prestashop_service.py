@@ -29,6 +29,7 @@ from src.repository.shipping_repository import ShippingRepository
 from src.repository.tax_repository import TaxRepository
 from src.schemas.shipping_schema import ShippingSchema
 from src.repository.address_repository import AddressRepository
+from src.repository.store_repository import StoreRepository
 from src.schemas.address_schema import AddressSchema
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,12 @@ class PrestaShopService(BaseEcommerceService):
         new_elements: bool = True
         ):
         super().__init__(db, store_id, batch_size)
+        # Recupera id_platform dallo store
+        store_repo = StoreRepository(db)
+        store = store_repo.get_by_id(store_id)
+        if not store:
+            raise ValueError(f"Store with ID {store_id} not found")
+        self.platform_id = store.id_platform
         self.max_concurrent_requests = max_concurrent_requests
         self._semaphore = None  # Will be initialized in async context
         self.default_language_id = default_language_id
@@ -306,10 +313,10 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages),
-                ("Countries", self.sync_countries),
-                ("Brands", self.sync_brands),
-                ("Categories", self.sync_categories),
+                ("Languages", self.sync_languages), #OK COMPATIBILE PRESTASHOP 9
+                ("Countries", self.sync_countries), #OK COMPATIBILE PRESTASHOP 9
+                ("Brands", self.sync_brands),  #OK COMPATIBILE PRESTASHOP 9
+                ("Categories", self.sync_categories), #OK COMPATIBILE PRESTASHOP 9
                 ("Carriers", self.sync_carriers), 
             ]
             
@@ -325,9 +332,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                ("Products", self.sync_products),
-                ("Customers", self.sync_customers),
-                ("Addresses", self.sync_addresses),
+                #("Products", self.sync_products),
+                #("Customers", self.sync_customers),
+                #("Addresses", self.sync_addresses),
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -352,7 +359,7 @@ class PrestaShopService(BaseEcommerceService):
                 phase3_functions.append(("Product Images", self.sync_product_images))
             
             # Aggiungi sempre Orders
-            phase3_functions.append(("Orders", self.sync_orders))
+            #phase3_functions.append(("Orders", self.sync_orders))
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
             sync_results['phases'].append(phase3_results)
@@ -485,6 +492,7 @@ class PrestaShopService(BaseEcommerceService):
         try:
             # Get languages from PrestaShop API
             response = await self._make_request_with_rate_limit('/api/languages', params={'display': '[id,name,iso_code]'})
+
             # Extract languages from response
             languages = self._extract_items_from_response(response, 'languages')
             # Prepare all language data
@@ -616,7 +624,9 @@ class PrestaShopService(BaseEcommerceService):
                 
                 brand_data = {
                     'id_origin': manufacturer.get('id', ''),
-                    'name': brand_name
+                    'name': brand_name,
+                    'id_platform': self.platform_id,
+                    'id_store': self.store_id
                 }
                 brand_data_list.append(brand_data)
             
@@ -671,17 +681,20 @@ class PrestaShopService(BaseEcommerceService):
             category_data_list = []
             for category in categories:
                 # Handle name field - it might be a list or string
-                category_name_raw = category.get('name', '')
-                category_name = next((item['value'] for item in category_name_raw if item.get('id') == str(self.default_language_id)), '')
+                category_name_raw = category.get('name', [])
+                category_name = next((item['value'] for item in category_name_raw if item.get('id') == self.default_language_id), '')
+
+
                 
                 # Skip categories without name
                 if not category_name:
-                    print(f"DEBUG: Skipping category {category.get('id', 'unknown')} - no name found")
+                    #print(f"DEBUG: Skipping category {category.get('id', 'unknown')} - no name found")
                     continue
                 
                 category_data = {
                     'id_origin': category.get('id', ''),
-                    'name': category_name
+                    'name': category_name,
+                    'id_store': self.store_id
                 }
                 category_data_list.append(category_data)
             
@@ -2303,7 +2316,7 @@ class PrestaShopService(BaseEcommerceService):
                 return {"status": "skipped", "id_origin": id_origin, "reason": "already_exists"}
             
             # Convert data to BrandSchema, add id_platform
-            brand_data = {**data, 'id_platform': self.platform_id}
+            brand_data = {**data, 'id_platform': self.platform_id, 'id_store': self.store_id}
             brand_schema = BrandSchema(**brand_data)
             
             # Create brand in database
@@ -2334,8 +2347,8 @@ class PrestaShopService(BaseEcommerceService):
             # Create CategorySchema with id_platform
             category_schema = CategorySchema(
                 id_origin=data.get('id_origin', 0),
-                id_platform=self.platform_id,
-                name=category_name
+                name=category_name,
+                id_store=self.store_id
             )
             
             # Create category in database

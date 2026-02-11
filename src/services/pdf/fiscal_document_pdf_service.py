@@ -107,14 +107,14 @@ class FiscalDocumentPDFService(BasePDFService):
             for detail in details_with_products:
                 code = detail.get('product_reference', '')[:15]
                 description = detail.get('product_name', '')[:30]
-                quantity = detail.get('quantity', 0)
+                quantity = detail.get('product_qty', detail.get('quantity', 0))
                 unit_price = detail.get('unit_price', 0.0)
-                total_amount = detail.get('total_amount', 0.0)
+                total_price_with_tax = detail.get('total_price_with_tax', detail.get('total_amount', 0.0))
                 reduction_percent = detail.get('reduction_percent', 0.0)
                 vat_rate = detail.get('vat_rate', 0)
                 
                 vat_multiplier = 1 + (vat_rate / 100.0) if vat_rate else 1.0
-                total_with_vat = total_amount * vat_multiplier
+                total_with_vat = total_price_with_tax * vat_multiplier
                 
                 self.add_items_table_row_with_discount(
                     pdf=pdf,
@@ -127,7 +127,7 @@ class FiscalDocumentPDFService(BasePDFService):
                     total_with_vat=total_with_vat
                 )
                 
-                subtotal += total_amount
+                subtotal += total_price_with_tax
                 total_with_vat_sum += total_with_vat
                 total_quantity += quantity
             
@@ -156,7 +156,7 @@ class FiscalDocumentPDFService(BasePDFService):
                     shipping_cost_with_vat = order.shipments.price_tax_incl if order.shipments.price_tax_incl else 0.0
             
             # Calcola totali
-            total_doc = fiscal_document.total_amount
+            total_doc = fiscal_document.total_price_with_tax
             if details_with_products and details_with_products[0].get('vat_rate'):
                 vat_rate_first = details_with_products[0]['vat_rate']
                 total_imponibile = total_doc / (1 + (vat_rate_first / 100.0))

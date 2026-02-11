@@ -301,7 +301,7 @@ class PreventivoService:
         # Invalidazione cache: invalidare liste (create sempre modifica le liste)
         tenant = f"user_{user_id}"  # Usa user_id come tenant
         self._invalidate_preventivo_cache(order_document.id_order_document, tenant, invalidate_lists=True)
-        print(shipment_obj)
+
         return PreventivoResponseSchema(
             id_order_document=order_document.id_order_document,
             id_order=order_document.id_order,
@@ -317,11 +317,10 @@ class PreventivoService:
             is_payed=order_document.is_payed,
             note=order_document.note,
             type_document=order_document.type_document,
-            total_imponibile=totals["total_imponibile"],
+            total_price_net=totals["total_imponibile"],
             total_iva=totals["total_iva"],
-            total_finale=totals["total_finale"],
             total_price_with_tax=totals["total_finale"],
-            total_discount=order_document.total_discount,
+            total_discounts=order_document.total_discount,
             date_add=order_document.date_add,
             updated_at=order_document.updated_at,
             articoli=articoli_data
@@ -550,10 +549,10 @@ class PreventivoService:
             is_invoice_requested=order_document.is_invoice_requested,
             is_payed=order_document.is_payed,
             type_document=order_document.type_document,
-            total_imponibile=totals["total_imponibile"],
+            total_price_net=totals["total_imponibile"],
             total_iva=totals["total_iva"],
-            total_finale=order_document.total_price_with_tax,
-            total_discount=order_document.total_discount,
+            total_price_with_tax=order_document.total_price_with_tax,
+            total_discounts=order_document.total_discount,
             total_discounts_applied=totals.get("total_discounts_applicati", 0.0),
             total_weight=order_document.total_weight,
             articoli=articoli_data,
@@ -707,10 +706,10 @@ class PreventivoService:
                 note=order_document.note,
                 status=None,  # OrderDocument non ha campo status
                 type_document=order_document.type_document,
-                total_imponibile=totals["total_imponibile"],
+                total_price_net=totals["total_imponibile"],
                 total_iva=totals["total_iva"],
-                total_finale=order_document.total_price_with_tax,
-                total_discount=order_document.total_discount,
+                total_price_with_tax=order_document.total_price_with_tax,
+                total_discounts=order_document.total_discount,
                 total_weight=order_document.total_weight,
                 articoli=articoli_data,
                 order_packages=order_packages_data,
@@ -1100,17 +1099,26 @@ class PreventivoService:
         elif img_url is None:
             img_url = "media/product_images/fallback/product_not_found.jpg"
         
+        total_price_with_tax = order_detail.total_price_with_tax if order_detail.total_price_with_tax is not None else 0.0
+        total_price_net = order_detail.total_price_net if order_detail.total_price_net is not None else 0.0
+        id_tax = order_detail.id_tax
+        if id_tax is None or id_tax == 0:
+            tax_info = self.tax_repo.get_tax_info_by_country(1)
+            id_tax = tax_info["id_tax"] if tax_info else 1
+        unit_price_with_tax = order_detail.unit_price_with_tax
+        if unit_price_with_tax is None:
+            unit_price_with_tax = 0.0
         return ArticoloPreventivoSchema(
             id_order_detail=order_detail.id_order_detail,
             id_product=order_detail.id_product,
             product_name=order_detail.product_name,
             product_reference=order_detail.product_reference,
-            unit_price_with_tax=order_detail.unit_price_with_tax,
-            total_price_net=order_detail.total_price_net,
-            total_price_with_tax=order_detail.total_price_with_tax,
-            product_qty=order_detail.product_qty,
+            unit_price_with_tax=float(unit_price_with_tax),
+            total_price_net=float(total_price_net),
+            total_price_with_tax=float(total_price_with_tax),
+            product_qty=order_detail.product_qty or 1,
             product_weight=order_detail.product_weight,
-            id_tax=order_detail.id_tax,
+            id_tax=int(id_tax),
             reduction_percent=order_detail.reduction_percent,
             reduction_amount=order_detail.reduction_amount,
             rda=order_detail.rda,
@@ -1361,11 +1369,10 @@ class PreventivoService:
             reference=None,
             note=order_document.note,
             type_document=order_document.type_document,
-            total_imponibile=totals["total_imponibile"],
+            total_price_net=totals["total_imponibile"],
             total_iva=totals["total_iva"],
-            total_finale=totals["total_finale"],
             total_price_with_tax=totals["total_finale"],
-            total_discount=order_document.total_discount,
+            total_discounts=order_document.total_discount,
             articoli=articoli_data,
             order_packages=order_packages_data,
             date_add=order_document.date_add,

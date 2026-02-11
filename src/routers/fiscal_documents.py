@@ -301,7 +301,7 @@ async def create_credit_note(
     - `status`: "pending" (se elettronica) o "issued" (se non elettronica)
     - `is_partial`: true/false
     - `includes_shipping`: true/false (traccia se include spese)
-    - `total_amount`: Importo totale stornato (IVA inclusa)
+    - `total_price_with_tax`: Importo totale stornato (IVA inclusa)
     - `id_fiscal_document_ref`: ID fattura di riferimento
     - `details[]`: Elenco articoli stornati
     
@@ -319,7 +319,7 @@ async def create_credit_note(
       "credit_note_reason": "Reso parziale",
       "is_partial": true,
       "includes_shipping": false,
-      "total_amount": 122.00,
+      "total_price_with_tax": 122.00,
       "date_add": "2025-10-10T10:30:00",
       "date_upd": "2025-10-10T10:30:00",
       "details": [...]
@@ -746,9 +746,9 @@ async def generate_fiscal_document_pdf(
         details_with_products.append({
             'id_fiscal_document_detail': detail.id_fiscal_document_detail,
             'id_order_detail': detail.id_order_detail,
-            'quantity': detail.quantity,
+            'product_qty': detail.product_qty,
             'unit_price': detail.unit_price,
-            'total_amount': detail.total_amount,
+            'total_price_with_tax': detail.total_price_with_tax,
             'product_name': order_detail.product_name if order_detail else 'N/A',
             'product_reference': order_detail.product_reference if order_detail else 'N/A',
             'reduction_percent': order_detail.reduction_percent if order_detail else 0.0,

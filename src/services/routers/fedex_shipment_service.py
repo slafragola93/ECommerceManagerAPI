@@ -1,30 +1,51 @@
-import os
-import hashlib
+# Standard library
 import base64
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-from pathlib import Path
+from collections import namedtuple
+import hashlib
 import logging
-import httpx
+from datetime import datetime, timedelta
+from io import BytesIO
+from pathlib import Path
+import shutil
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
+# Third-party
+import httpx
+from pypdf import PdfReader, PdfWriter
+from sqlalchemy import select
+
+# Local - Core
+from src.core.exceptions import (
+    BusinessRuleException,
+    InfrastructureException,
+    NotFoundException,
+    ValidationException,
+)
 from src.core.settings import get_cache_settings
-from src.core.exceptions import NotFoundException, BusinessRuleException, InfrastructureException, ValidationException
-from src.services.interfaces.fedex_shipment_service_interface import IFedexShipmentService
-from src.repository.interfaces.order_repository_interface import IOrderRepository
-from src.repository.interfaces.shipping_repository_interface import IShippingRepository
-from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
-from src.repository.interfaces.fedex_configuration_repository_interface import IFedexConfigurationRepository
-from src.repository.interfaces.address_repository_interface import IAddressRepository
-from src.repository.interfaces.country_repository_interface import ICountryRepository
-from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
-from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
-from src.services.ecommerce.shipments.fedex_client import FedexClient
-from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
-from src.models.shipment_document import ShipmentDocument
+
+# Local - Models
 from src.models.fedex_configuration import FedexScopeEnum
 from src.models.order_document import OrderDocument
+from src.models.shipment_document import ShipmentDocument
+
+# Local - Repositories
+from src.repository.interfaces.address_repository_interface import IAddressRepository
+from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
+from src.repository.interfaces.country_repository_interface import ICountryRepository
+from src.repository.interfaces.fedex_configuration_repository_interface import IFedexConfigurationRepository
+from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
+from src.repository.interfaces.order_package_repository_interface import IOrderPackageRepository
+from src.repository.interfaces.order_repository_interface import IOrderRepository
+from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.repository.order_document_repository import OrderDocumentRepository
-from collections import namedtuple
+from src.repository.shipment_document_repository import ShipmentDocumentRepository
+
+# Local - Services
+from src.services.ecommerce.shipments.fedex_client import FedexClient
+from src.services.ecommerce.shipments.fedex_mapper import FedexMapper
+from src.services.interfaces.fedex_shipment_service_interface import IFedexShipmentService
+
 logger = logging.getLogger(__name__)
 
 # Namedtuple per rappresentare un package con peso corretto
@@ -70,9 +91,6 @@ class FedexShipmentService(IFedexShipmentService):
             SimpleNamespace con id_order_document, id_order, id_shipping, total_weight
             o None se non trovato
         """
-        from sqlalchemy import select
-        from types import SimpleNamespace
-        
         result = self.order_repository.session.execute(
             select(
                 OrderDocument.id_order_document,
@@ -350,7 +368,6 @@ class FedexShipmentService(IFedexShipmentService):
                 mps=None
             )
             await self._validate_fedex_payload(fedex_payload, order_id, credentials, fedex_config)
-            logger.info(f"Creating FedEx shipment for order {order_id} (validation passed)")
             fedex_response = await self.fedex_client.create_shipment(
                 payload=fedex_payload,
                 credentials=credentials,
@@ -505,8 +522,6 @@ class FedexShipmentService(IFedexShipmentService):
             Percorso del file PDF o None se non trovato
         """
         try:
-            from src.repository.shipment_document_repository import ShipmentDocumentRepository
-            
             # Cerca il documento per AWB
             document_repo = ShipmentDocumentRepository(self.order_repository.session)
             documents = document_repo.get_by_awb(awb)
@@ -542,7 +557,7 @@ class FedexShipmentService(IFedexShipmentService):
             tracking_number = shipping_info.tracking
             if not tracking_number:
                 raise BusinessRuleException(
-                    f"No tracking number found for order {order_id}",
+                    f"Tracking non trovato per l'ordine {order_id}",
                     details={"order_id": order_id}
                 )
             
@@ -860,12 +875,6 @@ class FedexShipmentService(IFedexShipmentService):
         Raises:
             ValueError: Se un PDF non è valido o l'unione fallisce
         """
-        try:
-            from pypdf import PdfWriter, PdfReader
-            from io import BytesIO
-        except ImportError:
-            raise ImportError("pypdf library is required. Install with: pip install pypdf")
-        
         if not pdf_bytes_list:
             raise ValueError("Cannot merge empty list of PDFs")
         
@@ -903,9 +912,6 @@ class FedexShipmentService(IFedexShipmentService):
             order_id: ID dell'ordine
         """
         try:
-            from src.repository.shipment_document_repository import ShipmentDocumentRepository
-            import shutil
-            
             # Recupera tutti i documenti esistenti per l'ordine
             document_repo = ShipmentDocumentRepository(self.order_repository.session)
             existing_documents = document_repo.get_by_order_id(order_id)
@@ -940,5 +946,4 @@ class FedexShipmentService(IFedexShipmentService):
             
         except Exception as e:
             logger.error(f"Errore durante la pulizia per l'ordine {order_id}: {str(e)}")
-            # Non sollevo eccezione per non bloccare la creazione spedizione
 

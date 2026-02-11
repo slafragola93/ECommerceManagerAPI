@@ -81,7 +81,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             is_electronic=is_electronic,
             status=initial_status,
             includes_shipping=True,  # Le fatture includono sempre le spese di spedizione
-            total_amount=order.total_price_with_tax  # Verrà aggiornato dopo aver creato i dettagli (total_amount corrisponde a total_price_with_tax)
+            total_price_with_tax=order.total_price_with_tax  # Verrà aggiornato dopo aver creato i dettagli
         )
         
         self._session.add(invoice)
@@ -141,22 +141,20 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             detail = FiscalDocumentDetail(
                 id_fiscal_document=invoice.id_fiscal_document,
                 id_order_detail=od.id_order_detail,
-                quantity=quantity,
+                product_qty=quantity,
                 unit_price_net=unit_price_net,  # Prezzo originale senza sconto, senza IVA
                 unit_price_with_tax=unit_price_with_tax,  # Prezzo originale senza sconto, con IVA
                 total_price_net=total_price_net,  # Totale con sconto applicato, senza IVA
                 total_price_with_tax=total_price_with_tax,  # Totale con sconto applicato, con IVA
-                total_amount=total_price_with_tax,  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
                 id_tax=od.id_tax
             )
             
             self._session.add(detail)
 
-    
-        
-        self._session.commit()
+        self._session.flush()
+        self.recalculate_fiscal_document_total(invoice.id_fiscal_document)
         self._session.refresh(invoice)
-        
+
         return invoice
     
     def get_invoice_by_order(self, id_order: int) -> Optional[FiscalDocument]:
@@ -227,9 +225,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             refunded_quantities = {}
             for detail in already_refunded_details:
                 if detail.id_order_detail in refunded_quantities:
-                    refunded_quantities[detail.id_order_detail] += detail.quantity
+                    refunded_quantities[detail.id_order_detail] += detail.product_qty
                 else:
-                    refunded_quantities[detail.id_order_detail] = detail.quantity
+                    refunded_quantities[detail.id_order_detail] = detail.product_qty
             
             # Verifica ogni articolo da stornare
             for item in items:
@@ -243,12 +241,12 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 
                 # Verifica se l'articolo è già stato completamente stornato
                 already_refunded = refunded_quantities.get(id_order_detail, 0)
-                remaining_quantity = invoice_detail.quantity - already_refunded
+                remaining_quantity = invoice_detail.product_qty - already_refunded
                 
                 if remaining_quantity <= 0:
                     raise ValueError(
                         f"L'articolo {id_order_detail} è già stato completamente stornato "
-                        f"(quantità fatturata: {invoice_detail.quantity}, già stornata: {already_refunded})"
+                        f"(quantità fatturata: {invoice_detail.product_qty}, già stornata: {already_refunded})"
                     )
                 
                 if quantity_to_refund > remaining_quantity:
@@ -356,24 +354,22 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 invoice_detail = invoice_details_map[id_order_detail]
                 quantity_to_refund = item.get('quantity', 0)
                 
-                if quantity_to_refund > invoice_detail.quantity:
-                    raise ValueError(f"Quantità da stornare ({quantity_to_refund}) superiore a quella fatturata ({invoice_detail.quantity})")
+                if quantity_to_refund > invoice_detail.product_qty:
+                    raise ValueError(f"Quantità da stornare ({quantity_to_refund}) superiore a quella fatturata ({invoice_detail.product_qty})")
                 
                 # USA i valori dalla fattura (già contengono sconti applicati)
                 unit_price_net = invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
                 unit_price_with_tax = invoice_detail.unit_price_with_tax or 0.0
                 
                 # Calcola totali proporzionali
-                # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.quantity
+                # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.product_qty
                 # Calcolo proporzionale: (total_fatturato / qty_fatturata) × qty_da_stornare
-                if invoice_detail.quantity > 0:
-                    total_price_net = (invoice_detail.total_price_net / invoice_detail.quantity) * quantity_to_refund
-                    total_price_with_tax = (invoice_detail.total_price_with_tax / invoice_detail.quantity) * quantity_to_refund
-                    total_amount = total_price_with_tax  # Per retrocompatibilità
+                if invoice_detail.product_qty > 0:
+                    total_price_net = (invoice_detail.total_price_net / invoice_detail.product_qty) * quantity_to_refund
+                    total_price_with_tax = (invoice_detail.total_price_with_tax / invoice_detail.product_qty) * quantity_to_refund
                 else:
                     total_price_net = 0.0
                     total_price_with_tax = 0.0
-                    total_amount = 0.0
                 
                 credit_note_details_data.append({
                     'id_order_detail': id_order_detail,
@@ -382,7 +378,6 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     'unit_price_with_tax': unit_price_with_tax,
                     'total_price_net': total_price_net,
                     'total_price_with_tax': total_price_with_tax,
-                    'total_amount': total_amount,  # Per retrocompatibilità
                     'id_tax': invoice_detail.id_tax
                 })
         else:
@@ -404,15 +399,15 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 
                 for detail in already_refunded_details:
                     if detail.id_order_detail in refunded_quantities:
-                        refunded_quantities[detail.id_order_detail] += detail.quantity
+                        refunded_quantities[detail.id_order_detail] += detail.product_qty
                     else:
-                        refunded_quantities[detail.id_order_detail] = detail.quantity
+                        refunded_quantities[detail.id_order_detail] = detail.product_qty
             
             # Prepara dettagli solo per articoli con quantità residua
             # USA i valori già salvati in FiscalDocumentDetail della fattura (non ricalcolare sconti!)
             for invoice_detail in invoice_details:
                 id_order_detail = invoice_detail.id_order_detail
-                original_quantity = invoice_detail.quantity
+                original_quantity = invoice_detail.product_qty
                 already_refunded = refunded_quantities.get(id_order_detail, 0)
                 remaining_quantity = original_quantity - already_refunded
                 
@@ -423,16 +418,14 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     unit_price_with_tax = invoice_detail.unit_price_with_tax or 0.0
                     
                     # Calcola totali proporzionali
-                    # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.quantity
+                    # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.product_qty
                     # Calcolo proporzionale: (total_fatturato / qty_fatturata) × qty_residua
                     if original_quantity > 0:
                         total_price_net = (invoice_detail.total_price_net / original_quantity) * remaining_quantity
                         total_price_with_tax = (invoice_detail.total_price_with_tax / original_quantity) * remaining_quantity
-                        total_amount = total_price_with_tax  # Per retrocompatibilità
                     else:
                         total_price_net = 0.0
                         total_price_with_tax = 0.0
-                        total_amount = 0.0
                     
                     credit_note_details_data.append({
                         'id_order_detail': id_order_detail,
@@ -441,7 +434,6 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                         'unit_price_with_tax': unit_price_with_tax,
                         'total_price_net': total_price_net,
                         'total_price_with_tax': total_price_with_tax,
-                        'total_amount': total_amount,  # Per retrocompatibilità
                         'id_tax': invoice_detail.id_tax
                     })
         
@@ -453,7 +445,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             )
         
         # Calcola il totale IMPONIBILE (senza IVA) dai dettagli preparati (solo prodotti)
-        total_imponibile_prodotti = sum(d['total_amount'] for d in credit_note_details_data)
+        total_imponibile_prodotti = sum(d['total_price_net'] for d in credit_note_details_data)
         
         # Aggiungi spese di spedizione se richieste
         shipping_cost_no_vat = 0.0
@@ -508,7 +500,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             credit_note_reason=reason,
             is_partial=is_partial,
             includes_shipping=include_shipping,  # Traccia se include spese di spedizione
-            total_amount=total_with_vat  # Totale CON IVA calcolato dai dettagli residui + spese
+            total_price_with_tax=total_with_vat  # Totale CON IVA calcolato dai dettagli residui + spese
         )
         
         self._session.add(credit_note)
@@ -519,19 +511,18 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             detail = FiscalDocumentDetail(
                 id_fiscal_document=credit_note.id_fiscal_document,
                 id_order_detail=detail_data['id_order_detail'],
-                quantity=detail_data['quantity'],
+                product_qty=detail_data['quantity'],
                 unit_price_net=detail_data.get('unit_price_net', 0.0),
                 unit_price_with_tax=detail_data.get('unit_price_with_tax', 0.0),
                 total_price_net=detail_data.get('total_price_net', 0.0),
                 total_price_with_tax=detail_data.get('total_price_with_tax', 0.0),
-                total_amount=detail_data.get('total_amount', detail_data.get('total_price_with_tax', 0.0)),  # Per retrocompatibilità
                 id_tax=detail_data.get('id_tax')
             )
             self._session.add(detail)
         
-        self._session.commit()
+        self._session.flush()
+        self.recalculate_fiscal_document_total(credit_note.id_fiscal_document)
         self._session.refresh(credit_note)
-        
         return credit_note
     
     def get_credit_notes_by_invoice(self, id_invoice: int) -> List[FiscalDocument]:
@@ -783,7 +774,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             credit_note_reason=note,
             is_partial=is_partial,
             includes_shipping=includes_shipping,
-            total_amount=total_amount
+            total_price_with_tax=total_amount
         )
         
         self._session.add(return_doc)
@@ -818,19 +809,18 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             detail = FiscalDocumentDetail(
                 id_fiscal_document=return_doc.id_fiscal_document,
                 id_order_detail=item['id_order_detail'],
-                quantity=quantity,
+                product_qty=quantity,
                 unit_price_net=unit_price_net,
                 unit_price_with_tax=unit_price_with_tax,
                 total_price_net=total_price_net,
                 total_price_with_tax=total_price_with_tax,
-                total_amount=total_price_with_tax,  # Per retrocompatibilità
                 id_tax=id_tax
             )
             self._session.add(detail)
         
-        self._session.commit()
+        self._session.flush()
+        self.recalculate_fiscal_document_total(return_doc.id_fiscal_document)
         self._session.refresh(return_doc)
-        
         return return_doc
     
     def update_fiscal_document_detail(self, id_detail: int, quantity: Optional[int] = None, unit_price: Optional[float] = None, id_tax: Optional[int] = None) -> FiscalDocumentDetail:
@@ -844,7 +834,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         # Aggiorna i campi se forniti
         if quantity is not None:
-            detail.quantity = quantity
+            detail.product_qty = quantity
         if unit_price is not None:
             detail.unit_price_net = unit_price
         if id_tax is not None:
@@ -852,7 +842,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         # Ricalcola i totali
         unit_price_net = detail.unit_price_net or 0.0
-        detail.total_price_net = detail.quantity * unit_price_net
+        detail.total_price_net = detail.product_qty * unit_price_net
         
         # Calcola total_price_with_tax usando la percentuale di id_tax
         detail.total_price_with_tax = detail.total_price_net
@@ -862,9 +852,6 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             if tax_percentage is not None:
                 tax_percentage = float(tax_percentage)
                 detail.total_price_with_tax = calculate_price_with_tax(detail.total_price_net, tax_percentage, quantity=1)
-        
-        # Aggiorna total_amount per retrocompatibilità
-        detail.total_amount = detail.total_price_with_tax
         
         # Ricalcola il totale del documento fiscale
         self.recalculate_fiscal_document_total(detail.id_fiscal_document)
@@ -902,39 +889,35 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if not fiscal_doc:
             return
         
-        # Calcola il totale dai dettagli
+        # Calcola il totale dai dettagli (solo prodotti)
         details = self._session.query(FiscalDocumentDetail).filter(
             FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
         ).all()
 
-        total_products = 0.0
-        for detail in details:
-            # Usa total_price_with_tax se disponibile, altrimenti calcola da total_amount
-            if detail.total_price_with_tax is not None:
-                total_products += float(detail.total_price_with_tax)
-            elif detail.total_amount is not None:
-                # Retrocompatibilità: se total_amount è senza IVA, calcola con IVA
-                total_amount = float(detail.total_amount)
-                if detail.id_tax:
-                    tax = self._tax_repository.get_tax_by_id(detail.id_tax)
-                    tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
-                    if tax_percentage is not None:
-                        total_products += calculate_price_with_tax(total_amount, tax_percentage, quantity=1)
-                    else:
-                        total_products += total_amount
-                else:
-                    total_products += total_amount
+        products_total_price_net = sum(float(d.total_price_net or 0) for d in details)
+        products_total_price_with_tax = sum(float(d.total_price_with_tax or 0) for d in details)
+        total_price_net = products_total_price_net
+        total_price_with_tax = products_total_price_with_tax
 
-        
         # Aggiungi spese di spedizione se incluse
         if fiscal_doc.includes_shipping:
             order_id_shipping = self._session.query(Order.id_shipping).filter(Order.id_order == fiscal_doc.id_order).scalar()
             if order_id_shipping:
                 shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order_id_shipping).first()
-                if shipping and shipping.price_tax_incl:
-                    total_products += float(shipping.price_tax_incl)
-        
-        fiscal_doc.total_amount = total_products
+                if shipping:
+                    if shipping.price_tax_excl is not None:
+                        total_price_net += float(shipping.price_tax_excl)
+                    if shipping.price_tax_incl:
+                        total_price_with_tax += float(shipping.price_tax_incl)
+                    elif shipping.price_tax_excl is not None and shipping.id_tax:
+                        tax = self._tax_repository.get_tax_by_id(shipping.id_tax)
+                        if tax and tax.percentage is not None:
+                            total_price_with_tax += float(calculate_price_with_tax(float(shipping.price_tax_excl), float(tax.percentage), quantity=1))
+
+        fiscal_doc.products_total_price_net = products_total_price_net
+        fiscal_doc.products_total_price_with_tax = products_total_price_with_tax
+        fiscal_doc.total_price_net = total_price_net
+        fiscal_doc.total_price_with_tax = total_price_with_tax
         self._session.commit()
     
     # ==================== METODI INTERFACCIA ====================
@@ -1038,9 +1021,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             for detail in details:
                 id_order_detail = detail.id_order_detail
                 if id_order_detail in returned_quantities:
-                    returned_quantities[id_order_detail] += detail.quantity
+                    returned_quantities[id_order_detail] += detail.product_qty
                 else:
-                    returned_quantities[id_order_detail] = detail.quantity
+                    returned_quantities[id_order_detail] = detail.product_qty
         
         return returned_quantities
     

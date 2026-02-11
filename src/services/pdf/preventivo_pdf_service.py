@@ -180,7 +180,7 @@ class PreventivoPDFService(BasePDFService):
             shipping_cost_with_vat = float(shipping_data.get('price_tax_incl', 0.0)) if shipping_data else 0.0
             
             # Calcola totali
-            total_doc = float(preventivo_data.total_finale or 0.0)
+            total_doc = float(preventivo_data.total_price_with_tax or 0.0)
             total_vat = float(preventivo_data.total_iva or 0.0)
             
             # Preparazione label spese trasporto

@@ -19,14 +19,13 @@ class FiscalDocumentDetail(Base):
     id_order_detail = Column(Integer, ForeignKey("order_details.id_order_detail"), nullable=False, index=True)
     
     # Quantità da stornare (può essere minore della quantità originale)
-    quantity = Column(Numeric(10, 5), nullable=False)
+    product_qty = Column(Numeric(10, 5), nullable=False)
     
     # Importo da stornare (può essere diverso dal prezzo originale)
     unit_price_net = Column(Numeric(10, 5))  # Prezzo unitario senza IVA (rinominato da unit_price)
     unit_price_with_tax = Column(Numeric(10, 5), nullable=False)  # Prezzo unitario con IVA (obbligatorio)
     total_price_net = Column(Numeric(10, 5), nullable=False)  # Totale senza IVA (obbligatorio)
-    total_price_with_tax = Column(Numeric(10, 5), nullable=False)  # Totale con IVA (obbligatorio, corrisponde a total_amount)
-    total_amount = Column(Numeric(10, 5), nullable=False)  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
+    total_price_with_tax = Column(Numeric(10, 5), nullable=False)  # Totale con IVA (obbligatorio)
     
     # Tassa applicata (riferimento all'order detail originale)
     id_tax = Column(Integer, ForeignKey("taxes.id_tax"), nullable=True, index=True)

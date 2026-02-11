@@ -10,7 +10,7 @@ from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
 from src.models.order import Order
 from src.schemas.preventivo_schema import ArticoloPreventivoSchema, ArticoloPreventivoUpdateSchema
-from src.services.core.tool import calculate_amount_with_percentage, calculate_price_without_tax, calculate_price_with_tax
+from src.services.core.tool import calculate_price_without_tax, calculate_price_with_tax
 
 
 class OrderDocumentService:
@@ -417,26 +417,12 @@ class OrderDocumentService:
             # Calcola da total_price_with_tax diviso per quantità
             unit_price_with_tax = total_price_with_tax / articolo.product_qty
         
-        # Calcola unit_price_net
-        unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
-        
-        # Applica sconti se presenti (gli sconti vengono applicati al total_price_net)
-        reduction_percent = articolo.reduction_percent or 0.0
-        reduction_amount = articolo.reduction_amount or 0.0
-        
-        if reduction_percent > 0:
-            discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
-            total_price_net = total_price_net - discount
-            # Ricalcola total_price_with_tax dopo lo sconto
-            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-        elif reduction_amount > 0:
-            total_price_net = total_price_net - reduction_amount
-            # Ricalcola total_price_with_tax dopo lo sconto
-            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-        
-        # Ricalcola unit_price_net e unit_price_with_tax dopo gli sconti
+        # Prezzi unitari da totali (dati usati come passati, nessuna applicazione sconti)
         unit_price_net = total_price_net / articolo.product_qty
         unit_price_with_tax = total_price_with_tax / articolo.product_qty
+        
+        reduction_percent = articolo.reduction_percent or 0.0
+        reduction_amount = articolo.reduction_amount or 0.0
         
         # Crea l'articolo
         order_detail = OrderDetail(
@@ -521,26 +507,6 @@ class OrderDocumentService:
             # Calcola total_price_net
             total_price_net = unit_price_net * product_qty
             
-            # Applica sconti se presenti
-            reduction_percent = update_data.get('reduction_percent', order_detail.reduction_percent) or 0.0
-            reduction_amount = update_data.get('reduction_amount', order_detail.reduction_amount) or 0.0
-            
-            if reduction_percent > 0:
-                discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
-                total_price_net = total_price_net - discount
-                # Ricalcola total_price_with_tax dopo lo sconto
-                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-                # Ricalcola unit_price_with_tax dopo lo sconto
-                unit_price_with_tax = total_price_with_tax / product_qty
-                unit_price_net = total_price_net / product_qty
-            elif reduction_amount > 0:
-                total_price_net = total_price_net - reduction_amount
-                # Ricalcola total_price_with_tax dopo lo sconto
-                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-                # Ricalcola unit_price_with_tax dopo lo sconto
-                unit_price_with_tax = total_price_with_tax / product_qty
-                unit_price_net = total_price_net / product_qty
-            
             # Aggiorna i prezzi calcolati
             order_detail.unit_price_net = unit_price_net
             order_detail.unit_price_with_tax = unit_price_with_tax
@@ -574,33 +540,9 @@ class OrderDocumentService:
                         tax_percentage = float(tax.percentage)
                 unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
             
-            # Calcola totali (prezzi unitari * quantità)
+            # Calcola totali (prezzi unitari * quantità, dati usati come passati)
             total_price_net = unit_price_net * product_qty
             total_price_with_tax = unit_price_with_tax * product_qty
-            
-            # Applica sconti
-            reduction_percent = update_data.get('reduction_percent', order_detail.reduction_percent) or 0.0
-            reduction_amount = update_data.get('reduction_amount', order_detail.reduction_amount) or 0.0
-            
-            if reduction_percent > 0:
-                discount = calculate_amount_with_percentage(total_price_net, reduction_percent)
-                total_price_net = total_price_net - discount
-                tax_percentage = 0.0
-                id_tax = update_data.get('id_tax', order_detail.id_tax)
-                if id_tax:
-                    tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
-                    if tax and tax.percentage is not None:
-                        tax_percentage = float(tax.percentage)
-                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-            elif reduction_amount > 0:
-                total_price_net = total_price_net - reduction_amount
-                tax_percentage = 0.0
-                id_tax = update_data.get('id_tax', order_detail.id_tax)
-                if id_tax:
-                    tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
-                    if tax and tax.percentage is not None:
-                        tax_percentage = float(tax.percentage)
-                total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
             
             # Aggiorna i prezzi
             order_detail.unit_price_net = unit_price_net

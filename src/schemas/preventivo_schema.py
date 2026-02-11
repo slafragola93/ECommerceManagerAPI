@@ -75,7 +75,8 @@ class ArticoloPreventivoSchema(BaseModel):
     id_product: Optional[int] = None  # Se articolo esistente
     product_name: Optional[str] = Field(None, max_length=100)
     product_reference: Optional[str] = Field(None, max_length=100)
-    unit_price_with_tax: Optional[float] = Field(None, ge=0, description="Prezzo unitario con IVA (opzionale, calcolato se non fornito)")
+    unit_price_net: float = Field(None, ge=0, description="Prezzo unitario senza IVA")
+    unit_price_with_tax: float = Field(..., ge=0, description="Prezzo unitario con IVA (obbligatorio)")
     total_price_net: Optional[float] = Field(None, ge=0, description="Totale imponibile senza IVA (opzionale, calcolato se non fornito)")
     total_price_with_tax: float = Field(..., ge=0, description="Totale con IVA (obbligatorio)")
     product_weight: Optional[float] = Field(0.0, ge=0)
@@ -312,17 +313,17 @@ class PreventivoResponseSchema(BaseModel):
     reference: Optional[str] = None
     note: Optional[str] = None
     type_document: str
-    total_imponibile: float
+    total_price_net: float = Field(..., description="Totale imponibile")
     total_iva: float
-    total_finale: float
-    total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
+    total_price_with_tax: float = Field(..., description="Totale con IVA")
+    total_discounts: float = Field(default=0.0, description="Sconto totale applicato al documento")
     total_weight: float = Field(default=0.0, description="Peso totale del preventivo (kg)")
     date_add: Optional[datetime] = None
     updated_at: datetime
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo (solo se show_details=True)")
 
-    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', 'total_weight', pre=True, allow_reuse=True)
+    @validator('total_price_net', 'total_iva', 'total_price_with_tax', 'total_discounts', 'total_weight', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -349,10 +350,10 @@ class PreventivoDetailResponseSchema(BaseModel):
     reference: Optional[str] = None
     note: Optional[str] = None
     type_document: str
-    total_imponibile: float
+    total_price_net: float = Field(..., description="Totale imponibile")
     total_iva: float
-    total_finale: float
-    total_discount: float = Field(default=0.0, description="Sconto totale applicato al documento")
+    total_price_with_tax: float = Field(..., description="Totale con IVA")
+    total_discounts: float = Field(default=0.0, description="Sconto totale applicato al documento")
     total_discounts_applied: float = Field(default=0.0, description="Totale di tutti gli sconti applicati (sconti articoli + sconto totale documento)")
     total_weight: float = Field(default=0.0, description="Peso totale del preventivo (kg)")
     date_add: Optional[datetime] = None
@@ -360,7 +361,7 @@ class PreventivoDetailResponseSchema(BaseModel):
     articoli: List[ArticoloPreventivoSchema] = Field(default_factory=list)
     order_packages: List[OrderPackageResponseSchema] = Field(default_factory=list, description="Lista dei package del preventivo")
 
-    @validator('total_imponibile', 'total_iva', 'total_finale', 'total_discount', 'total_discounts_applied', 'total_weight', pre=True, allow_reuse=True)
+    @validator('total_price_net', 'total_iva', 'total_price_with_tax', 'total_discounts', 'total_discounts_applied', 'total_weight', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -425,10 +426,10 @@ class PreventivoListResponseSchema(BaseModel):
                         "reference": None,
                         "note": "Preventivo esempio",
                         "type_document": "preventivo",
-                        "total_imponibile": 15.0,
+                        "total_price_net": 15.0,
                         "total_iva": 3.3,
-                        "total_finale": 18.3,
-                        "total_discount": 0.0,
+                        "total_price_with_tax": 18.3,
+                        "total_discounts": 0.0,
                         "date_add": "2024-01-15T10:30:00",
                         "updated_at": "2024-01-15T10:30:00",
                         "articoli": [],

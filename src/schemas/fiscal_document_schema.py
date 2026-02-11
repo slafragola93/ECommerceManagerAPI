@@ -20,16 +20,15 @@ class FiscalDocumentDetailResponseSchema(BaseModel):
     id_fiscal_document_detail: int
     id_fiscal_document: int
     id_order_detail: int
-    quantity: float
+    product_qty: float
     unit_price_net: Optional[float] = None
     unit_price_with_tax: float
     total_price_net: float
     total_price_with_tax: float
-    total_amount: float  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
     id_tax: Optional[int] = None
     
-    @validator('quantity', 'unit_price_net', 'unit_price_with_tax', 'total_price_net', 
-               'total_price_with_tax', 'total_amount', pre=True, allow_reuse=True)
+    @validator('product_qty', 'unit_price_net', 'unit_price_with_tax', 'total_price_net',
+               'total_price_with_tax', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -53,12 +52,11 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
     id_fiscal_document_detail: int
     id_fiscal_document: int
     id_order_detail: int
-    quantity: float
+    product_qty: float
     unit_price_net: Optional[float] = None
     unit_price_with_tax: float
     total_price_net: float
     total_price_with_tax: float
-    total_amount: float  # Mantenuto per retrocompatibilità (alias di total_price_with_tax)
     id_tax: Optional[int] = None
     
     # Info prodotto
@@ -106,11 +104,14 @@ class InvoiceResponseSchema(BaseModel):
     status: str
     is_electronic: bool
     includes_shipping: bool
-    total_amount: Optional[float]
+    total_price_with_tax: Optional[float] = None
+    total_price_net: Optional[float] = None
+    products_total_price_net: Optional[float] = None
+    products_total_price_with_tax: Optional[float] = None
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
-    
-    @validator('total_amount', pre=True, allow_reuse=True)
+
+    @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
@@ -192,17 +193,20 @@ class CreditNoteResponseSchema(BaseModel):
     credit_note_reason: Optional[str]
     is_partial: bool
     includes_shipping: bool
-    total_amount: Optional[float]
+    total_price_with_tax: Optional[float] = None
+    total_price_net: Optional[float] = None
+    products_total_price_net: Optional[float] = None
+    products_total_price_with_tax: Optional[float] = None
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
     details: List[FiscalDocumentDetailResponseSchema] = []
-    
-    @validator('total_amount', pre=True, allow_reuse=True)
+
+    @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
         return round(float(v), 2)
-    
+
     class Config:
         from_attributes = True
 
@@ -225,11 +229,14 @@ class FiscalDocumentResponseSchema(BaseModel):
     upload_result: Optional[str]
     credit_note_reason: Optional[str]
     is_partial: bool
-    total_amount: Optional[float]
+    total_price_with_tax: Optional[float] = None
+    total_price_net: Optional[float] = None
+    products_total_price_net: Optional[float] = None
+    products_total_price_with_tax: Optional[float] = None
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
-    
-    @validator('total_amount', pre=True, allow_reuse=True)
+
+    @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

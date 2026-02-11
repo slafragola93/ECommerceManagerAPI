@@ -161,28 +161,32 @@ def calculate_order_totals(order_details: list, tax_percentages: dict = None) ->
         weight = product_weight * (order_detail.product_qty or 1)
         total_weight += weight
         
-        # Calcola prezzo base - converti Decimal in float se necessario
-        product_price = float(order_detail.product_price) if order_detail.product_price is not None else 0.0
-        price_base = product_price * (order_detail.product_qty or 1)
+        # Usa i dati come salvati: total_price_net/total_price_with_tax se presenti, altrimenti product_price * qty
+        total_net = None
+        total_with_tax = None
+        if getattr(order_detail, 'total_price_net', None) is not None:
+            total_net = float(order_detail.total_price_net)
+        if getattr(order_detail, 'total_price_with_tax', None) is not None:
+            total_with_tax = float(order_detail.total_price_with_tax)
         
-        # Applica sconti
-        discount_amount = 0.0
-        if order_detail.reduction_percent and order_detail.reduction_percent > 0:
-            reduction_percent = float(order_detail.reduction_percent)
-            discount_amount = calculate_amount_with_percentage(price_base, reduction_percent)
-        elif order_detail.reduction_amount and order_detail.reduction_amount > 0:
-            discount_amount = float(order_detail.reduction_amount)
+        if total_net is not None:
+            price_base = total_net
+            if total_with_tax is not None:
+                price_with_tax = total_with_tax
+            else:
+                tax_percentage = 0.0
+                if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
+                    tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+                price_with_tax = total_net * (1 + tax_percentage / 100)
+        else:
+            product_price = float(order_detail.product_price) if order_detail.product_price is not None else 0.0
+            price_base = product_price * (order_detail.product_qty or 1)
+            tax_percentage = 0.0
+            if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
+                tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+            price_with_tax = price_base * (1 + tax_percentage / 100)
         
-        price_after_discount = price_base - discount_amount
-        total_discounts += discount_amount
-        total_price_base += price_after_discount
-        
-        # Calcola prezzo con tasse
-        tax_percentage = 0.0
-        if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
-            tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
-        
-        price_with_tax = price_after_discount * (1 + tax_percentage / 100)
+        total_price_base += price_base
         total_price_with_tax += price_with_tax
     
     return {

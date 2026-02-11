@@ -44,8 +44,11 @@ class FiscalDocument(Base):
     is_partial = Column(Boolean, default=False, nullable=False)  # True se parziale
     includes_shipping = Column(Boolean, default=True, nullable=False)  # True se include spese di spedizione
     
-    # Importi (per note parziali)
-    total_amount = Column(Numeric(10, 5), nullable=True)  # Importo totale documento
+    # Importi (allineati a OrderDocument)
+    total_price_with_tax = Column(Numeric(10, 5), nullable=True)  # Totale documento con IVA
+    total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale documento senza IVA
+    products_total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale imponibile prodotti (senza shipping)
+    products_total_price_with_tax = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale con IVA prodotti (senza shipping)
     
     # Timestamp
     date_add = Column(DateTime, default=datetime.utcnow, nullable=False)
