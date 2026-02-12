@@ -184,7 +184,6 @@ class ProvinceService:
                 return abbreviazione
         
         # Se non trova nulla, restituisce None
-        print(f"Abbreviazione non trovata per provincia: '{state_name}'")
         return None
     
     def update_state_with_abbreviation(self, state_name: str) -> str:

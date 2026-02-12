@@ -2,35 +2,65 @@
 PrestaShop synchronization service
 """
 
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
-import aiohttp
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-import base64
+# Standard library imports
 import asyncio
+import base64
 import logging
-from datetime import datetime
 import os
-from tenacity import retry, stop_after_attempt, retry_unless_exception_type, wait_exponential
-from src.schemas.order_schema import OrderUpdateSchema
-from src.services.core.tool import safe_int, safe_float, sql_value,get_tax_percentage_by_country, generate_internal_reference, calculate_price_without_tax, calculate_price_with_tax,get_tax_percentage_by_address_delivery_id
-from src.services.external.province_service import province_service
-from src.services.media.image_service import ImageService
-from src.services.media.image_cache_service import get_image_cache_service
-from src.repository.customer_repository import CustomerRepository
-from src.schemas.customer_schema import CustomerSchema
-from .base_ecommerce_service import BaseEcommerceService
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+# Third-party imports
+import aiohttp
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from tenacity import (
+    retry,
+    retry_unless_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+# Local imports - Core
 from src.core.exceptions import EcommerceApiResponseError
-from src.repository.country_repository import CountryRepository
+
+# Local imports - Models
+from src.models.order import Order
+
+# Local imports - Repositories
+from src.repository.address_repository import AddressRepository
 from src.repository.app_configuration_repository import AppConfigurationRepository
+from src.repository.country_repository import CountryRepository
+from src.repository.customer_repository import CustomerRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.shipping_repository import ShippingRepository
-from src.repository.tax_repository import TaxRepository
-from src.schemas.shipping_schema import ShippingSchema
-from src.repository.address_repository import AddressRepository
 from src.repository.store_repository import StoreRepository
+from src.repository.tax_repository import TaxRepository
+
+# Local imports - Schemas
 from src.schemas.address_schema import AddressSchema
+from src.schemas.customer_schema import CustomerSchema
+from src.schemas.order_schema import OrderUpdateSchema
+from src.schemas.shipping_schema import ShippingSchema
+
+# Local imports - Services
+from src.services.core.tool import (
+    calculate_price_with_tax,
+    calculate_price_without_tax,
+    generate_internal_reference,
+    get_tax_percentage_by_address_delivery_id,
+    get_tax_percentage_by_country,
+    safe_float,
+    safe_int,
+    sql_value,
+)
+from src.services.external.province_service import province_service
+from src.services.media.image_cache_service import get_image_cache_service
+from src.services.media.image_service import ImageService
+
+# Local imports - Relative
+from .base_ecommerce_service import BaseEcommerceService
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +127,6 @@ class PrestaShopService(BaseEcommerceService):
             
             if products_query:
                 product_ids = [p.id_origin for p in products_query]
-                print(f"🔥 Warm-up cache per {len(product_ids)} immagini")
                 
                 # Pre-carica i metadati in batch
                 await cache_service.warm_cache_for_products(
@@ -219,7 +248,6 @@ class PrestaShopService(BaseEcommerceService):
 
     def _get_one_year_ago_date(self) -> str:
         """Get date string for one year ago in YYYY-MM-DD format"""
-        from datetime import timedelta
         one_year_ago = datetime.now() - timedelta(days=365)  # 1 year
         return one_year_ago.strftime('%Y-%m-%d')
     
@@ -313,11 +341,11 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 1: Base tables (sequential to ensure all complete before proceeding)
             phase1_functions = [
-                ("Languages", self.sync_languages), #OK COMPATIBILE PRESTASHOP 9
-                ("Countries", self.sync_countries), #OK COMPATIBILE PRESTASHOP 9
-                ("Brands", self.sync_brands),  #OK COMPATIBILE PRESTASHOP 9
-                ("Categories", self.sync_categories), #OK COMPATIBILE PRESTASHOP 9
-                ("Carriers", self.sync_carriers), 
+                #("Languages", self.sync_languages), #OK COMPATIBILE PRESTASHOP 9
+                #("Countries", self.sync_countries), #OK COMPATIBILE PRESTASHOP 9
+                #("Brands", self.sync_brands),  #OK COMPATIBILE PRESTASHOP 9
+                #("Categories", self.sync_categories), #OK COMPATIBILE PRESTASHOP 9
+                #("Carriers", self.sync_carriers), #OK COMPATIBILE PRESTASHOP 9
             ]
             
             phase1_results = await self._sync_phase_sequential("Phase 1 - Base Tables", phase1_functions)
@@ -332,9 +360,9 @@ class PrestaShopService(BaseEcommerceService):
             
             # Phase 2: Dependent tables (sequential - addresses need customers)
             phase2_functions = [
-                #("Products", self.sync_products),
-                #("Customers", self.sync_customers),
-                #("Addresses", self.sync_addresses),
+                #("Products", self.sync_products), #OK COMPATIBILE PRESTASHOP 9
+                #("Customers", self.sync_customers), #OK COMPATIBILE PRESTASHOP 9
+                #("Addresses", self.sync_addresses), #OK COMPATIBILE PRESTASHOP 9
             ]
             
             phase2_results = await self._sync_phase_sequential("Phase 2 - Dependent Tables", phase2_functions)
@@ -353,8 +381,7 @@ class PrestaShopService(BaseEcommerceService):
             # Controlla se skip_images è 0 prima di aggiungere sync_product_images
             # Usa _store_config se _ecommerce_config non è disponibile (backward compatibility)
             ecommerce_config = getattr(self, '_ecommerce_config', None) or getattr(self, '_store_config', {})
-            skip_images = ecommerce_config.get('skip_images', 0)
-            
+            skip_images = 0 #ecommerce_config.get('skip_images', 1)
             if skip_images == 0:
                 phase3_functions.append(("Product Images", self.sync_product_images))
             
@@ -362,6 +389,7 @@ class PrestaShopService(BaseEcommerceService):
             #phase3_functions.append(("Orders", self.sync_orders))
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
+            print(f"DEBUG: Skip images: {skip_images}")
             sync_results['phases'].append(phase3_results)
             
             # Calculate totals
@@ -832,8 +860,6 @@ class PrestaShopService(BaseEcommerceService):
                     response = await self._make_request_with_rate_limit('/api/products', params)
 
                     products = self._extract_items_from_response(response, 'products')
-                    print(f"DEBUG: Products: {products}")
-                    print(f"DEBUG: Extracted {len(products)} products from response")
                     if not products:
                         break
                         
@@ -862,13 +888,12 @@ class PrestaShopService(BaseEcommerceService):
             unique_products = {}
             print(f"DEBUG: Starting deduplication process...")
             for product in all_products:
-                product_name_list = product.get('name', {})
-                product['name'] = next((item['value'] for item in product_name_list if item.get('id') == str(self.default_language_id)), '')
+
+                product_name_list = product.get('name') or []
+                product['name'] = next((item['value'] for item in product_name_list if item.get('id') == self.default_language_id), '')
                 product_id = product.get('id', '')
                 if not product_id:
                     continue
-                
-
                 unique_products[product_id] = product
             
             products = list(unique_products.values())
@@ -929,12 +954,14 @@ class PrestaShopService(BaseEcommerceService):
                     
                     # Extract minimal_quantity
                     minimal_quantity = int(product.get('minimal_quantity'))
+                    ########### DEBUG #############
                     if int(product.get('id')) == 35:
                         print(f"DEBUG: Minimal quantity: {minimal_quantity}")
                         print(f"DEBUG: Purchase price: {purchase_price}")
                         print(f"DEBUG: Price without tax: {price_without_tax}")
                         print(f"DEBUG: Price with tax: {price_with_tax}")
                         print(product)
+                    ############################
                     return ProductSchema(
                     id_origin=int(product.get('id', 0)),
                     id_category=int(category_id) if category_id else 0,
@@ -1002,10 +1029,7 @@ class PrestaShopService(BaseEcommerceService):
                 upsert_errors = []
                 
                 all_errors = errors + upsert_errors
-                if all_errors:
-                    self._log_sync_result("Products (Italian)", total_inserted, all_errors)
-                else:
-                    self._log_sync_result("Products (Italian)", total_inserted)
+                self._log_sync_result("Products (Italian)", total_inserted, all_errors if all_errors else None)
                 
                 print(f"DEBUG: Bulk inserted {total_inserted} Italian products")
                 return successful_results
@@ -1132,7 +1156,6 @@ class PrestaShopService(BaseEcommerceService):
                         break
                     
                     all_products.extend(products)
-                    print(f"DEBUG: Total products so far: {len(all_products)}")
                     offset += limit
                     
                     # Small delay to avoid overwhelming the server
@@ -1358,7 +1381,70 @@ class PrestaShopService(BaseEcommerceService):
             error_msg = f"Error getting live price for product id_origin={id_origin}: {str(e)}"
             print(f"DEBUG: {error_msg}")
             raise
-    
+
+    async def _fetch_products_image_data(
+        self, origin_ids: List[int]
+    ) -> List[Dict[str, Any]]:
+        """
+        Recupera dall'API PrestaShop i dati necessari per le immagini (id, id_default_image, name)
+        per gli id_origin indicati. Le chiamate sono in batch (100 ID per richiesta).
+        Restituisce una lista nello stesso ordine di origin_ids; per prodotti non trovati
+        usa id_default_image=0 e name=''.
+        """
+        if not origin_ids:
+            return []
+        batch_size = 100
+        result_ordered: List[Dict[str, Any]] = []
+        for i in range(0, len(origin_ids), batch_size):
+            batch_ids = origin_ids[i : i + batch_size]
+            filter_val = "|".join(str(oid) for oid in batch_ids)
+            params = {
+                "display": "[id,id_default_image,name]",
+                "filter[id]": f"[{filter_val}]",
+                "output_format": "JSON",
+            }
+            try:
+                response = await self._make_request_with_rate_limit(
+                    "/api/products", params
+                )
+                products = self._extract_items_from_response(response, "products")
+                if not isinstance(products, list):
+                    products = [products] if products else []
+                api_by_id: Dict[str, Dict[str, Any]] = {}
+                for p in products:
+                    pid = p.get("id") or p.get("@attributes", {}).get("id")
+                    if pid is not None:
+                        pid = str(pid)
+                        name_list = p.get("name") or []
+                        name = ""
+                        if isinstance(name_list, list):
+                            for item in name_list:
+                                if not isinstance(item, dict):
+                                    continue
+                                lid = item.get("id")
+                                if lid == self.default_language_id or lid == str(self.default_language_id):
+                                    name = item.get("value", "") or ""
+                                    break
+                        elif isinstance(name_list, str):
+                            name = name_list
+                        api_by_id[pid] = {
+                            "id": p.get("id", 0),
+                            "id_default_image": p.get("id_default_image", 0) or 0,
+                            "name": name or "",
+                        }
+                for oid in batch_ids:
+                    row = api_by_id.get(str(oid), {"id_default_image": 0, "name": ""})
+                    if "id" not in row:
+                        row["id"] = oid
+                    result_ordered.append(row)
+            except Exception as e:
+                logger.warning(
+                    "Batch fetch image data failed for ids %s: %s", batch_ids[:5], e
+                )
+                for _ in batch_ids:
+                    result_ordered.append({"id_default_image": 0, "name": ""})
+        return result_ordered
+
     def check_image_exist(self, id_product: int) -> bool:
         """
         Controlla se un'immagine esiste già per un prodotto.
@@ -1629,7 +1715,57 @@ class PrestaShopService(BaseEcommerceService):
         except Exception as e:
             self._log_sync_result("Product Images", 0, [str(e)])
             raise
-    
+
+    async def sync_product_images_standalone(self) -> Dict[str, Any]:
+        """
+        Sincronizza le immagini dei prodotti per lo store corrente senza dipendere
+        da una precedente sync prodotti. Carica i prodotti dal DB, recupera i dati
+        dall'API PrestaShop e riusa _download_product_images (prodotti con e senza immagine).
+        """
+        from src.repository.product_repository import ProductRepository
+        from types import SimpleNamespace
+
+        product_repo = ProductRepository(self.db)
+        db_rows = product_repo.get_products_for_image_sync(self.store_id)
+        if not db_rows:
+            return {
+                "products_processed": 0,
+                "message": "No products with id_origin found for this store.",
+            }
+
+        origin_ids = [row[1] for row in db_rows]
+        original_products_data = await self._fetch_products_image_data(origin_ids)
+        if len(original_products_data) != len(db_rows):
+            logger.warning(
+                "Image data length %s != db rows %s",
+                len(original_products_data),
+                len(db_rows),
+            )
+            original_products_data = original_products_data[: len(db_rows)]
+            if len(original_products_data) < len(db_rows):
+                for _ in range(len(db_rows) - len(original_products_data)):
+                    original_products_data.append({"id_default_image": 0, "name": ""})
+
+        product_data_list = []
+        for i, row in enumerate(db_rows):
+            id_product, id_origin, img_url, name_db = row
+            name_api = (
+                original_products_data[i].get("name", "") if i < len(original_products_data) else ""
+            )
+            name = (name_api or name_db) or ""
+            product_data_list.append(
+                SimpleNamespace(id_origin=id_origin, name=name)
+            )
+
+        await self._download_product_images(product_data_list, original_products_data)
+        if product_data_list:
+            await self._warm_up_image_cache()
+
+        return {
+            "products_processed": len(product_data_list),
+            "message": f"Image sync completed for {len(product_data_list)} products.",
+        }
+
     async def sync_customers(self) -> List[Dict[str, Any]]:
         """Synchronize customers from ps_customer"""
         print("🚀 STARTING SYNC_CUSTOMERS")
@@ -1652,6 +1788,7 @@ class PrestaShopService(BaseEcommerceService):
 
                 response = await self._make_request_with_rate_limit('/api/customers', params)
                 customers = self._extract_items_from_response(response, 'customers')
+                print(f"Found {len(customers)} customers")
                 if not customers:
                     return []
                     
@@ -1708,14 +1845,14 @@ class PrestaShopService(BaseEcommerceService):
                         id_store=self.store_id,
                         firstname=firstname,
                         lastname=lastname,
-                        email=email
+                        email=email,
+                        date_add=data.get('date_add')  # datetime con hh:mm:ss
                     )
                     customer_schemas.append(customer_schema)
                 
                 # Bulk insert
                 total_inserted = customer_repo.bulk_create(customer_schemas, batch_size=10000)
                 successful_results = [{"status": "success", "count": total_inserted}]
-                errors = []
                 
                 self._log_sync_result("Customers", total_inserted)
                 return successful_results
@@ -1878,7 +2015,7 @@ class PrestaShopService(BaseEcommerceService):
             print("DEBUG: Pre-fetching customer IDs...")
             customer_origins = set()
             for address in all_addresses:
-                customer_origin = address.get('id_customer', '')
+                customer_origin = address.get('id', 0)
                 if customer_origin and customer_origin != '0':
                     try:
                         customer_origins.add(int(customer_origin))
@@ -1928,7 +2065,7 @@ class PrestaShopService(BaseEcommerceService):
                 customer_origin = int(customer_origin_raw) if customer_origin_raw is not None and customer_origin_raw != '' else 0
                 customer_id_raw = all_customers.get(customer_origin)
                 customer_id = int(customer_id_raw) if customer_id_raw is not None else 0
-                
+
                 
                 return {
                     'id_origin': address.get('id', 0),
@@ -2433,7 +2570,6 @@ class PrestaShopService(BaseEcommerceService):
             
             return {"status": "success", "id_origin": data.get('id_origin', 'unknown')}
         except Exception as e:
-            print(data)
             print(f"DEBUG: Error upserting product {data.get('id_origin', 'unknown')}: {str(e)}")
             return {"status": "error", "error": str(e), "id_origin": data.get('id_origin', 'unknown')}
     
@@ -2970,7 +3106,6 @@ class PrestaShopService(BaseEcommerceService):
         try:
             # Re-enable autocommit
             self.db.autocommit = True
-            print("DEBUG: Autocommit enabled")
         except Exception as e:
             print(f"Error enabling foreign key checks: {e}")
 
@@ -3532,8 +3667,6 @@ class PrestaShopService(BaseEcommerceService):
                     if total_paid_tax_incl == 0.0:
                         total_paid_tax_incl = safe_float(order.get('total_paid', 0))
                     
-                    total_paid_tax_excl = safe_float(order.get('total_paid_tax_excl', 0))
-                    
                     # Calcola total_without_tax usando calculate_price_without_tax con dict pre-calcolati
                     tax_percentage = get_tax_percentage_by_address_delivery_id(
                         self.db, 
@@ -3561,6 +3694,9 @@ class PrestaShopService(BaseEcommerceService):
                     # Calcola price_tax_excl usando stessa percentuale IVA dell'ordine
                     total_shipping_tax_excl = calculate_price_without_tax(total_shipping_tax_incl, tax_percentage) if total_shipping_tax_incl > 0 else 0.0
                     
+                    products_total_price_net = safe_float(order.get('total_products', 0))
+                    products_total_price_with_tax = safe_float(order.get('total_products_wt', 0))
+
                     if not customer_id:
                         total_errors += 1
                         continue
@@ -3622,6 +3758,8 @@ class PrestaShopService(BaseEcommerceService):
                         'is_invoice_requested': order.get('fattura', 0),
                         'payed': is_payed,
                         'date_payment': None,  # Default
+                        'products_total_price_net': products_total_price_net,
+                        'products_total_price_with_tax': products_total_price_with_tax,
                         'total_price_with_tax': total_paid_tax_incl,  # ex total_with_tax, ex total_paid
                         'total_price_net': total_without_tax,  # ex total_without_tax
                         'total_discounts': safe_float(order.get('total_discounts', 0.0)),
@@ -3696,7 +3834,7 @@ class PrestaShopService(BaseEcommerceService):
                                                 reduction_amount = safe_float(order_detail.get('reduction_amount_tax_excl', 0.0))
                                                 break
                                 except Exception as e:
-                                    print(f"⚠️ Errore nel recupero sconti per ordine {order_id_origin}: {e}")
+                                    print(f"Errore nel recupero sconti per ordine {order_id_origin}: {e}")
                             
                             # Prepare complete order detail data con nuovi campi
                             order_detail_data = {
@@ -3824,13 +3962,11 @@ class PrestaShopService(BaseEcommerceService):
                     finally:
                         self.db.bind.echo = original_echo
                 
-                # Clean up order details SQL file
-                import os
+                # Clean up order details SQL file    
                 if os.path.exists(details_sql_file):
                     os.remove(details_sql_file)
             
             # Clean up orders SQL file
-            import os
             if os.path.exists(orders_sql_file):
                 os.remove(orders_sql_file)
             
@@ -4146,7 +4282,6 @@ class PrestaShopService(BaseEcommerceService):
             }
             
             response = await self._make_request('/api/order_states', params=params)
-            
             # Estrai array order_states dalla risposta
             order_states_data = response.get('order_states', [])
             
@@ -4194,9 +4329,6 @@ class PrestaShopService(BaseEcommerceService):
         """
         try:
             # Recupera Order.id_origin (ID PrestaShop) dal database
-            from sqlalchemy import text
-            from src.models.order import Order
-            
             order = self.db.query(Order).filter(Order.id_order == order_id).first()
             if not order or not order.id_origin or order.id_origin == 0:
                 logger.warning(f"Ordine {order_id} non trovato o senza id_origin valido (id_origin={order.id_origin if order else None})")

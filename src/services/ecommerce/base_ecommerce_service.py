@@ -181,7 +181,17 @@ class BaseEcommerceService(ABC):
             List of order state objects (e.g., PrestaShopOrderState, ShopifyOrderState)
         """
         pass
-    
+
+    async def sync_product_images_standalone(self) -> Dict[str, Any]:
+        """
+        Synchronize product images for the current store without requiring a prior full product sync.
+        Override in platform-specific services (e.g. PrestaShop).
+        Returns dict with at least products_processed and message.
+        """
+        raise NotImplementedError(
+            "sync_product_images_standalone is not implemented for this platform"
+        )
+
     async def _make_request(self, endpoint: str, params: Optional[Dict] = None, max_retries: int = 3) -> Dict[str, Any]:
         """
         Make HTTP request to the e-commerce API with retry mechanism

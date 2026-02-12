@@ -889,7 +889,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if not fiscal_doc:
             return
         
-        # Calcola il totale dai dettagli (solo prodotti)
+        # Calcola il totale dai dettagli
         details = self._session.query(FiscalDocumentDetail).filter(
             FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
         ).all()

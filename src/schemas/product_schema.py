@@ -119,3 +119,12 @@ class AllProductsResponseSchema(BaseModel):
     limit: int
     
     model_config = {"from_attributes": True}
+
+
+class SyncImagesResponseSchema(BaseModel):
+    """Risposta dell'endpoint POST /api/v1/sync/sync-images."""
+
+    id_store: int
+    success: bool = True
+    products_processed: int = 0
+    message: str = ""

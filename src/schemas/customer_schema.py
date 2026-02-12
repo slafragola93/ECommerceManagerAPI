@@ -28,6 +28,7 @@ class CustomerSchema(BaseModel):
     firstname: str = Field(..., min_length=1, max_length=100)
     lastname: str = Field(..., min_length=1, max_length=100)
     email: str = Field(..., max_length=150)
+    date_add: Optional[datetime] = None
 
 
 class CountryResponseSchema(BaseModel):

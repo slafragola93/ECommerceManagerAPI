@@ -1,7 +1,7 @@
 """
 Product Repository rifattorizzato seguendo SOLID
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.orm import Session, noload
 from sqlalchemy import func, desc, text, or_
 from src.models.product import Product
@@ -82,7 +82,37 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving product by origin ID: {str(e)}")
-    
+
+    def get_products_for_image_sync(self, id_store: int) -> List[Tuple[int, int, Optional[str], str]]:
+        """
+        Restituisce i prodotti dello store con id_origin non nullo, per la sync immagini standalone.
+        Ordine: id_product ASC (ordine stabile per allineamento con risposta API).
+
+        Returns:
+            Lista di (id_product, id_origin, img_url, name)
+        """
+        try:
+            rows = (
+                self._session.query(
+                    Product.id_product,
+                    Product.id_origin,
+                    Product.img_url,
+                    Product.name,
+                )
+                .filter(
+                    Product.id_store == id_store,
+                    Product.id_origin.isnot(None),
+                    Product.id_origin != 0,
+                )
+                .order_by(Product.id_product)
+                .all()
+            )
+            return [(r.id_product, r.id_origin, r.img_url, r.name) for r in rows]
+        except Exception as e:
+            raise InfrastructureException(
+                f"Database error retrieving products for image sync: {str(e)}"
+            )
+
     def bulk_create(self, data_list: list[ProductSchema], batch_size: int = 1000):
         """Bulk insert products for better performance"""
         # Get existing origin IDs to avoid duplicates

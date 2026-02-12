@@ -47,8 +47,8 @@ class FiscalDocument(Base):
     # Importi (allineati a OrderDocument)
     total_price_with_tax = Column(Numeric(10, 5), nullable=True)  # Totale documento con IVA
     total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale documento senza IVA
-    products_total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale imponibile prodotti (senza shipping)
-    products_total_price_with_tax = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale con IVA prodotti (senza shipping)
+    products_total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale imponibile prodotti
+    products_total_price_with_tax = Column(Numeric(10, 5), default=0.0, nullable=True)  # Totale con IVA prodotti
     
     # Timestamp
     date_add = Column(DateTime, default=datetime.utcnow, nullable=False)

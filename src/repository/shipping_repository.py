@@ -112,7 +112,6 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             self._session.commit()
             self._session.refresh(shipping)
             
-            logger.warning(f"[DEBUG] ShippingRepository.create_and_get_id - shipping creato con ID: {shipping.id_shipping}")
             
             return shipping.id_shipping
         except Exception as e:

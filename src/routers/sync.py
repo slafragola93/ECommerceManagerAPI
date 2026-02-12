@@ -21,6 +21,7 @@ from src.routers.dependencies import get_ecommerce_service
 from src.services.routers.order_service import OrderService
 from src.services.interfaces.order_service_interface import IOrderService
 from src.schemas.order_schema import OrderStateSyncSchema, OrderStateSyncResponseSchema
+from src.schemas.product_schema import SyncImagesResponseSchema
 import time
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,42 @@ async def get_prestashop_last_imported_ids(
             "message": "Last imported IDs retrieved successfully",
             "note": "These IDs represent the highest ID origin imported for each table"
         }
+
+
+@router.post("/sync-images", status_code=status.HTTP_200_OK, response_model=SyncImagesResponseSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def sync_images(
+    db: Session = Depends(get_db),
+    store_repo: StoreRepository = Depends(get_store_repository),
+    id_store: int = Query(..., description="ID dello store per la sincronizzazione immagini prodotti"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Sincronizza le immagini dei prodotti per lo store indicato.
+
+    Recupera il service e-commerce associato allo store (es. PrestaShop), carica i prodotti
+    dal database e dall'API della piattaforma, e scarica/aggiorna le immagini (inclusi
+    prodotti senza immagine, per i quali viene impostato il fallback).
+
+    Returns:
+        200 OK: Riepilogo con id_store, products_processed e message.
+        400 Bad Request: Store non trovato o piattaforma non supportata.
+    """
+    store = store_repo.get_by_id(id_store)
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {id_store} not found")
+
+    ecommerce_service = get_ecommerce_service(store_id=id_store, db=db)
+    async with ecommerce_service:
+        result = await ecommerce_service.sync_product_images_standalone()
+
+    return SyncImagesResponseSchema(
+        id_store=id_store,
+        success=True,
+        products_processed=result.get("products_processed", 0),
+        message=result.get("message", "Image sync completed."),
+    )
 
 
 async def _run_prestashop_sync(db: Session, store_id: int, new_elements: bool = True, incremental: bool = None, limit: int = None):
