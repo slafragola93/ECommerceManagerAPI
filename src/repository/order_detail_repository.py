@@ -90,6 +90,15 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving order details by order document ID: {str(e)}")
     
+    def get_by_order_detail_id(self, order_detail_id: int) -> Optional[OrderDetail]:
+        """Ottiene un dettaglio ordine per un id_order_detail specifico"""
+        try:
+            return self._session.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == order_detail_id
+            ).first()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving order detail by ID: {str(e)}")
+    
     def get_by_product_id(self, product_id: int) -> List[OrderDetail]:
         """Ottiene tutti i dettagli ordine per un prodotto specifico"""
         try:

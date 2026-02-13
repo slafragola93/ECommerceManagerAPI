@@ -282,8 +282,6 @@ async def _run_prestashop_sync(db: Session, store_id: int, new_elements: bool = 
         new_elements = incremental
     
     sync_type = "incremental" if new_elements else "full"
-    print(f"Starting PrestaShop {sync_type} synchronization...")
-    print(f"Store ID: {store_id}")
     
     # Recupera lo store per verificare che esista
     store_repo = StoreRepository(db)

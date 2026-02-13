@@ -107,9 +107,9 @@ class FiscalDocumentPDFService(BasePDFService):
             for detail in details_with_products:
                 code = detail.get('product_reference', '')[:15]
                 description = detail.get('product_name', '')[:30]
-                quantity = detail.get('product_qty', detail.get('quantity', 0))
+                quantity = detail.get('product_qty')
                 unit_price = detail.get('unit_price', 0.0)
-                total_price_with_tax = detail.get('total_price_with_tax', detail.get('total_amount', 0.0))
+                total_price_with_tax = detail.get('total_price_with_tax')
                 reduction_percent = detail.get('reduction_percent', 0.0)
                 vat_rate = detail.get('vat_rate', 0)
                 

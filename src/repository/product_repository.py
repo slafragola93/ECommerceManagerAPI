@@ -2,14 +2,13 @@
 Product Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List, Dict, Any, Tuple
-from sqlalchemy.orm import Session, noload
+from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, text, or_
 from src.models.product import Product
 from src.repository.interfaces.product_repository_interface import IProductRepository
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.schemas.product_schema import ProductSchema
-from src.services import QueryUtils
 
 class ProductRepository(BaseRepository[Product, int], IProductRepository):
     """Product Repository rifattorizzato seguendo SOLID"""

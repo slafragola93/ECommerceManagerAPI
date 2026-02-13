@@ -2,6 +2,7 @@
 Servizio centralizzato per la gestione dei documenti fiscali
 """
 from typing import List, Optional
+from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.models.fiscal_document import FiscalDocument
@@ -19,8 +20,9 @@ from src.events.extractors import (
 class FiscalDocumentService(IFiscalDocumentService):
     """Servizio centralizzato per la gestione dei documenti fiscali"""
     
-    def __init__(self, fiscal_document_repository: IFiscalDocumentRepository):
+    def __init__(self, fiscal_document_repository: IFiscalDocumentRepository, order_detail_repository: IOrderDetailRepository):
         self._fiscal_document_repository = fiscal_document_repository
+        self._order_detail_repository = order_detail_repository
     
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_CREATED,
@@ -78,9 +80,9 @@ class FiscalDocumentService(IFiscalDocumentService):
         """Crea un reso per un ordine"""
         try:
             # Converte i dati dello schema in formato dict
-            order_details = []
+            items_to_return = []
             for item in return_data.order_details:
-                order_details.append({
+                items_to_return.append({
                     'id_order_detail': item.id_order_detail,
                     'quantity': item.quantity,
                     'unit_price_net': getattr(item, 'unit_price_net', getattr(item, 'unit_price', 0.0)),
@@ -88,9 +90,21 @@ class FiscalDocumentService(IFiscalDocumentService):
                     'id_tax': item.id_tax
                 })
             
+            items_already_returned = await self.get_items_returned_by_order(id_order)
+            items_already_returned_dict = {}
+            if items_already_returned:
+                for item in items_already_returned:
+                    id_order_detail = item['id_order_detail']
+                    if id_order_detail not in items_already_returned_dict:
+                        items_already_returned_dict[id_order_detail] = {k: v for k, v in item.items() if k != 'id_order_detail'}
+                    else:
+                        items_already_returned_dict[id_order_detail]['quantity_returned'] += item['quantity_returned']
+            is_returnable = await self.validate_return_items(items_to_return, items_already_returned_dict)
+            if not is_returnable:
+                raise ValidationException("Non è possibile creare il reso per questi articoli. Controllare la quantità di articoli già resi e la quantità da restituire.")
             return self._fiscal_document_repository.create_return(
                 id_order,
-                order_details,
+                items_to_return,
                 return_data.includes_shipping,
                 return_data.note
             )
@@ -189,20 +203,13 @@ class FiscalDocumentService(IFiscalDocumentService):
         except Exception as e:
             raise ValidationException(f"Errore nella generazione del numero sequenziale: {str(e)}")
     
-    # Metodi per validazione
-    async def validate_return_items(self, id_order: int, return_items: List[dict]) -> None:
-        """Valida gli articoli per un reso"""
-        try:
-            self._fiscal_document_repository.validate_return_items(id_order, return_items)
-        except Exception as e:
-            raise ValidationException(f"Errore nella validazione degli articoli: {str(e)}")
     
-    async def get_returned_quantities(self, id_order: int) -> dict:
-        """Ottiene le quantità già restituite per ogni order_detail"""
+    async def get_items_returned_by_order(self, id_order: int):
+        """Recupera gli articoli già resi per un ordine (richiama get_items_returned_by_order del repository)"""
         try:
-            return self._fiscal_document_repository.get_returned_quantities(id_order)
+            return self._fiscal_document_repository.get_items_returned_by_order(id_order)
         except Exception as e:
-            raise ValidationException(f"Errore nel recupero delle quantità restituite: {str(e)}")
+            raise ValidationException(f"Errore nel recupero degli articoli resi: {str(e)}")
     
     # ==================== METODI CENTRALIZZATI PER FATTURE E NOTE DI CREDITO ====================
     
@@ -277,3 +284,25 @@ class FiscalDocumentService(IFiscalDocumentService):
         # Implementazione delle regole di business specifiche per i documenti fiscali
         # Per ora, implementazione vuota - può essere estesa in futuro
         pass
+    
+    async def validate_return_items(self, items_to_return: List[dict], items_already_returned: List[dict]) -> bool:
+        """Valida il reso in base agli articoli da restituire e agli articoli già resi"""
+        if not items_to_return:
+            return False
+        if not items_already_returned:
+            return True
+
+        for item in items_to_return:
+            id_order_detail = item['id_order_detail']
+            order_detail = self._order_detail_repository.get_by_order_detail_id(id_order_detail)
+            if not order_detail:
+                return False
+            total_quantity_bought = order_detail.product_qty
+            quantity_to_return = item['quantity']
+            quantity_already_returned = items_already_returned.get(id_order_detail, {}).get('quantity_returned', 0)
+            total_quantity = quantity_to_return + quantity_already_returned
+
+            if total_quantity > total_quantity_bought:
+                return False
+        return True
+    

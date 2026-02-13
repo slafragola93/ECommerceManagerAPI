@@ -19,7 +19,7 @@ class FiscalDocumentDetail(Base):
     id_order_detail = Column(Integer, ForeignKey("order_details.id_order_detail"), nullable=False, index=True)
     
     # Quantità da stornare (può essere minore della quantità originale)
-    product_qty = Column(Numeric(10, 5), nullable=False)
+    product_qty = Column(Integer, nullable=False)
     
     # Importo da stornare (può essere diverso dal prezzo originale)
     unit_price_net = Column(Numeric(10, 5))  # Prezzo unitario senza IVA (rinominato da unit_price)

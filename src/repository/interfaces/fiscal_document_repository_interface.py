@@ -84,13 +84,8 @@ class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
         pass
     
     @abstractmethod
-    def validate_return_items(self, id_order: int, return_items: List[dict]) -> None:
-        """Valida gli articoli per un reso"""
-        pass
-    
-    @abstractmethod
-    def get_returned_quantities(self, id_order: int) -> dict:
-        """Ottiene le quantità già restituite per ogni order_detail"""
+    def get_items_returned_by_order(self, id_order: int) -> List[Dict[str, Any]]:
+        """Recupera gli articoli già resi per un ordine (righe reso con id_product, product_reference, quantity_returned)"""
         pass
     
     @abstractmethod

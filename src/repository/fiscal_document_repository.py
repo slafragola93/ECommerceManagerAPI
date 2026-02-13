@@ -9,6 +9,7 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
+from src.models.order_document import OrderDocument
 from src.models.address import Address
 from src.models.country import Country
 from src.models.shipping import Shipping
@@ -20,7 +21,6 @@ from src.services.core.tool import (
 )
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
-from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
 from src.repository.tax_repository import TaxRepository
 
 
@@ -722,7 +722,13 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
     
     # ==================== RESI ====================
     
-    def create_return(self, id_order: int, order_details: List[dict], includes_shipping: bool = False, note: Optional[str] = None) -> FiscalDocument:
+    def create_return(
+        self, 
+        id_order: int, 
+        order_details: List[dict], 
+        includes_shipping: bool = False, 
+        note: Optional[str] = None
+        ) -> FiscalDocument:
         """
         Crea un reso per un ordine
         
@@ -739,9 +745,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         order = self._session.query(Order).filter(Order.id_order == id_order).first()
         if not order:
             raise ValueError(f"Ordine {id_order} non trovato")
-        
-        # Valida gli articoli del reso
-        self.validate_return_items(id_order, order_details)
+    
         
         # Genera numero sequenziale per reso
         document_number = self.get_next_document_number('return')
@@ -965,67 +969,39 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         return self._session.query(FiscalDocument).filter(
             FiscalDocument.document_type == document_type
         ).count()
-    
-    def validate_return_items(self, id_order: int, return_items: List[dict]) -> None:
-        """Valida gli articoli per un reso"""
-        if not return_items:
-            raise ValueError("Nessun articolo specificato per il reso")
-        
-        # Ottieni le quantità già restituite
-        returned_quantities = self.get_returned_quantities(id_order)
-        
-        # Verifica ogni articolo
-        for item in return_items:
-            id_order_detail = item['id_order_detail']
-            quantity_to_return = item['quantity']
-            
-            # Verifica che l'order_detail esista e appartenga all'ordine
-            order_detail = self._session.query(OrderDetail).filter(
-                and_(
-                    OrderDetail.id_order_detail == id_order_detail,
-                    OrderDetail.id_order == id_order
-                )
-            ).first()
-            
-            if not order_detail:
-                raise ValueError(f"OrderDetail {id_order_detail} non trovato per l'ordine {id_order}")
-            
-            # Verifica che la quantità da restituire non superi quella disponibile
-            original_quantity = order_detail.product_qty
-            already_returned = returned_quantities.get(id_order_detail, 0)
-            available_quantity = original_quantity - already_returned
-            
-            if quantity_to_return > available_quantity:
-                raise ValueError(
-                    f"Quantità da restituire ({quantity_to_return}) superiore alla quantità disponibile "
-                    f"({available_quantity}) per l'articolo {id_order_detail}"
-                )
-    
-    def get_returned_quantities(self, id_order: int) -> dict:
-        """Ottiene le quantità già restituite per ogni order_detail"""
-        # Recupera tutti i resi per questo ordine
-        returns = self._session.query(FiscalDocument).filter(
-            and_(
-                FiscalDocument.id_order == id_order,
-                FiscalDocument.document_type == 'return'
+
+    def get_items_returned_by_order(self, id_order: int) -> List[Dict[str, Any]]:
+        """Recupera gli articoli già resi per un ordine (id_fiscal_document, document_number, id_order_detail, id_product, product_reference, product_name, quantity_returned)"""
+        rows = (
+            self._session.query(
+                FiscalDocument.id_fiscal_document,
+                FiscalDocument.document_number,
+                FiscalDocumentDetail.id_order_detail,
+                OrderDetail.id_product,
+                OrderDetail.product_reference,
+                OrderDetail.product_name,
+                FiscalDocumentDetail.product_qty.label("quantity_returned"),
             )
-        ).all()
-        
-        returned_quantities = {}
-        
-        for return_doc in returns:
-            details = self._session.query(FiscalDocumentDetail).filter(
-                FiscalDocumentDetail.id_fiscal_document == return_doc.id_fiscal_document
-            ).all()
-            
-            for detail in details:
-                id_order_detail = detail.id_order_detail
-                if id_order_detail in returned_quantities:
-                    returned_quantities[id_order_detail] += detail.product_qty
-                else:
-                    returned_quantities[id_order_detail] = detail.product_qty
-        
-        return returned_quantities
+            .join(FiscalDocumentDetail, FiscalDocumentDetail.id_fiscal_document == FiscalDocument.id_fiscal_document)
+            .join(OrderDetail, OrderDetail.id_order_detail == FiscalDocumentDetail.id_order_detail)
+            .filter(
+                FiscalDocument.document_type == "return",
+                FiscalDocument.id_order == id_order,
+            )
+            .all()
+        )
+        return [
+            {
+                "id_fiscal_document": r.id_fiscal_document,
+                "document_number": r.document_number,
+                "id_order_detail": r.id_order_detail,
+                "id_product": r.id_product,
+                "product_reference": r.product_reference,
+                "product_name": r.product_name,
+                "quantity_returned": float(r.quantity_returned) if r.quantity_returned is not None else 0,
+            }
+            for r in rows
+        ]
     
     def calculate_return_totals(self, order_details: List[dict], includes_shipping: bool, id_order: int) -> float:
         """Calcola il totale di un reso"""

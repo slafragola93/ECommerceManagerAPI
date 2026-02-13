@@ -146,6 +146,7 @@ class BrtShipmentService(IBrtShipmentService):
             shipping_message=shipping_message,
             order_id=order_id
         )
+        print("[BRT create label] JSON inviato a BRT:", json.dumps(create_payload, indent=2, ensure_ascii=False))
         
         create_response = await self.brt_client.create_shipment(
             payload=create_payload,

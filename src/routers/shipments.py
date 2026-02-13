@@ -334,15 +334,14 @@ async def create_shipment(
             db.commit()
             db.expire_all()  # Forza il refresh di tutti gli oggetti nella sessione
             
-            all_shipped = await shipping_service.check_all_products_shipped(order_id, db)
             all_have_labels = await shipping_service.check_all_shipments_have_labels(order_id, db)
-            
-            if all_shipped and all_have_labels:
+            print(f"DEBUG check_all_shipments_have_labels: {all_have_labels}")
+            if all_have_labels:
+                print(f"DEBUG updating order status to 4")
                 await order_service.update_order_status(order_id, 4)  # SPEDIZIONE CONFERMATA
                 logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) - all products shipped and all labels generated")
             else:
                 await order_service.update_order_status(order_id, 7)  # MULTISPEDIZIONE
-                logger.info(f"Order {order_id} status updated to 7 (Multispedizione) - products shipped: {all_shipped}, all labels: {all_have_labels}")
     except Exception as e:
         # Non bloccare la risposta in caso di errori nell'aggiornamento dello stato
         logger.warning(f"Failed to update order {order_id} status: {str(e)}", exc_info=True)
@@ -472,6 +471,8 @@ async def bulk_create_shipments(
                 logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
             else:
                 # Multispedizione -> verifica se tutto spedito E se tutte le spedizioni hanno l'etichetta
+                db.commit()
+                db.expire_all()
                 all_shipped = await shipping_service.check_all_products_shipped(order_id, db)
                 all_have_labels = await shipping_service.check_all_shipments_have_labels(order_id, db)
                 

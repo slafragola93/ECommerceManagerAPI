@@ -23,6 +23,11 @@ class IFiscalDocumentService(IBaseService):
                                include_shipping: bool = True) -> FiscalDocument:
         """Crea una nota di credito per una fattura"""
         pass
+
+    @abstractmethod
+    async def validate_return_items(self, items_to_return: List[dict], items_already_returned: List[dict]) -> dict:
+        """Valida gli articoli per un reso"""
+        pass
     
     @abstractmethod
     async def create_return(self, id_order: int, return_data: ReturnCreateSchema) -> FiscalDocument:

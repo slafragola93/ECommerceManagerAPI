@@ -45,6 +45,8 @@ from src.schemas.shipping_schema import (
     ShippingUpdateSchema,
 )
 from src.services.interfaces.shipping_service_interface import IShippingService
+import json
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -860,7 +862,6 @@ class ShippingService(IShippingService):
         for shipment in shipments:
             if not shipment.shipping or not shipment.shipping.tracking:
                 return False
-        
         return True
     
     async def get_multi_shipments_by_order(

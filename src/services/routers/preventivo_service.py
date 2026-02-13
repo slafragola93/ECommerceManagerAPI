@@ -1105,9 +1105,8 @@ class PreventivoService:
         if id_tax is None or id_tax == 0:
             tax_info = self.tax_repo.get_tax_info_by_country(1)
             id_tax = tax_info["id_tax"] if tax_info else 1
-        unit_price_with_tax = order_detail.unit_price_with_tax
-        if unit_price_with_tax is None:
-            unit_price_with_tax = 0.0
+        unit_price_with_tax = order_detail.unit_price_with_tax if order_detail.unit_price_with_tax is not None else 0.0
+
         return ArticoloPreventivoSchema(
             id_order_detail=order_detail.id_order_detail,
             id_product=order_detail.id_product,
