@@ -2,9 +2,12 @@
 Router per gestione ordini seguendo principi SOLID.
 Tutte le funzioni helper e la logica business sono nel service.
 """
+import json
 import logging
+import pprint
 from typing import Optional
-
+from src.models.address import Address
+from src.models.order import Order
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body
 from sqlalchemy.orm import Session
 from starlette import status
@@ -14,6 +17,10 @@ from src.database import get_db
 from src.repository.order_detail_repository import OrderDetailRepository
 from src.repository.product_repository import ProductRepository
 from src.routers.dependencies import get_fiscal_document_service
+from src.schemas.address_schema import AddressResponseSchema
+from src.schemas.customer_schema import CustomerResponseSchema, CustomerResponseWithoutAddressSchema
+from src.schemas.payment_schema import PaymentResponseSchema
+from src.schemas.shipping_schema import ShippingResponseSchema
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.services.routers.auth_service import authorize, get_current_user
@@ -35,6 +42,7 @@ from ..schemas.return_schema import (
     AllReturnsResponseSchema,
     ReturnCreateSchema,
     ReturnDetailUpdateSchema,
+    ReturnDocumentResponseSchema,
     ReturnResponseSchema,
     ReturnUpdateSchema,
 )
@@ -458,6 +466,7 @@ async def create_return(
     id_order: int = Path(..., description="ID dell'ordine"),
     user: dict = Depends(get_current_user),
     return_data: ReturnCreateSchema = None,
+    or_repo: OrderRepository = Depends(get_repository),
     fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
 ):
     """
@@ -473,17 +482,10 @@ async def create_return(
     - Il totale con IVA inclusa
     - Se il reso è parziale o totale
     """
-
-    # Verifica che l'ordine esista
-    from src.models.order import Order
-    from src.database import get_db
-    db = next(get_db())
-    order = db.query(Order).filter(Order.id_order == id_order).first()
+    order = or_repo.get_by_id(_id=id_order)
     if not order:
         raise HTTPException(status_code=404, detail=f"Ordine {id_order} non trovato")
-    
-    # Crea il reso
-    return_doc = await fiscal_document_service.create_return(id_order, return_data)
+    return_doc = await fiscal_document_service.create_return(order, return_data)
     
     return {
         "message": "Reso creato con successo",
@@ -503,21 +505,39 @@ async def create_return(
 @authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def get_order_returns(
     id_order: int = Path(..., description="ID dell'ordine"),
+    page: int = Query(1, gt=0, description="Numero di pagina"),
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
     user: dict = Depends(get_current_user),
     fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
-):
+)-> AllReturnsResponseSchema:
     """
     Recupera tutti i documenti di reso per un ordine specifico.
     """
-    returns = await fiscal_document_service.get_fiscal_documents_by_order(id_order, 'return')
+    returns = await fiscal_document_service.get_fiscal_documents_by_order(id_order, page, limit, 'return')
+    total_count = len(returns)
     
-    return {
-        "returns": [ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
-        "total": len(returns),
-        "order_id": id_order
-    }
+    return AllReturnsResponseSchema(
+        returns=returns,
+        total=total_count,
+        page=page,
+        limit=limit
+    )
 
-
+@router.get("/returns/get-return-by-id/{id_fiscal_document}",
+           status_code=status.HTTP_200_OK,
+           summary="Recupera un reso per ID",
+           description="Recupera un documento di reso per ID (con customer, indirizzi, payment, shipping e righe dettaglio)",
+           response_model=ReturnResponseSchema,
+           response_description="Documento di reso trovato")
+@check_authentication
+@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
+async def get_return_by_id(
+    id_fiscal_document: int = Path(..., description="ID del documento di reso"),
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    user: dict = Depends(get_current_user),
+) -> ReturnResponseSchema:
+    """Recupera un documento di reso per ID (ReturnResponseSchema con details)."""
+    return await fiscal_document_service.get_fiscal_document_by_id(id_fiscal_document)
 
 @router.put("/returns/{id_fiscal_document}", 
            status_code=status.HTTP_200_OK,

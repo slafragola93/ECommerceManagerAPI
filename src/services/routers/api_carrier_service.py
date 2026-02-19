@@ -8,9 +8,7 @@ from src.schemas.carrier_api_schema import CarrierApiSchema
 from src.models.carrier_api import CarrierApi
 from src.core.exceptions import (
     ValidationException, 
-    NotFoundException, 
     BusinessRuleException,
-    ExceptionFactory,
     ErrorCode
 )
 

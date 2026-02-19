@@ -1,10 +1,11 @@
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, func
+from sqlalchemy.orm import Session, aliased, joinedload
+from sqlalchemy import Result, and_, or_, desc, func
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import math
 
+from src.models.customer import Customer
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
@@ -14,10 +15,10 @@ from src.models.address import Address
 from src.models.country import Country
 from src.models.shipping import Shipping
 from src.models.tax import Tax
+from src.models.payment import Payment
 from src.services.core.tool import (
     calculate_amount_with_percentage,
-    calculate_price_with_tax,
-    calculate_price_without_tax
+    calculate_price_with_tax
 )
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
@@ -724,7 +725,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
     
     def create_return(
         self, 
-        id_order: int, 
+        order: Order, 
         order_details: List[dict], 
         includes_shipping: bool = False, 
         note: Optional[str] = None
@@ -742,35 +743,42 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             FiscalDocument creato (reso)
         """
         # Verifica che l'ordine esista
-        order = self._session.query(Order).filter(Order.id_order == id_order).first()
         if not order:
-            raise ValueError(f"Ordine {id_order} non trovato")
-    
+            raise ValueError(f"Ordine non trovato")
         
         # Genera numero sequenziale per reso
         document_number = self.get_next_document_number('return')
         
         # Calcola il totale del reso
-        total_amount = self.calculate_return_totals(order_details, includes_shipping, id_order)
-        # Determina se il reso è parziale confrontando con le quantità totali dell'ordine
-        original_order_details = self._session.query(OrderDetail).filter(OrderDetail.id_order == id_order).all()
-        
-        # Se non ci sono tutti gli articoli dell'ordine nel reso, è parziale
-        if len(order_details) < len(original_order_details):
-            is_partial = True
-        else:
-            # Controlla se per ogni articolo la quantità del reso è uguale alla quantità totale
-            is_partial = False
-            for item in order_details:
-                original_detail = next((od for od in original_order_details if od.id_order_detail == item['id_order_detail']), None)
-                if original_detail and item['quantity'] < original_detail.product_qty:
-                    is_partial = True
-                    break
-        
+        total_amount = self.calculate_return_totals(order_details, includes_shipping, order.id_order)
+
+        # Quantità già resa per ogni id_order_detail (resi precedenti)
+        already_returned = self.get_items_returned_by_order(order.id_order)
+        returned_by_detail: Dict[int, float] = {}
+        for r in already_returned:
+            id_od = r['id_order_detail']
+            returned_by_detail[id_od] = returned_by_detail.get(id_od, 0.0) + (r.get('quantity_returned') or 0)
+
+        # Aggiungi le quantità di questo reso
+        for item in order_details:
+            id_od = item['id_order_detail']
+            returned_by_detail[id_od] = returned_by_detail.get(id_od, 0.0) + item['quantity']
+
+        # Confronto con le quantità totali ordinate: se ogni prodotto è stato interamente reso, is_partial = 1 (reso completo)
+        original_order_details = self._session.query(OrderDetail).filter(OrderDetail.id_order == order.id_order).all()
+        all_fully_returned = True
+        for od in original_order_details:
+            total_returned = returned_by_detail.get(od.id_order_detail, 0) or 0
+            if total_returned < (od.product_qty or 0):
+                all_fully_returned = False
+                break
+        # Quando ogni prodotto è stato interamente reso, is_partial = 1 (reso completo)
+        is_partial = all_fully_returned
+
         # Crea il documento reso
         return_doc = FiscalDocument(
             document_type='return',
-            id_order=id_order,
+            id_order=order.id_order,
             id_store=order.id_store,  # Porta id_store dall'ordine
             document_number=str(document_number),
             status='issued',
@@ -948,15 +956,73 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         else:
             return 1
     
-    def get_by_order_id(self, id_order: int, document_type: Optional[str] = None) -> List[FiscalDocument]:
+    def get_by_order_id(self, id_order: int, page: int = 1, limit: int = 10, document_type: Optional[str] = None):
         """Ottiene tutti i documenti fiscali per un ordine"""
-        query = self._session.query(FiscalDocument).filter(FiscalDocument.id_order == id_order)
+        AddressDelivery = aliased(Address)
+        AddressInvoice = aliased(Address)
+        CountryDelivery = aliased(Country)
+        CountryInvoice = aliased(Country)
+        offset = (page - 1) * limit
+        query = self._session.query(
+            FiscalDocument, 
+            # Indirizzo di consegna
+            AddressDelivery,
+            # Indirizzo di fatturazione
+            AddressInvoice,
+            # Cliente
+            Customer,
+            # Metodo di pagamento
+            Payment,
+            # Spedizione
+            Shipping
+            ).filter(FiscalDocument.id_order == id_order)
         
         if document_type:
             query = query.filter(FiscalDocument.document_type == document_type)
         
-        return query.order_by(desc(FiscalDocument.date_add)).all()
-    
+        query =  query.outerjoin(Order, Order.id_order == FiscalDocument.id_order)
+        query = query.outerjoin(Customer, Customer.id_customer == Order.id_customer)
+        query = query.outerjoin(AddressDelivery, AddressDelivery.id_address == Order.id_address_delivery)
+        query = query.outerjoin(CountryDelivery, CountryDelivery.id_country == AddressDelivery.id_country)
+        query = query.outerjoin(AddressInvoice, AddressInvoice.id_address == Order.id_address_invoice)
+        query = query.outerjoin(CountryInvoice, CountryInvoice.id_country == AddressInvoice.id_country)
+        query = query.outerjoin(Payment, Payment.id_payment == Order.id_payment)
+        query = query.outerjoin(Shipping, Shipping.id_shipping == Order.id_shipping)
+        query = query.options(joinedload(FiscalDocument.details))
+
+        result = query.order_by(desc(FiscalDocument.date_add)).offset(offset).limit(limit).all()
+        return result
+
+    def get_fiscal_document_with_relations_by_id(self, id_fiscal_document: int):
+        """Recupera un documento fiscale per ID con Order, Customer, indirizzi, payment, shipping.
+        Ritorna (FiscalDocument, AddressDelivery, AddressInvoice, Customer, Payment, Shipping) o None.
+        """
+        AddressDelivery = aliased(Address)
+        AddressInvoice = aliased(Address)
+        CountryDelivery = aliased(Country)
+        CountryInvoice = aliased(Country)
+        query = (
+            self._session.query(
+                FiscalDocument,
+                AddressDelivery,
+                AddressInvoice,
+                Customer,
+                Payment,
+                Shipping,
+            )
+            .filter(FiscalDocument.id_fiscal_document == id_fiscal_document)
+            .outerjoin(Order, Order.id_order == FiscalDocument.id_order)
+            .outerjoin(Customer, Customer.id_customer == Order.id_customer)
+            .outerjoin(AddressDelivery, AddressDelivery.id_address == Order.id_address_delivery)
+            .outerjoin(CountryDelivery, CountryDelivery.id_country == AddressDelivery.id_country)
+            .outerjoin(AddressInvoice, AddressInvoice.id_address == Order.id_address_invoice)
+            .outerjoin(CountryInvoice, CountryInvoice.id_country == AddressInvoice.id_country)
+            .outerjoin(Payment, Payment.id_payment == Order.id_payment)
+            .outerjoin(Shipping, Shipping.id_shipping == Order.id_shipping)
+        )
+        query = query.options(joinedload(FiscalDocument.details))
+        return query.first()
+
     def get_by_document_type(self, document_type: str, page: int = 1, limit: int = 10) -> List[FiscalDocument]:
         """Ottiene documenti per tipo"""
         offset = (page - 1) * limit

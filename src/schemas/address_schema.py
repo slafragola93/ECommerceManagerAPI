@@ -32,6 +32,9 @@ class CountryResponseSchema(BaseModel):
     name: str | None
     iso_code: str | None
 
+    class Config:
+        from_attributes = True
+
 
 class AddressResponseSchema(BaseModel):
     id_address: int | None

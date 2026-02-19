@@ -67,7 +67,8 @@ class CustomerResponseSchema(BaseModel):
     email: str | None
     date_add: datetime | None
     addresses: Optional[list[AddressResponseSchema]] = None
-
+    class Config:
+        from_attributes = True
 
 class CustomerResponseWithoutAddressSchema(BaseModel):
     id_customer: int | None
@@ -78,6 +79,8 @@ class CustomerResponseWithoutAddressSchema(BaseModel):
     lastname: str | None
     email: str | None
     date_add: datetime | None
+    class Config:
+        from_attributes = True
 
 
 class AllCustomerResponseSchema(BaseModel):

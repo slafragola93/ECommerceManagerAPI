@@ -2,12 +2,18 @@
 Servizio centralizzato per la gestione dei documenti fiscali
 """
 from typing import List, Optional
+from src.repository.interfaces.order_repository_interface import IOrderRepository
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
-from src.schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
+from src.models.order import Order
+from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
+from src.schemas.customer_schema import CustomerResponseWithoutAddressSchema
+from src.schemas.address_schema import AddressResponseSchema
+from src.schemas.payment_schema import PaymentResponseSchema
+from src.schemas.shipping_schema import ShippingResponseSchema
 from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
@@ -20,8 +26,14 @@ from src.events.extractors import (
 class FiscalDocumentService(IFiscalDocumentService):
     """Servizio centralizzato per la gestione dei documenti fiscali"""
     
-    def __init__(self, fiscal_document_repository: IFiscalDocumentRepository, order_detail_repository: IOrderDetailRepository):
+    def __init__(
+        self,
+        fiscal_document_repository: IFiscalDocumentRepository,
+        order_repository: IOrderRepository,
+        order_detail_repository: IOrderDetailRepository,
+    ):
         self._fiscal_document_repository = fiscal_document_repository
+        self._order_repository = order_repository
         self._order_detail_repository = order_detail_repository
     
     @emit_event_on_success(
@@ -76,7 +88,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della nota di credito: {str(e)}")
     
-    async def create_return(self, id_order: int, return_data: ReturnCreateSchema) -> FiscalDocument:
+    async def create_return(self, order: Order, return_data: ReturnCreateSchema) -> FiscalDocument:
         """Crea un reso per un ordine"""
         try:
             # Converte i dati dello schema in formato dict
@@ -90,7 +102,7 @@ class FiscalDocumentService(IFiscalDocumentService):
                     'id_tax': item.id_tax
                 })
             
-            items_already_returned = await self.get_items_returned_by_order(id_order)
+            items_already_returned = await self.get_items_returned_by_order(order.id_order)
             items_already_returned_dict = {}
             if items_already_returned:
                 for item in items_already_returned:
@@ -103,10 +115,10 @@ class FiscalDocumentService(IFiscalDocumentService):
             if not is_returnable:
                 raise ValidationException("Non è possibile creare il reso per questi articoli. Controllare la quantità di articoli già resi e la quantità da restituire.")
             return self._fiscal_document_repository.create_return(
-                id_order,
+                order,
                 items_to_return,
                 return_data.includes_shipping,
-                return_data.note
+                return_data.note,
             )
         except Exception as e:
             raise ValidationException(f"Errore nella creazione del reso: {str(e)}")
@@ -173,11 +185,70 @@ class FiscalDocumentService(IFiscalDocumentService):
             return self._fiscal_document_repository.delete_fiscal_document_detail(id_detail)
         except Exception as e:
             raise ValidationException(f"Errore nell'eliminazione del dettaglio: {str(e)}")
-    
-    async def get_fiscal_documents_by_order(self, id_order: int, document_type: Optional[str] = None) -> List[FiscalDocument]:
-        """Ottiene i documenti fiscali per un ordine"""
+
+    def _row_to_return_response_schema(self, row) -> Optional[ReturnResponseSchema]:
+        """Converte una tupla (doc, addr_del, addr_inv, customer, payment, shipping) in ReturnResponseSchema."""
+        if not row:
+            return None
+        doc, address_delivery, address_invoice, customer, payment, shipping = row
+
+        def _float(v):
+            return float(v) if v is not None else None
+
+        customer_schema = CustomerResponseWithoutAddressSchema.from_orm(customer) if customer else None
+        addr_del_schema = AddressResponseSchema.from_orm(address_delivery) if address_delivery else None
+        addr_inv_schema = AddressResponseSchema.from_orm(address_invoice) if address_invoice else None
+        payment_schema = PaymentResponseSchema.from_orm(payment) if payment else None
+        shipping_schema = ShippingResponseSchema.from_orm(shipping) if shipping else None
+
+        details_schemas = []
+        for d in (doc.details or []):
+            details_schemas.append(
+                ReturnDetailResponseSchema(
+                    id_fiscal_document_detail=d.id_fiscal_document_detail,
+                    id_fiscal_document=d.id_fiscal_document,
+                    id_order_detail=d.id_order_detail,
+                    product_qty=d.product_qty,
+                    unit_price_net=_float(d.unit_price_net),
+                    unit_price_with_tax=_float(d.unit_price_with_tax) if d.unit_price_with_tax is not None else 0.0,
+                    total_price_net=_float(d.total_price_net) if d.total_price_net is not None else 0.0,
+                    total_price_with_tax=_float(d.total_price_with_tax) if d.total_price_with_tax is not None else 0.0,
+                    id_tax=d.id_tax,
+                )
+            )
+
+        return ReturnResponseSchema(
+            id_fiscal_document=doc.id_fiscal_document,
+            id_order=doc.id_order,
+            document_number=doc.document_number,
+            date_add=doc.date_add,
+            filename=doc.filename,
+            xml_content=doc.xml_content,
+            status=doc.status,
+            upload_result=doc.upload_result,
+            date_upd=doc.date_upd,
+            document_type=doc.document_type,
+            tipo_documento_fe=doc.tipo_documento_fe,
+            id_fiscal_document_ref=doc.id_fiscal_document_ref,
+            internal_number=doc.internal_number,
+            credit_note_reason=doc.credit_note_reason,
+            is_partial=doc.is_partial,
+            total_price_with_tax=_float(doc.total_price_with_tax),
+            includes_shipping=doc.includes_shipping,
+            customer=customer_schema,
+            address_delivery=addr_del_schema,
+            address_invoice=addr_inv_schema,
+            payment=payment_schema,
+            shipping=shipping_schema,
+            details=details_schemas,
+        )
+
+    async def get_fiscal_documents_by_order(self, id_order: int, page: int = 1, limit: int = 10, document_type: Optional[str] = None) -> List[ReturnResponseSchema]:
+        """Ottiene i documenti fiscali per un ordine, formattati come ReturnResponseSchema."""
         try:
-            return self._fiscal_document_repository.get_by_order_id(id_order, document_type)
+            result = self._fiscal_document_repository.get_by_order_id(id_order, page, limit, document_type)
+            schemas = [self._row_to_return_response_schema(r) for r in result]
+            return [s for s in schemas if s is not None]
         except Exception as e:
             raise ValidationException(f"Errore nel recupero dei documenti fiscali: {str(e)}")
     
@@ -241,12 +312,15 @@ class FiscalDocumentService(IFiscalDocumentService):
         except Exception as e:
             raise ValidationException(f"Errore nel recupero delle note di credito: {str(e)}")
     
-    async def get_fiscal_document_by_id(self, id_fiscal_document: int):
-        """Recupera documento fiscale per ID"""
-        try:
-            return self._fiscal_document_repository.get_fiscal_document_by_id(id_fiscal_document)
-        except Exception as e:
-            raise ValidationException(f"Errore nel recupero del documento fiscale: {str(e)}")
+    async def get_fiscal_document_by_id(self, id_fiscal_document: int) -> ReturnResponseSchema:
+        """Recupera documento fiscale per ID con relazioni, formattato come ReturnResponseSchema."""
+        row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(id_fiscal_document)
+        if not row:
+            raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
+        schema = self._row_to_return_response_schema(row)
+        if not schema:
+            raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
+        return schema
     
     async def get_fiscal_documents(self, skip: int = 0, limit: int = 100, 
                                  document_type: Optional[str] = None,

@@ -1,9 +1,15 @@
 """
 Schemi per la gestione dei resi
 """
+from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
+
+from src.schemas.address_schema import AddressResponseSchema
+from src.schemas.customer_schema import CustomerResponseSchema
+from src.schemas.payment_schema import PaymentResponseSchema
+from src.schemas.shipping_schema import ShippingResponseSchema
 
 
 class ReturnItemSchema(BaseModel):
@@ -41,11 +47,17 @@ class ReturnDetailUpdateSchema(BaseModel):
     id_tax: Optional[int] = Field(None, gt=0, description="Nuovo ID della tassa applicata")
 
 
+
 class ReturnResponseSchema(BaseModel):
     """Schema di risposta per un reso"""
     id_fiscal_document: int
     id_order: int
     document_number: Optional[str]
+    customer: Optional[CustomerResponseSchema] = None
+    address_delivery: Optional[AddressResponseSchema] = None
+    address_invoice: Optional[AddressResponseSchema] = None
+    payment: Optional[PaymentResponseSchema] = None
+    shipping: Optional[ShippingResponseSchema] = None
     date_add: Optional[datetime]
     filename: Optional[str]
     xml_content: Optional[str]
@@ -60,7 +72,8 @@ class ReturnResponseSchema(BaseModel):
     is_partial: bool
     total_price_with_tax: Optional[float] = None
     includes_shipping: bool
-    
+    details: List["ReturnDetailResponseSchema"] = Field(default_factory=list, description="Righe/dettagli del documento fiscale")
+
     class Config:
         from_attributes = True
 
@@ -70,9 +83,41 @@ class ReturnDetailResponseSchema(BaseModel):
     id_fiscal_document_detail: int
     id_fiscal_document: int
     id_order_detail: int
-    product_qty: float
-    unit_price: float
+    product_qty: int
+    unit_price_net: Optional[float] = None
+    unit_price_with_tax: float
+    total_price_net: float
     total_price_with_tax: float
+    id_tax: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ReturnDocumentResponseSchema(BaseModel):
+    """Schema di risposta completo per un reso (documento + dettagli righe)"""
+    id_fiscal_document: int
+    id_order: int
+    document_number: Optional[str] = None
+    internal_number: Optional[str] = None
+    tipo_documento_fe: Optional[str] = None
+    xml_content: Optional[str] = None
+    is_electronic: bool = False
+    includes_shipping: bool = False
+
+    products_total_price_net: Optional[float] = None
+    products_total_price_with_tax: Optional[float] = None
+    total_price_with_tax: Optional[float] = None
+    total_price_net: Optional[float] = None
+    status: str
+    upload_result: Optional[str] = None
+    date_add: Optional[datetime] = None
+    date_upd: Optional[datetime] = None
+    details: List[ReturnDetailResponseSchema] = Field(
+        default_factory=list,
+        serialization_alias="fiscal_document_detail",
+        description="Lista dei dettagli (righe) del reso"
+    )
 
     class Config:
         from_attributes = True

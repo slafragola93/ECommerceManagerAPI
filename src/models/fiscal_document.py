@@ -1,3 +1,4 @@
+from pydantic import field_serializer
 from sqlalchemy import Integer, Column, String, Text, DateTime, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -14,7 +15,7 @@ class FiscalDocument(Base):
     - is_electronic: True se emessa elettronicamente (solo per IT)
     """
     __tablename__ = "fiscal_documents"
-
+    
     id_fiscal_document = Column(Integer, primary_key=True, index=True)
     
     # Tipo documento

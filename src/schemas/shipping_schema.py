@@ -43,7 +43,8 @@ class ShippingResponseSchema(BaseModel):
         if v is None:
             return None
         return round(float(v), 2)
-
+    class Config:
+        from_attributes = True
 
 class AllShippingResponseSchema(BaseModel):
     shippings: list[ShippingResponseSchema]

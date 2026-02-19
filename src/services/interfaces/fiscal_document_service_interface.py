@@ -6,7 +6,8 @@ from typing import List, Optional
 from src.core.interfaces import IBaseService
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
-from src.schemas.return_schema import ReturnCreateSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
+from src.models.order import Order
+from src.schemas.return_schema import ReturnCreateSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 
 
 class IFiscalDocumentService(IBaseService):
@@ -30,8 +31,8 @@ class IFiscalDocumentService(IBaseService):
         pass
     
     @abstractmethod
-    async def create_return(self, id_order: int, return_data: ReturnCreateSchema) -> FiscalDocument:
-        """Crea un reso per un ordine"""
+    async def create_return(self, order: Order, return_data: ReturnCreateSchema) -> FiscalDocument:
+        """Crea un reso per un ordine (recupera l'ordine tramite id_order)."""
         pass
     
     @abstractmethod
@@ -55,8 +56,8 @@ class IFiscalDocumentService(IBaseService):
         pass
     
     @abstractmethod
-    async def get_fiscal_documents_by_order(self, id_order: int, document_type: Optional[str] = None) -> List[FiscalDocument]:
-        """Ottiene i documenti fiscali per un ordine"""
+    async def get_fiscal_documents_by_order(self, id_order: int, page: int = 1, limit: int = 10, document_type: Optional[str] = None) -> List[ReturnResponseSchema]:
+        """Ottiene i documenti fiscali per un ordine (lista di ReturnResponseSchema)"""
         pass
     
     @abstractmethod

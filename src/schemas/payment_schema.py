@@ -15,7 +15,8 @@ class PaymentResponseSchema(BaseModel):
     is_complete_payment: bool
     fiscal_mode_payment: Optional[str] = None
 
-
+    class Config:
+        from_attributes = True
 class AllPaymentsResponseSchema(BaseModel):
     payments: list[PaymentResponseSchema]
     total: int

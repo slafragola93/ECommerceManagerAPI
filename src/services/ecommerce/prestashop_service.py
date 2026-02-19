@@ -3652,7 +3652,7 @@ class PrestaShopService(BaseEcommerceService):
                     payment_name = order.get('payment', '')
                     reference = order.get('reference', None)
                     current_state = safe_int(order.get('current_state', 0))
-                    id_ecommerce_state_local = platform_state_to_ecommerce_state.get(current_state) if current_state else None
+                    id_ecommerce_state_local = platform_state_to_ecommerce_state.get(order.get('current_state', 0)) if current_state else None
                     products_total_price_net = safe_float(order.get('total_products_wt', 0))
                     products_total_price_with_tax = safe_float(order.get('total_products', 0))
                     # Validate required fields
