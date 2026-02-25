@@ -5,7 +5,12 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
 from src.services.interfaces.app_configuration_service_interface import IAppConfigurationService
 from src.repository.interfaces.app_configuration_repository_interface import IAppConfigurationRepository
-from src.schemas.app_configuration_schema import AppConfigurationSchema, AppConfigurationResponseSchema, AllAppConfigurationsResponseSchema
+from src.schemas.app_configuration_schema import (
+    AppConfigurationSchema,
+    AppConfigurationResponseSchema,
+    AllAppConfigurationsResponseSchema,
+    AppConfigurationByCategoryResponseSchema,
+)
 from src.core.container import container
 from src.core.exceptions import (
     BaseApplicationException,
@@ -63,6 +68,33 @@ async def get_all_app_configurations(
     total_count = await app_configuration_service.get_app_configurations_count()
 
     return {"configurations": app_configurations, "total": total_count, "page": page, "limit": limit}
+
+
+@router.get(
+    "/by-category/{category}",
+    status_code=status.HTTP_200_OK,
+    response_model=AppConfigurationByCategoryResponseSchema,
+    summary="Configurazioni per categoria",
+)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
+async def get_app_configurations_by_category(
+    user: dict = Depends(get_current_user),
+    app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
+    category: str = Path(..., min_length=1, description="Categoria (es. company_info, electronic_invoicing)"),
+):
+    """
+    Restituisce tutte le configurazioni app per la categoria indicata.
+
+    - **category**: Nome della categoria (case insensitive). Esempi: `company_info`, `electronic_invoicing`.
+    """
+    configurations = await app_configuration_service.get_app_configurations_by_category(category)
+    return {
+        "category": category,
+        "configurations": configurations,
+        "total": len(configurations),
+    }
+
 
 @router.get("/{app_configuration_id}", status_code=status.HTTP_200_OK, response_model=AppConfigurationResponseSchema)
 @check_authentication

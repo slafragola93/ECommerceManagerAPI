@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, Numeric, ForeignKey
+from sqlalchemy import Integer, Column, Numeric, ForeignKey, String
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -20,6 +20,9 @@ class FiscalDocumentDetail(Base):
     
     # Quantità da stornare (può essere minore della quantità originale)
     product_qty = Column(Integer, nullable=False)
+    
+    # RDA (come in order_detail)
+    rda = Column(String(10), nullable=True)
     
     # Importo da stornare (può essere diverso dal prezzo originale)
     unit_price_net = Column(Numeric(10, 5))  # Prezzo unitario senza IVA (rinominato da unit_price)

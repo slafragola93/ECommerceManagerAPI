@@ -16,6 +16,7 @@ from src.models.country import Country
 from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.models.payment import Payment
+from src.models.product import Product
 from src.services.core.tool import (
     calculate_amount_with_percentage,
     calculate_price_with_tax
@@ -143,6 +144,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 id_fiscal_document=invoice.id_fiscal_document,
                 id_order_detail=od.id_order_detail,
                 product_qty=quantity,
+                rda=od.rda,
                 unit_price_net=unit_price_net,  # Prezzo originale senza sconto, senza IVA
                 unit_price_with_tax=unit_price_with_tax,  # Prezzo originale senza sconto, con IVA
                 total_price_net=total_price_net,  # Totale con sconto applicato, senza IVA
@@ -372,9 +374,11 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     total_price_net = 0.0
                     total_price_with_tax = 0.0
                 
+                order_detail = self._session.query(OrderDetail).filter(OrderDetail.id_order_detail == id_order_detail).first()
                 credit_note_details_data.append({
                     'id_order_detail': id_order_detail,
                     'quantity': quantity_to_refund,
+                    'rda': order_detail.rda if order_detail else None,
                     'unit_price_net': unit_price_net,
                     'unit_price_with_tax': unit_price_with_tax,
                     'total_price_net': total_price_net,
@@ -428,9 +432,11 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                         total_price_net = 0.0
                         total_price_with_tax = 0.0
                     
+                    order_detail = self._session.query(OrderDetail).filter(OrderDetail.id_order_detail == id_order_detail).first()
                     credit_note_details_data.append({
                         'id_order_detail': id_order_detail,
                         'quantity': remaining_quantity,  # Quantità residua
+                        'rda': order_detail.rda if order_detail else None,
                         'unit_price_net': unit_price_net,
                         'unit_price_with_tax': unit_price_with_tax,
                         'total_price_net': total_price_net,
@@ -513,6 +519,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 id_fiscal_document=credit_note.id_fiscal_document,
                 id_order_detail=detail_data['id_order_detail'],
                 product_qty=detail_data['quantity'],
+                rda=detail_data.get('rda'),
                 unit_price_net=detail_data.get('unit_price_net', 0.0),
                 unit_price_with_tax=detail_data.get('unit_price_with_tax', 0.0),
                 total_price_net=detail_data.get('total_price_net', 0.0),
@@ -818,10 +825,15 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     tax_percentage = float(tax.percentage)
                     unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
 
+            # RDA dall'order detail originale (come in order_detail)
+            order_detail_for_rda = next((od for od in original_order_details if od.id_order_detail == item['id_order_detail']), None)
+            rda_value = order_detail_for_rda.rda if order_detail_for_rda else None
+
             detail = FiscalDocumentDetail(
                 id_fiscal_document=return_doc.id_fiscal_document,
                 id_order_detail=item['id_order_detail'],
                 product_qty=quantity,
+                rda=rda_value,
                 unit_price_net=unit_price_net,
                 unit_price_with_tax=unit_price_with_tax,
                 total_price_net=total_price_net,
@@ -1022,6 +1034,35 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         )
         query = query.options(joinedload(FiscalDocument.details))
         return query.first()
+
+    def get_order_details_with_images(self, id_order_detail_list: List[int]) -> Dict[int, Any]:
+        """
+        Per una lista di id_order_detail restituisce un dict id_order_detail -> dict con
+        'order_detail' (OrderDetail) e 'img_url' (str), per arricchire i dettagli reso come order_detail.
+        """
+        if not id_order_detail_list:
+            return {}
+        order_details = (
+            self._session.query(OrderDetail)
+            .filter(OrderDetail.id_order_detail.in_(id_order_detail_list))
+            .all()
+        )
+        product_ids = list({od.id_product for od in order_details if od and od.id_product})
+        img_map = {}
+        if product_ids:
+            rows = (
+                self._session.query(Product.id_product, Product.img_url)
+                .filter(Product.id_product.in_(product_ids))
+                .all()
+            )
+            for r in rows:
+                img_map[r.id_product] = r.img_url or "media/product_images/fallback/product_not_found.jpg"
+        result = {}
+        fallback_img = "media/product_images/fallback/product_not_found.jpg"
+        for od in order_details:
+            img_url = img_map.get(od.id_product, fallback_img) if od.id_product else fallback_img
+            result[od.id_order_detail] = {"order_detail": od, "img_url": img_url}
+        return result
 
     def get_by_document_type(self, document_type: str, page: int = 1, limit: int = 10) -> List[FiscalDocument]:
         """Ottiene documenti per tipo"""

@@ -111,7 +111,16 @@ class AppConfigurationService(IAppConfigurationService):
             return self._app_configuration_repository.get_count(**filters)
         except Exception as e:
             raise ValidationException(f"Error counting app_configurations: {str(e)}")
-    
+
+    async def get_app_configurations_by_category(self, category: str) -> List[AppConfiguration]:
+        """Ottiene tutte le configurazioni per categoria (case insensitive)."""
+        if not category or not str(category).strip():
+            return []
+        try:
+            return self._app_configuration_repository.get_by_category(str(category).strip())
+        except Exception as e:
+            raise ValidationException(f"Error retrieving app_configurations by category: {str(e)}")
+
     async def validate_business_rules(self, data: Any) -> None:
         """Valida le regole business per AppConfiguration"""
         # Validazioni specifiche per AppConfiguration se necessarie

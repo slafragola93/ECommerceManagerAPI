@@ -79,16 +79,31 @@ class ReturnResponseSchema(BaseModel):
 
 
 class ReturnDetailResponseSchema(BaseModel):
-    """Schema di risposta per un dettaglio reso"""
-    id_fiscal_document_detail: int
-    id_fiscal_document: int
+    """Schema di risposta per un dettaglio reso (stessa struttura di OrderDetailResponseSchema + id_fiscal_document_detail/id_fiscal_document)."""
+    # Campi in comune con OrderDetailResponseSchema
     id_order_detail: int
-    product_qty: int
-    unit_price_net: Optional[float] = None
-    unit_price_with_tax: float
-    total_price_net: float
-    total_price_with_tax: float
+    id_order: Optional[int] = None
+    id_order_document: Optional[int] = None
+    id_origin: Optional[int] = None
     id_tax: Optional[int] = None
+    id_product: Optional[int] = None
+    product_name: Optional[str] = None
+    product_reference: Optional[str] = None
+    product_qty: int = 0
+    unit_price_net: Optional[float] = None
+    unit_price_with_tax: float = 0.0
+    total_price_net: float = 0.0
+    total_price_with_tax: float = 0.0
+    product_weight: Optional[float] = None
+    reduction_percent: Optional[float] = None
+    reduction_amount: Optional[float] = None
+    rda: Optional[str] = None
+    rda_quantity: Optional[int] = None
+    note: Optional[str] = None
+    img_url: Optional[str] = None
+    # Campi specifici del reso
+    id_fiscal_document_detail: Optional[int] = None
+    id_fiscal_document: Optional[int] = None
 
     class Config:
         from_attributes = True

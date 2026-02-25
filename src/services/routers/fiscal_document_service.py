@@ -187,7 +187,9 @@ class FiscalDocumentService(IFiscalDocumentService):
             raise ValidationException(f"Errore nell'eliminazione del dettaglio: {str(e)}")
 
     def _row_to_return_response_schema(self, row) -> Optional[ReturnResponseSchema]:
-        """Converte una tupla (doc, addr_del, addr_inv, customer, payment, shipping) in ReturnResponseSchema."""
+        """Converte una tupla (doc, addr_del, addr_inv, customer, payment, shipping) in ReturnResponseSchema.
+        I dettagli (details) hanno la stessa struttura del dettaglio order_detail (OrderDetailResponseSchema).
+        """
         if not row:
             return None
         doc, address_delivery, address_invoice, customer, payment, shipping = row
@@ -201,21 +203,70 @@ class FiscalDocumentService(IFiscalDocumentService):
         payment_schema = PaymentResponseSchema.from_orm(payment) if payment else None
         shipping_schema = ShippingResponseSchema.from_orm(shipping) if shipping else None
 
+        details_list = doc.details or []
+        order_detail_map = self._fiscal_document_repository.get_order_details_with_images(
+            [d.id_order_detail for d in details_list]
+        ) if details_list else {}
+
         details_schemas = []
-        for d in (doc.details or []):
-            details_schemas.append(
-                ReturnDetailResponseSchema(
-                    id_fiscal_document_detail=d.id_fiscal_document_detail,
-                    id_fiscal_document=d.id_fiscal_document,
-                    id_order_detail=d.id_order_detail,
-                    product_qty=d.product_qty,
-                    unit_price_net=_float(d.unit_price_net),
-                    unit_price_with_tax=_float(d.unit_price_with_tax) if d.unit_price_with_tax is not None else 0.0,
-                    total_price_net=_float(d.total_price_net) if d.total_price_net is not None else 0.0,
-                    total_price_with_tax=_float(d.total_price_with_tax) if d.total_price_with_tax is not None else 0.0,
-                    id_tax=d.id_tax,
+        for d in details_list:
+            od_data = order_detail_map.get(d.id_order_detail, {})
+            od = od_data.get("order_detail")
+            img_url = od_data.get("img_url")
+            if od:
+                details_schemas.append(
+                    ReturnDetailResponseSchema(
+                        id_order_detail=od.id_order_detail,
+                        id_order=od.id_order,
+                        id_order_document=od.id_order_document,
+                        id_origin=od.id_origin,
+                        id_tax=d.id_tax or od.id_tax,
+                        id_product=od.id_product,
+                        product_name=od.product_name,
+                        product_reference=od.product_reference or None,
+                        product_qty=d.product_qty,
+                        unit_price_net=_float(d.unit_price_net),
+                        unit_price_with_tax=_float(d.unit_price_with_tax) if d.unit_price_with_tax is not None else 0.0,
+                        total_price_net=_float(d.total_price_net) if d.total_price_net is not None else 0.0,
+                        total_price_with_tax=_float(d.total_price_with_tax) if d.total_price_with_tax is not None else 0.0,
+                        product_weight=_float(od.product_weight) if od.product_weight is not None else None,
+                        reduction_percent=_float(od.reduction_percent) if getattr(od, "reduction_percent", None) is not None else None,
+                        reduction_amount=_float(od.reduction_amount) if getattr(od, "reduction_amount", None) is not None else None,
+                        rda=getattr(d, "rda", None) or getattr(od, "rda", None),
+                        rda_quantity=getattr(od, "rda_quantity", None),
+                        note=getattr(od, "note", None),
+                        img_url=img_url,
+                        id_fiscal_document_detail=d.id_fiscal_document_detail,
+                        id_fiscal_document=d.id_fiscal_document,
+                    )
                 )
-            )
+            else:
+                details_schemas.append(
+                    ReturnDetailResponseSchema(
+                        id_order_detail=d.id_order_detail,
+                        id_order=doc.id_order,
+                        id_order_document=None,
+                        id_origin=None,
+                        id_tax=d.id_tax,
+                        id_product=None,
+                        product_name=None,
+                        product_reference=None,
+                        product_qty=d.product_qty,
+                        unit_price_net=_float(d.unit_price_net),
+                        unit_price_with_tax=_float(d.unit_price_with_tax) if d.unit_price_with_tax is not None else 0.0,
+                        total_price_net=_float(d.total_price_net) if d.total_price_net is not None else 0.0,
+                        total_price_with_tax=_float(d.total_price_with_tax) if d.total_price_with_tax is not None else 0.0,
+                        product_weight=None,
+                        reduction_percent=None,
+                        reduction_amount=None,
+                        rda=getattr(d, "rda", None),
+                        rda_quantity=None,
+                        note=None,
+                        img_url=None,
+                        id_fiscal_document_detail=d.id_fiscal_document_detail,
+                        id_fiscal_document=d.id_fiscal_document,
+                    )
+                )
 
         return ReturnResponseSchema(
             id_fiscal_document=doc.id_fiscal_document,

@@ -39,3 +39,8 @@ class IAppConfigurationService(IBaseService):
     async def get_app_configurations_count(self, **filters) -> int:
         """Ottiene il numero totale di app_configuration con filtri"""
         pass
+
+    @abstractmethod
+    async def get_app_configurations_by_category(self, category: str) -> List[AppConfiguration]:
+        """Ottiene tutte le configurazioni per categoria"""
+        pass
