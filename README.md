@@ -10,10 +10,6 @@ API che permette di gestire gli ordini su Prestashop.
 # Setup automatico completo
 python scripts/setup_initial.py
 
-# Oppure setup manuale
-python scripts/init_app_configurations.py
-python scripts/init_order_states.py
-python scripts/init_prestashop_platform.py
 ```
 
 
