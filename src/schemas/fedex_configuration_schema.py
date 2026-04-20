@@ -40,7 +40,7 @@ class FedexConfigurationSchema(BaseModel):
     pickup_type: str = Field(..., max_length=100)
     customs_charges: Optional[str] = Field(None, max_length=50)  # Used for paymentType (SENDER, RECIPIENT, THIRD_PARTY, ACCOUNT)
     harmonized_code: Optional[str] = Field(None, max_length=20)  # HS code for customs commodities
-    scope: FedexScopeEnum = Field(..., description="Scope of the configuration: SHIP for shipment operations, TRACK for tracking operations")
+    scope: FedexScopeEnum = Field(..., description="SHIP o TRACK")
 
 
 class FedexConfigurationResponseSchema(BaseModel):

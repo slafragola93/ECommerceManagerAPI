@@ -26,6 +26,7 @@ class IOrderRepository(ABC):
                 search: Optional[str] = None,
                 is_payed: Optional[bool] = None,
                 is_invoice_requested: Optional[bool] = None,
+                has_invoice: Optional[bool] = None,
                 date_from: Optional[str] = None,
                 date_to: Optional[str] = None,
                 show_details: bool = False,
@@ -49,6 +50,7 @@ class IOrderRepository(ABC):
                   search: Optional[str] = None,
                   is_payed: Optional[bool] = None,
                   is_invoice_requested: Optional[bool] = None,
+                  has_invoice: Optional[bool] = None,
                   date_from: Optional[str] = None,
                   date_to: Optional[str] = None
                   ) -> int:

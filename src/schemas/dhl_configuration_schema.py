@@ -1,6 +1,6 @@
 from typing import Optional
 from decimal import Decimal
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from enum import Enum
 
 
@@ -94,6 +94,13 @@ class DhlConfigurationResponseSchema(BaseModel):
     cod_currency: Optional[str]
     client_id: str
     client_secret: str
+
+    @field_validator("pickup_is_requested", "cod_enabled", mode="before")
+    @classmethod
+    def coerce_bool_none_to_false(cls, v: Optional[bool]) -> bool:
+        if v is None:
+            return False
+        return bool(v)
     
     model_config = {"from_attributes": True}
 

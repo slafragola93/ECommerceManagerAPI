@@ -1,17 +1,13 @@
 """
 Tax Router rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
+
+from fastapi import APIRouter, Depends, status, Query, Path
 from src.services.interfaces.tax_service_interface import ITaxService
 from src.repository.interfaces.tax_repository_interface import ITaxRepository
 from src.schemas.tax_schema import TaxSchema, TaxResponseSchema, AllTaxesResponseSchema
-from src.core.container import container
 from src.core.exceptions import (
-    BaseApplicationException,
-    ValidationException,
-    NotFoundException,
-    BusinessRuleException
+    NotFoundException
 )
 from src.core.dependencies import db_dependency
 from src.services.routers.auth_service import authorize

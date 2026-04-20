@@ -1,12 +1,11 @@
 """
 User Router rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
+from fastapi import APIRouter, Depends, status, Query, Path
 from src.services.interfaces.user_service_interface import IUserService
 from src.repository.interfaces.user_repository_interface import IUserRepository
-from src.schemas.user_schema import UserSchema, UserResponseSchema, AllUsersResponseSchema
-from src.core.container import container
+from src.repository.interfaces.role_repository_interface import IRoleRepository
+from src.schemas.user_schema import UserSchema, UserResponseSchema, AllUsersResponseSchema, UserRolesUpdateSchema
 from src.core.exceptions import (
     BaseApplicationException,
     ValidationException,
@@ -30,10 +29,13 @@ def get_user_service(db: db_dependency) -> IUserService:
     configured_container = get_configured_container()
     
     user_repo = configured_container.resolve_with_session(IUserRepository, db)
+    role_repo = configured_container.resolve_with_session(IRoleRepository, db)
     user_service = configured_container.resolve(IUserService)
     
     if hasattr(user_service, '_user_repository'):
         user_service._user_repository = user_repo
+    if hasattr(user_service, '_role_repository'):
+        user_service._role_repository = role_repo
     
     return user_service
 
@@ -75,6 +77,22 @@ async def get_user_by_id(
     """
     user = await user_service.get_user(user_id)
     return user
+
+
+@router.put("/{user_id}/roles", status_code=status.HTTP_200_OK, response_model=UserResponseSchema)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
+async def set_user_roles(
+    user_id: int = Path(gt=0),
+    body: UserRolesUpdateSchema = ...,
+    user: dict = Depends(get_current_user),
+    user_service: IUserService = Depends(get_user_service),
+):
+    """
+    Imposta i ruoli di un utente. Il body definisce l'insieme finale dei ruoli (lista vuota = rimozione di tutti).
+    """
+    return await user_service.set_user_roles(user_id, body.role_ids)
+
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="User creato correttamente")
 @check_authentication

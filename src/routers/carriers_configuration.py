@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, Path, HTTPException, status
+from sqlalchemy.orm import Session
+from src.database import get_db
 from src.schemas.brt_configuration_schema import BrtConfigurationSchema, BrtConfigurationResponseSchema, BrtConfigurationUpdateSchema
 from src.schemas.fedex_configuration_schema import FedexConfigurationSchema, FedexConfigurationResponseSchema, FedexConfigurationUpdateSchema
 from src.schemas.dhl_configuration_schema import DhlConfigurationSchema, DhlConfigurationResponseSchema, DhlConfigurationUpdateSchema
@@ -14,22 +16,25 @@ router = APIRouter(
     tags=["Carriers Configuration"]
 )
 
-# Dependency injection functions (to be implemented in dependencies.py)
-def get_brt_service() -> IBrtConfigurationService:
-    # This will be implemented in dependencies.py
-    pass
 
-def get_fedex_service() -> IFedexConfigurationService:
-    # This will be implemented in dependencies.py
-    pass
+def get_brt_service(db: Session = Depends(get_db)) -> IBrtConfigurationService:
+    from src.core.container_config import get_configured_container
+    return get_configured_container().resolve_with_session(IBrtConfigurationService, db)
 
-def get_dhl_service() -> IDhlConfigurationService:
-    # This will be implemented in dependencies.py
-    pass
 
-def get_carrier_repo() -> IApiCarrierRepository:
-    # This will be implemented in dependencies.py
-    pass
+def get_fedex_service(db: Session = Depends(get_db)) -> IFedexConfigurationService:
+    from src.core.container_config import get_configured_container
+    return get_configured_container().resolve_with_session(IFedexConfigurationService, db)
+
+
+def get_dhl_service(db: Session = Depends(get_db)) -> IDhlConfigurationService:
+    from src.core.container_config import get_configured_container
+    return get_configured_container().resolve_with_session(IDhlConfigurationService, db)
+
+
+def get_carrier_repo(db: Session = Depends(get_db)) -> IApiCarrierRepository:
+    from src.core.container_config import get_configured_container
+    return get_configured_container().resolve_with_session(IApiCarrierRepository, db)
 
 # === BRT ENDPOINTS ===
 
@@ -42,7 +47,7 @@ async def create_brt_configuration(
 ):
     """Crea configurazione BRT per un carrier_api"""
     try:
-        carrier = await carrier_repo.get_by_id(carrier_api_id)
+        carrier = carrier_repo.get_by_id(carrier_api_id)
         if not carrier:
             raise HTTPException(status_code=404, detail="Carrier API not found")
         if carrier.carrier_type != CarrierTypeEnum.BRT:
@@ -106,7 +111,7 @@ async def create_fedex_configuration(
 ):
     """Crea configurazione Fedex per un carrier_api"""
     try:
-        carrier = await carrier_repo.get_by_id(carrier_api_id)
+        carrier = carrier_repo.get_by_id(carrier_api_id)
         if not carrier:
             raise HTTPException(status_code=404, detail="Carrier API not found")
         if carrier.carrier_type != CarrierTypeEnum.FEDEX:
@@ -222,7 +227,7 @@ async def create_dhl_configuration(
      **NOTA**: Tutti i campi opzionali possono essere lasciati vuoti/null se non necessari.
     """
     try:
-        carrier = await carrier_repo.get_by_id(carrier_api_id)
+        carrier = carrier_repo.get_by_id(carrier_api_id)
         if not carrier:
             raise HTTPException(status_code=404, detail="API Corriere non trovato")
         if carrier.carrier_type != CarrierTypeEnum.DHL:

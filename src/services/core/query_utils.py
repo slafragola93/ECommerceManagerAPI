@@ -5,12 +5,25 @@ from sqlalchemy.sql import expression
 
 class QueryUtils:
     @staticmethod
-    def parse_int_list(s):
-        """Gestisce la conversione di stringhe in liste di interi e lancia un'eccezione se il formato non è corretto."""
-        try:
-            return [int(item) for item in s.split(',')]
-        except ValueError:
-            raise ValueError("Input non valido, separare gli elementi con una virgola.")
+    def parse_int_list(values):
+        """
+        Converte in lista di interi:
+        - stringa con ID separati da virgola (es. filtri query legacy);
+        - list/tuple/set di int o valori convertibili (es. parametri FastAPI List[int]).
+        """
+        if values is None:
+            return []
+        if isinstance(values, (list, tuple, set)):
+            try:
+                return [int(x) for x in values]
+            except (TypeError, ValueError):
+                raise ValueError("Input non valido per la lista di ID.")
+        if isinstance(values, str):
+            try:
+                return [int(item.strip()) for item in values.split(",") if item.strip()]
+            except ValueError:
+                raise ValueError("Input non valido, separare gli elementi con una virgola.")
+        raise ValueError("Input non valido per la lista di ID.")
 
     @staticmethod
     def filter_by_id(query, model, field_name, values):

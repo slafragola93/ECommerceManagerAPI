@@ -26,6 +26,11 @@ class IUserService(IBaseService):
         pass
     
     @abstractmethod
+    async def set_user_roles(self, user_id: int, role_ids: List[int]) -> User:
+        """Sostituisce i ruoli dell'utente con quelli corrispondenti agli id forniti."""
+        pass
+    
+    @abstractmethod
     async def get_users(self, page: int = 1, limit: int = 10, **filters) -> List[User]:
         """Ottiene la lista degli utenti con filtri"""
         pass

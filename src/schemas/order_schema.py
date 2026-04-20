@@ -147,6 +147,7 @@ class OrderSimpleResponseSchema(BaseModel):
     date_add: Optional[datetime] = None
     is_multishipping: int = 0  # Solo il flag
     order_packages: Optional[List[OrderPackageResponseSchema]] = None
+    has_invoice: bool = False  # Derivato dalla presenza di FiscalDocument(document_type=invoice)
 
     @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
@@ -201,6 +202,7 @@ class OrderResponseSchema(BaseModel):
     order_history: Optional[list[OrderHistorySchema]] = None
     is_multishipping: int = 0
     multishippings: Optional[List[OrderMultishippingItemSchema]] = None  # Solo se is_multishipping=1
+    has_invoice: bool = False  # Derivato dalla presenza di FiscalDocument(document_type=invoice)
 
     @validator('total_weight', 'total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', 'total_discounts', 'cash_on_delivery', 'insured_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
@@ -248,6 +250,7 @@ class OrderIdSchema(BaseModel):
     order_history: Optional[list] = None
     is_multishipping: int = 0
     multishippings: Optional[List[OrderMultishippingItemSchema]] = None  # Solo se is_multishipping=1
+    has_invoice: bool = False  # Derivato dalla presenza di FiscalDocument(document_type=invoice)
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')  # Ignora campi extra come relazioni SQLAlchemy (es. store)
 

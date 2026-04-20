@@ -547,9 +547,9 @@ class OrderService(IOrderService):
         # Se viene modificato id_tax, unit_price_with_tax o total_price_with_tax, 
         # calcola i prezzi netti se necessario
         if 'id_tax' in update_data or 'unit_price_with_tax' in update_data or 'total_price_with_tax' in update_data:
-            # Usa id_tax aggiornato o quello esistente
-            id_tax = update_data.get('id_tax') or order_detail.id_tax
-            if not id_tax:
+            # Usa id_tax aggiornato o quello esistente (non usare `or`: id_tax=0 sarebbe ignorato)
+            id_tax = update_data['id_tax'] if 'id_tax' in update_data else order_detail.id_tax
+            if id_tax is None or id_tax <= 0:
                 raise ValueError("id_tax è obbligatorio per calcolare i prezzi netti")
             
             tax_repo = TaxRepository(session)
@@ -571,20 +571,38 @@ class OrderService(IOrderService):
         
         # Se vengono modificati reduction_percent o reduction_amount, ricalcola i totali
         if 'reduction_percent' in update_data or 'reduction_amount' in update_data:
-            # Usa i valori aggiornati o quelli esistenti
-            id_tax = update_data.get('id_tax') or order_detail.id_tax
-            unit_price_net = update_data.get('unit_price_net') or order_detail.unit_price_net
-            product_qty = update_data.get('product_qty') or order_detail.product_qty
+            # Usa i valori aggiornati o quelli esistenti (no `or`: 0 è un valore valido per prezzo/qty)
+            id_tax = update_data['id_tax'] if 'id_tax' in update_data else order_detail.id_tax
+            unit_price_net = (
+                update_data['unit_price_net'] if 'unit_price_net' in update_data else order_detail.unit_price_net
+            )
+            product_qty = (
+                update_data['product_qty'] if 'product_qty' in update_data else order_detail.product_qty
+            )
+
+            if id_tax is None or id_tax <= 0:
+                raise ValueError("id_tax è necessario per applicare gli sconti")
+            if unit_price_net is None:
+                raise ValueError("unit_price_net è necessario per applicare gli sconti")
+            if product_qty is None:
+                raise ValueError("product_qty è necessario per applicare gli sconti")
             
-            if not id_tax or not unit_price_net or not product_qty:
-                raise ValueError("id_tax, unit_price_net e product_qty sono necessari per applicare gli sconti")
+            # Calcola il totale base (prima degli sconti); float() evita TypeError Decimal/float da SQLAlchemy
+            total_base_net = float(unit_price_net) * int(product_qty)
             
-            # Calcola il totale base (prima degli sconti)
-            total_base_net = unit_price_net * product_qty
-            
-            # Applica gli sconti
-            reduction_percent = update_data.get('reduction_percent') or order_detail.reduction_percent or 0.0
-            reduction_amount = update_data.get('reduction_amount') or order_detail.reduction_amount or 0.0
+            # Applica gli sconti (stesso criterio `in update_data` del resto: 0 è valido)
+            rp = (
+                update_data['reduction_percent']
+                if 'reduction_percent' in update_data
+                else order_detail.reduction_percent
+            )
+            ra = (
+                update_data['reduction_amount']
+                if 'reduction_amount' in update_data
+                else order_detail.reduction_amount
+            )
+            reduction_percent = float(rp if rp is not None else 0.0)
+            reduction_amount = float(ra if ra is not None else 0.0)
             
             if reduction_percent > 0:
                 discount = calculate_amount_with_percentage(total_base_net, reduction_percent)

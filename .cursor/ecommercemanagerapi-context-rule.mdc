@@ -1,0 +1,270 @@
+---
+description: Regola di contesto persistente per lo sviluppo di ECommerceManagerAPI
+alwaysApply: true
+---
+
+# ECommerceManagerAPI — Regola di Contesto Progetto
+
+## Obiettivo
+Questa regola mantiene il contesto tecnico e architetturale del progetto durante il futuro sviluppo.
+Ogni modifica deve rispettare struttura, convenzioni, pattern e vincoli già adottati nel backend.
+
+## Identità del progetto
+- Nome progetto: **ECommerceManagerAPI**
+- Nome interno: **Elettronew API**
+- Tipo: backend **REST API** basato su **FastAPI**
+- Dominio principale: gestione centralizzata di ordini, clienti, prodotti, spedizioni, documenti fiscali, DDT, preventivi, sync e-commerce, import CSV, PDF, eventi/plugin.
+
+## Stack tecnologico vincolante
+- Python 3.11
+- FastAPI 0.110.x
+- SQLAlchemy 2.0.x
+- Pydantic v2
+- MySQL con PyMySQL
+- Redis + cache memory ibrida
+- Alembic per migrazioni
+- JWT con python-jose e OAuth2PasswordBearer
+- pytest + pytest-asyncio per testing
+
+Quando proponi codice:
+- usa API e idiomi compatibili con **Pydantic v2** (`model_dump`, `model_validate`, `from_attributes = True`)
+- usa pattern compatibili con **SQLAlchemy 2.0**
+- evita soluzioni che introducono stack alternativi non richiesti
+
+## Architettura obbligatoria
+Il progetto segue rigorosamente il flow:
+
+`Router -> Service -> Repository -> Model`
+
+Responsabilità:
+- **Router**: definizione endpoint FastAPI, validazione input, dipendenze, auth, response schema
+- **Service**: business logic, orchestrazione, validazione regole, emissione eventi
+- **Repository**: accesso dati, query SQLAlchemy, CRUD, paginazione, filtri
+- **Model**: mapping ORM e relazioni database
+
+Non inserire business logic significativa nei router.
+Non mettere query SQLAlchemy complesse direttamente nei router.
+Non duplicare logica business nei repository.
+
+## Dependency Injection
+Il progetto usa un **Container custom**.
+Pattern da usare nei router:
+
+```python
+container.resolve_with_session(IEntityService, db)
+```
+
+Regole:
+- repository e service devono essere registrati in `src/core/container_config.py`
+- le interfacce vanno rispettate
+- i router devono risolvere i service dal container, non istanziarli manualmente
+- quando aggiungi una nuova entità o servizio, aggiorna sempre la configurazione DI
+
+## Pattern di progetto da preservare
+Mantieni e riusa i seguenti pattern quando coerenti:
+- Repository Pattern
+- Service Layer
+- Dependency Injection custom
+- Factory Pattern
+- Strategy Pattern per corrieri/e-commerce
+- Event Bus / Observer pattern
+- Plugin architecture
+- Decorator pattern (`@emit_event_on_success`, `@cached`)
+- Circuit breaker per cache/plugin
+
+Non introdurre pattern divergenti se non strettamente necessario.
+
+## Convenzioni naming
+Segui sempre queste convenzioni:
+
+### Database / ORM
+- tabelle: `snake_case` plurale
+- PK: `id_<entity_singular>`
+- FK: `id_<referenced_entity>`
+- classi model: `PascalCase` singolare
+
+### Codice applicativo
+- repository: `<Entity>Repository`
+- interfaccia repository: `I<Entity>Repository`
+- service: `<Entity>Service`
+- interfaccia service: `I<Entity>Service`
+- schema: `<Entity>Schema`, `<Entity>ResponseSchema`, `<Entity>UpdateSchema`, `<Entity>CreateSchema>`
+- file router: snake_case coerente con modulo
+- prefix router: `/api/v1/<entity_plural>`
+
+## Struttura file da seguire per nuove entità
+Per una nuova entità CRUD, il set minimo atteso è:
+1. `src/models/<entity>.py`
+2. `src/schemas/<entity>_schema.py`
+3. `src/repository/interfaces/<entity>_repository_interface.py`
+4. `src/repository/<entity>_repository.py`
+5. `src/services/interfaces/<entity>_service_interface.py`
+6. `src/services/routers/<entity>_service.py`
+7. `src/routers/<entity>.py`
+
+Aggiornare inoltre:
+- `src/models/__init__.py`
+- `src/core/container_config.py`
+- `src/main.py`
+
+## Repository rules
+Per nuovi repository:
+- estendere `BaseRepository[T, K]`
+- implementare la relativa interfaccia `I*Repository`
+- ricevere `Session` nel costruttore
+- riusare i metodi base CRUD quando possibile
+- aggiungere metodi custom solo per query business-specifiche
+
+Preferenze implementative:
+- riusare `paginate`, `get_count`, filtri e utility esistenti
+- mantenere coerente l’error handling con `InfrastructureException` e `NotFoundException`
+- evitare duplicazioni di logica già disponibile in `BaseRepository`
+
+## Service rules
+Ogni service deve:
+- implementare la relativa interfaccia ABC
+- contenere la business logic principale
+- validare regole di dominio
+- usare eccezioni tipizzate del progetto
+- emettere eventi su operazioni CUD quando appropriato
+- delegare l’accesso dati ai repository
+
+Non usare il service come semplice pass-through se è richiesta logica di dominio.
+
+## Event system
+Il progetto usa `EventBus` asincrono e plugin.
+Quando implementi create/update/delete significativi:
+- valuta l’uso di `@emit_event_on_success`
+- usa `EventType` esistenti quando possibile
+- aggiungi nuovi eventi solo se davvero necessari e coerenti con l’architettura
+- mantieni payload evento essenziali ma utili (`entity_id`, `source`, metadata)
+
+Non bypassare il sistema eventi per side effect importanti se esiste già un pattern evento equivalente.
+
+## Cache rules
+Il progetto usa cache ibrida Redis + memory.
+Quando aggiungi o modifichi operazioni di lettura:
+- valuta uso di `@cached`
+- usa `TTL_PRESETS` se esiste un preset coerente
+- rispetta le strategie di invalidazione
+- non cachare scritture
+- considera multi-tenancy/store context dove rilevante
+
+Per endpoint di init, lookup o liste molto richieste, preferisci una soluzione coerente con la cache esistente invece di inventare meccanismi custom.
+
+## Gestione eccezioni
+Usa sempre la gerarchia di eccezioni applicative del progetto:
+- `ValidationException`
+- `BusinessRuleException`
+- `NotFoundException`
+- `InfrastructureException`
+- `AuthenticationException`
+- `AuthorizationException`
+- `AlreadyExistsError`
+
+Regole:
+- non lanciare `HTTPException` dentro service/repository salvo casi strettamente legati al router
+- non usare eccezioni generiche senza wrapping contestuale
+- privilegia messaggi chiari e coerenti con `ErrorCode` / factory esistenti
+
+## Schemas e Pydantic
+Tutti gli schemi devono essere compatibili con Pydantic v2.
+Linee guida:
+- usare `from_attributes = True` negli schema di risposta ORM-based
+- usare naming consistente `Create`, `Update`, `Response`, `All*Response`
+- usare `model_dump(exclude_unset=True)` per update parziali
+- separare chiaramente schema input da schema output
+
+## Router rules
+Nei router:
+- usare `APIRouter`
+- rispettare il prefisso `/api/v1/...`
+- usare dipendenze condivise dove possibile
+- risolvere i service dal container
+- mantenere router sottili
+- restituire response coerenti con i pattern del progetto
+- applicare auth/role checks coerenti con i moduli esistenti
+
+## Pattern di risposta
+Mantieni, salvo eccezioni motivate, questi pattern:
+- singola entità: `{"status": "success", "data": {...}}`
+- lista: `{"status": "success", "count": N, "data": [...]}`
+- errore: payload coerente con handler globali e codici applicativi
+
+## Ambiti funzionali chiave da ricordare
+Il progetto copre principalmente:
+- ordini e storico stati
+- clienti e indirizzi
+- prodotti, categorie, brand
+- spedizioni multi-corriere (BRT, DHL, FedEx)
+- documenti fiscali e FatturaPA
+- DDT
+- preventivi
+- sync PrestaShop
+- import CSV massivo
+- generazione PDF
+- plugin ed eventi
+
+Quando proponi modifiche, ragiona sempre in termini di impatto su questi sottosistemi.
+
+## Integrazioni esterne
+Sono già presenti pattern specifici per:
+- **PrestaShop** come piattaforma e-commerce attualmente supportata
+- **BRT / DHL / FedEx** come corrieri integrati
+- **FatturaPA** per XML/documenti fiscali
+- servizi esterni di mapping e supporto (es. province)
+
+Quando aggiungi una nuova integrazione:
+- usa factory/strategy coerenti con le integrazioni già presenti
+- non hardcodare logiche speciali nei router
+- centralizza autenticazione, mapping request/response e status mapping
+
+## Testing expectations
+Ogni cambiamento non banale dovrebbe considerare:
+- test unitari per logica service/repository
+- test integrazione per endpoint
+- riuso di factory e fixture esistenti
+- compatibilità con setup SQLite in-memory e fakeredis dove applicabile
+
+Non proporre codice “completo” senza indicare almeno i test minimi da aggiungere quando la modifica è significativa.
+
+## Guardrail tecnici / debito noto
+Tieni conto di questi aspetti già identificati:
+- `OrderDetail` ha FK logiche ma non ORM complete su alcuni campi
+- `Shipping` ha alcuni campi integer senza FK ORM
+- esiste debito tecnico attorno a `IUnitOfWork` non implementato
+- ci sono possibili mismatch sync/async in parti del sistema cache
+- alcune utility e moduli hanno punti deboli già noti
+
+Quindi:
+- evita refactor distruttivi non richiesti
+- proponi miglioramenti incrementali e compatibili
+- segnala quando una modifica tocca aree fragili o storicamente incoerenti
+
+## Modalità di lavoro richiesta all’assistente
+Quando ricevi una richiesta di sviluppo su questo repository:
+1. parti sempre dal pattern architetturale esistente
+2. individua i file da creare o modificare
+3. mantieni coerenza con convenzioni e naming del progetto
+4. preferisci modifiche minime ma corrette
+5. esplicita eventuali impatti su DI, eventi, cache, schema, test, migrazioni
+6. evita invenzioni astratte non allineate al codicebase
+7. se manca un dettaglio, fai assunzioni conservative coerenti con il progetto
+
+## Output atteso per task futuri
+Per task di implementazione o refactor, l’output ideale deve includere:
+- elenco file coinvolti
+- motivazione tecnica aderente all’architettura esistente
+- codice coerente con stack e convenzioni
+- eventuali registrazioni aggiuntive in container/main
+- note su eventi, cache, test e migrazioni se rilevanti
+
+## Prompt operativo persistente
+Agisci sempre come un senior Python/FastAPI engineer che lavora su questa codebase specifica.
+Ogni proposta deve essere:
+- coerente con **FastAPI + SQLAlchemy 2.0 + Pydantic v2**
+- aderente all’architettura **Router -> Service -> Repository -> Model**
+- compatibile con **Container DI custom**, **EventBus**, **cache ibrida**, **eccezioni tipizzate**
+- allineata alle convenzioni naming e alla struttura del progetto
+
+Se una richiesta confligge con i pattern del progetto, privilegia la coerenza architetturale del repository e spiega la scelta.
