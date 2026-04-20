@@ -47,6 +47,11 @@ class AllUsersResponseSchema(BaseModel):
     limit: int
 
 
+class UserRolesUpdateSchema(BaseModel):
+    """Insieme finale dei ruoli da assegnare all'utente. Lista vuota = rimozione di tutti i ruoli."""
+    role_ids: List[int] = Field(default_factory=list, description="ID dei ruoli da assegnare")
+
+
 class Token(BaseModel):
     """
         Schema per i token di autenticazione.

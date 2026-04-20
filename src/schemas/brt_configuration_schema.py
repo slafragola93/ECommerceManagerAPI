@@ -27,23 +27,23 @@ class BrtConfigurationSchema(BaseModel):
 class BrtConfigurationResponseSchema(BaseModel):
     id_brt_config: int
     id_carrier_api: int
-    description: str
-    sender: str
-    api_user: str
-    departure_line: int
-    client_code: int
-    departure_branch: int
-    departure_depot: int
-    rate_code: int
-    service_type: str
-    default_weight: int
-    notes: Optional[str]
-    collection_mode: str
-    network: str
-    label_format: str
-    customer_notification: str
-    tracking_type: str
-    
+    description: Optional[str] = None
+    sender: Optional[str] = None
+    api_user: Optional[str] = None
+    departure_line: Optional[int] = None
+    client_code: Optional[int] = None
+    departure_branch: Optional[int] = None
+    departure_depot: Optional[int] = None
+    rate_code: Optional[int] = None
+    service_type: Optional[str] = None
+    default_weight: Optional[int] = None
+    notes: Optional[str] = None
+    collection_mode: Optional[str] = None
+    network: Optional[str] = None
+    label_format: Optional[str] = None
+    customer_notification: Optional[str] = None
+    tracking_type: Optional[str] = None
+
     model_config = {"from_attributes": True}
 
 

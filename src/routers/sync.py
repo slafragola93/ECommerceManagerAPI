@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any
 import asyncio
 import logging
+import time
 
-from src.database import get_db
+from src.database import get_db, SessionLocal
 from src.services.routers.auth_service import db_dependency, get_current_user
 from src.services.core.wrap import check_authentication
 from src.services.routers.auth_service import authorize
@@ -19,10 +20,10 @@ from src.repository.product_repository import ProductRepository
 from src.repository.order_repository import OrderRepository
 from src.routers.dependencies import get_ecommerce_service
 from src.services.routers.order_service import OrderService
+from src.services.sync.order_state_sync_service import _update_local_order_states
 from src.services.interfaces.order_service_interface import IOrderService
 from src.schemas.order_schema import OrderStateSyncSchema, OrderStateSyncResponseSchema
 from src.schemas.product_schema import SyncImagesResponseSchema
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +98,9 @@ async def sync_prestashop(
     if not store:
         raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
     
-    # Start background synchronization
+    # Start background synchronization (task crea la propria sessione DB)
     background_tasks.add_task(
         _run_prestashop_sync,
-        db=db,
         store_id=store_id,
         new_elements=True,
         limit=limit
@@ -147,10 +147,9 @@ async def sync_prestashop_full(
     if not store:
         raise HTTPException(status_code=404, detail=f"Store {store_id} not found")
     
-    # Start background synchronization
+    # Start background synchronization (task crea la propria sessione DB)
     background_tasks.add_task(
         _run_prestashop_sync,
-        db=db,
         store_id=store_id,
         new_elements=False
     )
@@ -266,12 +265,12 @@ async def sync_images(
     )
 
 
-async def _run_prestashop_sync(db: Session, store_id: int, new_elements: bool = True, incremental: bool = None, limit: int = None):
+async def _run_prestashop_sync(store_id: int, new_elements: bool = True, incremental: bool = None, limit: int = None):
     """
-    Background task to run PrestaShop synchronization
+    Background task to run PrestaShop synchronization.
+    Crea una sessione DB dedicata per evitare che la sessione della request sia chiusa prima del commit.
     
     Args:
-        db: Database session
         store_id: Store ID in the stores table
         new_elements: Whether to sync only new elements (incremental sync)
         incremental: Whether to run incremental sync (only new data) - deprecated, use new_elements
@@ -283,59 +282,66 @@ async def _run_prestashop_sync(db: Session, store_id: int, new_elements: bool = 
     
     sync_type = "incremental" if new_elements else "full"
     
-    # Recupera lo store per verificare che esista
-    store_repo = StoreRepository(db)
-    store = store_repo.get_by_id(store_id)
-    
-    if not store:
-        raise Exception(f"Store with ID {store_id} not found")
-    
-    if not store.is_active:
-        raise Exception(f"Store {store.name} is not active")
-    
-    # Note: limit parameter is not currently supported by PrestaShopService
-    # but we log it for future implementation
-    if limit:
-        print(f"Limit parameter set to {limit} (not yet implemented in PrestaShopService)")
-    
-    # Crea il service usando la funzione centralizzata
-    service_class = get_ecommerce_service(store_id, db, new_elements=new_elements)
-    
-    async with service_class as ps_service:
-        print(f"Base URL: {ps_service.base_url}")
-        print(f"API Key: {ps_service.api_key[:10]}...")
-        # Run synchronization based on type
-        results = await ps_service.sync_all_data()
-        
-        # Sincronizza anche gli stati ordini
-        try:
-            print("Syncing order states...")
-            order_states = await ps_service.sync_order_states()
-            print(f"Order states sync completed: {len(order_states)} states retrieved")
-        except Exception as e:
-            print(f"Warning: Order states sync failed: {str(e)}")
-            # Non bloccare la sincronizzazione per errori di sync stati
-        
-        print(f"{sync_type.capitalize()} synchronization completed:")
-        print(f"  Total processed: {results['total_processed']}")
-        print(f"  Total errors: {results['total_errors']}")
-        print(f"  Status: {results['status']}")
-        
-        if new_elements and 'last_ids' in results:
-            print(f"  Last imported IDs: {results['last_ids']}")
-        
-        # Log detailed results
-        for phase in results['phases']:
-            print(f"  Phase: {phase['phase']}")
-            print(f"    Processed: {phase['total_processed']}")
-            print(f"    Errors: {phase['total_errors']}")
-            
-            for func_result in phase['functions']:
-                status_icon = "✅" if func_result['status'] == 'SUCCESS' else "❌"
-                print(f"    {status_icon} {func_result['function']}: {func_result['processed']} records")
-                if func_result['status'] == 'ERROR':
-                    print(f"      Error: {func_result['error']}")
-        
+    db = SessionLocal()
+    try:
+        # Recupera lo store per verificare che esista
+        store_repo = StoreRepository(db)
+        store = store_repo.get_by_id(store_id)
+
+        if not store:
+            raise Exception(f"Store with ID {store_id} not found")
+
+        if not store.is_active:
+            raise Exception(f"Store {store.name} is not active")
+
+        # Note: limit parameter is not currently supported by PrestaShopService
+        # but we log it for future implementation
+        if limit:
+            print(f"Limit parameter set to {limit} (not yet implemented in PrestaShopService)")
+
+        # Crea il service usando la funzione centralizzata
+        service_class = get_ecommerce_service(store_id, db, new_elements=new_elements)
+
+        async with service_class as ps_service:
+            print(f"Base URL: {ps_service.base_url}")
+            print(f"API Key: {ps_service.api_key[:10]}...")
+            # Run synchronization based on type
+            results = await ps_service.sync_all_data()
+
+            # Sincronizza anche gli stati ordini e persiste in ecommerce_order_states
+            try:
+                print("Syncing order states...")
+                order_states = await ps_service.sync_order_states()
+                print(f"Order states sync completed: {len(order_states)} states retrieved")
+                if order_states:
+                    await _update_local_order_states(db, order_states, store_id)
+                    print(f"Order states saved to ecommerce_order_states: {len(order_states)}")
+            except Exception as e:
+                print(f"Warning: Order states sync failed: {str(e)}")
+                # Non bloccare la sincronizzazione per errori di sync stati
+
+            print(f"{sync_type.capitalize()} synchronization completed:")
+            print(f"  Total processed: {results['total_processed']}")
+            print(f"  Total errors: {results['total_errors']}")
+            print(f"  Status: {results['status']}")
+
+            if new_elements and 'last_ids' in results:
+                print(f"  Last imported IDs: {results['last_ids']}")
+
+            # Log detailed results
+            for phase in results['phases']:
+                print(f"  Phase: {phase['phase']}")
+                print(f"    Processed: {phase['total_processed']}")
+                print(f"    Errors: {phase['total_errors']}")
+
+                for func_result in phase['functions']:
+                    status_icon = "✅" if func_result['status'] == 'SUCCESS' else "❌"
+                    print(f"    {status_icon} {func_result['function']}: {func_result['processed']} records")
+                    if func_result['status'] == 'ERROR':
+                        print(f"      Error: {func_result['error']}")
+    finally:
+        db.close()
+
 
 @router.post("/test-connection", status_code=status.HTTP_200_OK)
 @check_authentication
@@ -381,6 +387,55 @@ async def test_prestashop_connection(
             "response_keys": list(response.keys()) if response else [],
             "response_sample": str(response)[:500] if response else "No response"
         }
+
+
+@router.post("/prestashop/order-states", status_code=status.HTTP_200_OK)
+@check_authentication
+@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
+async def import_order_states_from_ecommerce(
+    db: Session = Depends(get_db),
+    store_id: int = Query(..., description="ID dello store da cui importare gli stati ordine"),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Importa gli stati ordine dalla piattaforma e-commerce (PrestaShop) nello store indicato
+    e li persiste nella tabella ecommerce_order_states.
+
+    Returns:
+        200 OK: Numero di stati importati/aggiornati
+        404: Store non trovato o non attivo
+        500: Errore di connessione o sync
+    """
+    store_repo = StoreRepository(db)
+    store = store_repo.get_by_id(store_id)
+
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Store {store_id} non trovato")
+
+    if not store.is_active:
+        raise HTTPException(status_code=400, detail=f"Store {store.name} non è attivo")
+
+    try:
+        service_class = get_ecommerce_service(store_id, db)
+        async with service_class as ps_service:
+            order_states = await ps_service.sync_order_states()
+            if not order_states:
+                return {
+                    "store_id": store_id,
+                    "store_name": store.name,
+                    "synced": 0,
+                    "message": "Nessuno stato ordine recuperato dalla piattaforma"
+                }
+            await _update_local_order_states(db, order_states, store_id)
+            return {
+                "store_id": store_id,
+                "store_name": store.name,
+                "synced": len(order_states),
+                "message": f"Importati {len(order_states)} stati ordine in ecommerce_order_states"
+            }
+    except Exception as e:
+        logger.exception("Import order states failed")
+        raise HTTPException(status_code=500, detail=f"Import stati ordine fallito: {str(e)}")
 
 
 @router.post("/products/quantity", status_code=status.HTTP_202_ACCEPTED)

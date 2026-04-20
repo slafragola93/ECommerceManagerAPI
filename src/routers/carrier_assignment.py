@@ -1,8 +1,7 @@
 """
 Carrier Assignment Router rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional
-from fastapi import APIRouter, Depends, status, Query, Path, UploadFile, File, Form
+from fastapi import APIRouter, Depends, status, Query, Path
 from src.services.interfaces.carrier_assignment_service_interface import ICarrierAssignmentService
 from src.repository.interfaces.carrier_assignment_repository_interface import ICarrierAssignmentRepository
 from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
@@ -12,7 +11,7 @@ from src.schemas.carrier_assignment_schema import (
     CarrierAssignmentResponseSchema, 
     AllCarrierAssignmentsResponseSchema
 )
-from src.core.container import container
+
 from src.core.exceptions import (
     NotFoundException
 )
@@ -33,10 +32,13 @@ def get_carrier_assignment_service(db: db_dependency) -> ICarrierAssignmentServi
     configured_container = get_configured_container()
     
     carrier_assignment_repo = configured_container.resolve_with_session(ICarrierAssignmentRepository, db)
+    api_carrier_repo = configured_container.resolve_with_session(IApiCarrierRepository, db)
     carrier_assignment_service = configured_container.resolve(ICarrierAssignmentService)
     
     if hasattr(carrier_assignment_service, '_carrier_assignment_repository'):
         carrier_assignment_service._carrier_assignment_repository = carrier_assignment_repo
+    if hasattr(carrier_assignment_service, '_api_carrier_repository'):
+        carrier_assignment_service._api_carrier_repository = api_carrier_repo
     
     return carrier_assignment_service
 

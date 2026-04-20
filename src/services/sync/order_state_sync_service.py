@@ -47,7 +47,7 @@ async def sync_order_states_periodic(db: Session):
         for store in active_stores:
             try:
                 logger.info(f"Syncing order states for store {store.id_store} ({store.name})")
-                
+
                 # Usa factory per ottenere il service corretto
                 ecommerce_service = create_ecommerce_service(store.id_store, db)
                 
@@ -61,7 +61,7 @@ async def sync_order_states_periodic(db: Session):
                         continue
                     
                     logger.info(f"Retrieved {len(order_states)} order states from store {store.id_store}")
-                    
+
                     # Verifica e aggiorna stati locali
                     await _update_local_order_states(db, order_states, store.id_store)
                     

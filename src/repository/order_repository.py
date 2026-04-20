@@ -32,6 +32,7 @@ from ..models.payment import Payment
 from ..models.product import Product
 from ..models.order_detail import OrderDetail as OrderDetailModel
 from ..models.order_document import OrderDocument
+from ..models.fiscal_document import FiscalDocument
 from ..models.relations.relations import orders_history
 
 # Local application imports - Schemas
@@ -106,6 +107,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 search: Optional[str] = None,
                 is_payed: Optional[bool] = None,
                 is_invoice_requested: Optional[bool] = None,
+                has_invoice: Optional[bool] = None,
                 date_from: Optional[str] = None,
                 date_to: Optional[str] = None,
                 show_details: bool = False,
@@ -160,6 +162,12 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 query = query.filter(Order.is_payed == is_payed)
             if is_invoice_requested is not None:
                 query = query.filter(Order.is_invoice_requested == is_invoice_requested)
+            if has_invoice is not None:
+                invoice_exists = self.session.query(FiscalDocument.id_fiscal_document).filter(
+                    FiscalDocument.id_order == Order.id_order,
+                    FiscalDocument.document_type == 'invoice'
+                ).exists()
+                query = query.filter(invoice_exists if has_invoice else ~invoice_exists)
             
             # Filtri per data (se implementati)
             if date_from:
@@ -174,6 +182,19 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             query = query.distinct()
         
         orders_result = query.order_by(desc(Order.id_order)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        
+        # Pre-calcola has_invoice in batch per evitare N+1 in formatted_output
+        if orders_result:
+            order_ids = [o.id_order for o in orders_result]
+            invoiced_ids = {
+                row[0]
+                for row in self.session.query(FiscalDocument.id_order).filter(
+                    FiscalDocument.id_order.in_(order_ids),
+                    FiscalDocument.document_type == 'invoice'
+                ).distinct().all()
+            }
+            for o in orders_result:
+                o._has_invoice = o.id_order in invoiced_ids
         
         return orders_result
 
@@ -190,6 +211,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                   search: Optional[str] = None,
                   is_payed: Optional[bool] = None,
                   is_invoice_requested: Optional[bool] = None,
+                  has_invoice: Optional[bool] = None,
                   date_from: Optional[str] = None,
                   date_to: Optional[str] = None
                   ) -> int:
@@ -279,6 +301,12 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 query = query.filter(Order.is_payed == is_payed)
             if is_invoice_requested is not None:
                 query = query.filter(Order.is_invoice_requested == is_invoice_requested)
+            if has_invoice is not None:
+                invoice_exists = self.session.query(FiscalDocument.id_fiscal_document).filter(
+                    FiscalDocument.id_order == Order.id_order,
+                    FiscalDocument.document_type == 'invoice'
+                ).exists()
+                query = query.filter(invoice_exists if has_invoice else ~invoice_exists)
             
             # Filtri per data
             if date_from:
@@ -1231,7 +1259,8 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "ecommerce_id_state": order.id_ecommerce_state or None,
             "ecommerce_reference": order.reference or None,
             "ecommerce_order_state": format_ecommerce_order_state(order) or None,
-            "ecommerce_carrier": format_ecommerce_carrier(order) or None
+            "ecommerce_carrier": format_ecommerce_carrier(order) or None,
+            "has_invoice": self._resolve_has_invoice(order)
         }
         
         # Aggiungi order_packages anche per la lista ordini
@@ -1272,6 +1301,22 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
 
         
         return response
+    
+    def _resolve_has_invoice(self, order: Order) -> bool:
+        """Restituisce il flag derivato has_invoice per un ordine.
+
+        Usa il valore pre-calcolato in batch da get_all (attributo _has_invoice)
+        se presente, altrimenti esegue una EXISTS query mirata.
+        """
+        cached = getattr(order, '_has_invoice', None)
+        if cached is not None:
+            return bool(cached)
+        return self.session.query(
+            self.session.query(FiscalDocument.id_fiscal_document).filter(
+                FiscalDocument.id_order == order.id_order,
+                FiscalDocument.document_type == 'invoice'
+            ).exists()
+        ).scalar() or False
     
     def _get_multishippings(self, order_id: int) -> List[dict]:
         """

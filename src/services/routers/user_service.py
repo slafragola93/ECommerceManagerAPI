@@ -4,6 +4,7 @@ User Service rifattorizzato seguendo i principi SOLID
 from typing import List, Optional, Any
 from src.services.interfaces.user_service_interface import IUserService
 from src.repository.interfaces.user_repository_interface import IUserRepository
+from src.repository.interfaces.role_repository_interface import IRoleRepository
 from src.schemas.user_schema import UserSchema, UserResponseSchema
 from src.models.user import User
 from src.core.exceptions import (
@@ -18,8 +19,10 @@ import re
 class UserService(IUserService):
     """User Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
     
-    def __init__(self, user_repository: IUserRepository):
+    def __init__(self, user_repository: IUserRepository, role_repository: IRoleRepository):
         self._user_repository = user_repository
+        # Necessario per caricare i Role da assegnare (stessa sessione del user_repository)
+        self._role_repository = role_repository
     
     async def create_user(self, user_data: UserSchema) -> User:
         """Crea un nuovo utente con validazioni business"""
@@ -65,8 +68,11 @@ class UserService(IUserService):
         
         # Aggiorna l'utente
         try:
-            # Aggiorna i campi
+            # Campi da non assegnare direttamente (relationship: richiedono oggetti ORM, non dict)
+            skip_fields = {"roles"}
             for field_name, value in user_data.model_dump(exclude_unset=True).items():
+                if field_name in skip_fields:
+                    continue
                 if hasattr(user, field_name) and value is not None:
                     setattr(user, field_name, value)
             
@@ -79,7 +85,21 @@ class UserService(IUserService):
         """Ottiene un utente per ID"""
         user = self._user_repository.get_by_id_or_raise(user_id)
         return user
-    
+
+    async def set_user_roles(self, user_id: int, role_ids: List[int]) -> User:
+        """Sostituisce i ruoli dell'utente con quelli corrispondenti agli id forniti."""
+        user = self._user_repository.get_by_id_or_raise(user_id)
+        if not role_ids:
+            user.roles = []
+        else:
+            roles = self._role_repository.get_by_ids(role_ids)
+            if len(roles) < len(role_ids):
+                raise ValidationException(
+                    "Uno o più id_role non esistono; verificare la lista role_ids."
+                )
+            user.roles = roles
+        return self._user_repository.update(user)
+
     async def get_users(self, page: int = 1, limit: int = 10, **filters) -> List[User]:
         """Ottiene la lista degli utenti con filtri"""
         try:

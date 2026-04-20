@@ -46,3 +46,12 @@ class RoleRepository(BaseRepository[Role, int], IRoleRepository):
             ).first()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving role by name: {str(e)}")
+
+    def get_by_ids(self, ids: List[int]) -> List[Role]:
+        """Carica in una query i ruoli da assegnare (id in ids). Lista vuota se ids vuota."""
+        if not ids:
+            return []
+        try:
+            return self._session.query(Role).filter(Role.id_role.in_(ids)).all()
+        except Exception as e:
+            raise InfrastructureException(f"Database error retrieving roles by ids: {str(e)}")

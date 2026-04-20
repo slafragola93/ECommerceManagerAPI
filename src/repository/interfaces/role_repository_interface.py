@@ -13,3 +13,8 @@ class IRoleRepository(IRepository[Role, int]):
     def get_by_name(self, name: str) -> Optional[Role]:
         """Ottiene un ruolo per nome"""
         pass
+
+    @abstractmethod
+    def get_by_ids(self, ids: List[int]) -> List[Role]:
+        """Ottiene i ruoli con id nella lista (una sola query)."""
+        pass

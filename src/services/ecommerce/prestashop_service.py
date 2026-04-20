@@ -15,15 +15,8 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from tenacity import (
-    retry,
-    retry_unless_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 # Local imports - Core
-from src.core.exceptions import EcommerceApiResponseError
 
 # Local imports - Models
 from src.models.order import Order
@@ -37,6 +30,8 @@ from src.repository.payment_repository import PaymentRepository
 from src.repository.shipping_repository import ShippingRepository
 from src.repository.store_repository import StoreRepository
 from src.repository.tax_repository import TaxRepository
+from src.repository.product_repository import ProductRepository
+from src.models.product import Product
 
 # Local imports - Schemas
 from src.schemas.address_schema import AddressSchema
@@ -163,8 +158,7 @@ class PrestaShopService(BaseEcommerceService):
             original_products_data: Lista di dati originali da PrestaShop
         """
         try:
-            from src.repository.product_repository import ProductRepository
-            from src.models.product import Product
+ 
             
             
             product_repo = ProductRepository(self.db)
@@ -224,9 +218,7 @@ class PrestaShopService(BaseEcommerceService):
             product_id: ID locale del prodotto da aggiornare
         """
         try:
-            from src.repository.product_repository import ProductRepository
-            
-            
+        
             product_repo = ProductRepository(self.db)
             
             # Genera il nuovo img_url
@@ -380,7 +372,6 @@ class PrestaShopService(BaseEcommerceService):
             
             # Controlla se skip_images è 0 prima di aggiungere sync_product_images
             # Usa _store_config se _ecommerce_config non è disponibile (backward compatibility)
-            ecommerce_config = getattr(self, '_ecommerce_config', None) or getattr(self, '_store_config', {})
             skip_images = 0 #ecommerce_config.get('skip_images', 1)
             if skip_images == 0:
                 phase3_functions.append(("Product Images", self.sync_product_images))
@@ -389,7 +380,6 @@ class PrestaShopService(BaseEcommerceService):
             phase3_functions.append(("Orders", self.sync_orders))
             
             phase3_results = await self._sync_phase_sequential("Phase 3 - Complex Tables", phase3_functions)
-            print(f"DEBUG: Skip images: {skip_images}")
             sync_results['phases'].append(phase3_results)
             
             # Calculate totals
@@ -4259,11 +4249,6 @@ class PrestaShopService(BaseEcommerceService):
             print(f"DEBUG: Error in carrier assignment logic: {str(e)}")
             return None  # Nessuna assegnazione in caso di errore
     
-    @retry(
-        stop=stop_after_attempt(3),
-        retry=retry_unless_exception_type(EcommerceApiResponseError),
-        wait=wait_exponential(multiplier=1, min=1, max=10)
-    )
     async def sync_order_states(self) -> List[PrestaShopOrderState]:
         """
         Recupera stati ordini da PrestaShop.
@@ -4287,7 +4272,7 @@ class PrestaShopService(BaseEcommerceService):
             response = await self._make_request('/api/order_states', params=params)
             # Estrai array order_states dalla risposta
             order_states_data = response.get('order_states', [])
-            
+
             if not isinstance(order_states_data, list):
                 logger.warning(f"Expected list of order_states, got {type(order_states_data)}")
                 return []
@@ -4298,14 +4283,14 @@ class PrestaShopService(BaseEcommerceService):
                 try:
                     state_id = safe_int(state_data.get('id', 0))
                     state_name = state_data.get('name', '')
-                    
+
                     # Gestisci nomi multi-lingua: se name è dict, prendi primo valore
                     if isinstance(state_name, dict):
-                        # Prendi il primo valore del dizionario
-                        state_name = next(iter(state_name.values())) if state_name else ''
+                        # Prendi il primo valore del dizionario (default '' se vuoto per evitare StopIteration)
+                        state_name = next(iter(state_name.values()), '') if state_name else ''
                     elif not isinstance(state_name, str):
                         state_name = str(state_name) if state_name else ''
-                    
+
                     if state_id and state_id > 0:
                         order_states.append(PrestaShopOrderState(id=state_id, name=state_name))
                 except Exception as e:

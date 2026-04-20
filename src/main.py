@@ -282,12 +282,14 @@ else:
 # CORS configuration - più permissiva per sviluppo
 origins = [
     "http://localhost:4200",
-    "http://localhost:63297", 
+    "http://localhost:63297",
     "http://localhost:8000",
+    "http://localhost:8082",
     "http://127.0.0.1:4200",
     "http://127.0.0.1:8000",
+    "http://127.0.0.1:8082",
     "http://0.0.0.0:4200",
-    "http://0.0.0.0:8000"
+    "http://0.0.0.0:8000",
 ]
 
 # Add CORS middleware - DEVE essere il primo middleware
@@ -296,6 +298,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:4200",
         "http://127.0.0.1:4200",
+        "http://localhost:8082",
+        "http://127.0.0.1:8082",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -480,6 +484,23 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             "details": {},
             "status_code": exc.status_code
         }
+    )
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """ValueError dai service (es. order_detail): evita 500 generico e restituisce 4xx con messaggio."""
+    msg = str(exc)
+    status = 404 if "non trovato" in msg.lower() else 400
+    log_fn = logger.info if status == 404 else logger.warning
+    log_fn(f"ValueError ({status}): {msg}", extra={"path": str(request.url), "method": request.method})
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error_code": "NOT_FOUND" if status == 404 else "VALIDATION_ERROR",
+            "message": msg,
+            "details": {},
+            "status_code": status,
+        },
     )
 
 @app.exception_handler(Exception)

@@ -33,15 +33,6 @@ class ApiCarrierService(IApiCarrierService):
                 {"name": api_carrier_data.name}
             )
         
-        # Business Rule 3: Account number deve essere unico
-        existing_account = self._api_carrier_repository.get_by_account_number(api_carrier_data.account_number)
-        if existing_account:
-            raise BusinessRuleException(
-                f"API Carrier with account number '{api_carrier_data.account_number}' already exists",
-                ErrorCode.BUSINESS_RULE_VIOLATION,
-                {"account_number": api_carrier_data.account_number}
-            )
-        
         # Crea l'API carrier
         try:
             api_carrier = CarrierApi(**api_carrier_data.model_dump())
@@ -65,16 +56,6 @@ class ApiCarrierService(IApiCarrierService):
                     f"API Carrier with name '{api_carrier_data.name}' already exists",
                     ErrorCode.BUSINESS_RULE_VIOLATION,
                     {"name": api_carrier_data.name}
-                )
-        
-        # Business Rule: Se account number cambia, deve essere unico
-        if api_carrier_data.account_number != api_carrier.account_number:
-            existing = self._api_carrier_repository.get_by_account_number(api_carrier_data.account_number)
-            if existing and existing.id_carrier_api != api_carrier_id:
-                raise BusinessRuleException(
-                    f"API Carrier with account number '{api_carrier_data.account_number}' already exists",
-                    ErrorCode.BUSINESS_RULE_VIOLATION,
-                    {"account_number": api_carrier_data.account_number}
                 )
         
         # Aggiorna l'API carrier
