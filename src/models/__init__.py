@@ -28,7 +28,6 @@ from .order_document import OrderDocument
 from .fiscal_document import FiscalDocument
 from .fiscal_document_detail import FiscalDocumentDetail
 from .purchase_invoice_sync import PurchaseInvoiceSync
-from .relations import *
 from .brt_configuration import BrtConfiguration
 from .dhl_configuration import DhlConfiguration
 from .fedex_configuration import FedexConfiguration
@@ -38,3 +37,14 @@ from .platform_state_trigger import PlatformStateTrigger
 from .store import Store
 from .company_fiscal_info import CompanyFiscalInfo
 from .ecommerce_order_state import EcommerceOrderState
+
+
+
+# Nuovi modelli autenticazione
+from .refresh_token import RefreshToken
+from .app_modules import AppModule
+from .user_module_permission import UserModulePermission
+from .mfa_pending_session import MFAPendingSession
+from .auth_log import AuthLog
+
+from .relations import *
