@@ -14,7 +14,6 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
@@ -39,7 +38,6 @@ def get_message_service(db: db_dependency) -> IMessageService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllMessagesResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_messages(
     user: dict = Depends(get_current_user),
     message_service: IMessageService = Depends(get_message_service),
@@ -62,7 +60,6 @@ async def get_all_messages(
 
 @router.get("/{message_id}", status_code=status.HTTP_200_OK, response_model=MessageResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_message_by_id(
     message_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
@@ -78,7 +75,6 @@ async def get_message_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Message creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_message(
     message_data: MessageSchema,
     user: dict = Depends(get_current_user),
@@ -91,7 +87,6 @@ async def create_message(
 
 @router.put("/{message_id}", status_code=status.HTTP_200_OK, response_description="Message aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_message(
     message_data: MessageSchema,
     message_id: int = Path(gt=0),
@@ -107,7 +102,6 @@ async def update_message(
 
 @router.delete("/{message_id}", status_code=status.HTTP_200_OK, response_description="Message eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_message(
     message_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),

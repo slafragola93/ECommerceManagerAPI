@@ -14,10 +14,23 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import authorize, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
+
+# NB sulla convenzione di authorization:
+# Gli endpoint addresses sono protetti dai permessi del modulo
+# `customers` perché concettualmente gli indirizzi sono sottorisorse
+# del cliente. Un indirizzo non esiste senza un cliente a cui
+# appartiene.
+#
+# Letture (GET) → customers.read
+# Scritture (POST/PUT/DELETE) → customers.update
+#
+# DELETE su un indirizzo NON richiede customers.delete: cancellare
+# UN indirizzo è una modifica del cliente, non l'eliminazione del
+# cliente stesso.
 
 router = APIRouter(
     prefix="/api/v1/addresses",
@@ -43,12 +56,12 @@ def get_address_service(db: db_dependency) -> IAddressService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllAddressResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_addresses(
     user: dict = Depends(get_current_user),
     address_service: IAddressService = Depends(get_address_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("customers", "read")),
 ):
     """
     Restituisce tutti i address con supporto alla paginazione.
@@ -63,11 +76,11 @@ async def get_all_addresses(
 
 @router.get("/customer/{customer_id}", status_code=status.HTTP_200_OK, response_model=AddressesByCustomerResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_addresses_by_customer(
     customer_id: int = Path(gt=0, description="ID del customer"),
     user: dict = Depends(get_current_user),
-    address_service: IAddressService = Depends(get_address_service)
+    address_service: IAddressService = Depends(get_address_service),
+    _: None = Depends(require_permission("customers", "read")),
 ):
     """
     Restituisce tutti gli indirizzi di un customer specifico.
@@ -82,11 +95,11 @@ async def get_addresses_by_customer(
 
 @router.get("/{address_id}", status_code=status.HTTP_200_OK, response_model=AddressResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_address_by_id(
     user: dict = Depends(get_current_user),
     address_service: IAddressService = Depends(get_address_service),
-    address_id: int = Path(gt=0)
+    address_id: int = Path(gt=0),
+    _: None = Depends(require_permission("customers", "read")),
 ):
     """
     Restituisce un singolo address basato sull'ID specificato.
@@ -98,11 +111,11 @@ async def get_address_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Address creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_address(
     address_data: AddressSchema,
     user: dict = Depends(get_current_user),
-    address_service: IAddressService = Depends(get_address_service)
+    address_service: IAddressService = Depends(get_address_service),
+    _: None = Depends(require_permission("customers", "update")),
 ):
     """
     Crea un nuovo address con i dati forniti.
@@ -111,12 +124,12 @@ async def create_address(
 
 @router.put("/{address_id}", status_code=status.HTTP_200_OK, response_description="Address aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_address(
     address_data: AddressSchema,
     user: dict = Depends(get_current_user),
     address_service: IAddressService = Depends(get_address_service),
-    address_id: int = Path(gt=0)
+    address_id: int = Path(gt=0),
+    _: None = Depends(require_permission("customers", "update")),
 ):
     """
     Aggiorna i dati di un address esistente basato sull'ID specificato.
@@ -127,11 +140,11 @@ async def update_address(
 
 @router.delete("/{address_id}", status_code=status.HTTP_200_OK, response_description="Address eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_address(
     user: dict = Depends(get_current_user),
     address_service: IAddressService = Depends(get_address_service),
-    address_id: int = Path(gt=0)
+    address_id: int = Path(gt=0),
+    _: None = Depends(require_permission("customers", "update")),
 ):
     """
     Elimina un address basato sull'ID specificato.

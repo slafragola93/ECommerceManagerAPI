@@ -15,7 +15,7 @@ from src.core.exceptions import (
     NotFoundException,
     BusinessRuleException
 )
-from src.services.routers.auth_service import authorize, get_current_user, db_dependency
+from src.services.routers.auth_service import get_current_user, db_dependency, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 
@@ -40,12 +40,12 @@ def get_carrier_service(db: db_dependency) -> ICarrierService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCarriersResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_carriers(
     user: dict = Depends(get_current_user),
     carrier_service: ICarrierService = Depends(get_carrier_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("carriers", "read")),
 ):
     """
     Restituisce tutti i carrier con supporto alla paginazione.
@@ -63,7 +63,6 @@ async def get_all_carriers(
 
 @router.get("/price", status_code=status.HTTP_200_OK, response_model=CarrierPriceResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'PREVENTIVI'], permissions_required=['R'])
 async def get_carrier_price(
     db: db_dependency,
     id_carrier_api: int = Query(..., gt=0, description="ID del carrier API"),
@@ -129,11 +128,11 @@ async def get_carrier_price(
 
 @router.get("/{carrier_id}", status_code=status.HTTP_200_OK, response_model=CarrierResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_carrier_by_id(
     carrier_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    carrier_service: ICarrierService = Depends(get_carrier_service)
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    _: None = Depends(require_permission("carriers", "read")),
 ):
     """
     Restituisce un singolo carrier basato sull'ID specificato.
@@ -145,11 +144,11 @@ async def get_carrier_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Carrier creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_carrier(
     carrier_data: CarrierSchema,
     user: dict = Depends(get_current_user),
-    carrier_service: ICarrierService = Depends(get_carrier_service)
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    _: None = Depends(require_permission("carriers", "create")),
 ):
     """
     Crea un nuovo carrier con i dati forniti.
@@ -158,12 +157,12 @@ async def create_carrier(
     
 @router.put("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Carrier aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_carrier(
     carrier_data: CarrierSchema,
     carrier_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    carrier_service: ICarrierService = Depends(get_carrier_service)
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    _: None = Depends(require_permission("carriers", "update")),
 ):
     """
     Aggiorna i dati di un carrier esistente basato sull'ID specificato.
@@ -174,11 +173,11 @@ async def update_carrier(
 
 @router.delete("/{carrier_id}", status_code=status.HTTP_200_OK, response_description="Carrier eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_carrier(
     carrier_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    carrier_service: ICarrierService = Depends(get_carrier_service)
+    carrier_service: ICarrierService = Depends(get_carrier_service),
+    _: None = Depends(require_permission("carriers", "delete")),
 ):
     """
     Elimina un carrier basato sull'ID specificato.

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.services.core.wrap import check_authentication
-from src.services.routers.auth_service import authorize, get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.repository.platform_state_trigger_repository import PlatformStateTriggerRepository
 from src.schemas.platform_state_trigger_schema import (
     PlatformStateTriggerSchema,
@@ -31,7 +31,6 @@ def get_repository(db: Session = Depends(get_db)) -> PlatformStateTriggerReposit
     response_description="Lista trigger sincronizzazione stati"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_platform_state_triggers(
     page: int = Query(1, ge=1, description="Numero pagina"),
     limit: int = Query(100, ge=1, le=1000, description="Limite risultati per pagina"),
@@ -39,7 +38,8 @@ async def get_platform_state_triggers(
     id_store: Optional[int] = Query(None, gt=0, description="Filtra per ID store"),
     is_active: Optional[bool] = Query(None, description="Filtra per trigger attivi"),
     user: dict = Depends(get_current_user),
-    repo: PlatformStateTriggerRepository = Depends(get_repository)
+    repo: PlatformStateTriggerRepository = Depends(get_repository),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Ottiene lista di tutti i trigger di sincronizzazione stati.
@@ -74,11 +74,11 @@ async def get_platform_state_triggers(
     response_description="Trigger sincronizzazione stato"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_platform_state_trigger(
     trigger_id: int = Path(gt=0, description="ID trigger"),
     user: dict = Depends(get_current_user),
-    repo: PlatformStateTriggerRepository = Depends(get_repository)
+    repo: PlatformStateTriggerRepository = Depends(get_repository),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """Ottiene un trigger specifico per ID."""
     trigger = repo.get_by_id(trigger_id)
@@ -97,11 +97,11 @@ async def get_platform_state_trigger(
     response_description="Trigger creato con successo"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_platform_state_trigger(
     trigger_data: PlatformStateTriggerSchema,
     user: dict = Depends(get_current_user),
-    repo: PlatformStateTriggerRepository = Depends(get_repository)
+    repo: PlatformStateTriggerRepository = Depends(get_repository),
+    _: None = Depends(require_permission("settings", "create")),
 ):
     """
     Crea un nuovo trigger di sincronizzazione stato.
@@ -158,12 +158,12 @@ async def create_platform_state_trigger(
     response_description="Trigger aggiornato con successo"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_platform_state_trigger(
     trigger_id: int = Path(gt=0, description="ID trigger"),
     trigger_data: PlatformStateTriggerUpdateSchema = ...,
     user: dict = Depends(get_current_user),
-    repo: PlatformStateTriggerRepository = Depends(get_repository)
+    repo: PlatformStateTriggerRepository = Depends(get_repository),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """Aggiorna un trigger esistente."""
     trigger = repo.get_by_id(trigger_id)
@@ -194,11 +194,11 @@ async def update_platform_state_trigger(
     response_description="Trigger eliminato con successo"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_platform_state_trigger(
     trigger_id: int = Path(gt=0, description="ID trigger"),
     user: dict = Depends(get_current_user),
-    repo: PlatformStateTriggerRepository = Depends(get_repository)
+    repo: PlatformStateTriggerRepository = Depends(get_repository),
+    _: None = Depends(require_permission("settings", "delete")),
 ):
     """Elimina un trigger."""
     trigger = repo.get_by_id(trigger_id)
@@ -223,9 +223,9 @@ async def delete_platform_state_trigger(
     response_description="Lista eventi disponibili"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_available_events(
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Restituisce lista di tutti gli eventi disponibili nell'applicazione.

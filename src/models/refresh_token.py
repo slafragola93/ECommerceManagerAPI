@@ -14,7 +14,7 @@ class RefreshToken(Base):
     ip_address  = Column(String(45), nullable=True)
     expires_at  = Column(DateTime, nullable=False)
     revoked_at  = Column(DateTime, nullable=True)
-    created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at  = Column(DateTime, default=datetime.now(), nullable=False)
 
     # Relazione
     user = relationship('User', back_populates='refresh_tokens')
@@ -27,7 +27,7 @@ class RefreshToken(Base):
         """
         return (
             self.revoked_at is None and
-            self.expires_at > datetime.utcnow()
+            self.expires_at > datetime.now()
         )
 
     def revoke(self):
@@ -35,4 +35,4 @@ class RefreshToken(Base):
         Marca il token come revocato.
         Chiamato durante il logout.
         """
-        self.revoked_at = datetime.utcnow()
+        self.revoked_at = datetime.now()

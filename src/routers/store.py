@@ -17,10 +17,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/stores",
@@ -45,12 +44,12 @@ def get_store_service(db: db_dependency) -> IStoreService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllStoresResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_stores(
     user: dict = Depends(get_current_user),
     store_service: IStoreService = Depends(get_store_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("stores", "read")),
 ):
     """
     Restituisce tutti gli store con supporto alla paginazione.
@@ -68,10 +67,10 @@ async def get_all_stores(
 
 @router.get("/default", status_code=status.HTTP_200_OK, response_model=StoreResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_default_store(
     user: dict = Depends(get_current_user),
-    store_service: IStoreService = Depends(get_store_service)
+    store_service: IStoreService = Depends(get_store_service),
+    _: None = Depends(require_permission("stores", "read")),
 ):
     """
     Restituisce lo store di default.
@@ -81,11 +80,11 @@ async def get_default_store(
 
 @router.get("/{store_id}", status_code=status.HTTP_200_OK, response_model=StoreResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_store_by_id(
     store_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    store_service: IStoreService = Depends(get_store_service)
+    store_service: IStoreService = Depends(get_store_service),
+    _: None = Depends(require_permission("stores", "read")),
 ):
     """
     Restituisce un singolo store basato sull'ID specificato.
@@ -97,11 +96,11 @@ async def get_store_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Store creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_store(
     store_data: StoreCreateSchema,
     user: dict = Depends(get_current_user),
-    store_service: IStoreService = Depends(get_store_service)
+    store_service: IStoreService = Depends(get_store_service),
+    _: None = Depends(require_permission("stores", "create")),
 ):
     """
     Crea un nuovo store con i dati forniti.
@@ -110,12 +109,12 @@ async def create_store(
 
 @router.put("/{store_id}", status_code=status.HTTP_200_OK, response_description="Store aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_store(
     store_data: StoreUpdateSchema,
     store_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    store_service: IStoreService = Depends(get_store_service)
+    store_service: IStoreService = Depends(get_store_service),
+    _: None = Depends(require_permission("stores", "update")),
 ):
     """
     Aggiorna i dati di uno store esistente basato sull'ID specificato.
@@ -126,11 +125,11 @@ async def update_store(
 
 @router.delete("/{store_id}", status_code=status.HTTP_200_OK, response_description="Store eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_store(
     store_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    store_service: IStoreService = Depends(get_store_service)
+    store_service: IStoreService = Depends(get_store_service),
+    _: None = Depends(require_permission("stores", "delete")),
 ):
     """
     Elimina uno store basato sull'ID specificato.

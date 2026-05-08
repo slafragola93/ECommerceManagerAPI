@@ -10,10 +10,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/taxes",
@@ -35,12 +34,12 @@ def get_tax_service(db: db_dependency) -> ITaxService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllTaxesResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_taxes(
     user: dict = Depends(get_current_user),
     tax_service: ITaxService = Depends(get_tax_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("tax", "read")),
 ):
     """
     Restituisce tutte le tax con supporto alla paginazione.
@@ -58,11 +57,11 @@ async def get_all_taxes(
 
 @router.get("/{tax_id}", status_code=status.HTTP_200_OK, response_model=TaxResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_tax_by_id(
     tax_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    tax_service: ITaxService = Depends(get_tax_service)
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("tax", "read")),
 ):
     """
     Restituisce una singola tax basata sull'ID specificato.
@@ -74,11 +73,11 @@ async def get_tax_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Tax creata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_tax(
     tax_data: TaxSchema,
     user: dict = Depends(get_current_user),
-    tax_service: ITaxService = Depends(get_tax_service)
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("tax", "create")),
 ):
     """
     Crea una nuova tax con i dati forniti.
@@ -87,12 +86,12 @@ async def create_tax(
 
 @router.put("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax aggiornata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_tax(
     tax_data: TaxSchema,
     tax_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    tax_service: ITaxService = Depends(get_tax_service)
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("tax", "update")),
 ):
     """
     Aggiorna i dati di una tax esistente basata sull'ID specificato.
@@ -103,11 +102,11 @@ async def update_tax(
 
 @router.delete("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax eliminata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_tax(
     tax_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    tax_service: ITaxService = Depends(get_tax_service)
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("tax", "delete")),
 ):
     """
     Elimina una tax basata sull'ID specificato.

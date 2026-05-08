@@ -16,10 +16,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
 
 router = APIRouter(
     prefix="/api/v1/carrier-assignments",
@@ -44,12 +43,12 @@ def get_carrier_assignment_service(db: db_dependency) -> ICarrierAssignmentServi
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCarrierAssignmentsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_carrier_assignments(
     user: dict = Depends(get_current_user),
     carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("carriers", "read")),
 ):
     """
     Restituisce tutti i carrier_assignment con supporto alla paginazione.
@@ -67,11 +66,11 @@ async def get_all_carrier_assignments(
 
 @router.get("/{carrier_assignment_id}", status_code=status.HTTP_200_OK, response_model=CarrierAssignmentResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_carrier_assignment_by_id(
     carrier_assignment_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service)
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    _: None = Depends(require_permission("carriers", "read")),
 ):
     """
     Restituisce un singolo carrier_assignment basato sull'ID specificato.
@@ -83,11 +82,11 @@ async def get_carrier_assignment_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="CarrierAssignment creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_carrier_assignment(
     carrier_assignment_data: CarrierAssignmentSchema,
     user: dict = Depends(get_current_user),
-    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service)
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    _: None = Depends(require_permission("carriers", "create")),
 ):
     """
     Crea un nuovo carrier_assignment con i dati forniti.
@@ -96,12 +95,12 @@ async def create_carrier_assignment(
 
 @router.put("/{carrier_assignment_id}", status_code=status.HTTP_200_OK, response_description="CarrierAssignment aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_carrier_assignment(
     carrier_assignment_data: CarrierAssignmentUpdateSchema,
     carrier_assignment_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service)
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    _: None = Depends(require_permission("carriers", "update")),
 ):
     """
     Aggiorna i dati di un carrier_assignment esistente basato sull'ID specificato.
@@ -112,11 +111,11 @@ async def update_carrier_assignment(
 
 @router.delete("/{carrier_assignment_id}", status_code=status.HTTP_200_OK, response_description="CarrierAssignment eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_carrier_assignment(
     carrier_assignment_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service)
+    carrier_assignment_service: ICarrierAssignmentService = Depends(get_carrier_assignment_service),
+    _: None = Depends(require_permission("carriers", "delete")),
 ):
     """
     Elimina un carrier_assignment basato sull'ID specificato.

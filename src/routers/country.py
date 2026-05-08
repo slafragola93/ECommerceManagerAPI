@@ -11,10 +11,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/countries",
@@ -36,7 +35,6 @@ def get_country_service(db: db_dependency) -> ICountryService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCountryResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_countries(
     user: dict = Depends(get_current_user),
     country_service: ICountryService = Depends(get_country_service),
@@ -59,7 +57,6 @@ async def get_all_countries(
 
 @router.get("/{country_id}", status_code=status.HTTP_200_OK, response_model=CountryResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_country_by_id(
     country_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
@@ -75,11 +72,11 @@ async def get_country_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Country creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_country(
     country_data: CountrySchema,
     user: dict = Depends(get_current_user),
-    country_service: ICountryService = Depends(get_country_service)
+    country_service: ICountryService = Depends(get_country_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Crea un nuovo country con i dati forniti.
@@ -88,12 +85,12 @@ async def create_country(
 
 @router.put("/{country_id}", status_code=status.HTTP_200_OK, response_description="Country aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_country(
     country_data: CountrySchema,
     country_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    country_service: ICountryService = Depends(get_country_service)
+    country_service: ICountryService = Depends(get_country_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Aggiorna i dati di un country esistente basato sull'ID specificato.
@@ -104,11 +101,11 @@ async def update_country(
 
 @router.delete("/{country_id}", status_code=status.HTTP_200_OK, response_description="Country eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_country(
     country_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    country_service: ICountryService = Depends(get_country_service)
+    country_service: ICountryService = Depends(get_country_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Elimina un country basato sull'ID specificato.

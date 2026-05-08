@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from io import BytesIO
 
 from src.database import get_db
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.repository.fiscal_document_repository import FiscalDocumentRepository
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.services.external.fatturapa_service import FatturaPAService
@@ -61,7 +61,8 @@ async def create_invoice(
         }
     ),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
     Crea una nuova fattura per un ordine
@@ -89,7 +90,8 @@ async def create_invoice(
 async def get_invoices_by_order(
     id_order: int = Path(..., gt=0, description="ID dell'ordine"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
     Recupera tutte le fatture di un ordine
@@ -112,7 +114,8 @@ async def get_invoices_by_order(
 async def create_credit_note(
     credit_note_data: CreditNoteCreateSchema,
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
     Crea una nota di credito per una fattura esistente
@@ -355,7 +358,8 @@ async def create_credit_note(
 async def get_credit_notes_by_invoice(
     id_invoice: int = Path(..., gt=0, description="ID della fattura"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """Recupera tutte le note di credito di una fattura"""
     repo = get_fiscal_repository(db)
@@ -369,7 +373,8 @@ async def get_credit_notes_by_invoice(
 async def get_fiscal_document(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """Recupera documento fiscale per ID (fattura o nota di credito)"""
     repo = get_fiscal_repository(db)
@@ -389,7 +394,8 @@ async def get_fiscal_documents(
     is_electronic: Optional[bool] = Query(None, description="Filtra per elettronici/non elettronici"),
     status: Optional[str] = Query(None, description="Filtra per status"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
     Recupera lista documenti fiscali con filtri
@@ -422,7 +428,8 @@ async def get_fiscal_documents(
 async def delete_fiscal_document(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "delete")),
 ):
     """
     Elimina documento fiscale (solo se status=pending)
@@ -446,7 +453,8 @@ async def delete_fiscal_document(
 async def generate_xml(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
 ):
     """
     Genera XML FatturaPA per documento fiscale
@@ -535,7 +543,8 @@ async def update_status(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     status_data: FiscalDocumentUpdateStatusSchema = Body(...),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
 ):
     """Aggiorna status di un documento fiscale"""
     repo = get_fiscal_repository(db)
@@ -555,7 +564,8 @@ async def send_to_sdi(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     send_to_sdi: bool = Body(False, description="Se True, invia a Sistema di Interscambio (default: False = solo upload)"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
 ):
     """
     Carica documento fiscale su FatturaPA (con opzione invio a SDI)
@@ -667,7 +677,8 @@ def _generate_pdf_with_fpdf(fiscal_document, order, invoice_address, delivery_ad
 async def generate_fiscal_document_pdf(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
     Genera PDF per documento fiscale (fattura o nota di credito)

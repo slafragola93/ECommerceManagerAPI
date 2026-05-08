@@ -14,10 +14,9 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/order-states",
@@ -39,7 +38,6 @@ def get_order_state_service(db: db_dependency) -> IOrderStateService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllOrdersStateResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_order_states(
     user: dict = Depends(get_current_user),
     order_state_service: IOrderStateService = Depends(get_order_state_service),
@@ -62,7 +60,6 @@ async def get_all_order_states(
 
 @router.get("/{order_state_id}", status_code=status.HTTP_200_OK, response_model=OrderStateResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_order_state_by_id(
     order_state_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
@@ -78,11 +75,11 @@ async def get_order_state_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="OrderState creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_order_state(
     order_state_data: OrderStateSchema,
     user: dict = Depends(get_current_user),
-    order_state_service: IOrderStateService = Depends(get_order_state_service)
+    order_state_service: IOrderStateService = Depends(get_order_state_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Crea un nuovo order_state con i dati forniti.
@@ -91,12 +88,12 @@ async def create_order_state(
 
 @router.put("/{order_state_id}", status_code=status.HTTP_200_OK, response_description="OrderState aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_order_state(
     order_state_data: OrderStateSchema,
     order_state_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    order_state_service: IOrderStateService = Depends(get_order_state_service)
+    order_state_service: IOrderStateService = Depends(get_order_state_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Aggiorna i dati di un order_state esistente basato sull'ID specificato.
@@ -107,11 +104,11 @@ async def update_order_state(
 
 @router.delete("/{order_state_id}", status_code=status.HTTP_200_OK, response_description="OrderState eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_order_state(
     order_state_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    order_state_service: IOrderStateService = Depends(get_order_state_service)
+    order_state_service: IOrderStateService = Depends(get_order_state_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Elimina un order_state basato sull'ID specificato.

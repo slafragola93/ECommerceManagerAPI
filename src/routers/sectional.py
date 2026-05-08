@@ -14,10 +14,9 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/sectionals",
@@ -39,12 +38,12 @@ def get_sectional_service(db: db_dependency) -> ISectionalService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllSectionalsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_sectionals(
     user: dict = Depends(get_current_user),
     sectional_service: ISectionalService = Depends(get_sectional_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
     Restituisce tutti i sectional con supporto alla paginazione.
@@ -62,11 +61,11 @@ async def get_all_sectionals(
 
 @router.get("/{sectional_id}", status_code=status.HTTP_200_OK, response_model=SectionalResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_sectional_by_id(
     sectional_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    sectional_service: ISectionalService = Depends(get_sectional_service)
+    sectional_service: ISectionalService = Depends(get_sectional_service),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
     Restituisce un singolo sectional basato sull'ID specificato.
@@ -78,11 +77,11 @@ async def get_sectional_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Sectional creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_sectional(
     sectional_data: SectionalSchema,
     user: dict = Depends(get_current_user),
-    sectional_service: ISectionalService = Depends(get_sectional_service)
+    sectional_service: ISectionalService = Depends(get_sectional_service),
+    _: None = Depends(require_permission("fiscal_documents", "update")),
 ):
     """
     Crea un nuovo sectional con i dati forniti.
@@ -91,12 +90,12 @@ async def create_sectional(
 
 @router.put("/{sectional_id}", status_code=status.HTTP_200_OK, response_description="Sectional aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_sectional(
     sectional_data: SectionalSchema,
     sectional_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    sectional_service: ISectionalService = Depends(get_sectional_service)
+    sectional_service: ISectionalService = Depends(get_sectional_service),
+    _: None = Depends(require_permission("fiscal_documents", "update")),
 ):
     """
     Aggiorna i dati di un sectional esistente basato sull'ID specificato.
@@ -107,11 +106,11 @@ async def update_sectional(
 
 @router.delete("/{sectional_id}", status_code=status.HTTP_200_OK, response_description="Sectional eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_sectional(
     sectional_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    sectional_service: ISectionalService = Depends(get_sectional_service)
+    sectional_service: ISectionalService = Depends(get_sectional_service),
+    _: None = Depends(require_permission("fiscal_documents", "update")),
 ):
     """
     Elimina un sectional basato sull'ID specificato.

@@ -37,7 +37,7 @@ from src.core.exceptions import (
     AuthenticationException,
     InfrastructureException
 )
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.events.core.event import Event, EventType
 from src.events.runtime import emit_event
 from src.services.routers.order_service import OrderService
@@ -173,7 +173,8 @@ async def create_shipment(
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "create")),
 ):
     """
     Crea una nuova spedizione per un ordine (unificato per tutti i corrieri)
@@ -357,7 +358,8 @@ async def bulk_create_shipments(
     shipping_service: IShippingService = Depends(get_shipping_service),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "create")),
 ):
     """
     Crea spedizioni in modo massivo per una lista di ordini (unificato per tutti i corrieri)
@@ -536,7 +538,8 @@ async def get_tracking(
     shipping_service: IShippingService = Depends(get_shipping_service),
     user: dict = Depends(get_current_user),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Recupera informazioni di tracciamento per le spedizioni (unificato per tutti i corrieri)
@@ -583,7 +586,8 @@ async def download_shipment_label(
     shipment_document_repo: IShipmentDocumentRepository = Depends(get_shipment_document_repository),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Scarica il PDF della label per una spedizione (unificato per tutti i corrieri)
@@ -646,7 +650,8 @@ async def cancel_shipment(
     order_repo: IOrderRepository = Depends(get_repository),
     shipping_service: IShippingService = Depends(get_shipping_service),
     factory: CarrierServiceFactory = Depends(get_carrier_service_factory),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "delete")),
 ):
     """
     Cancella una spedizione per un ordine (unificato per tutti i corrieri)
@@ -699,7 +704,8 @@ async def create_multi_shipments(
     user: dict = Depends(get_current_user),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
     shipping_service: IShippingService = Depends(get_shipping_service),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "create")),
 ):
     """
     Crea un documento di spedizione multipla con articoli selezionati.
@@ -723,7 +729,8 @@ async def get_order_shipment_status(
     order_id: int = Path(..., description="ID dell'ordine"),
     user: dict = Depends(get_current_user),
     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Recupera lo stato di spedizione per ogni articolo dell'ordine.
@@ -750,7 +757,8 @@ async def get_order_multi_shipments(
     order_id: int = Path(..., description="ID dell'ordine"),
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Recupera lista di spedizioni multiple per un ordine.

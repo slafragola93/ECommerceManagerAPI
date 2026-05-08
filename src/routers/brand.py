@@ -14,7 +14,6 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
@@ -39,7 +38,6 @@ def get_brand_service(db: db_dependency) -> IBrandService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllBrandsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_brands(
     user: dict = Depends(get_current_user),
     brand_service: IBrandService = Depends(get_brand_service),
@@ -62,7 +60,6 @@ async def get_all_brands(
 
 @router.get("/{brand_id}", status_code=status.HTTP_200_OK, response_model=BrandResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_brand_by_id(
     brand_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
@@ -78,7 +75,6 @@ async def get_brand_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Brand creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_brand(
     brand_data: BrandSchema,
     user: dict = Depends(get_current_user),
@@ -91,7 +87,6 @@ async def create_brand(
 
 @router.put("/{brand_id}", status_code=status.HTTP_200_OK, response_description="Brand aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_brand(
     brand_data: BrandSchema,
     brand_id: int = Path(gt=0),
@@ -107,7 +102,6 @@ async def update_brand(
 
 @router.delete("/{brand_id}", status_code=status.HTTP_200_OK, response_description="Brand eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_brand(
     brand_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),

@@ -13,7 +13,7 @@ from src.core.dependencies import db_dependency
 from src.services.csv_import.csv_import_service import CSVImportService
 from src.services.csv_import.entity_mapper import EntityMapper
 from src.services.csv_import.dependency_resolver import DependencyResolver
-from src.services.routers.auth_service import get_current_user, authorize
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.services.core.wrap import check_authentication
 
 
@@ -29,7 +29,6 @@ router = APIRouter(
     response_description="CSV import completed"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def import_csv(
     db: db_dependency,
     user: dict = Depends(get_current_user),
@@ -37,7 +36,8 @@ async def import_csv(
     entity_type: str = Query(..., description="Entity type: products, customers, addresses, brands, categories, carriers, countries, languages, payments, orders, order_details"),
     id_store: Optional[int] = Query(None, description="Store ID (optional)"),
     batch_size: int = Query(1000, ge=100, le=10000, description="Batch size for insert (100-10000)"),
-    validate_only: bool = Query(False, description="If true, only validate without importing")
+    validate_only: bool = Query(False, description="If true, only validate without importing"),
+    _: None = Depends(require_permission("settings", "create")),
 ):
     """
     Import data from CSV file.
@@ -112,11 +112,11 @@ async def import_csv(
     response_description="CSV template downloaded"
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_csv_template(
     entity_type: str = Path(..., description="Entity type for template"),
     id_store: Optional[int] = Query(None, description="Store ID (optional, for documentation)"),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Download CSV template with correct headers for entity type.
@@ -161,9 +161,9 @@ async def get_csv_template(
     status_code=status.HTTP_200_OK
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_supported_entities(
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Get list of supported entity types for CSV import.

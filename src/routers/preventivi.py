@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy.orm import Session
 from src.database import get_db
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.models.user import User
 from src.services.routers.preventivo_service import PreventivoService
 from src.schemas.preventivo_schema import (
@@ -179,7 +179,8 @@ async def create_preventivo(
         }
     ),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "create")),
 ):
     """
     Crea un nuovo preventivo con customer, indirizzi e articoli.
@@ -245,7 +246,8 @@ async def get_preventivi(
     date_from: Optional[str] = Query(None, description="Data inizio filtro (formato: YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Data fine filtro (formato: YYYY-MM-DD)"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "read")),
 ):
     """
     Lista preventivi con paginazione e filtri.
@@ -312,7 +314,8 @@ async def get_preventivi(
 async def get_preventivo(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo (id_order_document)"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "read")),
 ):
     """
     Recupera preventivo per ID con dettagli completi.
@@ -439,7 +442,8 @@ async def update_preventivo(
         }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Aggiorna preventivo esistente con supporto completo per entità nidificate.
@@ -518,7 +522,8 @@ async def add_articolo(
         }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Aggiunge articolo a preventivo esistente.
@@ -565,7 +570,8 @@ async def update_articolo(
         }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Aggiorna articolo esistente nel preventivo.
@@ -592,7 +598,8 @@ async def update_articolo(
 async def remove_articolo(
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo (id_order_detail)"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Rimuove articolo dal preventivo.
@@ -616,7 +623,8 @@ async def remove_articolo(
 async def delete_preventivo(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "delete")),
 ):
     """
     Elimina preventivo definitivamente.
@@ -645,7 +653,8 @@ async def delete_preventivo(
 async def duplicate_preventivo(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo da duplicare"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "create")),
 ):
     """
     Duplica preventivo esistente creando copia completa.
@@ -681,7 +690,8 @@ async def duplicate_preventivo(
 async def convert_to_order(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo da convertire"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Converte preventivo in ordine.
@@ -736,7 +746,8 @@ async def bulk_delete_preventivi(
         }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "delete")),
 ):
     """
     Elimina più preventivi in modo massivo.
@@ -781,7 +792,8 @@ async def bulk_convert_to_orders(
         }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Converte più preventivi in ordini in modo massivo.
@@ -824,7 +836,8 @@ async def bulk_remove_articoli(
             }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Elimina più articoli da preventivi in modo massivo.
@@ -881,7 +894,8 @@ async def bulk_update_articoli(
         }
     }),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "update")),
 ):
     """
     Aggiorna più articoli di preventivi in modo massivo.
@@ -907,7 +921,8 @@ async def bulk_update_articoli(
 async def download_preventivo_pdf(
     id_order_document: int = Path(..., gt=0, description="ID del preventivo"),
     user: User = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("quotes", "read")),
 ):
     """
     Genera il PDF del preventivo specificato

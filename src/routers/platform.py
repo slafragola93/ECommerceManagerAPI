@@ -11,10 +11,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/platforms",
@@ -36,12 +35,12 @@ def get_platform_service(db: db_dependency) -> IPlatformService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllPlatformsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_platforms(
     user: dict = Depends(get_current_user),
     platform_service: IPlatformService = Depends(get_platform_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("platforms", "read")),
 ):
     """
     Restituisce tutte le platform con supporto alla paginazione.
@@ -59,11 +58,11 @@ async def get_all_platforms(
 
 @router.get("/{platform_id}", status_code=status.HTTP_200_OK, response_model=PlatformResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_platform_by_id(
     platform_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    platform_service: IPlatformService = Depends(get_platform_service)
+    platform_service: IPlatformService = Depends(get_platform_service),
+    _: None = Depends(require_permission("platforms", "read")),
 ):
     """
     Restituisce una singola platform basata sull'ID specificato.
@@ -75,11 +74,11 @@ async def get_platform_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Platform creata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_platform(
     platform_data: PlatformSchema,
     user: dict = Depends(get_current_user),
-    platform_service: IPlatformService = Depends(get_platform_service)
+    platform_service: IPlatformService = Depends(get_platform_service),
+    _: None = Depends(require_permission("platforms", "create")),
 ):
     """
     Crea una nuova platform con i dati forniti.
@@ -88,12 +87,12 @@ async def create_platform(
 
 @router.put("/{platform_id}", status_code=status.HTTP_200_OK, response_description="Platform aggiornata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_platform(
     platform_data: PlatformSchema,
     platform_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    platform_service: IPlatformService = Depends(get_platform_service)
+    platform_service: IPlatformService = Depends(get_platform_service),
+    _: None = Depends(require_permission("platforms", "update")),
 ):
     """
     Aggiorna i dati di una platform esistente basata sull'ID specificato.
@@ -104,11 +103,11 @@ async def update_platform(
 
 @router.delete("/{platform_id}", status_code=status.HTTP_200_OK, response_description="Platform eliminata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_platform(
     platform_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    platform_service: IPlatformService = Depends(get_platform_service)
+    platform_service: IPlatformService = Depends(get_platform_service),
+    _: None = Depends(require_permission("platforms", "delete")),
 ):
     """
     Elimina una platform basata sull'ID specificato.

@@ -11,10 +11,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/shipping-states",
@@ -36,7 +35,6 @@ def get_shipping_state_service(db: db_dependency) -> IShippingStateService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllShippingStatesResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_shipping_states(
     user: dict = Depends(get_current_user),
     shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
@@ -59,7 +57,6 @@ async def get_all_shipping_states(
 
 @router.get("/{shipping_state_id}", status_code=status.HTTP_200_OK, response_model=ShippingStateResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_shipping_state_by_id(
     shipping_state_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
@@ -75,11 +72,11 @@ async def get_shipping_state_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="ShippingState creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_shipping_state(
     shipping_state_data: ShippingStateSchema,
     user: dict = Depends(get_current_user),
-    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service)
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Crea un nuovo shipping_state con i dati forniti.
@@ -88,12 +85,12 @@ async def create_shipping_state(
 
 @router.put("/{shipping_state_id}", status_code=status.HTTP_200_OK, response_description="ShippingState aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_shipping_state(
     shipping_state_data: ShippingStateSchema,
     shipping_state_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service)
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Aggiorna i dati di un shipping_state esistente basato sull'ID specificato.
@@ -104,11 +101,11 @@ async def update_shipping_state(
 
 @router.delete("/{shipping_state_id}", status_code=status.HTTP_200_OK, response_description="ShippingState eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_shipping_state(
     shipping_state_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service)
+    shipping_state_service: IShippingStateService = Depends(get_shipping_state_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Elimina un shipping_state basato sull'ID specificato.

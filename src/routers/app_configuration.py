@@ -19,10 +19,9 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/app_configurations",
@@ -48,12 +47,12 @@ def get_app_configuration_service(db: db_dependency) -> IAppConfigurationService
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllAppConfigurationsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_app_configurations(
     user: dict = Depends(get_current_user),
     app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Restituisce tutti i app_configuration con supporto alla paginazione.
@@ -77,11 +76,11 @@ async def get_all_app_configurations(
     summary="Configurazioni per categoria",
 )
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_app_configurations_by_category(
     user: dict = Depends(get_current_user),
     app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
     category: str = Path(..., min_length=1, description="Categoria (es. company_info, electronic_invoicing)"),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Restituisce tutte le configurazioni app per la categoria indicata.
@@ -98,11 +97,11 @@ async def get_app_configurations_by_category(
 
 @router.get("/{app_configuration_id}", status_code=status.HTTP_200_OK, response_model=AppConfigurationResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_app_configuration_by_id(
     user: dict = Depends(get_current_user),
     app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
-    app_configuration_id: int = Path(gt=0)
+    app_configuration_id: int = Path(gt=0),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Restituisce un singolo app_configuration basato sull'ID specificato.
@@ -113,11 +112,11 @@ async def get_app_configuration_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="AppConfiguration creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_app_configuration(
     app_configuration_data: AppConfigurationSchema,
     app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("settings", "create")),
 ):
     """
     Crea un nuovo app_configuration con i dati forniti.
@@ -126,12 +125,12 @@ async def create_app_configuration(
 
 @router.put("/{app_configuration_id}", status_code=status.HTTP_200_OK, response_description="AppConfiguration aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_app_configuration(
     app_configuration_data: AppConfigurationSchema,
     app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
     app_configuration_id: int = Path(gt=0),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Aggiorna i dati di un app_configuration esistente basato sull'ID specificato.
@@ -142,11 +141,11 @@ async def update_app_configuration(
 
 @router.delete("/{app_configuration_id}", status_code=status.HTTP_200_OK, response_description="AppConfiguration eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_app_configuration(
     user: dict = Depends(get_current_user),
     app_configuration_service: IAppConfigurationService = Depends(get_app_configuration_service),
-    app_configuration_id: int = Path(gt=0)
+    app_configuration_id: int = Path(gt=0),
+    _: None = Depends(require_permission("settings", "delete")),
 ):
     """
     Elimina un app_configuration basato sull'ID specificato.

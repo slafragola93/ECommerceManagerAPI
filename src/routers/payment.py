@@ -14,7 +14,7 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import authorize, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
@@ -39,12 +39,12 @@ def get_payment_service(db: db_dependency) -> IPaymentService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllPaymentsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_payments(
     user: dict = Depends(get_current_user),
     payment_service: IPaymentService = Depends(get_payment_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("payments", "read")),
 ):
     """
     Restituisce tutti i payment con supporto alla paginazione.
@@ -62,11 +62,11 @@ async def get_all_payments(
 
 @router.get("/{payment_id}", status_code=status.HTTP_200_OK, response_model=PaymentResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_payment_by_id(
     payment_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    payment_service: IPaymentService = Depends(get_payment_service)
+    payment_service: IPaymentService = Depends(get_payment_service),
+    _: None = Depends(require_permission("payments", "read")),
 ):
     """
     Restituisce un singolo payment basato sull'ID specificato.
@@ -78,11 +78,11 @@ async def get_payment_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Payment creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_payment(
     payment_data: PaymentSchema,
     user: dict = Depends(get_current_user),
-    payment_service: IPaymentService = Depends(get_payment_service)
+    payment_service: IPaymentService = Depends(get_payment_service),
+    _: None = Depends(require_permission("payments", "create")),
 ):
     """
     Crea un nuovo payment con i dati forniti.
@@ -91,12 +91,12 @@ async def create_payment(
 
 @router.put("/{payment_id}", status_code=status.HTTP_200_OK, response_description="Payment aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_payment(
     payment_data: PaymentSchema,
     payment_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    payment_service: IPaymentService = Depends(get_payment_service)
+    payment_service: IPaymentService = Depends(get_payment_service),
+    _: None = Depends(require_permission("payments", "update")),
 ):
     """
     Aggiorna i dati di un payment esistente basato sull'ID specificato.
@@ -107,11 +107,11 @@ async def update_payment(
 
 @router.delete("/{payment_id}", status_code=status.HTTP_200_OK, response_description="Payment eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_payment(
     payment_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    payment_service: IPaymentService = Depends(get_payment_service)
+    payment_service: IPaymentService = Depends(get_payment_service),
+    _: None = Depends(require_permission("payments", "delete")),
 ):
     """
     Elimina un payment basato sull'ID specificato.

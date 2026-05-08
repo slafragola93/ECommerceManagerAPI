@@ -1,23 +1,37 @@
 from pydantic import BaseModel, Field
+from typing import Optional
+from src.models.role import PermissionType
 
 
 class RoleSchema(BaseModel):
-    name: str = Field(..., max_length=15)
-    permissions: str = Field(max_length=4, default='R', pattern=r'^[CRUD]{1,4}$')
+    """Schema per creazione e aggiornamento ruolo"""
+    name:            str = Field(..., max_length=50)
+    description:     Optional[str] = Field(None, max_length=255)
+    permission_type: PermissionType = PermissionType.custom
+
+    class Config:
+        from_attributes = True
+        use_enum_values = True
 
 
 class RoleResponseSchema(BaseModel):
-    id_role: int
-    name: str
-    permissions: str
+    """Schema risposta singolo ruolo"""
+    id_role:         int
+    name:            str
+    description:     Optional[str] = None
+    permission_type: str
+    is_system:       bool
+
+    class Config:
+        from_attributes = True
 
 
 class AllRolesResponseSchema(BaseModel):
+    """Schema risposta lista ruoli"""
     roles: list[RoleResponseSchema]
     total: int
-    page: int
+    page:  int
     limit: int
 
-
-class ConfigDict:
-    from_attributes = True
+    class Config:
+        from_attributes = True

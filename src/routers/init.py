@@ -2,9 +2,10 @@
 Router per i dati di inizializzazione del frontend
 """
 
+from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError, ResponseValidationError
+from fastapi.exceptions import ResponseValidationError
 from pydantic import ValidationError
 from typing import Optional
 import time
@@ -13,39 +14,70 @@ from src.database import get_db
 from src.services.routers.init_service import InitService
 from src.schemas.init_schema import InitDataSchema
 from src.core.exceptions import InfrastructureException, ErrorCode
+from src.services.routers.auth_service import get_current_user
 
-router = APIRouter(
-    prefix="/api/v1/init",
-    tags=["Initialization"]
-)
+from src.core.dependencies import db_dependency
+from src.services.interfaces.permission_service_interface import IPermissionService
+
+router = APIRouter(prefix="/api/v1/init", tags=["Initialization"])
+
+
+def get_permission_service(db: db_dependency) -> IPermissionService:
+    """Dependency injection per Permission Service"""
+    from src.core.container_config import get_configured_container
+    from src.repository.interfaces.permission_repository_interface import (
+        IPermissionRepository,
+    )
+    from src.repository.interfaces.user_repository_interface import IUserRepository
+    from src.repository.interfaces.role_repository_interface import IRoleRepository
+
+    configured_container = get_configured_container()
+
+    perm_repo = configured_container.resolve_with_session(IPermissionRepository, db)
+    user_repo = configured_container.resolve_with_session(IUserRepository, db)
+    role_repo = configured_container.resolve_with_session(IRoleRepository, db)
+    perm_service = configured_container.resolve(IPermissionService)
+
+    if hasattr(perm_service, "_permission_repo"):
+        perm_service._permission_repo = perm_repo
+    if hasattr(perm_service, "_user_repo"):
+        perm_service._user_repo = user_repo
+    if hasattr(perm_service, "_role_repo"):
+        perm_service._role_repo = role_repo
+    if hasattr(perm_service, "_db"):
+        perm_service._db = db
+
+    return perm_service
 
 
 @router.get("/", response_model=InitDataSchema)
 async def get_init_data(
-    include: Optional[str] = Query("all", description="Dati da includere (static,dynamic,all)"),
+    include: Optional[str] = Query(
+        "all", description="Dati da includere (static,dynamic,all)"
+    ),
     version: Optional[str] = Query("1.0", description="Versione dei dati"),
-    db=Depends(get_db)
+    db=Depends(get_db),
 ):
     """
     Ottiene i dati di inizializzazione per il frontend.
-    
+
     - **include**: Specifica quali dati includere
       - `static`: Solo dati statici (platforms, languages, countries, taxes)
       - `dynamic`: Solo dati dinamici (sectionals, order_states, shipping_states)
       - `all`: Tutti i dati (default)
     - **version**: Versione dei dati richiesta
-    
+
     Returns:
         InitDataSchema: Dati di inizializzazione completi
     """
     try:
         start_time = time.time()
         init_service = InitService(db)
-        
+
         if include == "static":
             # Solo dati statici
             static_data = await init_service.get_static_data()
-            
+
             return JSONResponse(
                 content={
                     **static_data,
@@ -58,20 +90,20 @@ async def get_init_data(
                         "ttl_static": 604800,  # 7 giorni
                         "ttl_dynamic": 0,
                         "version": version,
-                        "total_items": len(static_data.get("platforms", [])) + 
-                                      len(static_data.get("languages", [])) + 
-                                      len(static_data.get("countries", [])) + 
-                                      len(static_data.get("taxes", [])) +
-                                      len(static_data.get("carriers", [])) +
-                                      len(static_data.get("stores", []))
-                    }
+                        "total_items": len(static_data.get("platforms", []))
+                        + len(static_data.get("languages", []))
+                        + len(static_data.get("countries", []))
+                        + len(static_data.get("taxes", []))
+                        + len(static_data.get("carriers", []))
+                        + len(static_data.get("stores", [])),
+                    },
                 }
             )
-        
+
         elif include == "dynamic":
             # Solo dati dinamici
             dynamic_data = await init_service.get_dynamic_data()
-            
+
             return JSONResponse(
                 content={
                     "platforms": [],
@@ -87,14 +119,14 @@ async def get_init_data(
                         "ttl_static": 0,
                         "ttl_dynamic": 86400,  # 1 giorno
                         "version": version,
-                        "total_items": len(dynamic_data.get("sectionals", [])) + 
-                                      len(dynamic_data.get("order_states", [])) + 
-                                      len(dynamic_data.get("shipping_states", [])) +
-                                      len(dynamic_data.get("ecommerce_order_states", []))
-                    }
+                        "total_items": len(dynamic_data.get("sectionals", []))
+                        + len(dynamic_data.get("order_states", []))
+                        + len(dynamic_data.get("shipping_states", []))
+                        + len(dynamic_data.get("ecommerce_order_states", [])),
+                    },
                 }
             )
-        
+
         else:
             # Tutti i dati (default)
             try:
@@ -105,47 +137,47 @@ async def get_init_data(
                 error_msg = str(e)
                 raise InfrastructureException(
                     message=f"Errore validazione dati inizializzazione. Il campo 'stores' potrebbe mancare nella cache. "
-                           f"Prova a cancellare la cache e riprova.",
+                    f"Prova a cancellare la cache e riprova.",
                     error_code=ErrorCode.DATABASE_ERROR,
                     details={
                         "original_error": error_msg,
                         "suggestion": "Cancella la cache e riprova",
-                        "cache_keys": ["init_data:static", "init_data:full"]
-                    }
+                        "cache_keys": ["init_data:static", "init_data:full"],
+                    },
                 )
             except ResponseValidationError as e:
                 # Errore di validazione della risposta (Pydantic)
                 error_msg = str(e)
                 raise InfrastructureException(
                     message=f"Errore validazione risposta. Il campo 'stores' potrebbe mancare nella cache. "
-                           f"Prova a cancellare la cache e riprova.",
+                    f"Prova a cancellare la cache e riprova.",
                     error_code=ErrorCode.DATABASE_ERROR,
                     details={
                         "original_error": error_msg,
                         "suggestion": "Cancella la cache e riprova",
-                        "cache_keys": ["init_data:static", "init_data:full"]
-                    }
+                        "cache_keys": ["init_data:static", "init_data:full"],
+                    },
                 )
             except Exception as e:
                 error_msg = str(e)
                 if "stores" in error_msg.lower() or "validation" in error_msg.lower():
                     raise InfrastructureException(
                         message=f"Errore validazione dati inizializzazione. Il campo 'stores' potrebbe mancare nella cache. "
-                               f"Prova a cancellare la cache e riprova.",
+                        f"Prova a cancellare la cache e riprova.",
                         error_code=ErrorCode.DATABASE_ERROR,
                         details={
                             "original_error": error_msg,
                             "suggestion": "Cancella la cache e riprova",
-                            "cache_keys": ["init_data:static", "init_data:full"]
-                        }
+                            "cache_keys": ["init_data:static", "init_data:full"],
+                        },
                     )
                 raise
-    
+
     except Exception as e:
         raise InfrastructureException(
             message=f"Errore interno durante il caricamento dei dati: {str(e)}",
             error_code=ErrorCode.DATABASE_ERROR,
-            details={"original_error": str(e)}
+            details={"original_error": str(e)},
         )
 
 
@@ -158,7 +190,7 @@ async def get_static_data_only(db=Depends(get_db)):
     try:
         init_service = InitService(db)
         static_data = await init_service.get_static_data()
-        
+
         return JSONResponse(
             content={
                 **static_data,
@@ -166,16 +198,16 @@ async def get_static_data_only(db=Depends(get_db)):
                     "generated_at": time.time(),
                     "ttl": 604800,  # 7 giorni
                     "version": "1.0",
-                    "type": "static"
-                }
+                    "type": "static",
+                },
             }
         )
-    
+
     except Exception as e:
         raise InfrastructureException(
             message=f"Errore caricamento dati statici: {str(e)}",
             error_code=ErrorCode.DATABASE_ERROR,
-            details={"original_error": str(e)}
+            details={"original_error": str(e)},
         )
 
 
@@ -188,7 +220,7 @@ async def get_dynamic_data_only(db=Depends(get_db)):
     try:
         init_service = InitService(db)
         dynamic_data = await init_service.get_dynamic_data()
-        
+
         return JSONResponse(
             content={
                 **dynamic_data,
@@ -196,16 +228,16 @@ async def get_dynamic_data_only(db=Depends(get_db)):
                     "generated_at": time.time(),
                     "ttl": 86400,  # 1 giorno
                     "version": "1.0",
-                    "type": "dynamic"
-                }
+                    "type": "dynamic",
+                },
             }
         )
-    
+
     except Exception as e:
         raise InfrastructureException(
             message=f"Errore caricamento dati dinamici: {str(e)}",
             error_code=ErrorCode.DATABASE_ERROR,
-            details={"original_error": str(e)}
+            details={"original_error": str(e)},
         )
 
 
@@ -217,64 +249,89 @@ async def get_init_health(db=Depends(get_db)):
     """
     try:
         init_service = InitService(db)
-        
+
         # Test rapido di tutti i servizi
-        health_status = {
-            "status": "healthy",
-            "services": {},
-            "timestamp": time.time()
-        }
-        
+        health_status = {"status": "healthy", "services": {}, "timestamp": time.time()}
+
         # Test platforms
         try:
             platforms = await init_service._get_platforms()
             health_status["services"]["platforms"] = {
                 "status": "ok",
-                "count": len(platforms)
+                "count": len(platforms),
             }
         except Exception as e:
             health_status["services"]["platforms"] = {
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
             }
             health_status["status"] = "degraded"
-        
+
         # Test languages
         try:
             languages = await init_service._get_languages()
             health_status["services"]["languages"] = {
                 "status": "ok",
-                "count": len(languages)
+                "count": len(languages),
             }
         except Exception as e:
             health_status["services"]["languages"] = {
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
             }
             health_status["status"] = "degraded"
-        
+
         # Test countries
         try:
             countries = await init_service._get_countries()
             health_status["services"]["countries"] = {
                 "status": "ok",
-                "count": len(countries)
+                "count": len(countries),
             }
         except Exception as e:
             health_status["services"]["countries"] = {
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
             }
             health_status["status"] = "degraded"
-        
+
         # Test altri servizi...
         # (omesso per brevità, ma stesso pattern)
-        
+
         return health_status
-    
+
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": time.time()
-        }
+        return {"status": "unhealthy", "error": str(e), "timestamp": time.time()}
+
+
+@router.get("/permissions")
+async def get_user_permissions_init(
+    user: dict = Depends(get_current_user),
+    permission_service=Depends(get_permission_service),
+):
+    """
+    Restituisce i permessi dell'utente loggato.
+    """
+    user_id = user["id"]
+    result = permission_service.get_user_permissions(user_id)
+
+    return {
+        "user": {
+            "id": user_id,
+            "username": user["username"],
+            "role": user.get("role"),
+            "role_type": user.get("role_type"),
+        },
+        "module_permissions": [
+            {
+                "module": p.module_name,
+                "label": p.label,
+                "can_read": p.can_read,
+                "can_create": p.can_create,
+                "can_update": p.can_update,
+                "can_delete": p.can_delete,
+                "source": p.source,
+            }
+            for p in result.permissions
+        ],
+    }

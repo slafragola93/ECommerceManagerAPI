@@ -2,7 +2,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy.orm import Session
 from src.database import get_db
-from src.services.routers.auth_service import get_current_user, authorize
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.services.core.wrap import check_authentication
 from src.services.routers.ddt_service import DDTService
 from src.schemas.ddt_schema import (
@@ -41,7 +41,6 @@ db_dependency = Depends(get_db)
              summary="Crea DDT parziale da articoli ordine",
              description="Crea un DDT parziale a partire da uno o più articoli ordine con quantità specificate. Recupera automaticamente RDA e rda_quantity se presenti.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
 async def create_ddt_partial(
     request: DDTCreatePartialRequestSchema = Body(..., examples={
         "esempio_base": {
@@ -94,7 +93,8 @@ async def create_ddt_partial(
         }
     }),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "create")),
 ):
     """
     Crea un DDT parziale da uno o più articoli ordine.
@@ -159,7 +159,6 @@ async def create_ddt_partial(
             summary="Lista DDT essenziali",
             description="Recupera lista DDT con solo informazioni essenziali (mittente e articoli). Stessi filtri dei preventivi.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_ddt_list(
     page: int = Query(1, ge=1, description="Numero pagina (min: 1)"),
     limit: int = Query(100, ge=1, le=1000, description="Elementi per pagina (max: 1000)"),
@@ -169,7 +168,8 @@ async def get_ddt_list(
     date_from: Optional[str] = Query(None, description="Data inizio filtro (formato: YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Data fine filtro (formato: YYYY-MM-DD)"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "read")),
 ):
     """
     Lista DDT con informazioni essenziali.
@@ -206,11 +206,11 @@ async def get_ddt_list(
              summary="Crea DDT normale",
              description="Crea un DDT normalmente. Verifica che non esista già un DDT con lo stesso numero documento.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
 async def create_ddt(
     request: DDTCreateRequestSchema = Body(...),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "create")),
 ):
     """
     Crea un DDT normale.
@@ -235,11 +235,11 @@ async def create_ddt(
              summary="Accorpa articolo a DDT esistente",
              description="Aggiunge un articolo a un DDT esistente. Se l'articolo esiste già, somma la quantità.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def merge_articolo_to_ddt(
     request: DDTMergeRequestSchema = Body(...),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "update")),
 ):
     """
     Accorpa un articolo a un DDT esistente.
@@ -266,11 +266,11 @@ async def merge_articolo_to_ddt(
              summary="Genera DDT completo da ordine",
              description="Genera un Documento di Trasporto (DDT) completo a partire da tutti gli articoli di un ordine esistente.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
 async def generate_ddt_from_order(
     id_order: int = Path(..., gt=0, description="ID dell'ordine da cui generare il DDT"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "create")),
 ):
     """
     Genera un DDT (Documento di Trasporto) completo da un ordine esistente.
@@ -303,11 +303,11 @@ async def generate_ddt_from_order(
             description="Genera il PDF del Documento di Trasporto (DDT) specificato",
             response_description="File PDF del DDT")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def generate_ddt_pdf(
     id_order_document: int = Path(..., gt=0, description="ID del DDT"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "read")),
 ):
     """
     Genera il PDF del DDT specificato.
@@ -357,11 +357,11 @@ async def generate_ddt_pdf(
             summary="Dettaglio DDT completo",
             description="Recupera un DDT completo con tutti i dettagli, inclusi cliente, indirizzi, spedizione, articoli e pacchi.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def get_ddt_detail(
     id_order_document: int = Path(..., gt=0, description="ID del DDT"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "read")),
 ):
     """
     Recupera un DDT completo con tutti i dettagli.
@@ -394,12 +394,12 @@ async def get_ddt_detail(
            description="Aggiorna un articolo collegato a un DDT. L'articolo deve essere collegato a un DDT e il DDT deve essere modificabile.",
            response_description="Articolo DDT aggiornato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def update_ddt_articolo(
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
     articolo_data: ArticoloPreventivoUpdateSchema = Body(...),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "update")),
 ):
     """
     Aggiorna un articolo in un DDT.
@@ -498,11 +498,11 @@ async def update_ddt_articolo(
               summary="Elimina articolo DDT",
               description="Elimina un articolo collegato a un DDT. L'articolo deve essere collegato a un DDT e il DDT deve essere modificabile.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['D'])
 async def delete_ddt_articolo(
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
     user: dict = user_dependency,
-    db: Session = db_dependency
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("ddt", "update")),
 ):
     """
     Elimina un articolo da un DDT.

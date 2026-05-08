@@ -255,6 +255,14 @@ def configure_container():
     container.register_transient(IFedexShipmentService, FedexShipmentService)
     container.register_transient(IFedexTrackingService, FedexTrackingService)
     
+    # Permission Service
+    from src.repository.interfaces.permission_repository_interface import IPermissionRepository
+    from src.repository.permission_repository import PermissionRepository
+    from src.services.interfaces.permission_service_interface import IPermissionService
+    from src.services.routers.permission_service import PermissionService
+
+    container.register_transient(IPermissionRepository, PermissionRepository)
+    container.register_transient(IPermissionService, PermissionService)
 
 def get_configured_container():
     """Ottiene il container configurato"""

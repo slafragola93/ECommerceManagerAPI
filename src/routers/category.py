@@ -39,7 +39,6 @@ def get_category_service(db: db_dependency) -> ICategoryService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCategoryResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_categories(
     user: dict = Depends(get_current_user),
     category_service: ICategoryService = Depends(get_category_service),
@@ -62,7 +61,6 @@ async def get_all_categories(
 
 @router.get("/{category_id}", status_code=status.HTTP_200_OK, response_model=CategoryResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_category_by_id(
     category_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),

@@ -11,7 +11,7 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import authorize, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 from src.services.routers.auth_service import get_current_user
@@ -37,12 +37,12 @@ def get_customer_service(db: db_dependency) -> ICustomerService:
 
 @router.post("/", response_description="Cliente creato o recuperato")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
 async def create_customer(
     customer: CustomerSchema,
     response: Response,
     user: dict = Depends(get_current_user),
-    customer_service: ICustomerService = Depends(get_customer_service)
+    customer_service: ICustomerService = Depends(get_customer_service),
+    _: None = Depends(require_permission("customers", "create")),
 ):
     """
     Crea un nuovo cliente con i dati forniti.
@@ -60,12 +60,12 @@ async def create_customer(
 
 @router.put("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Customer modificato")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
 async def update_customer(
     cs: CustomerSchema,
     customer_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    customer_service: ICustomerService = Depends(get_customer_service)
+    customer_service: ICustomerService = Depends(get_customer_service),
+    _: None = Depends(require_permission("customers", "update")),
 ):
     """
     Aggiorna i dati di un cliente esistente basato sull'ID specificato.
@@ -76,11 +76,11 @@ async def update_customer(
 
 @router.get("/{customer_id}", status_code=status.HTTP_200_OK, response_model=CustomerResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_customer_by_id(
     customer_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    customer_service: ICustomerService = Depends(get_customer_service)
+    customer_service: ICustomerService = Depends(get_customer_service),
+    _: None = Depends(require_permission("customers", "read")),
 ):
     """
     Restituisce un singolo cliente basato sull'ID specificato.
@@ -92,7 +92,6 @@ async def get_customer_by_id(
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllCustomerResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_customers(
     user: dict = Depends(get_current_user),
     customer_service: ICustomerService = Depends(get_customer_service),
@@ -100,7 +99,8 @@ async def get_all_customers(
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
     lang_ids: Optional[List[int]] = Query(None),
     param: Optional[str] = Query(None),
-    with_address: Optional[bool] = Query(False)
+    with_address: Optional[bool] = Query(False),
+    _: None = Depends(require_permission("customers", "read")),
 ):
     """
     Restituisce tutti i clienti con supporto alla paginazione. Se specificato, filtra i clienti per lingua.
@@ -128,11 +128,11 @@ async def get_all_customers(
 
 @router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Cliente eliminato.")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
 async def delete_customer(
     customer_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    customer_service: ICustomerService = Depends(get_customer_service)
+    customer_service: ICustomerService = Depends(get_customer_service),
+    _: None = Depends(require_permission("customers", "delete")),
 ):
     """
     Elimina un cliente basato sull'ID specificato.

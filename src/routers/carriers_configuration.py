@@ -10,6 +10,7 @@ from src.services.interfaces.dhl_configuration_service_interface import IDhlConf
 from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
 from src.models.carrier_api import CarrierTypeEnum
 from src.core.exceptions import BusinessRuleException, InfrastructureException
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/carriers_configuration",
@@ -43,7 +44,9 @@ async def create_brt_configuration(
     carrier_api_id: int = Path(..., gt=0),
     config_data: BrtConfigurationSchema = ...,
     brt_service: IBrtConfigurationService = Depends(get_brt_service),
-    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo)
+    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "create")),
 ):
     """Crea configurazione BRT per un carrier_api"""
     try:
@@ -62,7 +65,9 @@ async def create_brt_configuration(
 @router.get("/brt/{carrier_api_id}", response_model=BrtConfigurationResponseSchema)
 async def get_brt_configuration(
     carrier_api_id: int = Path(..., gt=0),
-    brt_service: IBrtConfigurationService = Depends(get_brt_service)
+    brt_service: IBrtConfigurationService = Depends(get_brt_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "read")),
 ):
     """Recupera configurazione BRT per carrier_api_id"""
     try:
@@ -77,7 +82,9 @@ async def get_brt_configuration(
 async def update_brt_configuration(
     carrier_api_id: int = Path(..., gt=0),
     config_data: BrtConfigurationUpdateSchema = ...,
-    brt_service: IBrtConfigurationService = Depends(get_brt_service)
+    brt_service: IBrtConfigurationService = Depends(get_brt_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "update")),
 ):
     """Aggiorna configurazione BRT"""
     try:
@@ -90,7 +97,9 @@ async def update_brt_configuration(
 @router.delete("/brt/{carrier_api_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_brt_configuration(
     carrier_api_id: int = Path(..., gt=0),
-    brt_service: IBrtConfigurationService = Depends(get_brt_service)
+    brt_service: IBrtConfigurationService = Depends(get_brt_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "delete")),
 ):
     """Elimina configurazione BRT"""
     try:
@@ -107,7 +116,9 @@ async def create_fedex_configuration(
     carrier_api_id: int = Path(..., gt=0),
     config_data: FedexConfigurationSchema = ...,
     fedex_service: IFedexConfigurationService = Depends(get_fedex_service),
-    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo)
+    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "create")),
 ):
     """Crea configurazione Fedex per un carrier_api"""
     try:
@@ -126,7 +137,9 @@ async def create_fedex_configuration(
 @router.get("/fedex/{carrier_api_id}", response_model=FedexConfigurationResponseSchema)
 async def get_fedex_configuration(
     carrier_api_id: int = Path(..., gt=0),
-    fedex_service: IFedexConfigurationService = Depends(get_fedex_service)
+    fedex_service: IFedexConfigurationService = Depends(get_fedex_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "read")),
 ):
     """Recupera configurazione Fedex per carrier_api_id"""
     try:
@@ -141,7 +154,9 @@ async def get_fedex_configuration(
 async def update_fedex_configuration(
     carrier_api_id: int = Path(..., gt=0),
     config_data: FedexConfigurationUpdateSchema = ...,
-    fedex_service: IFedexConfigurationService = Depends(get_fedex_service)
+    fedex_service: IFedexConfigurationService = Depends(get_fedex_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "update")),
 ):
     """Aggiorna configurazione Fedex"""
     try:
@@ -154,7 +169,9 @@ async def update_fedex_configuration(
 @router.delete("/fedex/{carrier_api_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_fedex_configuration(
     carrier_api_id: int = Path(..., gt=0),
-    fedex_service: IFedexConfigurationService = Depends(get_fedex_service)
+    fedex_service: IFedexConfigurationService = Depends(get_fedex_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "delete")),
 ):
     """Elimina configurazione Fedex"""
     try:
@@ -171,7 +188,9 @@ async def create_dhl_configuration(
     carrier_api_id: int = Path(..., gt=0),
     config_data: DhlConfigurationSchema = ...,
     dhl_service: IDhlConfigurationService = Depends(get_dhl_service),
-    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo)
+    carrier_repo: IApiCarrierRepository = Depends(get_carrier_repo),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "create")),
 ):
     """
     Crea configurazione DHL MyDHL API per un carrier_api
@@ -242,7 +261,9 @@ async def create_dhl_configuration(
 @router.get("/dhl/{carrier_api_id}", response_model=DhlConfigurationResponseSchema)
 async def get_dhl_configuration(
     carrier_api_id: int = Path(..., gt=0),
-    dhl_service: IDhlConfigurationService = Depends(get_dhl_service)
+    dhl_service: IDhlConfigurationService = Depends(get_dhl_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "read")),
 ):
     """
     Recupera la configurazione DHL MyDHL API associata a un carrier_api
@@ -262,7 +283,9 @@ async def get_dhl_configuration(
 async def update_dhl_configuration(
     carrier_api_id: int = Path(..., gt=0),
     config_data: DhlConfigurationUpdateSchema = ...,
-    dhl_service: IDhlConfigurationService = Depends(get_dhl_service)
+    dhl_service: IDhlConfigurationService = Depends(get_dhl_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "update")),
 ):
     """
     Aggiorna la configurazione DHL MyDHL API esistente
@@ -287,7 +310,9 @@ async def update_dhl_configuration(
 @router.delete("/dhl/{carrier_api_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dhl_configuration(
     carrier_api_id: int = Path(..., gt=0),
-    dhl_service: IDhlConfigurationService = Depends(get_dhl_service)
+    dhl_service: IDhlConfigurationService = Depends(get_dhl_service),
+    current_user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("carriers_config", "delete")),
 ):
     """
     Elimina la configurazione DHL MyDHL API

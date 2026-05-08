@@ -12,7 +12,6 @@ from .platform_schema import *
 from .lang_schema import *
 from .sectional_schema import *
 from .message_schema import *
-from . import *
 from .payment_schema import *
 from .tax_schema import *
 from .role_schema import *
@@ -22,3 +21,5 @@ from .order_schema import *
 from .order_package_schema import *
 from .order_detail_schema import *
 from .order_document_schema import *
+from .permission_schema import *
+from . import *

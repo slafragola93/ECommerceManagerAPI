@@ -39,12 +39,19 @@ class User(Base):
         'RefreshToken',
         back_populates='user'
     )
+    
     module_permissions = relationship(
-        'UserModulePermission',
-        back_populates='user'
+    'UserModulePermission',
+    back_populates='user',
+    foreign_keys='UserModulePermission.id_user'
     )
 
     mfa_pending_sessions = relationship(
     'MFAPendingSession',
     back_populates='user'
-)
+    )
+
+    auth_logs = relationship(
+        'AuthLog',
+        back_populates='user'
+    )

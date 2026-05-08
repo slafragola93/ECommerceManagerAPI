@@ -10,10 +10,9 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
 from src.repository.order_repository import OrderRepository
 from src.services.routers.order_document_service import OrderDocumentService
 from src.services.routers.order_service import OrderService
@@ -40,12 +39,12 @@ def get_shipping_service(db: db_dependency) -> IShippingService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllShippingResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_shippings(
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
     page: int = Query(1, gt=0),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT)
+    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Restituisce tutti i shipping con supporto alla paginazione.
@@ -63,11 +62,11 @@ async def get_all_shippings(
 
 @router.get("/{shipping_id}", status_code=status.HTTP_200_OK, response_model=ShippingResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_shipping_by_id(
     shipping_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    shipping_service: IShippingService = Depends(get_shipping_service)
+    shipping_service: IShippingService = Depends(get_shipping_service),
+    _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Restituisce un singolo shipping basato sull'ID specificato.
@@ -79,12 +78,12 @@ async def get_shipping_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Spedizione creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_shipping(
     shipping_data: ShippingSchema,
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
-    db: db_dependency = None
+    db: db_dependency = None,
+    _: None = Depends(require_permission("shipments", "create")),
 ):
     """
     Crea un nuovo shipping con i dati forniti.
@@ -114,13 +113,13 @@ async def create_shipping(
 
 @router.put("/{shipping_id}", status_code=status.HTTP_200_OK, response_description="Spedizione aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_shipping(
     shipping_data: ShippingUpdateSchema,
     shipping_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
-    db: db_dependency = None
+    db: db_dependency = None,
+    _: None = Depends(require_permission("shipments", "update")),
 ):
     """
     Aggiorna i dati di un shipping esistente basato sull'ID specificato.
@@ -153,12 +152,12 @@ async def update_shipping(
 
 @router.delete("/{shipping_id}", status_code=status.HTTP_200_OK, response_description="Spedizione eliminata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_shipping(
     shipping_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
-    db: db_dependency = None
+    db: db_dependency = None,
+    _: None = Depends(require_permission("shipments", "delete")),
 ):
     """
     Elimina un shipping basato sull'ID specificato.

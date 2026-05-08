@@ -12,7 +12,7 @@ from src.core.exceptions import (
     NotFoundException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
+from src.services.routers.auth_service import authorize, require_permission
 from src.services.core.wrap import check_authentication
 from src.services.media.image_service import ImageService
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
@@ -45,14 +45,14 @@ def get_product_service(db: db_dependency) -> IProductService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllProductsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_products(
     user: dict = Depends(get_current_user),
     product_service: IProductService = Depends(get_product_service),
     page: int = Query(1, gt=0),
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
     product_name: Optional[str] = Query(None, description="Filtra prodotti per nome (ricerca parziale)"),
-    id_country: Optional[int] = Query(None, description="ID del paese per calcolare IVA e prezzo netto")
+    id_country: Optional[int] = Query(None, description="ID del paese per calcolare IVA e prezzo netto"),
+    _: None = Depends(require_permission("products", "read")),
 ):
     """
     Restituisce tutti i product con supporto alla paginazione e filtro per nome.
@@ -76,12 +76,12 @@ async def get_all_products(
 
 @router.get("/{product_id}", status_code=status.HTTP_200_OK, response_model=ProductResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_product_by_id(
     user: dict = Depends(get_current_user),
     product_service: IProductService = Depends(get_product_service),
     product_id: int = Path(gt=0),
-    id_country: Optional[int] = Query(None, description="ID del paese per calcolare IVA e prezzo netto")
+    id_country: Optional[int] = Query(None, description="ID del paese per calcolare IVA e prezzo netto"),
+    _: None = Depends(require_permission("products", "read")),
 ):
     """
     Restituisce un singolo product basato sull'ID specificato.
@@ -93,11 +93,11 @@ async def get_product_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Product creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_product(
     product_data: ProductSchema,
     user: dict = Depends(get_current_user),
-    product_service: IProductService = Depends(get_product_service)
+    product_service: IProductService = Depends(get_product_service),
+    _: None = Depends(require_permission("products", "create")),
 ):
     """
     Crea un nuovo product con i dati forniti.
@@ -106,12 +106,12 @@ async def create_product(
 
 @router.put("/{product_id}", status_code=status.HTTP_200_OK, response_description="Product aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_product(
     product_data: ProductSchema,
     user: dict = Depends(get_current_user),
     product_service: IProductService = Depends(get_product_service),
-    product_id: int = Path(gt=0)
+    product_id: int = Path(gt=0),
+    _: None = Depends(require_permission("products", "update")),
 ):
     """
     Aggiorna i dati di un product esistente basato sull'ID specificato.
@@ -122,11 +122,11 @@ async def update_product(
 
 @router.delete("/{product_id}", status_code=status.HTTP_200_OK, response_description="Product eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_product(
     user: dict = Depends(get_current_user),
     product_service: IProductService = Depends(get_product_service),
-    product_id: int = Path(gt=0)
+    product_id: int = Path(gt=0),
+    _: None = Depends(require_permission("products", "delete")),
 ):
     """
     Elimina un product basato sull'ID specificato.
@@ -138,13 +138,13 @@ async def delete_product(
 
 @router.post("/{product_id}/upload-image", status_code=status.HTTP_200_OK, response_description="Immagine caricata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def upload_product_image(
     product_id: int = Path(gt=0),
     file: UploadFile = File(...),
     platform_id: int = Form(1),
     user: dict = Depends(get_current_user),
-    product_service: IProductService = Depends(get_product_service)
+    product_service: IProductService = Depends(get_product_service),
+    _: None = Depends(require_permission("products", "update")),
 ):
     """
     Carica un'immagine per un prodotto specifico.
@@ -191,11 +191,11 @@ async def upload_product_image(
 
 @router.delete("/{product_id}/image", status_code=status.HTTP_200_OK, response_description="Immagine eliminata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def delete_product_image(
     product_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    product_service: IProductService = Depends(get_product_service)
+    product_service: IProductService = Depends(get_product_service),
+    _: None = Depends(require_permission("products", "update")),
 ):
     """
     Elimina l'immagine di un prodotto.
@@ -231,11 +231,11 @@ async def delete_product_image(
 
 @router.get("/get-live-price/{id_origin}", status_code=status.HTTP_200_OK)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_live_price(
     id_origin: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    product_service: IProductService = Depends(get_product_service)
+    product_service: IProductService = Depends(get_product_service),
+    _: None = Depends(require_permission("products", "read")),
 ):
     """Recupera il prezzo live di un prodotto demandando la logica al service applicativo."""
     price = await product_service.get_live_price(id_origin)

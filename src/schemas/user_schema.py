@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, EmailStr
 
@@ -15,21 +15,19 @@ class UserSchema(BaseModel):
         sulla lunghezza e sul formato di username, nome, cognome, password ed email.
 
         Attributes:
-            username (str): Il nome utente, che deve essere univoco. Deve contenere tra 4 e 15 caratteri
-                            alfanumerici (lettere e numeri).
+            username (str): Il nome utente, che deve essere univoco. Lunghezza minima 1, massima 50 caratteri.
             firstname (str): Il nome dell'utente, con una lunghezza minima di 1 e massima di 100 caratteri.
             lastname (str): Il cognome dell'utente, anch'esso con limiti di lunghezza simili al nome.
             password (str): La password dell'utente, che deve avere una lunghezza minima di 8 caratteri e
                             una massima di 15 caratteri.
             email (EmailStr): L'indirizzo email dell'utente, che deve seguire il formato standard degli indirizzi email.
     """
-    username: str = Field(..., min_length=4, max_length=15, pattern="^[a-zA-Z0-9]+$")
+    username: str = Field(..., min_length=1, max_length=50)
     firstname: str = Field(..., min_length=1, max_length=100)
     lastname: str = Field(..., min_length=1, max_length=100)
     password: str = Field(..., min_length=8, max_length=15)
     email: EmailStr
-    roles: Optional[List[RoleResponseSchema]] = []
-
+    roles: Optional[List[Union[int, RoleResponseSchema]]] = []
 
 class UserResponseSchema(BaseModel):
     id_user: int
@@ -63,10 +61,11 @@ class Token(BaseModel):
             access_token (str): Il token di accesso JWT generato.
             token_type (str): Il tipo di token, generalmente "bearer".
     """
-    access_token: str
-    token_type: str
-    current_user: str
-    expires_at: datetime
+    access_token:  str
+    refresh_token: str
+    token_type:    str
+    current_user:  str
+    expires_at:    datetime
 
 
 class ChangePasswordSchema(BaseModel):

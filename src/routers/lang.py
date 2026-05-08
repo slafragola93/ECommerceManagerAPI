@@ -14,10 +14,9 @@ from src.core.exceptions import (
     BusinessRuleException
 )
 from src.core.dependencies import db_dependency
-from src.services.routers.auth_service import authorize
 from src.services.core.wrap import check_authentication
 from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
-from src.services.routers.auth_service import get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 
 router = APIRouter(
     prefix="/api/v1/languages",
@@ -39,7 +38,6 @@ def get_lang_service(db: db_dependency) -> ILangService:
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllLangsResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_all_langs(
     user: dict = Depends(get_current_user),
     lang_service: ILangService = Depends(get_lang_service),
@@ -62,7 +60,6 @@ async def get_all_langs(
 
 @router.get("/{lang_id}", status_code=status.HTTP_200_OK, response_model=LangResponseSchema)
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['R'])
 async def get_lang_by_id(
     lang_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
@@ -78,11 +75,11 @@ async def get_lang_by_id(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Lang creata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['C'])
 async def create_lang(
     lang_data: LangSchema,
     user: dict = Depends(get_current_user),
-    lang_service: ILangService = Depends(get_lang_service)
+    lang_service: ILangService = Depends(get_lang_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Crea una nuova lang con i dati forniti.
@@ -91,12 +88,12 @@ async def create_lang(
 
 @router.put("/{lang_id}", status_code=status.HTTP_200_OK, response_description="Lang aggiornata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['U'])
 async def update_lang(
     lang_data: LangSchema,
     lang_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    lang_service: ILangService = Depends(get_lang_service)
+    lang_service: ILangService = Depends(get_lang_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Aggiorna i dati di una lang esistente basata sull'ID specificato.
@@ -107,11 +104,11 @@ async def update_lang(
 
 @router.delete("/{lang_id}", status_code=status.HTTP_200_OK, response_description="Lang eliminata correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN'], permissions_required=['D'])
 async def delete_lang(
     lang_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    lang_service: ILangService = Depends(get_lang_service)
+    lang_service: ILangService = Depends(get_lang_service),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     """
     Elimina una lang basata sull'ID specificato.

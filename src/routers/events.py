@@ -14,7 +14,7 @@ from src.events.runtime import (
     get_plugin_manager,
 )
 from src.services.core.wrap import check_authentication
-from src.services.routers.auth_service import authorize, get_current_user
+from src.services.routers.auth_service import get_current_user, require_permission
 from src.core.cached import cached
 from src.events.core.event import EventType
 
@@ -53,9 +53,10 @@ router = APIRouter(prefix="/api/v1/events", tags=["Event System"])
     response_description="Configurazione ricaricata",
 )
 @check_authentication
-@authorize(roles_permitted=["ADMIN"], permissions_required=["U"])
 async def reload_event_configuration(
-    user: dict = Depends(get_current_user), plugin_manager: PluginManager = Depends(get_manager)
+    user: dict = Depends(get_current_user),
+    plugin_manager: PluginManager = Depends(get_manager),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     config = await plugin_manager.reload()
     return {"message": "Configurazione eventi ricaricata", "config": config.model_dump(mode="json")}
@@ -67,9 +68,10 @@ async def reload_event_configuration(
     response_description="Stato attuale dei plugin caricati",
 )
 @check_authentication
-@authorize(roles_permitted=["ADMIN"], permissions_required=["R"])
 async def list_event_plugins(
-    user: dict = Depends(get_current_user), plugin_manager: PluginManager = Depends(get_manager)
+    user: dict = Depends(get_current_user),
+    plugin_manager: PluginManager = Depends(get_manager),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     status = await plugin_manager.get_status()
     return {"plugins": status}
@@ -81,11 +83,11 @@ async def list_event_plugins(
     response_description="Plugin abilitato",
 )
 @check_authentication
-@authorize(roles_permitted=["ADMIN"], permissions_required=["U"])
 async def enable_event_plugin(
     plugin_name: str = Path(..., min_length=1),
     user: dict = Depends(get_current_user),
     plugin_manager: PluginManager = Depends(get_manager),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     if plugin_name not in plugin_manager.get_loaded_plugins():
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' non trovato")
@@ -103,11 +105,11 @@ async def enable_event_plugin(
     response_description="Plugin disabilitato",
 )
 @check_authentication
-@authorize(roles_permitted=["ADMIN"], permissions_required=["U"])
 async def disable_event_plugin(
     plugin_name: str = Path(..., min_length=1),
     user: dict = Depends(get_current_user),
     plugin_manager: PluginManager = Depends(get_manager),
+    _: None = Depends(require_permission("settings", "update")),
 ):
     if plugin_name not in plugin_manager.get_loaded_plugins():
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' non trovato")
@@ -125,11 +127,11 @@ async def disable_event_plugin(
     response_description="Plugin disinstallato",
 )
 @check_authentication
-@authorize(roles_permitted=["ADMIN"], permissions_required=["D"])
 async def uninstall_event_plugin(
     plugin_name: str = Path(..., min_length=1),
     user: dict = Depends(get_current_user),
     installer: PluginInstaller = Depends(get_installer),
+    _: None = Depends(require_permission("settings", "delete")),
 ):
     """Disinstalla un plugin eliminando completamente i suoi file dal filesystem.
     
@@ -159,10 +161,10 @@ async def uninstall_event_plugin(
     response_description="Lista di tutti gli eventi disponibili nell'applicazione",
 )
 @check_authentication
-@authorize(roles_permitted=["ADMIN"], permissions_required=["R"])
 @cached(preset="events_list", key="events:list")
 async def get_events_list(
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("settings", "read")),
 ):
     """
     Restituisce lista di tutti gli eventi disponibili nell'applicazione.

@@ -23,7 +23,7 @@ from src.schemas.payment_schema import PaymentResponseSchema
 from src.schemas.shipping_schema import ShippingResponseSchema
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
-from src.services.routers.auth_service import authorize, get_current_user
+from src.services.routers.auth_service import authorize, get_current_user, require_permission
 from src.services.routers.product_service import ProductService
 
 from .. import OrderSchema
@@ -83,7 +83,6 @@ def get_product_service(db: Session = Depends(get_db)) -> ProductService:
            description="Recupera una lista di ordini con filtri opzionali e possibilità di includere dettagli completi delle relazioni",
            response_description="Lista di ordini con metadati di paginazione")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_all_orders(user: dict = Depends(get_current_user),
                         or_repo: OrderRepository = Depends(get_repository),
                         orders_ids: Optional[str] = Query(None, description="ID degli ordini, separati da virgole (es: 1,2,3)"),
@@ -103,7 +102,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                         date_to: Optional[str] = Query(None, description="Data fine filtro (formato: YYYY-MM-DD)"),
                         show_details: str = Query("false", description="Se 'true', include dettagli completi delle relazioni (customer, platform, payment, shipping, addresses, order_states, order_details)"),
                         page: int = Query(1, gt=0, description="Numero di pagina (inizia da 1)"),
-                        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})")):
+                        limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
+                        _: None = Depends(require_permission("orders", "read"))):
     """
     Recupera una lista di ordini con filtri opzionali e possibilità di includere dettagli completi.
 
@@ -205,10 +205,10 @@ async def get_all_orders(user: dict = Depends(get_current_user),
 
 @router.get("/{order_id}", status_code=status.HTTP_200_OK, response_model=OrderIdSchema)
 @check_authentication  
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])  
 async def get_order_by_id(order_id: int = Path(gt=0),
                          user: dict = Depends(get_current_user),
-                         or_repo: OrderRepository = Depends(get_repository)):
+                         or_repo: OrderRepository = Depends(get_repository),
+                         _: None = Depends(require_permission("orders", "read"))):
     """
     Recupera un singolo ordine per ID con tutti i dettagli delle relazioni.
 
@@ -240,11 +240,11 @@ async def get_order_by_id(order_id: int = Path(gt=0),
 
 @router.get("/{order_id}/history", status_code=status.HTTP_200_OK, summary="Storico stato ordine")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'USER', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['R'])
 async def get_order_history(
     order_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
     or_repo: OrderRepository = Depends(get_repository),
+    _: None = Depends(require_permission("orders", "read")),
 ):
     """Restituisce la cronologia in formato [{state, data}]"""
     return or_repo.get_order_history_by_id_order(order_id)
@@ -252,11 +252,11 @@ async def get_order_history(
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Ordine creato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
 async def create_order(
     order: OrderSchema,
     user: dict = Depends(get_current_user),
-    order_service: IOrderService = Depends(get_order_service)
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "create")),
 ):
     """
     Crea un nuovo ordine con i dati forniti.
@@ -285,12 +285,12 @@ async def create_order(
 
 @router.put("/{order_id}", status_code=status.HTTP_200_OK, response_description="Ordine aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
 async def update_order(
     order_schema: OrderUpdateSchema,
     order_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
-    order_service: IOrderService = Depends(get_order_service)
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "update")),
 ):
     """
     Aggiorna un ordine esistente con aggiornamenti parziali.
@@ -316,10 +316,10 @@ async def update_order(
 
 @router.delete("/{order_id}", status_code=status.HTTP_204_NO_CONTENT, response_description="Ordine eliminato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
 async def delete_order(order_id: int = Path(gt=0),
                       user: dict = Depends(get_current_user),
-                      order_service: IOrderService = Depends(get_order_service)):
+                      order_service: IOrderService = Depends(get_order_service),
+                      _: None = Depends(require_permission("orders", "delete"))):
     """
     Elimina un ordine dal sistema per l'ID specificato.
     
@@ -347,12 +347,12 @@ async def delete_order(order_id: int = Path(gt=0),
 
 @router.patch("/{order_id}/status", status_code=status.HTTP_200_OK, response_description="Stato ordine aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def update_order_status(
     order_id: int = Path(gt=0),
     new_status_id: int = Query(gt=0),
     user: dict = Depends(get_current_user),
-    order_service: IOrderService = Depends(get_order_service)
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "update")),
 ):
     """
     Aggiorna lo stato di un ordine e crea un record nell'order history.
@@ -384,11 +384,11 @@ async def update_order_status(
              response_model=BulkOrderStatusUpdateResponseSchema,
              response_description="Aggiornamento massivo stati ordini completato")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def bulk_update_order_status(
     updates: List[OrderStatusUpdateItem] = Body(..., description="Lista di aggiornamenti stato ordine"),
     user: dict = Depends(get_current_user),
-    order_service: IOrderService = Depends(get_order_service)
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "update")),
 ):
     """
     Aggiorna gli stati di più ordini in modo massivo.
@@ -426,11 +426,11 @@ async def bulk_update_order_status(
 
 @router.patch("/{order_id}/payment", status_code=status.HTTP_200_OK, response_description="Stato pagamento aggiornato correttamente")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def update_order_payment(order_id: int = Path(gt=0),
                               is_payed: bool = Query(),
                               user: dict = Depends(get_current_user),
-                              or_repo: OrderRepository = Depends(get_repository)):
+                              or_repo: OrderRepository = Depends(get_repository),
+                              _: None = Depends(require_permission("orders", "update"))):
     """
     Aggiorna lo stato di pagamento di un ordine.
 
@@ -464,13 +464,13 @@ async def update_order_payment(order_id: int = Path(gt=0),
             description="Crea un nuovo documento di reso per un ordine specifico",
             response_description="Reso creato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['C'])
 async def create_return(
     id_order: int = Path(..., description="ID dell'ordine"),
     user: dict = Depends(get_current_user),
     return_data: ReturnCreateSchema = None,
     or_repo: OrderRepository = Depends(get_repository),
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "create")),
 ):
     """
     Crea un nuovo reso per un ordine specifico.
@@ -505,13 +505,13 @@ async def create_return(
            description="Recupera tutti i documenti di reso per un ordine specifico",
            response_description="Lista dei resi dell'ordine")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def get_order_returns(
     id_order: int = Path(..., description="ID dell'ordine"),
     page: int = Query(1, gt=0, description="Numero di pagina"),
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
     user: dict = Depends(get_current_user),
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "read")),
 )-> AllReturnsResponseSchema:
     """
     Recupera tutti i documenti di reso per un ordine specifico.
@@ -533,11 +533,11 @@ async def get_order_returns(
            response_model=ReturnResponseSchema,
            response_description="Documento di reso trovato")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def get_return_by_id(
     id_fiscal_document: int = Path(..., description="ID del documento di reso"),
     fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("returns", "read")),
 ) -> ReturnResponseSchema:
     """Recupera un documento di reso per ID (ReturnResponseSchema con details)."""
     return await fiscal_document_service.get_fiscal_document_by_id(id_fiscal_document)
@@ -548,12 +548,12 @@ async def get_return_by_id(
            description="Aggiorna i dati di un documento di reso esistente",
            response_description="Reso aggiornato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def update_return(
     id_fiscal_document: int = Path(..., description="ID del documento di reso"),
     user: dict = Depends(get_current_user),
     update_data: ReturnUpdateSchema = None,
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "update")),
 ):
     """
     Aggiorna un documento di reso esistente.
@@ -578,11 +578,11 @@ async def update_return(
               description="Elimina un documento di reso (solo se in stato pending)",
               response_description="Reso eliminato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['D'])
 async def delete_return(
     id_fiscal_document: int = Path(..., description="ID del documento di reso"),
     user: dict = Depends(get_current_user),
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "delete")),
 ):
     """
     Elimina un documento di reso.
@@ -599,12 +599,12 @@ async def delete_return(
            description="Aggiorna quantità o prezzo di un singolo articolo nel reso",
            response_description="Dettaglio reso aggiornato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['U'])
 async def update_return_detail(
     id_fiscal_document_detail: int = Path(..., description="ID del dettaglio di reso"),
     user: dict = Depends(get_current_user),
     update_data: ReturnDetailUpdateSchema = None,
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "update")),
 ):
     """
     Aggiorna un singolo dettaglio (articolo) di un reso.
@@ -630,11 +630,11 @@ async def update_return_detail(
               description="Elimina un singolo articolo dal reso",
               response_description="Dettaglio reso eliminato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['D'])
 async def delete_return_detail(
     id_fiscal_document_detail: int = Path(..., description="ID del dettaglio di reso"),
     user: dict = Depends(get_current_user),
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "delete")),
 ):
     """
     Elimina un singolo dettaglio (articolo) da un reso.
@@ -650,12 +650,12 @@ async def delete_return_detail(
            description="Recupera tutti i documenti di reso con paginazione",
            response_description="Lista di tutti i resi")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE'], permissions_required=['R'])
 async def get_all_returns(
     user: dict = Depends(get_current_user),
     page: int = Query(1, gt=0, description="Numero di pagina"),
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
-    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service)
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("returns", "read")),
 ):
     """
     Recupera tutti i documenti di reso con paginazione.
@@ -680,14 +680,14 @@ async def get_all_returns(
             description="Aggiunge un nuovo articolo all'ordine. I totali vengono ricalcolati automaticamente.",
             response_description="Articolo aggiunto con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['C'])
 async def add_order_detail(
     order_id: int = Path(..., gt=0, description="ID dell'ordine"),
     order_detail_data: OrderDetailCreateSchema = Body(...),
     user: dict = Depends(get_current_user),
     order_service: IOrderService = Depends(get_order_service),
     product_service: ProductService = Depends(get_product_service),
-    order_detail_repo: OrderDetailRepository = Depends(get_order_detail_repository)
+    order_detail_repo: OrderDetailRepository = Depends(get_order_detail_repository),
+    _: None = Depends(require_permission("orders", "update")),
 ):
     """
     Aggiunge un nuovo articolo all'ordine.
@@ -730,7 +730,6 @@ async def add_order_detail(
            description="Modifica un articolo esistente nell'ordine. Solo i campi forniti vengono aggiornati. I totali vengono ricalcolati automaticamente se necessario.",
            response_description="Articolo aggiornato con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['U'])
 async def update_order_detail(
     order_id: int = Path(..., gt=0, description="ID dell'ordine"),
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
@@ -738,7 +737,8 @@ async def update_order_detail(
     user: dict = Depends(get_current_user),
     order_service: IOrderService = Depends(get_order_service),
     product_service: ProductService = Depends(get_product_service),
-    order_detail_repo: OrderDetailRepository = Depends(get_order_detail_repository)
+    order_detail_repo: OrderDetailRepository = Depends(get_order_detail_repository),
+    _: None = Depends(require_permission("orders", "update")),
 ):
     """
     Modifica un articolo esistente nell'ordine.
@@ -779,12 +779,12 @@ async def update_order_detail(
               description="Rimuove un articolo dall'ordine. I totali vengono ricalcolati automaticamente.",
               response_description="Articolo rimosso con successo")
 @check_authentication
-@authorize(roles_permitted=['ADMIN', 'ORDINI', 'FATTURAZIONE', 'PREVENTIVI'], permissions_required=['D'])
 async def remove_order_detail(
     order_id: int = Path(..., gt=0, description="ID dell'ordine"),
     id_order_detail: int = Path(..., gt=0, description="ID dell'articolo"),
     user: dict = Depends(get_current_user),
-    order_service: IOrderService = Depends(get_order_service)
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "update")),
 ):
     """
     Rimuove un articolo dall'ordine.
