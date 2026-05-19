@@ -28,21 +28,24 @@ class ShippingUpdateSchema(BaseModel):
 
 
 class ShippingResponseSchema(BaseModel):
+    id_shipping: int
+    id_order: Optional[int] = None
     id_carrier_api: Optional[int] = None
     id_shipping_state: int
     id_tax: Optional[int] = None
-    tracking: str | None
+    tracking: Optional[str] = None
     weight: float
     price_tax_incl: float
     price_tax_excl: float
     customs_value: Optional[float] = None
     shipping_message: Optional[str] = None
-    
+
     @validator('weight', 'price_tax_incl', 'price_tax_excl', 'customs_value', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None
         return round(float(v), 2)
+
     class Config:
         from_attributes = True
 

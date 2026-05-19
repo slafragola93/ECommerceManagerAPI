@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 import json
+from fastapi import HTTPException
 from sqlalchemy.engine import Row
 from src.models.brt_configuration import BrtConfiguration
 from src.services.external.province_service import province_service
@@ -202,13 +203,27 @@ class BrtMapper:
             parcels_count = len(packages) if packages else 1
         
         # Build notes: use shipping_message (max 70 chars) if available, otherwise use brt_config.notes
+        # FIX BUG-010: Strategy B (silent truncate) for annotation field — both branches
         notes = ""
         if shipping_message:
-            # Use shipping_message, limit to 70 characters
-            notes = str(shipping_message)[:70]
+            notes = self._truncate_brt_field("notes", str(shipping_message), self.BRT_MAX_NOTES)
         elif brt_config.notes:
-            notes = str(brt_config.notes)
-        
+            notes = self._truncate_brt_field("notes", str(brt_config.notes), self.BRT_MAX_NOTES)
+
+        # FIX BUG-010: Strategy A (block + structured error) for critical fields
+        # consigneeAddress and consigneeContactName cannot be truncated without compromising delivery
+        consignee_address = receiver_address.address1 or ""
+        self._validate_brt_field_length(
+            "consigneeAddress",
+            consignee_address,
+            self.BRT_MAX_CONSIGNEE_ADDRESS,
+        )
+        self._validate_brt_field_length(
+            "consigneeContactName",
+            recipient_name,
+            self.BRT_MAX_CONSIGNEE_CONTACT_NAME,
+        )
+
         # Build createData
         create_data = {
             "network": brt_config.network or "",
@@ -216,7 +231,7 @@ class BrtMapper:
             "senderCustomerCode": int(brt_config.client_code),
             "deliveryFreightTypeCode": "DAP",
             "consigneeCompanyName": company_name,
-            "consigneeAddress": receiver_address.address1 or "",
+            "consigneeAddress": consignee_address,
             "consigneeZIPCode": zip_code,
             "consigneeCity": city,
             "consigneeProvinceAbbreviation": province,
@@ -326,6 +341,76 @@ class BrtMapper:
         logger.debug(f"BRT Delete Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
         return payload
     
+    # ===== BRT field length limits (from RestShipmentProd v.00 - May 2022) =====
+    # See docs/BRT_API_REFERENCE.md for full schema
+    BRT_MAX_CONSIGNEE_ADDRESS = 35
+    BRT_MAX_CONSIGNEE_CONTACT_NAME = 35
+    BRT_MAX_NOTES = 70
+
+    def _validate_brt_field_length(self, field_name: str, value: str, max_length: int) -> None:
+        """
+        FIX BUG-010: Validates that a BRT field doesn't exceed its max length.
+        Strategy A (block + error) for fields where truncation would compromise delivery.
+
+        Raises HTTPException(400) with structured detail compatible with FE-7 error wrapper.
+        """
+        if not value:
+            return  # empty/None values handled by other validation paths
+        actual_length = len(value)
+        if actual_length <= max_length:
+            return
+
+        # Build user-facing message in Italian (matches AlertService convention)
+        field_label_it = {
+            "consigneeAddress": "L'indirizzo del destinatario",
+            "consigneeContactName": "Il nome del contatto destinatario",
+        }.get(field_name, f"Il campo {field_name}")
+
+        message = (
+            f"{field_label_it} supera il limite di BRT "
+            f"({actual_length}/{max_length} caratteri). "
+            f"Modificare il dato e riprovare."
+        )
+        # Preview (max 40 chars + ellipsis) — useful for debugging without exposing PII fully
+        preview = value if len(value) <= 40 else value[:40] + "…"
+
+        logger.warning(
+            f"BRT field validation failed: {field_name} length {actual_length} > {max_length}. "
+            f"Value preview: '{preview}'"
+        )
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "VALIDATION_ERROR",
+                "message": message,
+                "details": {
+                    "carrier": "BRT",
+                    "field": field_name,
+                    "actual_length": actual_length,
+                    "max_length": max_length,
+                    "value_preview": preview,
+                },
+                "status_code": 400,
+            },
+        )
+
+    def _truncate_brt_field(self, field_name: str, value: str, max_length: int) -> str:
+        """
+        FIX BUG-010: Silent truncate for non-critical annotation fields.
+        Strategy B for fields where truncation doesn't compromise delivery (notes).
+
+        Returns the truncated value and logs a warning if truncation occurred.
+        """
+        if not value:
+            return value
+        if len(value) <= max_length:
+            return value
+        logger.warning(
+            f"BRT field truncated: {field_name} from {len(value)} to {max_length} characters."
+        )
+        return value[:max_length]
+
     def _calculate_total_weight(self, packages: List[Row], default_weight: Optional[int]) -> float:
         """Calculate total weight from packages or use default"""
         if packages:

@@ -57,18 +57,18 @@ class OrderDocumentService:
     def get_sender_config(self) -> Dict[str, Any]:
         """
         Recupera la configurazione del mittente per DDT da AppConfiguration
-        
+
         Returns:
             Dict con i dati del mittente, incluso id_address se configurato
         """
         configs = self.db.query(AppConfiguration).filter(
             AppConfiguration.category == "ddt_sender"
         ).all()
-        
+
         sender_config = {}
         for config in configs:
             sender_config[config.name] = config.value
-        
+
         # Recupera id_address default se configurato
         default_address_config = self.db.query(AppConfiguration).filter(
             and_(
@@ -76,14 +76,30 @@ class OrderDocumentService:
                 AppConfiguration.name == "default_sender_address_id"
             )
         ).first()
-        
+
         if default_address_config and default_address_config.value:
             try:
                 sender_config["default_sender_address_id"] = int(default_address_config.value)
             except (ValueError, TypeError):
                 sender_config["default_sender_address_id"] = None
-        
+
         return sender_config
+
+    def get_company_info(self) -> Dict[str, Any]:
+        """Recupera i dati legali della società dalla categoria `company_info`.
+
+        Usato dal template PDF di preventivi e fatture, dove il mittente è
+        la ragione sociale (non il mittente fisico DDT).
+
+        Returns:
+            Dict con tutti i campi configurati (es. company_name, vat_number,
+            address, civic_number, postal_code, city, province, country,
+            phone, email, pec, sdi_code, fiscal_code, iban, bic_swift, ...).
+        """
+        configs = self.db.query(AppConfiguration).filter(
+            AppConfiguration.category == "company_info"
+        ).all()
+        return {config.name: config.value for config in configs}
 
     def check_order_invoiced(self, id_order: int) -> bool:
         """

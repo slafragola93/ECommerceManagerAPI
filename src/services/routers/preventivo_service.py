@@ -52,6 +52,7 @@ from src.models.address import Address
 from src.models.shipping import Shipping
 from src.models.app_configuration import AppConfiguration
 from src.services.pdf.preventivo_pdf_service import PreventivoPDFService
+from src.services.core.tool import calculate_price_without_tax
 
 
 class PreventivoService:
@@ -1109,22 +1110,38 @@ class PreventivoService:
             id_tax = tax_info["id_tax"] if tax_info else 1
         unit_price_with_tax = order_detail.unit_price_with_tax if order_detail.unit_price_with_tax is not None else 0.0
 
+        tax_percentage = float(self.tax_repo.get_percentage_by_id(int(id_tax)) or 0.0)
+        unit_price_net = order_detail.unit_price_net if order_detail.unit_price_net is not None else 0.0
+        if not unit_price_net and unit_price_with_tax:
+            unit_price_net = calculate_price_without_tax(float(unit_price_with_tax), tax_percentage)
+
+        product_qty = order_detail.product_qty or 1
+        if not total_price_net and unit_price_net:
+            total_price_net = float(unit_price_net) * int(product_qty)
+        if not total_price_with_tax and unit_price_with_tax:
+            total_price_with_tax = float(unit_price_with_tax) * int(product_qty)
+
         return ArticoloPreventivoSchema(
             id_order_detail=order_detail.id_order_detail,
             id_product=order_detail.id_product,
             product_name=order_detail.product_name,
             product_reference=order_detail.product_reference,
+            unit_price_net=float(unit_price_net),
             unit_price_with_tax=float(unit_price_with_tax),
             total_price_net=float(total_price_net),
             total_price_with_tax=float(total_price_with_tax),
-            product_qty=order_detail.product_qty or 1,
+            product_qty=product_qty,
             product_weight=order_detail.product_weight,
             id_tax=int(id_tax),
             reduction_percent=order_detail.reduction_percent,
             reduction_amount=order_detail.reduction_amount,
             rda=order_detail.rda,
             note=order_detail.note,
-            img_url=img_url
+            img_url=img_url,
+            product_price=float(unit_price_net),
+            taxable=float(total_price_net),
+            prezzo_totale_riga=float(total_price_with_tax),
+            aliquota_iva=float(tax_percentage),
         )
     
     def _validate_preventivo_references(self, preventivo_data: PreventivoUpdateSchema) -> None:
@@ -1446,8 +1463,10 @@ class PreventivoService:
                         "shipping_message": shipping.shipping_message
                     }
             
-            # Recupera dati mittente
-            sender_config = self.order_doc_service.get_sender_config()
+            # Recupera dati legali della societa' (categoria company_info).
+            # Per i preventivi il mittente e' la ragione sociale, non il
+            # mittente fisico DDT (ddt_sender_*).
+            sender_config = self.order_doc_service.get_company_info()
             
             # Recupera il logo: prima prova logo store, poi fallback a logo aziendale
             logo_path = None

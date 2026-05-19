@@ -245,7 +245,12 @@ async def create_shipment(
         id_shipping=id_shipping if id_shipping else None,
         id_order_document=id_order_document if id_order_document else None
     )
-    
+
+    # Garantisce la presenza di `id_shipping` nel payload di risposta per
+    # uniformità con le altre risorse (convenzione `id_<entity>` PrestaShop-like).
+    if isinstance(result, dict) and id_shipping and not result.get("id_shipping"):
+        result["id_shipping"] = id_shipping
+
     awb = result.get("awb", "")
     
     # 4.1. Se id_order_document è presente, aggiorna il tracking dello shipping dell'OrderDocument
@@ -437,6 +442,7 @@ async def bulk_create_shipments(
             
             successful.append(BulkShipmentCreateSuccess(
                 order_id=order_id,
+                id_shipping=id_shipping,
                 awb=awb
             ))
             logger.info(f"Order {order_id}: Shipment created successfully with AWB {awb}")

@@ -1,7 +1,12 @@
 """
 Shipping Router rifattorizzato seguendo i principi SOLID
 """
+from typing import Dict, List, Optional, Sequence
+
 from fastapi import APIRouter, Depends, status, Query, Path
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
 from src.services.interfaces.shipping_service_interface import IShippingService
 from src.repository.interfaces.shipping_repository_interface import IShippingRepository
 from src.schemas.shipping_schema import ShippingSchema, ShippingUpdateSchema, ShippingResponseSchema, AllShippingResponseSchema
@@ -18,11 +23,52 @@ from src.services.routers.order_document_service import OrderDocumentService
 from src.services.routers.order_service import OrderService
 from src.models.order import Order
 from src.models.order_document import OrderDocument
+from src.models.shipping import Shipping
 
 router = APIRouter(
     prefix="/api/v1/shippings",
     tags=["Shipping"],
 )
+
+
+def _resolve_id_orders(db: Session, shipping_ids: Sequence[int]) -> Dict[int, Optional[int]]:
+    """
+    Risolve in batch l'`id_order` (ultimo) per ogni `id_shipping`.
+
+    Convenzione di dominio: ogni `Shipping` appartiene a un `Order`. In caso di
+    riuso (raro), restituiamo l'ID più recente (`MAX(id_order)`) così che il
+    client possa correlare la PUT con l'ordine corrente in modo deterministico.
+    """
+    if not shipping_ids:
+        return {}
+    rows = (
+        db.query(Order.id_shipping, func.max(Order.id_order))
+        .filter(Order.id_shipping.in_(shipping_ids))
+        .group_by(Order.id_shipping)
+        .all()
+    )
+    return {id_shipping: id_order for id_shipping, id_order in rows}
+
+
+def _to_shipping_response(shipping: Shipping, db: Session) -> ShippingResponseSchema:
+    """Serializza un Shipping in `ShippingResponseSchema` includendo `id_order`."""
+    id_order_map = _resolve_id_orders(db, [shipping.id_shipping])
+    return ShippingResponseSchema.model_validate(shipping).model_copy(
+        update={"id_order": id_order_map.get(shipping.id_shipping)}
+    )
+
+
+def _to_shipping_response_list(
+    shippings: Sequence[Shipping], db: Session
+) -> List[ShippingResponseSchema]:
+    """Serializza una lista di Shipping evitando N+1 query per `id_order`."""
+    id_order_map = _resolve_id_orders(db, [s.id_shipping for s in shippings])
+    return [
+        ShippingResponseSchema.model_validate(s).model_copy(
+            update={"id_order": id_order_map.get(s.id_shipping)}
+        )
+        for s in shippings
+    ]
 
 def get_shipping_service(db: db_dependency) -> IShippingService:
     """Dependency injection per Shipping Service"""
@@ -42,13 +88,14 @@ def get_shipping_service(db: db_dependency) -> IShippingService:
 async def get_all_shippings(
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
+    db: db_dependency = None,
     page: int = Query(1, gt=0),
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
     _: None = Depends(require_permission("shipments", "read")),
 ):
     """
     Restituisce tutti i shipping con supporto alla paginazione.
-    
+
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
     """
@@ -58,7 +105,12 @@ async def get_all_shippings(
 
     total_count = await shipping_service.get_shippings_count()
 
-    return {"shippings": shippings, "total": total_count, "page": page, "limit": limit}
+    return {
+        "shippings": _to_shipping_response_list(shippings, db),
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+    }
 
 @router.get("/{shipping_id}", status_code=status.HTTP_200_OK, response_model=ShippingResponseSchema)
 @check_authentication
@@ -66,6 +118,7 @@ async def get_shipping_by_id(
     shipping_id: int = Path(gt=0),
     user: dict = Depends(get_current_user),
     shipping_service: IShippingService = Depends(get_shipping_service),
+    db: db_dependency = None,
     _: None = Depends(require_permission("shipments", "read")),
 ):
     """
@@ -74,9 +127,14 @@ async def get_shipping_by_id(
     - **shipping_id**: Identificativo del shipping da ricercare.
     """
     shipping = await shipping_service.get_shipping(shipping_id)
-    return shipping
+    return _to_shipping_response(shipping, db)
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_description="Spedizione creato correttamente")
+@router.post(
+    "/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ShippingResponseSchema,
+    response_description="Spedizione creato correttamente",
+)
 @check_authentication
 async def create_shipping(
     shipping_data: ShippingSchema,
@@ -87,6 +145,9 @@ async def create_shipping(
 ):
     """
     Crea un nuovo shipping con i dati forniti.
+
+    Risponde con l'oggetto creato (incluso `id_shipping`), così che il client non
+    debba effettuare una GET di follow-up per recuperare la PK.
     """
     shipping = await shipping_service.create_shipping(shipping_data)
 
@@ -94,7 +155,6 @@ async def create_shipping(
 
     ods = OrderDocumentService(db)
     order_service = OrderService(OrderRepository(db))
-    # Order collegati
     order = (
         db.query(Order)
         .filter(Order.id_shipping == getattr(shipping, 'id_shipping', None))
@@ -103,15 +163,18 @@ async def create_shipping(
     )
     if order:
         order_service.recalculate_totals_for_order(order.id_order)
-    # Documenti collegati
     docs = db.query(OrderDocument).filter(OrderDocument.id_shipping == getattr(shipping, 'id_shipping', None)).all()
     for d in docs:
         ods.recalculate_totals_for_order_document(d.id_order_document, d.type_document)
 
+    return _to_shipping_response(shipping, db)
 
-    return shipping
-
-@router.put("/{shipping_id}", status_code=status.HTTP_200_OK, response_description="Spedizione aggiornato correttamente")
+@router.put(
+    "/{shipping_id}",
+    status_code=status.HTTP_200_OK,
+    response_model=ShippingResponseSchema,
+    response_description="Spedizione aggiornato correttamente",
+)
 @check_authentication
 async def update_shipping(
     shipping_data: ShippingUpdateSchema,
@@ -125,11 +188,13 @@ async def update_shipping(
     Aggiorna i dati di un shipping esistente basato sull'ID specificato.
     Tutti i campi sono facoltativi - solo i campi inviati verranno aggiornati.
 
+    Risponde con l'oggetto aggiornato (incluso `id_shipping`), così che il client
+    non debba effettuare una GET di follow-up per riallineare il proprio stato.
+
     - **shipping_id**: Identificativo del shipping da aggiornare.
     """
     result = await shipping_service.update_shipping(shipping_id, shipping_data)
-    
-    # Estrai shipping dal risultato (può essere dict o Shipping)
+
     shipping = result.get("shipping") if isinstance(result, dict) else result
 
     # Ricalcolo totali ordine/documento collegati a questa spedizione
@@ -148,7 +213,7 @@ async def update_shipping(
     for d in docs:
         ods.recalculate_totals_for_order_document(d.id_order_document, d.type_document)
 
-    return shipping
+    return _to_shipping_response(shipping, db)
 
 @router.delete("/{shipping_id}", status_code=status.HTTP_200_OK, response_description="Spedizione eliminata correttamente")
 @check_authentication

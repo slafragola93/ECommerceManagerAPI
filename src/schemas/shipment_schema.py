@@ -22,6 +22,7 @@ class BulkShipmentCreateRequestSchema(BaseModel):
 class BulkShipmentCreateSuccess(BaseModel):
     """Risultato di una creazione spedizione riuscita"""
     order_id: int = Field(..., description="ID dell'ordine")
+    id_shipping: Optional[int] = Field(None, description="ID della spedizione collegata all'ordine")
     awb: str = Field(..., description="Air Waybill number o tracking number")
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')
