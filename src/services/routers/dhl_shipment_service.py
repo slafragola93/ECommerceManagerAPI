@@ -193,8 +193,10 @@ class DhlShipmentService(IDhlShipmentService):
         Returns:
             Lista di metadati documenti salvati
         """
-        # 1. Cleanup documenti esistenti per questo ordine
-        self._cleanup_old_documents(order_id)
+        # 1. Cleanup documenti esistenti SOLO per lo stesso AWB (caso ricreazione).
+        # NON cancella altri documenti dell'ordine per non distruggere le label
+        # di spedizioni precedenti in caso di multi-shipping.
+        self._cleanup_documents_by_awb(awb)
         
         saved_documents = []
         
@@ -327,53 +329,46 @@ class DhlShipmentService(IDhlShipmentService):
         
         return redacted
     
-    def _cleanup_old_documents(self, order_id: int) -> None:
+    def _cleanup_documents_by_awb(self, awb: str) -> None:
         """
-        Elimina documenti esistenti per un ordine prima di salvare nuovi documenti
+        Elimina record + file PDF di eventuali documenti con lo stesso AWB.
+        
+        Caso d'uso: ricreazione esatta della label per uno stesso tracking.
+        NON tocca documenti di altri AWB dello stesso ordine (multi-shipping).
         
         Args:
-            order_id: ID dell'ordine
+            awb: Air Waybill number del nuovo documento
         """
+        if not awb:
+            return
         try:
             from src.repository.shipment_document_repository import ShipmentDocumentRepository
-            import shutil
             from pathlib import Path
             
-            # Recupera tutti i documenti esistenti per l'ordine
             document_repo = ShipmentDocumentRepository(self.order_repository.session)
-            existing_documents = document_repo.get_by_order_id(order_id)
+            existing_documents = document_repo.get_by_awb(awb)
             
             if not existing_documents:
                 return
             
-            # Raggruppa documenti per cartella per eliminare una volta sola
-            folders_to_delete = set()
-            
             for doc in existing_documents:
-                if doc.file_path:
-                    try:
-                        # Estrai la cartella dell'ordine dal file_path
-                        # Es: media/shipments/2025/10/123/label_xxx.pdf -> media/shipments/2025/10/123
-                        file_path = Path(doc.file_path)
-                        order_folder = file_path.parent  # cartella {id_order}
-                        folders_to_delete.add(str(order_folder))
-                        
-                        # Elimina il record dal database
-                        document_repo.delete_by_id(doc.id)
-                        
-                    except Exception as e:
-                        logger.warning(f"Errore nel processare il documento {doc.id}: {str(e)}")
-            
-            # Elimina le cartelle fisiche
-            for folder_path in folders_to_delete:
+                file_path_str = doc.file_path
                 try:
-                    if Path(folder_path).exists():
-                        shutil.rmtree(folder_path)
+                    document_repo.delete_by_id(doc.id)
                 except Exception as e:
-                    logger.error(f"Errore nell'eliminare la cartella {folder_path}: {str(e)}")
+                    logger.warning(f"Errore nell'eliminare il record documento {doc.id}: {str(e)}")
+                    continue
+                
+                if file_path_str:
+                    try:
+                        p = Path(file_path_str)
+                        if p.exists() and p.is_file():
+                            p.unlink()
+                    except Exception as e:
+                        logger.error(f"Errore nell'eliminare il file {file_path_str}: {str(e)}")
             
         except Exception as e:
-            logger.error(f"Errore durante la pulizia per l'ordine {order_id}: {str(e)}")
+            logger.error(f"Errore durante la pulizia per AWB {awb}: {str(e)}")
             # Non sollevo eccezione per non bloccare la creazione spedizione
     
     async def cancel_shipment(self, order_id: int) -> Dict[str, Any]:

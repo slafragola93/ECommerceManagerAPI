@@ -109,7 +109,10 @@ class BrtShipmentService(IBrtShipmentService):
         packages = self.order_package_repository.get_dimensions_by_order(order_id)
         
         # 7.1. Conta il numero di order_package collegate all'ordine
-        number_of_parcels = len(packages) if packages else 0
+        # FIX BUG-010 sub-case 5: default a 1 invece di 0 per evitare errore BRT -68 numberOfParcels.
+        # Casi noti: ordini senza order_packages (es. preventivi convertiti, anomalie storiche).
+        # Investigazione dati 2026-05-14: 3 ordini affetti su 46.898 totali.
+        number_of_parcels = len(packages) if packages else 1
         
         # 8. Recupero internal_reference dell'ordine
         internal_reference = order_data.internal_reference or str(order_id)
@@ -279,8 +282,10 @@ class BrtShipmentService(IBrtShipmentService):
             Dict con metadati documento salvato
         """
         try:
-            # Cleanup documenti esistenti
-            self._cleanup_old_documents(order_id)
+            # Cleanup documenti esistenti SOLO per lo stesso AWB (caso ricreazione).
+            # NON cancella altri documenti dell'ordine per non distruggere le label
+            # di spedizioni precedenti in caso di multi-shipping.
+            self._cleanup_documents_by_awb(awb)
             
             # Decodifica base64
             try:
@@ -344,52 +349,46 @@ class BrtShipmentService(IBrtShipmentService):
             logger.error(f"Error saving BRT document for AWB {awb}: {str(e)}")
             raise
     
-    def _cleanup_old_documents(self, order_id: int) -> None:
+    def _cleanup_documents_by_awb(self, awb: str) -> None:
         """
-        Elimina documenti esistenti per un ordine prima di salvare nuovi documenti
+        Elimina record + file PDF di eventuali documenti con lo stesso AWB.
+        
+        Caso d'uso: ricreazione esatta della label per uno stesso tracking.
+        NON tocca documenti di altri AWB dello stesso ordine (multi-shipping).
         
         Args:
-            order_id: ID dell'ordine
+            awb: Air Waybill number del nuovo documento
         """
+        if not awb:
+            return
         try:
             from src.repository.shipment_document_repository import ShipmentDocumentRepository
-            import shutil
             from pathlib import Path
             
-            # Recupera tutti i documenti esistenti per l'ordine
             document_repo = ShipmentDocumentRepository(self.order_repository.session)
-            existing_documents = document_repo.get_by_order_id(order_id)
+            existing_documents = document_repo.get_by_awb(awb)
             
             if not existing_documents:
                 return
             
-            # Raggruppa documenti per cartella per eliminare una volta sola
-            folders_to_delete = set()
-            
             for doc in existing_documents:
-                if doc.file_path:
-                    try:
-                        # Estrai la cartella dell'ordine dal file_path
-                        file_path = Path(doc.file_path)
-                        order_folder = file_path.parent  # cartella {id_order}
-                        folders_to_delete.add(str(order_folder))
-                        
-                        # Elimina il record dal database
-                        document_repo.delete_by_id(doc.id)
-                        
-                    except Exception as e:
-                        logger.warning(f"Errore nel processare il documento {doc.id}: {str(e)}")
-            
-            # Elimina le cartelle fisiche
-            for folder_path in folders_to_delete:
+                file_path_str = doc.file_path
                 try:
-                    if Path(folder_path).exists():
-                        shutil.rmtree(folder_path)
+                    document_repo.delete_by_id(doc.id)
                 except Exception as e:
-                    logger.error(f"Errore nell'eliminare la cartella {folder_path}: {str(e)}")
+                    logger.warning(f"Errore nell'eliminare il record documento {doc.id}: {str(e)}")
+                    continue
+                
+                if file_path_str:
+                    try:
+                        p = Path(file_path_str)
+                        if p.exists() and p.is_file():
+                            p.unlink()
+                    except Exception as e:
+                        logger.error(f"Errore nell'eliminare il file {file_path_str}: {str(e)}")
             
         except Exception as e:
-            logger.error(f"Errore durante la pulizia per l'ordine {order_id}: {str(e)}")
+            logger.error(f"Errore durante la pulizia per AWB {awb}: {str(e)}")
             # Non sollevo eccezione per non bloccare la creazione spedizione
     
     async def get_label_file_path(self, awb: str) -> Optional[str]:
