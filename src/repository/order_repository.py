@@ -1098,7 +1098,8 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 products = self.session.query(Product.id_product, Product.img_url).filter(
                     Product.id_product.in_(product_ids)
                 ).all()
-                fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
+                from src.services.media.image_service import ImageService
+                fallback_img_url = ImageService.FALLBACK_IMG_URL
                 images_map = {
                     product.id_product: product.img_url if product.img_url else fallback_img_url
                     for product in products

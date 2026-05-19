@@ -24,6 +24,7 @@ from src.services.core.tool import (
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.repository.tax_repository import TaxRepository
+from src.services.media.image_service import ImageService
 
 
 class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocumentRepository):
@@ -780,7 +781,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 all_fully_returned = False
                 break
         # Quando ogni prodotto è stato interamente reso, is_partial = 1 (reso completo)
-        is_partial = all_fully_returned
+        is_partial = not all_fully_returned
 
         # Crea il documento reso
         return_doc = FiscalDocument(
@@ -1055,10 +1056,11 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 .filter(Product.id_product.in_(product_ids))
                 .all()
             )
+            fallback_img = ImageService.FALLBACK_IMG_URL
             for r in rows:
-                img_map[r.id_product] = r.img_url or "media/product_images/fallback/product_not_found.jpg"
+                img_map[r.id_product] = r.img_url or fallback_img
         result = {}
-        fallback_img = "media/product_images/fallback/product_not_found.jpg"
+        fallback_img = ImageService.FALLBACK_IMG_URL
         for od in order_details:
             img_url = img_map.get(od.id_product, fallback_img) if od.id_product else fallback_img
             result[od.id_order_detail] = {"order_detail": od, "img_url": img_url}

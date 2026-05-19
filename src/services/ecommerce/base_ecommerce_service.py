@@ -2,6 +2,7 @@
 Base class for e-commerce synchronization services
 """
 
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
@@ -10,6 +11,16 @@ import aiohttp
 from datetime import datetime
 
 from src.core.exceptions import EcommerceApiResponseError
+
+
+def _ssl_verify_enabled() -> bool:
+    """Legge da env la flag di verifica certificato SSL per le API e-commerce.
+
+    Utile per ambienti di test/staging con certificati non validi (es. hostname
+    mismatch). Default sicuro: True (verifica abilitata).
+    """
+    raw = os.getenv("PRESTASHOP_SSL_VERIFY", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 
 class BaseEcommerceService(ABC):
@@ -35,7 +46,13 @@ class BaseEcommerceService(ABC):
         
     async def __aenter__(self):
         """Async context manager entry"""
-        self.session = aiohttp.ClientSession()
+        # Connector configurabile: per default verifica SSL, ma in ambienti con
+        # certificati non validi si può disabilitare via PRESTASHOP_SSL_VERIFY=false.
+        if _ssl_verify_enabled():
+            connector = aiohttp.TCPConnector()
+        else:
+            connector = aiohttp.TCPConnector(ssl=False)
+        self.session = aiohttp.ClientSession(connector=connector)
         await self._load_store_data()
         return self
         

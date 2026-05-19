@@ -2,7 +2,7 @@ import os
 import secrets
 import hashlib
 from datetime import datetime, timedelta
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 from functools import wraps
 
 from fastapi import Depends, HTTPException
@@ -21,6 +21,42 @@ oauth2_bearer = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 db_dependency = Annotated[Session, Depends(get_db)]
 token_dependency = Annotated[str, Depends(oauth2_bearer)]
+
+
+# ──────────────────────────────────────────────────────────
+# PERMISSION DENIED — helper per body strutturato 403
+# ──────────────────────────────────────────────────────────
+
+PermissionDeniedReason = Literal["module_not_found", "permission_missing", "permission_zero"]
+
+
+def _raise_permission_denied(
+    module: str,
+    action: str,
+    reason: PermissionDeniedReason,
+) -> None:
+    """
+    Solleva HTTPException 403 con body strutturato per errori di permission RBAC.
+
+    Il body resta machine-readable per il frontend:
+    {
+        "error_code": "PERMISSION_DENIED",
+        "message": "Non hai i permessi necessari per questa operazione.",
+        "module": "settings",
+        "action": "update",
+        "reason": "permission_missing"
+    }
+    """
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "error_code": "PERMISSION_DENIED",
+            "message": "Non hai i permessi necessari per questa operazione.",
+            "module": module,
+            "action": action,
+            "reason": reason,
+        },
+    )
 
 
 # ──────────────────────────────────────────────────────────
@@ -241,10 +277,7 @@ def require_permission(module: str, action: str):
         ).first()
 
         if not app_module:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Modulo '{module}' non trovato"
-            )
+            _raise_permission_denied(module, action, "module_not_found")
 
         # Cerca override personale
         perm = db.query(UserModulePermission).filter(
@@ -269,10 +302,7 @@ def require_permission(module: str, action: str):
                 ).first()
 
         if not perm:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permesso mancante: {module}.{action}"
-            )
+            _raise_permission_denied(module, action, "permission_missing")
 
         action_map = {
             'read':   perm.can_read,
@@ -282,10 +312,7 @@ def require_permission(module: str, action: str):
         }
 
         if not action_map.get(action, False):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permesso mancante: {module}.{action}"
-            )
+            _raise_permission_denied(module, action, "permission_zero")
 
         return current_user
 
@@ -332,10 +359,7 @@ def check_permission(
     ).first()
 
     if not app_module:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Modulo '{module}' non trovato"
-        )
+        _raise_permission_denied(module, action, "module_not_found")
 
     perm = db.query(UserModulePermission).filter(
         and_(
@@ -358,10 +382,7 @@ def check_permission(
             ).first()
 
     if not perm:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permesso mancante: {module}.{action}"
-        )
+        _raise_permission_denied(module, action, "permission_missing")
 
     action_map = {
         'read':   perm.can_read,
@@ -371,10 +392,7 @@ def check_permission(
     }
 
     if not action_map.get(action, False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permesso mancante: {module}.{action}"
-        )
+        _raise_permission_denied(module, action, "permission_zero")
 
 
 # ──────────────────────────────────────────────────────────

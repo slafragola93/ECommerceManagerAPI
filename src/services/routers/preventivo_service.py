@@ -1092,12 +1092,14 @@ class PreventivoService:
         Segue DIP: dipende da ProductService (abstraction) per recuperare immagini.
         """
         # Fallback image se non fornita
+        from src.services.media.image_service import ImageService
+        fallback_img_url = ImageService.FALLBACK_IMG_URL
         if img_url is None and order_detail.id_product:
             # Usa ProductService per recuperare immagine (DIP - Dependency Inversion)
             images_map = self.product_service.get_product_images_map([order_detail.id_product])
-            img_url = images_map.get(order_detail.id_product, "media/product_images/fallback/product_not_found.jpg")
+            img_url = images_map.get(order_detail.id_product, fallback_img_url)
         elif img_url is None:
-            img_url = "media/product_images/fallback/product_not_found.jpg"
+            img_url = fallback_img_url
         
         total_price_with_tax = order_detail.total_price_with_tax if order_detail.total_price_with_tax is not None else 0.0
         total_price_net = order_detail.total_price_net if order_detail.total_price_net is not None else 0.0

@@ -928,7 +928,7 @@ class PrestaShopService(BaseEcommerceService):
                         
                     else:
                         # Se non c'è immagine, usa l'immagine di fallback
-                        img_url = "media/product_images/fallback/product_not_found.jpg"
+                        img_url = self.image_service.FALLBACK_IMG_URL
                     # Extract price without tax (PrestaShop 'price' field is without tax)
                     price_without_tax = float(product.get('price'))
                     
@@ -1519,13 +1519,13 @@ class PrestaShopService(BaseEcommerceService):
                 else:
                     print(f"DEBUG: Failed to download image for product {id_product}, using fallback image")
                     # Usa l'immagine di fallback quando il download fallisce
-                    fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
+                    fallback_img_url = self.image_service.FALLBACK_IMG_URL
                     return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
                     
             except Exception as e:
                 print(f"DEBUG: Error downloading image for product {product_data.id_origin}: {str(e)}, using fallback image")
                 # Usa l'immagine di fallback quando c'è un errore
-                fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
+                fallback_img_url = self.image_service.FALLBACK_IMG_URL
                 return {"img_url": fallback_img_url, "id_product": id_product, "downloaded": False, "fallback": True}
 
     async def _download_product_images(self, product_data_list: list, original_products_data: list):
@@ -1641,7 +1641,7 @@ class PrestaShopService(BaseEcommerceService):
                     failed_count += 1
             
             # Processa prodotti senza immagini per impostare il fallback se necessario
-            fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
+            fallback_img_url = self.image_service.FALLBACK_IMG_URL
             for product_data in products_without_images:
                 product_info = products_dict.get(str(product_data.id_origin))
                 if product_info:

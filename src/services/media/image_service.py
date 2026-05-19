@@ -3,10 +3,25 @@ Servizio per la gestione delle immagini dei prodotti
 """
 
 import asyncio
+import logging
 import os
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib3.exceptions import InsecureRequestWarning
+
+logger = logging.getLogger(__name__)
+
+
+def _image_ssl_verify_enabled() -> bool:
+    """Verifica SSL per il download delle immagini dall'ecommerce sorgente.
+
+    Condivide la stessa env var del fetch API e-commerce (`PRESTASHOP_SSL_VERIFY`)
+    cosi' un singolo flag basta a sbloccare entrambi i flussi.
+    Default sicuro: True.
+    """
+    raw = os.getenv("PRESTASHOP_SSL_VERIFY", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 from typing import Optional, Dict, Any
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,7 +36,11 @@ class ImageService:
     Servizio per la gestione delle immagini dei prodotti.
     Gestisce il download, il salvataggio e la generazione degli URL delle immagini.
     """
-    
+
+    # URL pubblico del fallback. Deve combaciare col mount statico (`/media` in main.py)
+    # e col file fisico presente in `media/product_images/fallback/product_not_found.jpg`.
+    FALLBACK_IMG_URL: str = "/media/product_images/fallback/product_not_found.jpg"
+
     def __init__(self, base_path: str = "media/product_images"):
         """
         Inizializza il servizio immagini.
@@ -30,7 +49,7 @@ class ImageService:
             base_path: Percorso base per il salvataggio delle immagini
         """
         self.base_path = Path(base_path)
-        self.base_path.mkdir(exist_ok=True)
+        self.base_path.mkdir(parents=True, exist_ok=True)
         
         # Configura session con connection pooling per performance
         self.session = requests.Session()
@@ -52,7 +71,19 @@ class ImageService:
         
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
-        
+
+        # Verifica SSL configurabile via env var (PRESTASHOP_SSL_VERIFY=false)
+        # per ambienti di test con certificato non valido (hostname mismatch, ecc.)
+        self.verify_ssl = _image_ssl_verify_enabled()
+        if not self.verify_ssl:
+            self.session.verify = False
+            # Sopprimi il warning ripetuto urllib3 per ogni request non verificata
+            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+            logger.warning(
+                "ImageService: SSL verification DISABLED via PRESTASHOP_SSL_VERIFY env var. "
+                "Use only in trusted/test environments."
+            )
+
         # Parametri di performance configurabili
         self.image_quality = 15
         self.max_image_size = (400, 300)
@@ -87,8 +118,10 @@ class ImageService:
             if file_path.exists():
                 return f"/media/product_images/{platform_id}/{filename}"
             
-            # Scarica l'immagine con session ottimizzata
-            response = self.session.get(image_url, timeout=3, stream=True)
+            # Scarica l'immagine con session ottimizzata.
+            # Timeout 10s: 3s era troppo aggressivo e causava molti fallimenti
+            # su connessioni lente, lasciando img_url fantasma nel DB.
+            response = self.session.get(image_url, timeout=10, stream=True)
             if response.status_code == 200:
                 # Legge tutto il contenuto in memoria
                 content = response.content
@@ -305,8 +338,10 @@ class ImageService:
         
         # Salva il file usando asyncio.to_thread
         await asyncio.to_thread(self._write_file_sync, file_path, file_content)
-        
-        return f"product_images/{platform_id}/{saved_filename}"
+
+        # Restituisce un URL coerente con il mount statico `/media` definito in main.py
+        # (vedi anche `download_and_save_image`, che usa lo stesso pattern).
+        return f"/media/product_images/{platform_id}/{saved_filename}"
     
     def get_image_url(self, relative_path: str, base_url: str = None) -> str:
         """
@@ -328,16 +363,32 @@ class ImageService:
     def delete_image(self, relative_path: str) -> bool:
         """
         Elimina un'immagine dal filesystem.
-        
+
+        Accetta path nei formati storicamente prodotti dal servizio:
+        - "/media/product_images/{platform}/file.jpg"
+        - "media/product_images/{platform}/file.jpg"
+        - "product_images/{platform}/file.jpg"
+        - "{platform}/file.jpg" (relativo a base_path)
+
         Args:
-            relative_path: Percorso relativo dell'immagine
-            
+            relative_path: Percorso relativo o URL pubblico dell'immagine
+
         Returns:
             True se eliminata con successo, False altrimenti
         """
+        if not relative_path:
+            return False
+
         try:
-            # Costruisce il percorso completo partendo dalla directory base
-            file_path = self.base_path / relative_path
+            # Normalizza separatori e strippa prefissi noti per evitare di concatenare
+            # `media/product_images` due volte quando il path arriva già full-qualified.
+            normalized = relative_path.replace("\\", "/").lstrip("/")
+            for prefix in ("media/product_images/", "product_images/"):
+                if normalized.startswith(prefix):
+                    normalized = normalized[len(prefix):]
+                    break
+
+            file_path = self.base_path / normalized
             if file_path.exists():
                 file_path.unlink()
                 return True

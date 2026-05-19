@@ -37,7 +37,8 @@ class PlatformStateTriggerResponseSchema(BaseModel):
     id_store: int
     state_type: str
     id_state_local: int
-    id_state_platform: int
+    # nullable a DB (FK ON DELETE SET NULL su ecommerce_order_states)
+    id_state_platform: Optional[int] = None
     is_active: bool
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

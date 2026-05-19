@@ -476,6 +476,20 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         "path": str(request.url)
     })
     
+    # Se exc.detail è un dict strutturato (es. _raise_permission_denied),
+    # "spalmiamo" i suoi campi nel wrapper standard preservando la struttura.
+    if isinstance(exc.detail, dict):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error_code": exc.detail.get("error_code", "HTTP_ERROR"),
+                "message": exc.detail.get("message", ""),
+                "details": {k: v for k, v in exc.detail.items() if k not in ("error_code", "message")},
+                "status_code": exc.status_code,
+            }
+        )
+    
+    # Fallback: exc.detail è una stringa (FastAPI standard) o altro
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -525,13 +539,16 @@ async def general_exception_handler(request: Request, exc: Exception):
 # ============================================================================
 # STATIC FILES MOUNT (must be before routers)
 # ============================================================================
+# Il mount viene fatto in modo incondizionato: se le cartelle non esistono le
+# creiamo qui per evitare che `/media/...` risponda con 404 globali. La sotto
+# cartella `fallback` ospita il placeholder usato dai vari servizi tramite
+# ImageService.FALLBACK_IMG_URL.
 try:
     media_path = Path("media")
-    if media_path.exists():
-        app.mount("/media", CachedStaticFiles(directory="media"), name="media")
-        logger.info(f"Media files mounted at /media from directory: {media_path.absolute()}")
-    else:
-        logger.warning(f"Media directory not found: {media_path.absolute()}")
+    fallback_path = media_path / "product_images" / "fallback"
+    fallback_path.mkdir(parents=True, exist_ok=True)
+    app.mount("/media", CachedStaticFiles(directory="media"), name="media")
+    logger.info(f"Media files mounted at /media from directory: {media_path.absolute()}")
 except Exception as e:
     logger.warning(f"Failed to mount media directory: {str(e)}")
 

@@ -450,9 +450,11 @@ class ProductRepository(BaseRepository[Product, int], IProductRepository):
                 Product.id_product.in_(product_ids)
             ).all()
             
-            # Fallback image URL
-            fallback_img_url = "media/product_images/fallback/product_not_found.jpg"
-            
+            # Fallback URL coerente col mount statico `/media` (vedi main.py)
+            # e con ImageService.FALLBACK_IMG_URL.
+            from src.services.media.image_service import ImageService
+            fallback_img_url = ImageService.FALLBACK_IMG_URL
+
             # Crea mapping con fallback per img_url mancanti
             return {
                 product.id_product: product.img_url if product.img_url else fallback_img_url

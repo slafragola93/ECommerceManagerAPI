@@ -130,9 +130,11 @@ class OrderDetailRepository(BaseRepository[OrderDetail, int], IOrderDetailReposi
                 if product and product.img_url:
                     img_url = product.img_url
                 else:
-                    img_url = "media/product_images/fallback/product_not_found.jpg"
+                    from src.services.media.image_service import ImageService
+                    img_url = ImageService.FALLBACK_IMG_URL
             else:
-                img_url = "media/product_images/fallback/product_not_found.jpg"
+                from src.services.media.image_service import ImageService
+                img_url = ImageService.FALLBACK_IMG_URL
         
         return {
             "id_order_detail": order_detail.id_order_detail,

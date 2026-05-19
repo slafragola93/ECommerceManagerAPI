@@ -1475,10 +1475,17 @@ class PreventivoRepository:
             id_address_invoice=original_preventivo.id_address_invoice,
             id_sectional=original_preventivo.id_sectional,
             id_shipping=new_shipping_id,  # Usa la nuova spedizione creata
+            id_payment=original_preventivo.id_payment,  # FIX BUG-009: copia metodo pagamento
+            id_store=original_preventivo.id_store,  # FIX BUG-009: copia negozio
             is_invoice_requested=original_preventivo.is_invoice_requested,
+            is_payed=original_preventivo.is_payed,  # FIX BUG-009: copia stato pagamento
             note=f"Copia di {original_preventivo.document_number}" + (f" - {original_preventivo.note}" if original_preventivo.note else ""),
             total_weight=original_preventivo.total_weight,
-            total_price_with_tax=original_preventivo.total_price_with_tax
+            total_price_with_tax=original_preventivo.total_price_with_tax,
+            total_price_net=original_preventivo.total_price_net,  # FIX BUG-009: copia totale netto
+            products_total_price_net=original_preventivo.products_total_price_net,  # FIX BUG-009: copia imponibile prodotti
+            products_total_price_with_tax=original_preventivo.products_total_price_with_tax,  # FIX BUG-009: copia totale con IVA prodotti
+            total_discount=original_preventivo.total_discount  # FIX BUG-009: copia sconto totale
         )
         
         self.db.add(new_preventivo)
@@ -1502,10 +1509,15 @@ class PreventivoRepository:
                 product_reference=articolo.product_reference,
                 product_qty=articolo.product_qty,
                 product_weight=articolo.product_weight,
-                product_price=articolo.product_price,
+                unit_price_net=articolo.unit_price_net,  # FIX BUG-009: prezzo unitario netto
+                unit_price_with_tax=articolo.unit_price_with_tax,  # FIX BUG-009: prezzo unitario con IVA (nullable=False)
+                total_price_net=articolo.total_price_net,  # FIX BUG-009: totale riga netto (nullable=False)
+                total_price_with_tax=articolo.total_price_with_tax,  # FIX BUG-009: totale riga con IVA (nullable=False)
                 id_tax=articolo.id_tax,
                 reduction_percent=articolo.reduction_percent,
-                reduction_amount=articolo.reduction_amount
+                reduction_amount=articolo.reduction_amount,
+                rda_quantity=articolo.rda_quantity,  # FIX BUG-009: copia rda_quantity
+                note=articolo.note  # FIX BUG-009: note articolo
             )
             
             # Aggiungi direttamente alla sessione senza ricalcolare i totali
