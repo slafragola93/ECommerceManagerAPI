@@ -325,33 +325,11 @@ async def create_shipment(
         # Non bloccare la risposta in caso di errori nell'emissione dell'evento
         logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id}: {str(e)}", exc_info=True)
     
-    # 6. Aggiorna stato ordine in base al flag is_multishipping
-    try:
-        order_service = OrderService(or_repo)
-        order = or_repo.get_by_id(order_id)
-        
-        if order.is_multishipping == 0:
-            # Spedizione normale -> sempre stato 4
-            await order_service.update_order_status(order_id, 4)
-            logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
-        else:
-            # Multispedizione -> verifica se tutto spedito E se tutte le spedizioni hanno l'etichetta
-            # Commit esplicito e refresh sessione per assicurarsi che la query veda i dati aggiornati
-            db.commit()
-            db.expire_all()  # Forza il refresh di tutti gli oggetti nella sessione
-            
-            all_have_labels = await shipping_service.check_all_shipments_have_labels(order_id, db)
-            print(f"DEBUG check_all_shipments_have_labels: {all_have_labels}")
-            if all_have_labels:
-                print(f"DEBUG updating order status to 4")
-                await order_service.update_order_status(order_id, 4)  # SPEDIZIONE CONFERMATA
-                logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) - all products shipped and all labels generated")
-            else:
-                await order_service.update_order_status(order_id, 7)  # MULTISPEDIZIONE
-    except Exception as e:
-        # Non bloccare la risposta in caso di errori nell'aggiornamento dello stato
-        logger.warning(f"Failed to update order {order_id} status: {str(e)}", exc_info=True)
-    
+    # REPLAN-SHIPMENT-WORKFLOW: rimosso step 6 di auto-update stato ordine dopo creazione spedizione.
+    # Lo stato ordine viene gestito SOLO manualmente dall'operatore. La creazione spedizione
+    # non deve più forzare l'ordine a stato 4 (Spedizione Confermata) o 7 (Multispedizione).
+    # L'emit_event SHIPMENT_CREATED (sopra) resta attivo per notificare altre parti del sistema.
+
     return result
 
 
@@ -468,28 +446,8 @@ async def bulk_create_shipments(
                 # Non bloccare il processing in caso di errori nell'emissione dell'evento
                 logger.warning(f"Failed to emit SHIPMENT_CREATED event for order {order_id} in bulk operation: {str(e)}", exc_info=True)
             
-            # Aggiorna stato ordine in base al flag is_multishipping
-            # Il service gestisce le eccezioni internamente
-            order_service = OrderService(or_repo)
-            order = or_repo.get_by_id(order_id)
-            
-            if order.is_multishipping == 0:
-                # Spedizione normale -> sempre stato 4
-                await order_service.update_order_status(order_id, 4)
-                logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) after shipment creation")
-            else:
-                # Multispedizione -> verifica se tutto spedito E se tutte le spedizioni hanno l'etichetta
-                db.commit()
-                db.expire_all()
-                all_shipped = await shipping_service.check_all_products_shipped(order_id, db)
-                all_have_labels = await shipping_service.check_all_shipments_have_labels(order_id, db)
-                
-                if all_shipped and all_have_labels:
-                    await order_service.update_order_status(order_id, 4)  # SPEDIZIONE CONFERMATA
-                    logger.info(f"Order {order_id} status updated to 4 (Spedizione Confermata) - all products shipped and all labels generated")
-                else:
-                    await order_service.update_order_status(order_id, 7)  # MULTISPEDIZIONE
-                    logger.info(f"Order {order_id} status updated to 7 (Multispedizione) - products shipped: {all_shipped}, all labels: {all_have_labels}")
+            # REPLAN-SHIPMENT-WORKFLOW: rimosso auto-update stato ordine dopo creazione spedizione nel bulk.
+            # Lo stato ordine viene gestito SOLO manualmente dall'operatore (vedi commento in create_shipment singolo).
 
         except (NotFoundException, BusinessRuleException, ValidationException, 
                 AuthenticationException, InfrastructureException) as e:

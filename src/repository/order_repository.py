@@ -5,7 +5,7 @@ from typing import Optional, List
 
 # Third-party imports
 from fastapi import HTTPException
-from sqlalchemy import desc, func, select, or_, String, and_, text
+from sqlalchemy import asc, desc, func, select, or_, String, and_, text
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -33,6 +33,7 @@ from ..models.product import Product
 from ..models.order_detail import OrderDetail as OrderDetailModel
 from ..models.order_document import OrderDocument
 from ..models.fiscal_document import FiscalDocument
+from ..models.carrier_api import CarrierApi
 from ..models.relations.relations import orders_history
 
 # Local application imports - Schemas
@@ -68,6 +69,18 @@ logger = logging.getLogger(__name__)
 
 
 class OrderRepository(BaseRepository[Order, int], IOrderRepository):
+    # Whitelist colonne ordinabili da API.
+    # Mappa nome pubblico -> colonna SQLAlchemy. Tutto ciò che non è qui è rifiutato
+    # (no ORDER BY dinamico da stringa libera, no SQL injection).
+    # NOTA: `date_upd` non è esposto perché `Order.updated_at` è `String(19)` in formato
+    #       DD-MM-YYYY hh:mm:ss e l'ordinamento lessicografico non è temporalmente corretto.
+    #       Per esporlo serve prima migrare la colonna a DateTime.
+    ALLOWED_ORDER_BY_FIELDS = {
+        "id_order": Order.id_order,
+        "date_add": Order.date_add,
+    }
+    ALLOWED_ORDER_DIRECTIONS = {"asc", "desc"}
+
     def __init__(self, session: Session):
         """
         Inizializza la repository con la sessione del DB
@@ -111,12 +124,28 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 date_from: Optional[str] = None,
                 date_to: Optional[str] = None,
                 show_details: bool = False,
-                page: int = 1, 
-                limit: int = 10
+                page: int = 1,
+                limit: int = 10,
+                order_by: str = "id_order",
+                order_direction: str = "desc"
                 ):
         """
-        Recupera tutti gli ordini con filtri opzionali
+        Recupera tutti gli ordini con filtri opzionali.
+
+        Args:
+            order_by: nome colonna su cui ordinare. Deve essere in `ALLOWED_ORDER_BY_FIELDS`.
+            order_direction: "asc" o "desc" (case-insensitive, già normalizzato dal router).
+                             A parità di valore viene sempre applicato `id_order ASC` come
+                             tie-breaker per garantire un ordine deterministico (necessario
+                             per la paginazione stabile, soprattutto quando `order_by` è una data).
         """
+        # Validazione whitelist (difesa in profondità: il router già valida via Literal/normalize)
+        order_by_key = order_by if order_by in self.ALLOWED_ORDER_BY_FIELDS else "id_order"
+        order_direction_key = order_direction.lower() if isinstance(order_direction, str) else "desc"
+        if order_direction_key not in self.ALLOWED_ORDER_DIRECTIONS:
+            order_direction_key = "desc"
+        sort_column = self.ALLOWED_ORDER_BY_FIELDS[order_by_key]
+        primary_sort = desc(sort_column) if order_direction_key == "desc" else asc(sort_column)
         # Usa joinedload per caricare carrier ed evitare N+1 queries
         query = self.session.query(Order).options(joinedload(Order.carrier))
         
@@ -181,7 +210,11 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         if needs_search_joins:
             query = query.distinct()
         
-        orders_result = query.order_by(desc(Order.id_order)).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
+        # ORDER BY principale + tie-breaker stabile `id_order ASC` (paginazione deterministica
+        # anche quando si ordina per una data e ci sono timestamp identici).
+        # Quando si ordina già per id_order il tie-breaker è ridondante ma non dannoso.
+        order_by_clause = [primary_sort, asc(Order.id_order)]
+        orders_result = query.order_by(*order_by_clause).offset(QueryUtils.get_offset(limit, page)).limit(limit).all()
         
         # Pre-calcola has_invoice in batch per evitare N+1 in formatted_output
         if orders_result:
@@ -738,6 +771,117 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         self.session.commit()
         
         return True
+
+    def find_shipments_for_bordero(
+        self,
+        carrier_id: int,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> List[Row]:
+        """Recupera le spedizioni idonee al borderò per un corriere.
+
+        Filtri applicati:
+        - `orders.id_order_state = 3` (Spediti)
+        - `shipments.id_carrier_api = carrier_id`
+        - `shipments.tracking IS NOT NULL` AND `shipments.tracking != ''`
+        - `carriers_api.is_active = true` (corrieri disattivati esclusi anche se
+          hanno spedizioni storiche con tracking)
+        - `orders.date_add >= date_from` (se fornito)
+        - `orders.date_add <= date_to` (se fornito)
+
+        I filtri date hanno la stessa semantica di `GET /api/v1/orders/`
+        (estremi inclusivi). Accettano `str` formato `YYYY-MM-DD` o
+        `datetime.date` (auto-coerce da SQLAlchemy).
+
+        Ordinamento: `shipments.id_shipping DESC` (le più recenti in cima).
+
+        Returns:
+            Lista di SQLAlchemy Row (named tuple) con i campi necessari al PDF.
+            Ogni riga rappresenta una spedizione (relazione 1:1 con l'ordine via
+            `Order.id_shipping = Shipping.id_shipping`).
+        """
+        # Subquery: COUNT pacchi per ordine (no row explosion sul JOIN principale).
+        packages_count_subq = (
+            self.session.query(
+                OrderPackage.id_order.label("id_order"),
+                func.count(OrderPackage.id_order_package).label("packages_count"),
+            )
+            .filter(OrderPackage.id_order.isnot(None))
+            .group_by(OrderPackage.id_order)
+            .subquery()
+        )
+
+        conditions = [
+            Order.id_order_state == 3,
+            Shipping.id_carrier_api == carrier_id,
+            Shipping.tracking.isnot(None),
+            Shipping.tracking != "",
+            CarrierApi.is_active.is_(True),
+        ]
+        if date_from:
+            conditions.append(Order.date_add >= date_from)
+        if date_to:
+            conditions.append(Order.date_add <= date_to)
+
+        stmt = (
+            select(
+                Shipping.id_shipping,
+                Shipping.tracking,
+                Shipping.weight,
+                Order.id_order,
+                Order.cash_on_delivery,
+                CarrierApi.name.label("carrier_name"),
+                Address.firstname,
+                Address.lastname,
+                Address.company,
+                Address.address1,
+                Address.address2,
+                Address.postcode,
+                Address.city,
+                func.coalesce(packages_count_subq.c.packages_count, 0).label("packages_count"),
+            )
+            .select_from(Shipping)
+            .join(Order, Order.id_shipping == Shipping.id_shipping)
+            .join(CarrierApi, CarrierApi.id_carrier_api == Shipping.id_carrier_api)
+            .outerjoin(Address, Address.id_address == Order.id_address_delivery)
+            .outerjoin(
+                packages_count_subq,
+                packages_count_subq.c.id_order == Order.id_order,
+            )
+            .where(and_(*conditions))
+            .order_by(desc(Shipping.id_shipping))
+        )
+
+        return self.session.execute(stmt).all()
+
+    def get_product_names_by_order_ids(self, order_ids: List[int]) -> dict:
+        """Recupera i product_name di tutti gli order_details per un set di ordini.
+
+        Query separata dal JOIN principale del borderò per evitare row explosion
+        quando un ordine ha molti articoli.
+
+        Args:
+            order_ids: Lista di id_order per cui recuperare gli articoli.
+
+        Returns:
+            Dict `{id_order: [product_name, ...]}`. Ordini senza articoli non
+            sono presenti nel dict.
+        """
+        if not order_ids:
+            return {}
+
+        rows = (
+            self.session.query(OrderDetailModel.id_order, OrderDetailModel.product_name)
+            .filter(OrderDetailModel.id_order.in_(order_ids))
+            .all()
+        )
+
+        result: dict = {}
+        for id_order, product_name in rows:
+            if not id_order:
+                continue
+            result.setdefault(id_order, []).append(product_name or "")
+        return result
 
     def delete(self, order: Order) -> bool:
         """

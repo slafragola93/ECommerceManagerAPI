@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt
+    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero
 from src.database import Base, engine
 
 # Import new cache system
@@ -234,6 +234,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         print(f"⚠ Tracking polling warning: {e}")
     
+    try:
+        from src.core.diagnostics.order_state_audit import setup_order_state_audit
+        setup_order_state_audit()
+    except Exception as e:
+        print(f"⚠ Order state audit setup warning: {e}")
+
     print("✅ Startup completed\n")
     
     yield
@@ -311,6 +317,30 @@ app.add_middleware(
 app.add_middleware(ErrorLoggingMiddleware, log_requests=True, log_responses=False)
 app.add_middleware(PerformanceLoggingMiddleware, slow_request_threshold=1.0)
 app.add_middleware(SecurityLoggingMiddleware)
+
+
+@app.middleware("http")
+async def _order_state_audit_request_context(request: Request, call_next):
+    """
+    Populate the order_state_audit ContextVar with the current request URL/method.
+    No-op when ORDER_STATE_AUDIT is disabled (the audit listener simply ignores it).
+    """
+    from src.core.diagnostics.order_state_audit import (
+        current_request_url,
+        current_request_method,
+        is_audit_enabled,
+    )
+
+    if not is_audit_enabled():
+        return await call_next(request)
+
+    url_token = current_request_url.set(str(request.url))
+    method_token = current_request_method.set(request.method)
+    try:
+        return await call_next(request)
+    finally:
+        current_request_url.reset(url_token)
+        current_request_method.reset(method_token)
 
 # Setup cache middleware
 try:
@@ -589,6 +619,7 @@ app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
 app.include_router(shipments.router)
+app.include_router(bordero.router)
 app.include_router(events.router)
 app.include_router(csv_import.router)
 

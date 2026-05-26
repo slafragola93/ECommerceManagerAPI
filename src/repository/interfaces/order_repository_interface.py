@@ -2,7 +2,7 @@
 Interfaccia per Order Repository seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Dict, List, Optional
 from sqlalchemy.engine import Row
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
@@ -31,9 +31,11 @@ class IOrderRepository(ABC):
                 date_to: Optional[str] = None,
                 show_details: bool = False,
                 page: int = 1,
-                limit: int = 10
+                limit: int = 10,
+                order_by: str = "id_order",
+                order_direction: str = "desc"
                 ) -> List[Order]:
-        """Recupera tutti gli ordini con filtri opzionali"""
+        """Recupera tutti gli ordini con filtri opzionali e ordinamento configurabile"""
         pass
     
     @abstractmethod
@@ -135,4 +137,26 @@ class IOrderRepository(ABC):
     @abstractmethod
     def set_multishipping(self, order_id: int, value: int) -> bool:
         """Imposta il flag is_multishipping per un ordine"""
+        pass
+
+    @abstractmethod
+    def find_shipments_for_bordero(
+        self,
+        carrier_id: int,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> List[Row]:
+        """Recupera le spedizioni idonee al borderò per un corriere.
+
+        Filtri applicati: id_order_state=3, id_carrier_api=carrier_id,
+        tracking valorizzato, corriere attivo (`is_active=true`), e
+        opzionalmente finestra date su `orders.date_add` (estremi inclusivi,
+        stessa semantica di `GET /api/v1/orders/`).
+        Ordinato per `shipping.id_shipping DESC`.
+        """
+        pass
+
+    @abstractmethod
+    def get_product_names_by_order_ids(self, order_ids: List[int]) -> Dict[int, List[str]]:
+        """Recupera i product_name degli order_details raggruppati per ordine."""
         pass

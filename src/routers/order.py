@@ -5,7 +5,7 @@ Tutte le funzioni helper e la logica business sono nel service.
 import json
 import logging
 import pprint
-from typing import Optional
+from typing import Literal, Optional
 from src.models.address import Address
 from src.models.order import Order
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body
@@ -103,6 +103,26 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                         show_details: str = Query("false", description="Se 'true', include dettagli completi delle relazioni (customer, platform, payment, shipping, addresses, order_states, order_details)"),
                         page: int = Query(1, gt=0, description="Numero di pagina (inizia da 1)"),
                         limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
+                        order_by: Literal["id_order", "date_add"] = Query(
+                            "id_order",
+                            description=(
+                                "Colonna su cui ordinare i risultati. Valori ammessi: "
+                                "`id_order` (default, ordine di inserimento DB), "
+                                "`date_add` (data creazione ordine). "
+                                "A parità di valore viene sempre applicato `id_order ASC` "
+                                "come tie-breaker per garantire un ordine deterministico."
+                            ),
+                            examples=["id_order", "date_add"],
+                        ),
+                        order_direction: str = Query(
+                            "desc",
+                            description=(
+                                "Direzione di ordinamento. Valori ammessi (case-insensitive): "
+                                "`asc`, `desc`. Default `desc` per mostrare gli ordini "
+                                "più recenti in cima alla lista."
+                            ),
+                            examples=["desc", "asc"],
+                        ),
                         _: None = Depends(require_permission("orders", "read"))):
     """
     Recupera una lista di ordini con filtri opzionali e possibilità di includere dettagli completi.
@@ -139,6 +159,15 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     - `page`: Numero di pagina (inizia da 1)
     - `limit`: Numero di elementi per pagina (max 100)
 
+    **Ordinamento:**
+    - `order_by`: Colonna su cui ordinare. Valori ammessi: `id_order` (default),
+      `date_add`. Qualsiasi altro valore restituisce 422.
+    - `order_direction`: `asc` o `desc` (case-insensitive). Default `desc` per
+      mostrare gli ordini più recenti in cima.
+    - Tie-breaker: viene sempre applicato `id_order ASC` come secondo criterio
+      di ordinamento, anche quando `order_by` è una data, per garantire ordine
+      deterministico in caso di timestamp identici (paginazione stabile).
+
     **Risposta:**
     ```json
     {
@@ -150,11 +179,24 @@ async def get_all_orders(user: dict = Depends(get_current_user),
     ```
 
     **Esempi di utilizzo:**
-    - `/orders` - Tutti gli ordini (risposta base)
+    - `/orders` - Tutti gli ordini (risposta base, default `id_order desc`)
     - `/orders?show_details=true` - Tutti gli ordini con dettagli completi
     - `/orders?customers_ids=1,2&show_details=true` - Ordini di clienti specifici con dettagli
     - `/orders?is_payed=true&date_from=2024-01-01` - Ordini pagati dal 1 gennaio 2024
+    - `/orders?order_by=date_add&order_direction=asc` - Ordina per data creazione crescente
     """
+    # Normalizza order_direction (case-insensitive) e valida contro la whitelist.
+    # Restituisce 422 per coerenza con la validazione FastAPI degli altri query param.
+    order_direction_normalized = (order_direction or "desc").lower()
+    if order_direction_normalized not in {"asc", "desc"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Valore non valido per 'order_direction': '{order_direction}'. "
+                "Valori ammessi: 'asc', 'desc' (case-insensitive)."
+            ),
+        )
+
     try:
         orders = or_repo.get_all(orders_ids=orders_ids,
                                 customers_ids=customers_ids,
@@ -173,7 +215,9 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                                 date_to=date_to,
                                 show_details=show_details == "true",
                                 page=page,
-                                limit=limit)
+                                limit=limit,
+                                order_by=order_by,
+                                order_direction=order_direction_normalized)
         
         if not orders:
             return {"orders": [], "total": 0, "page": page, "limit": limit}

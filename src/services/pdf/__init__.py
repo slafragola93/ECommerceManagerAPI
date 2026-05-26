@@ -6,10 +6,12 @@ from src.services.pdf.base_pdf_service import BasePDFService
 from src.services.pdf.preventivo_pdf_service import PreventivoPDFService
 from src.services.pdf.ddt_pdf_service import DDTPDFService
 from src.services.pdf.fiscal_document_pdf_service import FiscalDocumentPDFService
+from src.services.pdf.bordero_pdf_service import BorderoPDFService
 
 __all__ = [
     'BasePDFService',
     'PreventivoPDFService',
     'DDTPDFService',
-    'FiscalDocumentPDFService'
+    'FiscalDocumentPDFService',
+    'BorderoPDFService',
 ]
