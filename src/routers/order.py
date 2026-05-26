@@ -365,20 +365,33 @@ async def delete_order(order_id: int = Path(gt=0),
                       order_service: IOrderService = Depends(get_order_service),
                       _: None = Depends(require_permission("orders", "delete"))):
     """
-    Elimina un ordine dal sistema per l'ID specificato.
-    
-    L'ordine può essere eliminato solo se:
-    - È in stato iniziale (id_order_state = 1, "In Preparazione")
-    - Non ha documenti fiscali collegati
-    
-    Vengono eliminati:
-    - Order
-    - OrderDetail collegati
-    - OrderPackage collegati
-    
-    Vengono lasciati intatti:
-    - FiscalDocument (se presenti, l'eliminazione fallisce)
-    - OrderDocument (id_order diventerà NULL)
+    Elimina un ordine dal sistema in modo definitivo (irreversibile).
+
+    Contratto (allineato a FE-ORDER-CANCEL, 2026-05-26):
+    - L'eliminazione e' valida in QUALSIASI stato (la protezione UX e' affidata
+      al dialog warning forte FE-side).
+    - Per il cambio stato "Annullato" usare invece `POST /api/v1/orders/bulk-status`
+      con `id_order_state=5` (semantica reversibile).
+
+    Cleanup automatico (delegato al repository):
+    - OrderDetail, OrderPackage, orders_history, ShipmentDocument
+    - Shipping collegati (solo se non condivisi con altri ordini/OrderDocument)
+
+    Lasciati intatti:
+    - FiscalDocument (vincolo fiscale italiano: una fattura emessa non si cancella)
+    - OrderDocument (orphan: `id_order` → NULL via DB)
+
+    Response:
+    - **204 No Content**: ordine eliminato con successo
+    - **404 Not Found**: `order_id` inesistente
+    - **403 Forbidden**: utente senza permission `orders.delete`
+    - **409 Conflict**:
+      - `error_code="ORDER_HAS_FISCAL_DOCUMENTS"` con `details.fiscal_document_ids`,
+        `details.fiscal_documents_count`, `details.current_state` — l'ordine ha
+        fatture/note di credito emesse, suggerire all'operatore "usa Annulla"
+      - `error_code="ORDER_DELETE_FK_CONSTRAINT"` con `details.db_error` — vincolo
+        FK residuo non gestito (difesa in profondita': non dovrebbe mai capitare,
+        se capita c'e' un cleanup mancante da aggiungere al repo)
 
     Parametri:
     - `user`: Dipendenza dell'utente autenticato.

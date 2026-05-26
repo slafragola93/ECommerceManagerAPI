@@ -3,6 +3,8 @@ Order Service per gestione logica business ordini seguendo principi SOLID
 """
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
 from src.services.interfaces.order_service_interface import IOrderService
@@ -1145,66 +1147,107 @@ class OrderService(IOrderService):
     )
     async def delete_order(self, order_id: int, user: dict = None) -> bool:
         """
-        Elimina un ordine solo se in stato iniziale (id_order_state = 1).
-        
-        Validazioni:
-        - L'ordine deve essere in stato iniziale (id_order_state = 1)
-        - Non devono esistere FiscalDocument collegati
-        
-        Elimina:
-        - Order
-        - OrderDetail collegati
-        - OrderPackage collegati
-        
+        Elimina un ordine in modo definitivo (irreversibile).
+
+        Contratto (allineato alla feature FE-ORDER-CANCEL, contratto FE 2026-05-26):
+        - DELETE e' valido in QUALSIASI stato (la protezione UX e' affidata al
+          dialog warning forte FE-side). Per il cambio stato "Annulla" il FE
+          usa `POST /api/v1/orders/bulk-status` con id_order_state=5.
+        - Bloccato in caso di FiscalDocument collegati (vincoli fiscali italiani:
+          una fattura emessa NON si puo' cancellare). Risponde 409 Conflict con
+          body strutturato `{error_code: "ORDER_HAS_FISCAL_DOCUMENTS", details: {...}}`
+          per consentire al FE di mostrare dialog informativo + suggerire "usa Annulla".
+
+        Catena di cleanup (delegata al repository):
+        - OrderDetail, OrderPackage collegati
+        - Record in orders_history
+        - ShipmentDocument (etichette/documenti spedizione)
+        - Shipping collegati (solo se non condivisi con altri ordini/OrderDocument)
+        - OrderDocument.id_shipping nullato prima della DELETE Shipping
+          (fix bug 2026-05-26: prima sollevava IntegrityError 1451 su FK
+          `orders_document_ibfk_7` RESTRICT)
+
         Non elimina:
-        - FiscalDocument (lasciati intatti, ma verifica che non esistano)
-        - OrderDocument (lasciati intatti, id_order diventerà NULL)
-        
+        - FiscalDocument (mai cancellabili — vincolo fiscale)
+        - OrderDocument (lasciati orphan, id_order diventa NULL via DB)
+
         Args:
             order_id: ID dell'ordine da eliminare
             user: Contesto utente per eventi
-            
+
         Returns:
             True se eliminato con successo
-            
+
         Raises:
-            BusinessRuleException: Se l'ordine non è in stato iniziale o ha FiscalDocument collegati
+            NotFoundException: ordine non esistente (mappata in 404)
+            HTTPException 409: FiscalDocument collegati (error_code=ORDER_HAS_FISCAL_DOCUMENTS)
+                               o IntegrityError residua (error_code=ORDER_DELETE_FK_CONSTRAINT)
         """
         # 1. Recupera l'ordine
         order = self._order_repository.get_by_id(_id=order_id)
         if not order:
             raise NotFoundException("Order", order_id, {"order_id": order_id})
-        
-        # 2. Verifica che l'ordine sia in stato iniziale (id_order_state = 1)
-        if order.id_order_state != 1:
-            raise BusinessRuleException(
-                f"L'ordine può essere eliminato solo se è in stato iniziale (In Preparazione). Stato attuale: {order.id_order_state}",
-                details={
+
+        # 2. Pre-check fiscale: blocco hard 409 con body strutturato (contratto FE).
+        # Usiamo HTTPException invece di BusinessRuleException perche' quest'ultima
+        # mappa a 400 — il FE attende esplicitamente 409 per distinguere "errore
+        # di validazione input" (400) da "conflitto stato risorsa" (409, suggest "usa Annulla").
+        session = self._order_repository.session
+        fiscal_docs = session.query(FiscalDocument.id_fiscal_document).filter(
+            FiscalDocument.id_order == order_id
+        ).all()
+        fiscal_doc_ids = [row[0] for row in fiscal_docs]
+
+        if fiscal_doc_ids:
+            # NB: i campi del payload `details` vanno messi flat dentro `detail`
+            # (NON in una sotto-chiave "details"), perche' il `http_exception_handler`
+            # in main.py riavvolge gia' tutto cio' che non e' `error_code`/`message`
+            # sotto la chiave `details` del body finale.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error_code": "ORDER_HAS_FISCAL_DOCUMENTS",
+                    "message": (
+                        f"Impossibile eliminare l'ordine: ha {len(fiscal_doc_ids)} "
+                        f"documento/i fiscale/i collegato/i. "
+                        f"Per chiudere comunque l'ordine usa 'Annulla ordine'."
+                    ),
                     "order_id": order_id,
                     "current_state": order.id_order_state,
-                    "required_state": 1
-                }
+                    "fiscal_documents_count": len(fiscal_doc_ids),
+                    "fiscal_document_ids": fiscal_doc_ids,
+                },
             )
-        
-        # 3. Verifica che non esistano FiscalDocument collegati
-        session = self._order_repository.session
-        fiscal_docs_count = session.query(FiscalDocument).filter(
-            FiscalDocument.id_order == order_id
-        ).count()
-        
-        if fiscal_docs_count > 0:
-            raise BusinessRuleException(
-                f"Impossibile eliminare l'ordine: esistono {fiscal_docs_count} documento/i fiscale/i collegato/i",
-                details={
+
+        # 3. Esegue la cancellazione. Wrap in try/except IntegrityError per
+        # difesa in profondita': se compaiono in futuro nuove FK non gestite
+        # dal cleanup esplicito del repo, il FE riceve 409 + suggerimento
+        # (invece di 500 generico).
+        try:
+            result = self._order_repository.delete(order)
+        except IntegrityError as exc:
+            self._order_repository.session.rollback()
+            logger.warning(
+                "delete_order: IntegrityError residua su order_id=%d. "
+                "Probabile FK non gestita dal cleanup repo. Errore: %s",
+                order_id,
+                str(exc.orig) if hasattr(exc, "orig") else str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error_code": "ORDER_DELETE_FK_CONSTRAINT",
+                    "message": (
+                        "Impossibile eliminare l'ordine: esistono ancora vincoli "
+                        "relazionali non gestiti. Per chiudere comunque l'ordine "
+                        "usa 'Annulla ordine'."
+                    ),
                     "order_id": order_id,
-                    "fiscal_documents_count": fiscal_docs_count
-                }
-            )
-        
-        # 4. Elimina l'ordine (il repository elimina anche OrderDetail e OrderPackage)
-        result = self._order_repository.delete(order)
-        
-        # Passa l'ordine al decorator tramite kwargs per l'estrazione dati evento
-        # Il decorator riceverà result=True, ma abbiamo bisogno dell'ordine per i dati
-        # Quindi passiamo order_id che verrà usato dall'extractor
+                    "current_state": order.id_order_state,
+                    "db_error": (
+                        str(exc.orig) if hasattr(exc, "orig") else str(exc)
+                    )[:500],
+                },
+            ) from exc
+
         return result

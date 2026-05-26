@@ -9,7 +9,7 @@
 
 | Area | Done | In corso | Backlog | Epic |
 |---|---|---|---|---|
-| Backend | 21 (M1-M19, BE-AUTOSTATE, BE-ORDERS-SORT) | 0 | 1 (BE-1) | 0 |
+| Backend | 22 (M1-M19, BE-AUTOSTATE, BE-ORDERS-SORT, BE-ORDER-DELETE-500) | 0 | 1 (BE-1) | 0 |
 | Frontend | 6 (FE-3, FE-7, FE-9, FE-11, FE-AUTOTAB ⚠️ deprecato, FE-MULTISHIP-BADGE) | 0 | 13 (FE-1, FE-4, FE-5, FE-6, FE-8, FE-10, FE-12, FE-13, T1, FE-REFACT, REPLAN-SHIPMENT-WORKFLOW, FE-BORDERO, FE-ORDER-CANCEL) | 2 (N1, N2) |
 
 ---
@@ -285,6 +285,86 @@ Il FE attualmente fa già una singola chiamata `GET /orders/?order_states_ids=X&
 
 **Cambio di comportamento osservabile per consumer esistenti:**
 Sì. Prima il BE rispondeva ASC implicito, ora risponde DESC implicito. Qualsiasi client che non passa i nuovi param vedrà la lista ribaltata. Per il FE è il comportamento desiderato (era il bug stesso). Se esistono altri consumer (script di sync, integrazioni esterne) che dipendevano implicitamente dall'ordine ASC, devono passare esplicitamente `?order_by=id_order&order_direction=asc` per preservare il vecchio comportamento.
+
+### BE-ORDER-DELETE-500 — Fix 500 su `DELETE /api/v1/orders/{id}` + nuovo contratto FE-ORDER-CANCEL (chiuso 2026-05-26)
+
+**Tipo:** Bug fix + estensione contratto API
+**Scope:** Backend
+**Priorità:** Alta (bloccante per chiusura FE-ORDER-CANCEL)
+**Stima:** ~2h (effettivi)
+
+**Contesto / Trigger:**
+Il FE (task `FE-ORDER-CANCEL`) ha implementato 2 azioni separate:
+- "Annulla ordine" — cambio stato a 5 via `POST /orders/bulk-status` (reversibile, OK)
+- "Elimina ordine" — cancellazione DEFINITIVA via `DELETE /api/v1/orders/{id}` (irreversibile)
+
+Su questa seconda azione il BE rispondeva sistematicamente **500 Internal Server Error** (catturato live il 2026-05-26 14:16 su ordine 69081 dal terminale uvicorn).
+
+**Root cause:**
+Stack trace conclusivo:
+```
+sqlalchemy.exc.IntegrityError: (pymysql.err.IntegrityError) (1451,
+'Cannot delete or update a parent row: a foreign key constraint fails
+(`ecommerce_manager`.`orders_document`, CONSTRAINT `orders_document_ibfk_7`
+ FOREIGN KEY (`id_shipping`) REFERENCES `shipments` (`id_shipping`))')
+
+[SQL: DELETE FROM shipments WHERE shipments.id_shipping IN (79024, 79025, 79023)]
+```
+
+`OrderRepository.delete()` nullava `Order.id_shipping` prima del DELETE FROM `shipments`, ma **non `OrderDocument.id_shipping`**. La FK `orders_document_ibfk_7` ha `ON DELETE RESTRICT` lato DB (asimmetria rispetto a `orders_document.id_order` che ha `ON DELETE SET NULL`). L'IntegrityError non era catturata né a livello service né a livello repo → finiva nel `general_exception_handler` come `INTERNAL_ERROR` 500 generico.
+
+**File modificati:**
+- `src/repository/order_repository.py` — nuovo **step 6b** in `delete()`: prima della cancellazione delle `Shipping`, esegue `UPDATE orders_document SET id_shipping = NULL WHERE id_shipping IN (shipping_ids_to_delete)`. Docstring del metodo aggiornata per documentare il cleanup di entrambe le FK (`id_order` via DB, `id_shipping` esplicitamente).
+- `src/services/routers/order_service.py`:
+  - Import aggiunti: `from fastapi import HTTPException, status`, `from sqlalchemy.exc import IntegrityError`.
+  - **Rimosso check** `id_order_state != 1`: il DELETE è ora valido in qualsiasi stato (contratto FE-ORDER-CANCEL — protezione UX delegata al dialog warning forte FE-side).
+  - **Promosso** il check `FiscalDocument` collegati da `BusinessRuleException` (400) a `HTTPException(409)` con body strutturato `{error_code: "ORDER_HAS_FISCAL_DOCUMENTS", message, details: {order_id, current_state, fiscal_documents_count, fiscal_document_ids}}` (formato proposto dal FE nel prompt operativo). 409 permette al FE di distinguere "errore validazione input" (400) da "conflitto stato risorsa" (409, suggerimento "usa Annulla").
+  - **Wrap** della chiamata `repository.delete()` in `try/except IntegrityError`: con rollback esplicito + `HTTPException(409)` con `error_code: "ORDER_DELETE_FK_CONSTRAINT"` + `details.db_error` troncato a 500 char. Difesa in profondità contro FK future non gestite (no più 500 generico).
+  - Nota tecnica nel codice: i campi del payload `detail` vanno messi flat (non in sub-chiave `details`) perché `http_exception_handler` in `main.py` ri-incapsula automaticamente sotto `details`.
+- `src/routers/order.py` — docstring `delete_order` riscritta con il nuovo contratto: response code 204/404/403/422/409, schema del body 409 per entrambi gli `error_code`, riferimento esplicito a `bulk-status` per il caso "Annulla". OpenAPI/Swagger ora documenta correttamente i nuovi casi.
+
+**Nuovi file:**
+- `tests/integration/api/v1/test_order_delete.py` — 5 classi di test, 9 test totali (tutti verdi in 0.80s su SQLite in-memory):
+  - `TestOrderDeleteHappyPath` — 4 test: minimal order, stato 3 (verifica rimozione check stato), order con packages+details, **order con `OrderDocument` che condivide `id_shipping`** (riproduzione esatta del bug 69081 — senza il fix 6b solleverebbe 500)
+  - `TestOrderDeleteFiscalDocumentsBlock` — 409 + body strutturato verificato campo per campo
+  - `TestOrderDeleteNotFound` — 404 su `order_id` inesistente
+  - `TestOrderDeleteAuthorization` — 403 `PERMISSION_DENIED` per utente senza `orders.delete`
+  - `TestOrderDeleteValidation` — 422 su `order_id <= 0`
+
+**Decisioni di prodotto / contratto (raccolte via questionario operativo 2026-05-26):**
+1. **DELETE in qualsiasi stato** (rimosso check `id_order_state == 1`). Per il cambio stato "Annullato" usare `POST /orders/bulk-status` con `id_order_state=5`. Sicurezza affidata al dialog warning forte FE-side.
+2. **Strategia fix:** combinazione "Fix bug repo + 409 hardening generico" (non strategia B completa col pre-check di returns/multishipping_with_tracking — rimandata).
+3. **Body 409:** formato proposto dal FE nel prompt (`fiscal_documents_count`, `fiscal_document_ids`, ecc.). Difesa in profondità: anche per IntegrityError ignote in futuro → 409 invece di 500.
+4. **Use case prioritario:** pulizia operativa di ordini fantasma da PrestaShop/AS400 (uso regolare, non solo test).
+
+**Contratto API finale:**
+| Status | error_code | Caso | Body |
+|---|---|---|---|
+| 204 | — | Success | (no body) |
+| 404 | (NotFoundException) | `order_id` inesistente | wrapper standard |
+| 403 | PERMISSION_DENIED | No permission `orders.delete` | wrapper standard |
+| 422 | — | `order_id <= 0` | FastAPI standard |
+| 409 | ORDER_HAS_FISCAL_DOCUMENTS | Ordine con fatture/note di credito | `details: {order_id, current_state, fiscal_documents_count, fiscal_document_ids}` |
+| 409 | ORDER_DELETE_FK_CONSTRAINT | IntegrityError residua (FK future ignote) | `details: {order_id, current_state, db_error}` |
+
+**Comportamento FE atteso (da prompt FE):**
+- 204 → dispatch `deleteSuccess`, rimuove da lista, chiude modale dettaglio
+- 409 ORDER_HAS_FISCAL_DOCUMENTS → alert dedicato col body `details` + suggerimento "usa Annulla ordine"
+- 409 ORDER_DELETE_FK_CONSTRAINT → alert "errore residuo" (caso edge, segnalare al BE per cleanup mancante)
+- 403/404 → toast esistenti via ErrorInterceptor
+
+**Verifica:**
+- ✅ Stack trace originale catturato dal terminale uvicorn `terminals/3.txt` riga 336-492 (bug confermato)
+- ✅ 9/9 integration test verdi in 0.80s
+- ✅ `ReadLints` su 4 file modificati: zero errori
+- ✅ Mappa completa FK in entrata su `orders.id_order` e `shipments.id_shipping` documentata nel prompt risposta (no altri cleanup mancanti)
+- ⏳ Smoke test su DB reale (DELETE 69081) demandato all'operatore — vecchia istanza uvicorn da killare (PID 18120) prima del restart con il fix caricato
+
+**Coordinamento FE:**
+Sblocca la chiusura del task FE-ORDER-CANCEL — il FE può ora chiamare `DELETE /api/v1/orders/{id}` con la confidenza che:
+- Il happy path (ordine senza fatture, qualunque stato) ritorna 204
+- Il caso fatturato ritorna 409 con body strutturato per dialog informativo
+- Il caso permessi è coerente con gli altri endpoint (403 + PERMISSION_DENIED)
 
 ---
 
@@ -659,6 +739,9 @@ L'operazione usa l'endpoint BE esistente di "annulla ordine" (da identificare la
 **Dipendenze:**
 - Endpoint BE di annullamento ordine (da identificare durante la PR — probabilmente esiste già)
 - Permessi RBAC: `orders.update` o action dedicata (da verificare)
+
+**Aggiornamento 2026-05-26 — Sblocco BE per "Elimina ordine" (azione B):**
+Il prompt FE distingue 2 azioni: "Annulla" (cambio stato 5 via `POST /orders/bulk-status`, già funzionante) e "Elimina" (cancellazione definitiva via `DELETE /api/v1/orders/{id}`). Quest'ultima rispondeva 500 — risolto con `BE-ORDER-DELETE-500` (vedi sopra). Contratto finale: 204/404/403/422/409. Il caso 409 ha 2 varianti (`ORDER_HAS_FISCAL_DOCUMENTS` con `fiscal_document_ids`, `ORDER_DELETE_FK_CONSTRAINT` con `db_error`). Il FE può ora implementare entrambe le azioni in autonomia.
 
 #### T1 — Aggiornare test infrastructure per nuovo RBAC
 

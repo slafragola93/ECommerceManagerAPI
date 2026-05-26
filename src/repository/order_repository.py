@@ -903,7 +903,9 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         
         Non elimina:
         - FiscalDocument (lasciati intatti, ma verifica che non esistano prima di chiamare questo metodo)
-        - OrderDocument (lasciati intatti, id_order diventerà NULL)
+        - OrderDocument (lasciati intatti, id_order diventerà NULL via ON DELETE SET NULL del DB,
+          id_shipping viene nullato esplicitamente prima della cancellazione degli Shipping
+          per evitare IntegrityError sul vincolo orders_document_ibfk_7 RESTRICT)
         """
         order_id = order.id_order
         
@@ -964,7 +966,17 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             order.id_shipping = None
             # Flush per applicare la modifica senza commit (rimuove il vincolo FK)
             self.session.flush()
-        
+
+        # 6b. Nulla anche `OrderDocument.id_shipping` per gli shipping che stanno
+        # per essere eliminati. Senza questo passaggio MySQL solleva IntegrityError
+        # (1451) sul vincolo `orders_document_ibfk_7` perche' ha DELETE RESTRICT
+        # (asimmetria rispetto a `orders_document.id_order` che ha ON DELETE SET NULL).
+        if shipping_ids_to_delete:
+            self.session.query(OrderDocument).filter(
+                OrderDocument.id_shipping.in_(shipping_ids_to_delete)
+            ).update({OrderDocument.id_shipping: None}, synchronize_session=False)
+            self.session.flush()
+
         # 7. Elimina Order PRIMA degli shipping per evitare vincoli di foreign key
         self.session.delete(order)
         # Flush per applicare l'eliminazione senza commit
