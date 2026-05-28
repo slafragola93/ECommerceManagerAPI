@@ -1,18 +1,36 @@
 """
 Tax Service rifattorizzato seguendo i principi SOLID
 """
-from typing import List, Optional, Any
-from src.services.interfaces.tax_service_interface import ITaxService
-from src.repository.interfaces.tax_repository_interface import ITaxRepository
-from src.schemas.tax_schema import TaxSchema
-from src.models.tax import Tax
+import logging
+from typing import Any, Dict, List, Optional
+
+from src.core.cache import get_cache_manager
 from src.core.exceptions import (
-    ValidationException, 
-    NotFoundException, 
     BusinessRuleException,
-    ExceptionFactory,
-    ErrorCode
+    ErrorCode,
+    NotFoundException,
+    ValidationException,
 )
+from src.events.core.event import EventType
+from src.events.decorators import emit_event_on_success
+from src.models.tax import Tax
+from src.repository.interfaces.tax_repository_interface import ITaxRepository
+from src.schemas.tax_schema import TaxCountryDefaultResponseSchema, TaxResponseSchema, TaxSchema
+from src.services.interfaces.tax_service_interface import ITaxService
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_tax_country_default_changed_data(*args, **kwargs) -> Dict[str, Any]:
+    result = kwargs.get("result")
+    if result is None:
+        return {}
+    return {
+        "id_tax": getattr(result, "id_tax", None),
+        "id_country": getattr(result, "id_country", None),
+        "percentage": getattr(result, "percentage", None),
+        "is_default": getattr(result, "is_default", None),
+    }
 
 class TaxService(ITaxService):
     """Tax Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
@@ -116,3 +134,70 @@ class TaxService(ITaxService):
         """Valida le regole business per Tax"""
         # Validazioni specifiche per Tax se necessarie
         pass
+
+    def _to_tax_response(self, tax: Tax) -> TaxResponseSchema:
+        return TaxResponseSchema.model_validate(tax)
+
+    def _to_country_default_response(self, tax: Tax) -> TaxCountryDefaultResponseSchema:
+        country = getattr(tax, "country", None)
+        payload = self._to_tax_response(tax).model_dump()
+        if country is None and tax.id_country:
+            from src.models.country import Country
+
+            session = getattr(self._tax_repository, "_session", None)
+            if session is not None:
+                country = session.query(Country).filter(Country.id_country == tax.id_country).first()
+        payload["country_iso_code"] = country.iso_code if country else None
+        payload["country_name"] = country.name if country else None
+        return TaxCountryDefaultResponseSchema(**payload)
+
+    async def _invalidate_init_tax_cache(self) -> None:
+        try:
+            cache_manager = await get_cache_manager()
+            await cache_manager.delete("init_data:static")
+            await cache_manager.delete("init_data:full")
+        except Exception as exc:
+            logger.warning("Impossibile invalidare cache init dopo modifica tax: %s", exc)
+
+    async def get_default_by_country(self, id_country: int) -> Optional[TaxResponseSchema]:
+        tax = self._tax_repository.get_default_by_country(id_country)
+        if not tax:
+            return None
+        return self._to_tax_response(tax)
+
+    async def get_default_by_country_iso(self, iso_code: str) -> Optional[TaxResponseSchema]:
+        if not iso_code or len(str(iso_code).strip()) != 2:
+            raise BusinessRuleException(
+                "country ISO code must be a 2-letter ISO 3166-1 alpha-2 value",
+                ErrorCode.BUSINESS_RULE_VIOLATION,
+                {"iso_code": iso_code},
+            )
+        tax = self._tax_repository.get_default_by_country_iso(iso_code)
+        if not tax:
+            return None
+        return self._to_tax_response(tax)
+
+    async def list_country_defaults(self) -> List[TaxCountryDefaultResponseSchema]:
+        taxes = self._tax_repository.list_country_defaults()
+        return [self._to_country_default_response(t) for t in taxes]
+
+    @emit_event_on_success(
+        event_type=EventType.TAX_COUNTRY_DEFAULT_CHANGED,
+        data_extractor=_extract_tax_country_default_changed_data,
+        source="tax_service.set_country_default",
+    )
+    async def set_country_default(self, id_tax: int) -> Tax:
+        tax = self._tax_repository.get_tax_by_id(id_tax)
+        if not tax:
+            raise NotFoundException("Tax", id_tax)
+
+        if tax.id_country is None or tax.id_country <= 0:
+            raise BusinessRuleException(
+                "Tax must have id_country set before it can be a country default",
+                ErrorCode.BUSINESS_RULE_VIOLATION,
+                {"id_tax": id_tax},
+            )
+
+        updated = self._tax_repository.set_country_default_atomic(id_tax, tax.id_country)
+        await self._invalidate_init_tax_cache()
+        return updated

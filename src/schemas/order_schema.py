@@ -12,6 +12,7 @@ from src.schemas.sectional_schema import SectionalResponseSchema
 from src.schemas.order_state_schema import OrderStateResponseSchema
 from src.schemas.preventivo_schema import OrderPackageUpdateItemSchema
 from src.schemas.order_package_schema import OrderPackageResponseSchema, OrderPackageSchema
+from src.models.order import ViesStatus
 
 
 class OrderHistorySchema(BaseModel):
@@ -69,6 +70,7 @@ class OrderUpdateSchema(BaseModel):
     id_origin: Optional[int] = None
     reference: Optional[str] = None
     is_invoice_requested: Optional[bool] = None
+    vies_status: Optional[ViesStatus] = None
     is_payed: Optional[int] = None
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
@@ -131,6 +133,7 @@ class OrderSimpleResponseSchema(BaseModel):
     order_state: Optional[OrderStateResponseSchema] = None
     id_ecommerce_state: Optional[int] = None
     is_invoice_requested: bool
+    vies_status: Optional[ViesStatus] = None
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
@@ -175,6 +178,7 @@ class OrderResponseSchema(BaseModel):
     id_order_state: int
     id_ecommerce_state: Optional[int] = None
     is_invoice_requested: bool
+    vies_status: Optional[ViesStatus] = None
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]
@@ -316,6 +320,23 @@ class OrderStateSyncSchema(BaseModel):
     id_ecommerce_order_state: int = Field(gt=0, description="ID stato ecommerce locale (PK di ecommerce_order_states)")
 
     model_config = ConfigDict(from_attributes=True, extra='ignore')
+
+
+class BulkApplyViesExemptionSchema(BaseModel):
+    """Richiesta applicazione esenzione VIES su più ordini."""
+
+    order_ids: List[int] = Field(..., min_length=1, description="ID ordini da aggiornare")
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+
+class BulkApplyViesExemptionResponseSchema(BaseModel):
+    """Risposta applicazione massiva esenzione VIES."""
+
+    processed: int
+    order_ids: List[int]
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
 
 
 class OrderStateSyncResponseSchema(BaseModel):

@@ -2,7 +2,7 @@
 Interfaccia per Tax Service seguendo ISP
 """
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from src.core.interfaces import IBaseService
 from src.schemas.tax_schema import TaxSchema, TaxResponseSchema
 from src.models.tax import Tax
@@ -38,4 +38,24 @@ class ITaxService(IBaseService):
     @abstractmethod
     async def get_taxes_count(self, **filters) -> int:
         """Ottiene il numero totale di tax con filtri"""
+        pass
+
+    @abstractmethod
+    async def get_default_by_country(self, id_country: int) -> Optional[TaxResponseSchema]:
+        """Default IVA per id_country."""
+        pass
+
+    @abstractmethod
+    async def get_default_by_country_iso(self, iso_code: str) -> Optional[TaxResponseSchema]:
+        """Default IVA per codice ISO paese."""
+        pass
+
+    @abstractmethod
+    async def list_country_defaults(self) -> List[TaxResponseSchema]:
+        """Lista di tutti i Tax default per paese."""
+        pass
+
+    @abstractmethod
+    async def set_country_default(self, id_tax: int) -> Tax:
+        """Imposta il Tax come unico default per il suo id_country."""
         pass

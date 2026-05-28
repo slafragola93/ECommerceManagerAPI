@@ -31,6 +31,7 @@ class EventType(str, Enum):
     ORDER_CREATED = "order_created"
     ORDER_UPDATED = "order_updated"
     ORDER_DELETED = "order_deleted"
+    ORDER_VIES_EXEMPTION_APPLIED = "order_vies_exemption_applied"
 
     # ===== CUSTOMER =====
     CUSTOMER_CREATED = "customer_created"
@@ -43,6 +44,9 @@ class EventType(str, Enum):
 
     # ===== ADDRESS =====
     ADDRESS_CREATED = "address_created"
+
+    # ===== TAX =====
+    TAX_COUNTRY_DEFAULT_CHANGED = "tax_country_default_changed"
 
     # ===== SYNC/IMPORT =====
     PRESTASHOP_SYNC_STARTED = "prestashop_sync_started"

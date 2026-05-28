@@ -5,7 +5,11 @@ Tax Router rifattorizzato seguendo i principi SOLID
 from fastapi import APIRouter, Depends, status, Query, Path
 from src.services.interfaces.tax_service_interface import ITaxService
 from src.repository.interfaces.tax_repository_interface import ITaxRepository
-from src.schemas.tax_schema import TaxSchema, TaxResponseSchema, AllTaxesResponseSchema
+from src.schemas.tax_schema import (
+    TaxSchema,
+    TaxResponseSchema,
+    AllTaxesResponseSchema,
+)
 from src.core.exceptions import (
     NotFoundException
 )
@@ -31,6 +35,58 @@ def get_tax_service(db: db_dependency) -> ITaxService:
         tax_service._tax_repository = tax_repo
     
     return tax_service
+
+
+def _tax_to_response_dict(tax) -> dict:
+    return TaxResponseSchema.model_validate(tax).model_dump()
+
+
+@router.get("/country-defaults", status_code=status.HTTP_200_OK)
+@check_authentication
+async def list_country_tax_defaults(
+    user: dict = Depends(get_current_user),
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("settings", "read")),
+):
+    """
+  Lista dei Tax con is_default=1 per paese (default IVA UE / configurazione).
+    """
+    defaults = await tax_service.list_country_defaults()
+    data = [d.model_dump() for d in defaults]
+    return {"status": "success", "count": len(data), "data": data}
+
+
+@router.get("/country-defaults/{iso_code}", status_code=status.HTTP_200_OK)
+@check_authentication
+async def get_country_tax_default_by_iso(
+    iso_code: str = Path(..., min_length=2, max_length=5),
+    user: dict = Depends(get_current_user),
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("settings", "read")),
+):
+    """
+    Default IVA per un paese (ISO 3166-1 alpha-2, es. IT).
+    """
+    tax = await tax_service.get_default_by_country_iso(iso_code)
+    if not tax:
+        raise NotFoundException("Country tax default", iso_code.upper())
+    return {"status": "success", "data": tax.model_dump()}
+
+
+@router.put("/{tax_id}/set-country-default", status_code=status.HTTP_200_OK)
+@check_authentication
+async def set_country_tax_default(
+    tax_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("settings", "update")),
+):
+    """
+    Imposta il Tax come unico default per il suo id_country (transazione atomica).
+    """
+    tax = await tax_service.set_country_default(tax_id)
+    return {"status": "success", "data": _tax_to_response_dict(tax)}
+
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=AllTaxesResponseSchema)
 @check_authentication

@@ -9,12 +9,100 @@
 
 | Area | Done | In corso | Backlog | Epic |
 |---|---|---|---|---|
-| Backend | 22 (M1-M19, BE-AUTOSTATE, BE-ORDERS-SORT, BE-ORDER-DELETE-500) | 0 | 1 (BE-1) | 0 |
+| Backend | 25 (…, BE-VIES-2, BE-VIES-CLEANUP-SEED) | 0 | 4 (BE-1, BE-TAX-DECIMAL, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC) | 0 |
 | Frontend | 6 (FE-3, FE-7, FE-9, FE-11, FE-AUTOTAB ⚠️ deprecato, FE-MULTISHIP-BADGE) | 0 | 13 (FE-1, FE-4, FE-5, FE-6, FE-8, FE-10, FE-12, FE-13, T1, FE-REFACT, REPLAN-SHIPMENT-WORKFLOW, FE-BORDERO, FE-ORDER-CANCEL) | 2 (N1, N2) |
 
 ---
 
 ## ✅ Task completati (storico)
+
+### BE-VIES-CLEANUP-SEED — Rimozione seed BE-VIES-1 da DB (chiuso 2026-05-27)
+
+**Scope:** Rimuovere aliquote UE pre-popolate dal seed BE-VIES-1 in prod/stage; seed solo test/CI.
+
+**Seed runner originale (disattivato):**
+- `src/vies/eu_vat_seed.py` → `setup_eu_country_taxes()` (logica estratta da `setup_initial`)
+- `scripts/setup_initial.py` → invoca seed **solo** se `SEED_EU_VAT_TAXES=1`
+
+**Migration cleanup:**
+- `alembic/versions/20260527_0001_cleanup_be_vies_1_seed.py` — `DELETE` su `taxes` con `note LIKE '%BE-VIES-1 seed%'`, skip FK (`order_details`, `fiscal_document_details`, `shippings`)
+- `downgrade`: ripristino idempotente via `setup_eu_country_taxes()`
+
+**Doc:** `docs/BE_VIES_CLEANUP_SEED.md` (rollback, SQL diagnostica)
+
+**Test:** `tests/unit/vies/test_be_vies_1_seed_cleanup.py`
+
+**FE:** nessuna modifica; tab "Default per paese" vuota finché l'utente crea aliquote.
+
+### BE-VIES-2 — VIES Fase 2: sync + filtro lista + esenzione manuale (chiuso 2026-05-27)
+
+**Scope:** Backend — Fase 2/4 VIES (sync PrestaShop, API gestionale, eventi).
+
+**Sync PrestaShop — file creati/modificati:**
+- `src/services/vies/vies_status_resolver.py` + `__init__.py`
+- `src/services/ecommerce/prestashop_service.py` — calcolo `vies_status` + bulk INSERT; fix `Address.vat` da `vat_number`/`vat`
+- `tests/unit/services/vies/test_vies_status_resolver.py`
+- `docs/ECOMMERCE_SYNC.md`
+
+**Regole sync:** snapshot al sync; totali ordine restano quelli PrestaShop; nessuna chiamata VIES runtime.
+
+**Campi PS esito VIES:** `vies_valid`, `vat_number_valid`, `valid_vat`, `vies`, `vies_checked`, `vies_status`.
+
+**Filtro lista ordini:**
+- `GET /api/v1/orders/?vies_status=eligible|not_eligible|null` (assenza param = tutti; `orders.read`)
+- `OrderRepository._apply_vies_status_filter` in `get_all` / `get_count`
+- Router: `_normalize_vies_status_filter` (422 su valore non valido)
+
+**Esenzione VIES manuale (gestionale):**
+- `PATCH /api/v1/orders/{id}/apply-vies-exemption` (`orders.update`)
+- `POST /api/v1/orders/bulk-apply-vies-exemption` body `{ "order_ids": [...] }` — transazione atomica (`orders.update`)
+- `OrderService.apply_vies_exemption` / `bulk_apply_vies_exemption`
+- Ricalcolo righe: `_recalculate_order_lines_for_zero_tax` → `calculate_price_without_tax` (`src/services/core/tool.py`, stesso pattern di `order_detail_service._calculate_price_fields`)
+- Ricalcolo totali ordine: `OrderService.recalculate_totals_for_order(order_id, commit=False)` in bulk/singolo core
+- Imposta `order.vies_status = eligible`; crea/usa `Tax` al 0% se assente (`_get_zero_tax_id`)
+- Evento: `ORDER_VIES_EXEMPTION_APPLIED` (`src/events/core/event.py`) payload `{order_id, previous_vies_status, applied_by_user_id, timestamp}`
+
+**Test:** `test_order_repository_vies_filter.py`, `test_order_vies_exemption.py` (unit + integration).
+
+### BE-VIES-1 — Fondamenta dati VIES + default IVA per paese (chiuso 2026-05-27)
+
+**Scope:** Backend — Fase 1/4 del task VIES.
+
+**Strategia:** Riuso di `Tax(id_country, is_default)` esistente. NIENTE nuova tabella `country_tax_rates` (audit ha rivelato sovrapposizione concettuale).
+
+**File modificati:**
+- `src/models/order.py` — aggiunto enum `ViesStatus` + colonna `vies_status` (nullable, indicizzata)
+- `src/schemas/order_schema.py` — esposto `vies_status` in `OrderResponseSchema`, `OrderSimpleResponseSchema`, `OrderUpdateSchema`
+- `src/repository/order_repository.py` — serializzazione `vies_status` in risposta ordine
+- `src/repository/tax_repository.py` + interface — `get_default_by_country`, `get_default_by_country_iso`, `list_country_defaults`, `set_country_default_atomic`
+- `src/services/routers/tax_service.py` + interface — `get_default_by_country*`, `set_country_default` (atomico, single-default invariant)
+- `src/routers/tax.py` — 3 endpoint country-defaults
+- `src/schemas/tax_schema.py` — `TaxCountryDefaultResponseSchema`, `model_config` su response
+- `src/events/core/event.py` — `TAX_COUNTRY_DEFAULT_CHANGED`
+- `scripts/setup_initial.py` — colonna `vies_status` su `orders` + seed 27 paesi UE (idempotente)
+
+**Endpoint nuovi:**
+- `GET /api/v1/taxes/country-defaults` (settings.read)
+- `GET /api/v1/taxes/country-defaults/{iso_code}` (settings.read)
+- `PUT /api/v1/taxes/{id_tax}/set-country-default` (settings.update)
+
+**Seed:** 27 paesi UE con aliquote standard. NOTA: Finlandia seedata a 25% invece di 25.5% per limitazione `Tax.percentage` Integer — vedi BE-TAX-DECIMAL.
+
+**Eventi:** `TAX_COUNTRY_DEFAULT_CHANGED` su `set_country_default`.
+
+**Cache:** `init_data:static` e `init_data:full` invalidate su modifica default paese.
+
+**Decisioni emerse da audit:**
+- Riuso `Tax.id_country + is_default` invece di nuova `country_tax_rates`
+- Convenzione progetto: `setup_initial.py` invece di Alembic (Alembic non in uso reale)
+- RBAC action `read` non `view` (coerente con country.py/lang.py)
+
+**Out-of-scope (a backlog separato):**
+- Popolamento `vies_status` durante sync PrestaShop → Fase 2 (BE-VIES-2)
+- FatturaPA N3.2 / art. 41 → Fase 4 (BE-VIES-4)
+- `define_tax` rotto (non bloccante Fase 2) → BE-TAX-DEFINE-FIX
+- Aliquote IVA decimali → BE-TAX-DECIMAL
+- Migrazione a Alembic vero → BE-INFRA-ALEMBIC
 
 ### M1-M19 — Migrazione RBAC Backend (chiuso 2026-05-08)
 
@@ -369,6 +457,39 @@ Sblocca la chiusura del task FE-ORDER-CANCEL — il FE può ora chiamare `DELETE
 ---
 
 ## 🟦 Backlog aperto
+
+### Backend — debito tecnico VIES / Tax
+
+#### BE-TAX-DECIMAL — Tax.percentage Integer → Numeric(5,2)
+
+**Tipo:** Bug fiscale / debito tecnico  
+**Scope:** Backend  
+**Priorità:** Bassa (rilevante solo per FI 25.5% B2C; il VIES azzera i casi B2B intra-UE)  
+**Stima:** 2-3 ore (migration + adeguamento consumatori di `Tax.percentage`)
+
+**Problema:** la colonna `Tax.percentage` è `Integer`, impedisce aliquote decimali (es. Finlandia 25.5%). Il seed BE-VIES-1 ha usato FI=25%.
+
+**Soluzione:** migrare colonna a `Numeric(5,2)`, adeguare schemi Pydantic, verificare calcoli IVA in order_repository, prestashop_service, fiscal_document, fatturapa, csv_import, plugin AS400.
+
+#### BE-TAX-DEFINE-FIX — Riparazione `define_tax` (non bloccante Fase 2)
+
+**Tipo:** Bug  
+**Scope:** Backend  
+**Priorità:** Bassa  
+**Note:** `TaxRepository.define_tax(country_id)` ignora `country_id` e restituisce il primo `Tax` per `id_tax`. Usato solo in `order_repository` alla creazione shipping ordini manuali — **non blocca** BE-VIES-2 (sync `vies_status` + totali PS). Valutare fix o sostituzione con `get_default_by_country`.
+
+#### BE-INFRA-ALEMBIC — Adozione Alembic come migration tool effettivo
+
+**Tipo:** Infrastruttura  
+**Scope:** Backend  
+**Priorità:** Bassa  
+**Note:** `alembic/versions/` vuoto; schema gestito da `scripts/setup_initial.py`. Task indipendente da VIES.
+
+#### BE-VIES-4 — FatturaPA N3.2 / art. 41 (Fase 4/4)
+
+**Tipo:** Feature  
+**Scope:** Backend + FatturaPA  
+**Priorità:** Da pianificare dopo Fase 2-3.
 
 ### Priorità ALTA
 

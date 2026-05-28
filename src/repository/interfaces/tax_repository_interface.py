@@ -33,3 +33,23 @@ class ITaxRepository(IRepository[Tax, int]):
     def get_tax_by_id_country(self, id_country: int) -> Optional[Tax]:
         """Ottiene una Tax basata su id_country"""
         pass
+
+    @abstractmethod
+    def get_default_by_country(self, id_country: int) -> Optional[Tax]:
+        """Restituisce il Tax con is_default=1 per il paese. None se non esiste."""
+        pass
+
+    @abstractmethod
+    def get_default_by_country_iso(self, iso_code: str) -> Optional[Tax]:
+        """Restituisce il Tax default per ISO 3166-1 alpha-2."""
+        pass
+
+    @abstractmethod
+    def list_country_defaults(self) -> List[Tax]:
+        """Tutti i Tax con is_default=1 e id_country valorizzato."""
+        pass
+
+    @abstractmethod
+    def set_country_default_atomic(self, id_tax: int, id_country: int) -> Tax:
+        """Imposta un Tax come unico default per il paese (transazione atomica)."""
+        pass

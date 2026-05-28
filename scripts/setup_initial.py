@@ -3,7 +3,7 @@
 Script di Setup Iniziale per ECommerceManagerAPI
 Esegue il setup necessario: Order State, Shipping State, App Configuration,
 Platform, Store, Role, Utente admin, CompanyFiscalInfo.
-Tax lasciato vuoto (nessun inserimento).
+Tax UE: seed opzionale (SEED_EU_VAT_TAXES=1); in prod le aliquote sono create dall'utente.
 """
 
 import sys
@@ -22,6 +22,8 @@ from src.models.company_fiscal_info import CompanyFiscalInfo
 from src.models.role import Role
 from src.models.user import User
 from passlib.context import CryptContext
+from src.vies.eu_vat_seed import setup_eu_country_taxes
+from sqlalchemy import inspect, text
 
 bcrypt_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -117,7 +119,6 @@ APP_CONFIGURATIONS_DATA = [
     # invoicing
     ("invoicing", "default_tav", "Percentuale IVA di default", False),
 ]
-
 
 def setup_order_states(db):
     """Inserisce Order State (solo se tabella vuota)."""
@@ -290,6 +291,39 @@ def setup_company_fiscal_info(db):
     print("  ✅ Elettronew - 08632861210 (id_store=1, is_default=1)")
 
 
+def setup_orders_vies_status_column(db):
+    """Aggiunge colonna vies_status su orders se assente (idempotente)."""
+    print("\n📦 Colonna orders.vies_status...")
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if "orders" not in inspector.get_table_names():
+        print("  ⚠️  Tabella orders non trovata — skip (eseguire migrazione schema prima).")
+        return
+    columns = {c["name"] for c in inspector.get_columns("orders")}
+    if "vies_status" in columns:
+        print("  ℹ️  Colonna vies_status già presente.")
+        return
+    dialect = bind.dialect.name
+    if dialect == "mysql":
+        db.execute(
+            text(
+                "ALTER TABLE orders ADD COLUMN vies_status "
+                "ENUM('eligible', 'not_eligible') NULL, "
+                "ADD INDEX idx_orders_vies_status (vies_status)"
+            )
+        )
+    elif dialect == "sqlite":
+        db.execute(text("ALTER TABLE orders ADD COLUMN vies_status VARCHAR(20)"))
+    else:
+        db.execute(
+            text(
+                "ALTER TABLE orders ADD COLUMN vies_status VARCHAR(20) NULL"
+            )
+        )
+    db.commit()
+    print("  ✅ Colonna vies_status aggiunta.")
+
+
 def main():
     print("🚀 ECommerceManagerAPI - Setup Iniziale")
     print("=" * 50)
@@ -304,7 +338,15 @@ def main():
         setup_role(db)
         setup_admin_user(db)
         setup_company_fiscal_info(db)
-        # Tax: lasciato vuoto (nessun inserimento)
+        setup_orders_vies_status_column(db)
+
+        if os.environ.get("SEED_EU_VAT_TAXES", "").strip().lower() in ("1", "true", "yes"):
+            setup_eu_country_taxes(db)
+        else:
+            print(
+                "\n  ℹ️  Seed aliquote UE (BE-VIES-1) disattivato. "
+                "Per test/CI: SEED_EU_VAT_TAXES=1 python scripts/setup_initial.py"
+            )
 
         print("\n" + "=" * 50)
         print("🎉 Setup completato.")
@@ -312,7 +354,11 @@ def main():
         print("  - Platform Prestashop, Store Elettronew")
         print("  - Role ADMIN (CRUD), Utente admin (admin / admin)")
         print("  - CompanyFiscalInfo Elettronew")
-        print("  - Tax: nessun inserimento (tabella vuota)")
+        print("  - orders.vies_status (se assente)")
+        print(
+            "  - Tax UE: solo se SEED_EU_VAT_TAXES=1 "
+            "(prod/stage: aliquote create dall'utente; cleanup: alembic upgrade head)"
+        )
         print("\n🚀 Avvio API: uvicorn src.main:app --reload")
     except Exception as e:
         db.rollback()

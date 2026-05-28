@@ -2,12 +2,13 @@
 Tax Repository rifattorizzato seguendo SOLID
 """
 from typing import Optional, List
-from sqlalchemy.orm import Session, noload
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc
 from src.models.tax import Tax
+from src.models.country import Country
 from src.repository.interfaces.tax_repository_interface import ITaxRepository
 from src.core.base_repository import BaseRepository
-from src.core.exceptions import InfrastructureException
+from src.core.exceptions import InfrastructureException, NotFoundException
 from src.services import QueryUtils
 
 class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
@@ -178,3 +179,80 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
             "percentage": default_percentage,
             "id_tax": 1
         }
+
+    def get_default_by_country(self, id_country: int) -> Optional[Tax]:
+        """Restituisce il Tax con is_default=1 per il paese."""
+        if id_country is None or id_country <= 0:
+            return None
+        try:
+            return (
+                self._session.query(Tax)
+                .filter(Tax.id_country == id_country, Tax.is_default == 1)
+                .first()
+            )
+        except Exception as e:
+            raise InfrastructureException(
+                f"Database error retrieving default tax for country {id_country}: {str(e)}"
+            )
+
+    def get_default_by_country_iso(self, iso_code: str) -> Optional[Tax]:
+        """Restituisce il Tax default per codice ISO paese."""
+        if not iso_code or not str(iso_code).strip():
+            return None
+        try:
+            normalized = str(iso_code).strip().upper()
+            return (
+                self._session.query(Tax)
+                .join(Country, Tax.id_country == Country.id_country)
+                .filter(
+                    func.upper(Country.iso_code) == normalized,
+                    Tax.is_default == 1,
+                )
+                .first()
+            )
+        except Exception as e:
+            raise InfrastructureException(
+                f"Database error retrieving default tax for ISO {iso_code}: {str(e)}"
+            )
+
+    def list_country_defaults(self) -> List[Tax]:
+        """Tutti i Tax con is_default=1 e id_country valorizzato."""
+        try:
+            return (
+                self._session.query(Tax)
+                .options(joinedload(Tax.country))
+                .filter(Tax.is_default == 1, Tax.id_country.isnot(None))
+                .order_by(Tax.id_country, Tax.id_tax)
+                .all()
+            )
+        except Exception as e:
+            raise InfrastructureException(
+                f"Database error listing country default taxes: {str(e)}"
+            )
+
+    def set_country_default_atomic(self, id_tax: int, id_country: int) -> Tax:
+        """Imposta un Tax come unico default per il paese (transazione atomica)."""
+        try:
+            tax = self.get_tax_by_id(id_tax)
+            if not tax:
+                raise NotFoundException("Tax", id_tax)
+
+            self._session.query(Tax).filter(
+                Tax.id_country == id_country,
+                Tax.id_tax != id_tax,
+            ).update({Tax.is_default: 0}, synchronize_session=False)
+
+            tax.is_default = 1
+            if tax.id_country is None:
+                tax.id_country = id_country
+
+            self._session.commit()
+            self._session.refresh(tax)
+            return tax
+        except NotFoundException:
+            raise
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(
+                f"Database error setting country default tax: {str(e)}"
+            )

@@ -3,6 +3,8 @@ Interfaccia per Order Service seguendo ISP (Interface Segregation Principle)
 """
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+
+from src.models.order import Order
 from src.core.interfaces import IBaseService
 from src.schemas.order_schema import (
     OrderSchema,
@@ -75,8 +77,20 @@ class IOrderService(IBaseService):
         pass
 
     @abstractmethod
-    def recalculate_totals_for_order(self, order_id: int) -> None:
+    def recalculate_totals_for_order(self, order_id: int, commit: bool = True) -> None:
         """Ricalcola e persiste i totali di un ordine (imponibile e ivato)."""
+        pass
+
+    @abstractmethod
+    async def apply_vies_exemption(self, order_id: int, user_id: int) -> Order:
+        """Applica esenzione VIES su un ordine (righe a 0% IVA, totale riga invariato)."""
+        pass
+
+    @abstractmethod
+    async def bulk_apply_vies_exemption(
+        self, order_ids: List[int], user_id: int
+    ) -> Dict[str, Any]:
+        """Applica esenzione VIES su più ordini in transazione atomica."""
         pass
     
     @abstractmethod

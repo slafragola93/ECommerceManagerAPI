@@ -53,6 +53,10 @@ from src.services.core.tool import (
 from src.services.external.province_service import province_service
 from src.services.media.image_cache_service import get_image_cache_service
 from src.services.media.image_service import ImageService
+from src.services.vies.vies_status_resolver import (
+    extract_prestashop_vies_valid,
+    resolve_vies_status,
+)
 
 # Local imports - Relative
 from .base_ecommerce_service import BaseEcommerceService
@@ -2071,7 +2075,7 @@ class PrestaShopService(BaseEcommerceService):
                     'postcode': address.get('postcode', ''),
                     'city': address.get('city', ''),
                     'phone': address.get('phone', None),
-                    'vat': address.get('vat_number', ''),
+                    'vat': address.get('vat_number', '') or address.get('vat', ''),
                     'dni': address.get('dni', ''),
                     'pec': address.get('pec', ''),
                     'sdi': address.get('sdi', ''),
@@ -3604,6 +3608,47 @@ class PrestaShopService(BaseEcommerceService):
                             address_to_country[row.id_address] = row.id_country
             print(f"DEBUG: Pre-fetched {len(address_to_country)} address->country mappings")
 
+            country_id_to_iso: Dict[int, str] = {}
+            country_ids_for_iso = {cid for cid in address_to_country.values() if cid}
+            if country_ids_for_iso:
+                placeholders = ",".join(
+                    [f":id_country_{i}" for i in range(len(country_ids_for_iso))]
+                )
+                params = {
+                    f"id_country_{i}": cid for i, cid in enumerate(country_ids_for_iso)
+                }
+                iso_rows = self.db.execute(
+                    text(
+                        f"SELECT id_country, iso_code FROM countries "
+                        f"WHERE id_country IN ({placeholders})"
+                    ),
+                    params,
+                )
+                for row in iso_rows:
+                    if row.iso_code:
+                        country_id_to_iso[int(row.id_country)] = str(row.iso_code).upper()
+
+            address_to_vat: Dict[int, Optional[str]] = {}
+            if all_addresses:
+                address_ids_for_vat = list(set(all_addresses.values()))
+                if address_ids_for_vat:
+                    placeholders = ",".join(
+                        [f":id_address_{i}" for i in range(len(address_ids_for_vat))]
+                    )
+                    params = {
+                        f"id_address_{i}": addr_id
+                        for i, addr_id in enumerate(address_ids_for_vat)
+                    }
+                    vat_rows = self.db.execute(
+                        text(
+                            f"SELECT id_address, vat FROM addresses "
+                            f"WHERE id_address IN ({placeholders})"
+                        ),
+                        params,
+                    )
+                    for row in vat_rows:
+                        address_to_vat[int(row.id_address)] = row.vat
+
             # Pre-fetch product weights using raw SQL
             product_weight_mapping = {}
             if product_origins:
@@ -3735,6 +3780,23 @@ class PrestaShopService(BaseEcommerceService):
                             print(f"⚠️ Warning: Could not generate internal_reference for order {order_id_origin}: {str(e)}")
                             # Continua senza internal_reference
 
+                    is_invoice_requested = bool(safe_int(order.get('fattura', 0), 0))
+                    billing_country_iso = None
+                    if invoice_address_id:
+                        invoice_country_id = address_to_country.get(invoice_address_id)
+                        if invoice_country_id:
+                            billing_country_iso = country_id_to_iso.get(invoice_country_id)
+                    invoice_vat = address_to_vat.get(invoice_address_id) if invoice_address_id else None
+                    vies_status_enum = resolve_vies_status(
+                        billing_country_iso=billing_country_iso,
+                        is_invoice_requested=is_invoice_requested,
+                        invoice_vat=invoice_vat,
+                        prestashop_vies_valid=extract_prestashop_vies_valid(order),
+                    )
+                    vies_status_value = (
+                        vies_status_enum.value if vies_status_enum is not None else None
+                    )
+
                     # Prepare complete order data
                     order_data = {
                         'id_origin': order_id_origin,
@@ -3748,7 +3810,8 @@ class PrestaShopService(BaseEcommerceService):
                         'id_carrier': carrier_id,
                         'sectional': 1,  # Default
                         'id_order_state': 1,  # Default
-                        'is_invoice_requested': order.get('fattura', 0),
+                        'is_invoice_requested': is_invoice_requested,
+                        'vies_status': vies_status_value,
                         'payed': is_payed,
                         'date_payment': None,  # Default
                         'products_total_price_net': products_total_price_net,
@@ -3891,11 +3954,11 @@ class PrestaShopService(BaseEcommerceService):
             orders_sql_file = "temp_orders_insert.sql"
             with open(orders_sql_file, 'w', encoding='utf-8') as f:
                 f.write("-- Orders bulk insert\n")
-                f.write("INSERT INTO orders (id_origin, reference, internal_reference, id_address_delivery, id_address_invoice, id_customer, id_store, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, is_payed, payment_date, total_weight, products_total_price_net, products_total_price_with_tax, total_price_with_tax, total_price_net, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, id_ecommerce_state, date_add) VALUES\n")
+                f.write("INSERT INTO orders (id_origin, reference, internal_reference, id_address_delivery, id_address_invoice, id_customer, id_store, id_payment, id_carrier, id_shipping, id_sectional, id_order_state, is_invoice_requested, vies_status, is_payed, payment_date, total_weight, products_total_price_net, products_total_price_with_tax, total_price_with_tax, total_price_net, total_discounts, cash_on_delivery, insured_value, privacy_note, general_note, delivery_date, id_ecommerce_state, date_add) VALUES\n")
                 
                 for i, order_data in enumerate(valid_order_data):
                     comma = "," if i < len(valid_order_data) - 1 else ";"
-                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data.get('internal_reference'))}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data.get('id_store', 'NULL')}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {order_data['is_invoice_requested']}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['products_total_price_net']}, {order_data['products_total_price_with_tax']}, {order_data['total_price_with_tax']}, {sql_value(order_data.get('total_price_net', 0))}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data.get('id_ecommerce_state'))}, {sql_value(order_data['date_add'])}){comma}\n")
+                    f.write(f"({order_data['id_origin']}, {sql_value(order_data['reference'])}, {sql_value(order_data.get('internal_reference'))}, {sql_value(order_data['address_delivery'])}, {sql_value(order_data['address_invoice'])}, {order_data['customer']}, {order_data.get('id_store', 'NULL')}, {sql_value(order_data['id_payment'])}, {order_data.get('id_carrier', 0)}, {order_data['shipping']}, {order_data['sectional']}, {order_data['id_order_state']}, {1 if order_data['is_invoice_requested'] else 0}, {sql_value(order_data.get('vies_status'))}, {order_data['payed']}, {sql_value(order_data['date_payment'])}, {order_data['total_weight']}, {order_data['products_total_price_net']}, {order_data['products_total_price_with_tax']}, {order_data['total_price_with_tax']}, {sql_value(order_data.get('total_price_net', 0))}, {order_data['total_discounts']}, {order_data['cash_on_delivery']}, {order_data['insured_value']}, {sql_value(order_data['privacy_note'])}, {sql_value(order_data['note'])}, {sql_value(order_data['delivery_date'])}, {sql_value(order_data.get('id_ecommerce_state'))}, {sql_value(order_data['date_add'])}){comma}\n")
             
             # Execute orders SQL file
             with open(orders_sql_file, 'r', encoding='utf-8') as f:

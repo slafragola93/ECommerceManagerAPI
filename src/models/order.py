@@ -1,10 +1,18 @@
+import enum
 from datetime import datetime
 
-from sqlalchemy import Integer, Column, Text, Boolean, Date, DateTime, Numeric, Table, ForeignKey, String
+from sqlalchemy import Integer, Column, Text, Boolean, Date, DateTime, Numeric, Table, ForeignKey, String, Enum
 from sqlalchemy.orm import relationship
 from .relations.relations import orders_history
 
 from src import Base
+
+
+class ViesStatus(str, enum.Enum):
+  """Stato VIES per ordini intra-UE B2B (snapshot al sync). NULL = non applicabile."""
+
+  ELIGIBLE = "eligible"
+  NOT_ELIGIBLE = "not_eligible"
 
 # orders_history = Table('orders_history', Base.metadata,
 #                        Column('id_order', Integer, ForeignKey('orders.id_order')),
@@ -32,6 +40,7 @@ class Order(Base):
     id_order_state = Column(Integer, default=1)
     id_ecommerce_state = Column(Integer, ForeignKey('ecommerce_order_states.id_ecommerce_order_state', ondelete='SET NULL'), nullable=True, index=True, comment="ID stato corrente sull'e-commerce remoto (PrestaShop, Shopify, ecc.)")
     is_invoice_requested = Column(Boolean, default=False)
+    vies_status = Column(Enum(ViesStatus), nullable=True, index=True, default=None)
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
     total_weight = Column(Numeric(10, 5), default=0)

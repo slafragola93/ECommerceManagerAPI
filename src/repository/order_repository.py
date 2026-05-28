@@ -25,6 +25,7 @@ from src.services.routers.order_document_service import OrderDocumentService
 from src.models.order_package import OrderPackage
 # Local application imports - Models
 from ..models import Order, OrderState, Shipping, Address
+from ..models.order import ViesStatus
 from ..models.shipments_history import ShipmentsHistory
 from ..models.shipment_document import ShipmentDocument
 from ..models.customer import Customer
@@ -107,6 +108,26 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         self.payment_repository = PaymentRepository(session)
         self.app_configuration_repository = AppConfigurationRepository(session)
 
+    @staticmethod
+    def _apply_vies_status_filter(query, vies_status: Optional[str]):
+        """Filtra per vies_status: eligible | not_eligible | null (solo NULL)."""
+        if vies_status is None:
+            return query
+        normalized = str(vies_status).strip().lower()
+        if normalized == "null":
+            return query.filter(Order.vies_status.is_(None))
+        if normalized == ViesStatus.ELIGIBLE.value:
+            return query.filter(Order.vies_status == ViesStatus.ELIGIBLE)
+        if normalized == ViesStatus.NOT_ELIGIBLE.value:
+            return query.filter(Order.vies_status == ViesStatus.NOT_ELIGIBLE)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Valore non valido per 'vies_status': '{vies_status}'. "
+                "Valori ammessi: eligible, not_eligible, null."
+            ),
+        )
+
     def get_all(self,
                 orders_ids: Optional[str] = None,
                 customers_ids: Optional[str] = None,
@@ -121,6 +142,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 is_payed: Optional[bool] = None,
                 is_invoice_requested: Optional[bool] = None,
                 has_invoice: Optional[bool] = None,
+                vies_status: Optional[str] = None,
                 date_from: Optional[str] = None,
                 date_to: Optional[str] = None,
                 show_details: bool = False,
@@ -197,6 +219,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                     FiscalDocument.document_type == 'invoice'
                 ).exists()
                 query = query.filter(invoice_exists if has_invoice else ~invoice_exists)
+            query = self._apply_vies_status_filter(query, vies_status)
             
             # Filtri per data (se implementati)
             if date_from:
@@ -245,6 +268,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                   is_payed: Optional[bool] = None,
                   is_invoice_requested: Optional[bool] = None,
                   has_invoice: Optional[bool] = None,
+                  vies_status: Optional[str] = None,
                   date_from: Optional[str] = None,
                   date_to: Optional[str] = None
                   ) -> int:
@@ -340,6 +364,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                     FiscalDocument.document_type == 'invoice'
                 ).exists()
                 query = query.filter(invoice_exists if has_invoice else ~invoice_exists)
+            query = self._apply_vies_status_filter(query, vies_status)
             
             # Filtri per data
             if date_from:
@@ -1398,6 +1423,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "id_order_state": order.id_order_state,
             "order_state": format_order_state(order.id_order_state),
             "is_invoice_requested": order.is_invoice_requested,
+            "vies_status": order.vies_status.value if order.vies_status else None,
             "is_payed": order.is_payed,
             "payment_date": order.payment_date,
             "total_weight": order.total_weight,

@@ -33,7 +33,8 @@ from ..schemas.order_schema import (
     OrderIdSchema, 
     OrderUpdateSchema,
     OrderStatusUpdateItem,
-    BulkOrderStatusUpdateResponseSchema
+    BulkOrderStatusUpdateResponseSchema,
+    BulkApplyViesExemptionSchema,
 )
 from src.services.routers.order_service import OrderService
 from src.services.interfaces.order_service_interface import IOrderService
@@ -50,6 +51,24 @@ from .dependencies import LIMIT_DEFAULT, MAX_LIMIT
 
 
 logger = logging.getLogger(__name__)
+
+_VIES_STATUS_FILTER_VALUES = frozenset({"eligible", "not_eligible", "null"})
+
+
+def _normalize_vies_status_filter(vies_status: Optional[str]) -> Optional[str]:
+    if vies_status is None:
+        return None
+    normalized = vies_status.strip().lower()
+    if normalized in _VIES_STATUS_FILTER_VALUES:
+        return normalized
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            f"Valore non valido per 'vies_status': '{vies_status}'. "
+            "Valori ammessi: eligible, not_eligible, null."
+        ),
+    )
+
 
 router = APIRouter(
     prefix='/api/v1/orders',
@@ -98,6 +117,13 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                         is_payed: Optional[bool] = Query(None, description="Filtro per ordini pagati (true) o non pagati (false)"),
                         is_invoice_requested: Optional[bool] = Query(None, description="Filtro per ordini con fattura richiesta (true) o no (false)"),
                         has_invoice: Optional[bool] = Query(None, description="Filtro per ordini gia fatturati (true) o non fatturati (false). Derivato da FiscalDocument(document_type=invoice)"),
+                        vies_status: Optional[str] = Query(
+                            None,
+                            description=(
+                                "Filtro stato VIES: eligible | not_eligible | null "
+                                "(solo ordini con vies_status IS NULL). Assenza param = tutti."
+                            ),
+                        ),
                         date_from: Optional[str] = Query(None, description="Data inizio filtro (formato: YYYY-MM-DD)"),
                         date_to: Optional[str] = Query(None, description="Data fine filtro (formato: YYYY-MM-DD)"),
                         show_details: str = Query("false", description="Se 'true', include dettagli completi delle relazioni (customer, platform, payment, shipping, addresses, order_states, order_details)"),
@@ -197,6 +223,8 @@ async def get_all_orders(user: dict = Depends(get_current_user),
             ),
         )
 
+    vies_status_filter = _normalize_vies_status_filter(vies_status)
+
     try:
         orders = or_repo.get_all(orders_ids=orders_ids,
                                 customers_ids=customers_ids,
@@ -211,6 +239,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                                 is_payed=is_payed,
                                 is_invoice_requested=is_invoice_requested,
                                 has_invoice=has_invoice,
+                                vies_status=vies_status_filter,
                                 date_from=date_from,
                                 date_to=date_to,
                                 show_details=show_details == "true",
@@ -235,6 +264,7 @@ async def get_all_orders(user: dict = Depends(get_current_user),
                                        is_payed=is_payed,
                                        is_invoice_requested=is_invoice_requested,
                                        has_invoice=has_invoice,
+                                       vies_status=vies_status_filter,
                                        date_from=date_from,
                                        date_to=date_to)
 
@@ -479,6 +509,48 @@ async def bulk_update_order_status(
     """
     logger.info(f"Bulk status update received: {len(updates)} updates - {[{'id_order': u.id_order, 'id_order_state': u.id_order_state} for u in updates]}")
     return await order_service.bulk_update_order_status(updates)
+
+
+@router.post(
+    "/bulk-apply-vies-exemption",
+    status_code=status.HTTP_200_OK,
+    response_description="Esenzione VIES applicata in massa",
+)
+@check_authentication
+async def bulk_apply_vies_exemption(
+    body: BulkApplyViesExemptionSchema,
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    """
+    Applica l'esenzione VIES su più ordini in un'unica transazione atomica.
+    """
+    user_id = user.get("id") or user.get("user_id") or 0
+    result = await order_service.bulk_apply_vies_exemption(body.order_ids, user_id)
+    return {"status": "success", "data": result}
+
+
+@router.patch(
+    "/{order_id}/apply-vies-exemption",
+    status_code=status.HTTP_200_OK,
+    response_description="Esenzione VIES applicata",
+)
+@check_authentication
+async def apply_vies_exemption(
+    order_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service),
+    or_repo: OrderRepository = Depends(get_repository),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    """
+    Applica manualmente l'esenzione VIES: righe ordine a 0% IVA con totale ivato invariato.
+    """
+    user_id = user.get("id") or user.get("user_id") or 0
+    order = await order_service.apply_vies_exemption(order_id, user_id)
+    data = or_repo.formatted_output(order, show_details=False, include_order_history=False)
+    return {"status": "success", "data": data}
 
 
 @router.patch("/{order_id}/payment", status_code=status.HTTP_200_OK, response_description="Stato pagamento aggiornato correttamente")

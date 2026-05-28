@@ -4,6 +4,7 @@ Order Service per gestione logica business ordini seguendo principi SOLID
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from src.services.core.tool import format_datetime_ddmmyyyy_hhmmss
@@ -14,6 +15,10 @@ from src.models.order_state import OrderState
 from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.models.fiscal_document import FiscalDocument
+from src.models.order import Order, ViesStatus
+from src.events.core.event import Event
+from src.events.runtime import emit_event
+from datetime import timezone
 from src.models.relations.relations import orders_history
 from src.schemas.order_schema import (
     OrderUpdateSchema,
@@ -325,7 +330,7 @@ class OrderService(IOrderService):
         
         return order
 
-    def recalculate_totals_for_order(self, order_id: int) -> None:
+    def recalculate_totals_for_order(self, order_id: int, commit: bool = True) -> None:
         """Ricalcola e salva peso, imponibile e totale ivato dell'ordine."""
         order = self._order_repository.get_by_id(_id=order_id)
         if not order:
@@ -353,7 +358,10 @@ class OrderService(IOrderService):
             # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
             order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
 
-            session.commit()
+            if commit:
+                session.commit()
+            else:
+                session.flush()
             return
 
         tax_ids = {
@@ -411,7 +419,10 @@ class OrderService(IOrderService):
         # Aggiorna updated_at con formato DD-MM-YYYY hh:mm:ss
         order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
 
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
     
     async def add_order_detail(self, order_id: int, order_detail_data: OrderDetailCreateSchema) -> OrderDetail:
         """
@@ -1251,3 +1262,142 @@ class OrderService(IOrderService):
             ) from exc
 
         return result
+
+    def _get_zero_tax_id(self, session: Session) -> int:
+        """Restituisce id_tax con aliquota 0% (crea record se assente)."""
+        tax = session.query(Tax).filter(Tax.percentage == 0).order_by(Tax.id_tax).first()
+        if tax:
+            return tax.id_tax
+        tax = Tax(
+            name="IVA 0% VIES",
+            percentage=0,
+            code="VAT0",
+            is_default=0,
+            electronic_code="",
+            note="Aliquota esenzione VIES intra-UE B2B",
+        )
+        session.add(tax)
+        session.flush()
+        return tax.id_tax
+
+    def _recalculate_order_lines_for_zero_tax(
+        self, session: Session, order_id: int, zero_tax_id: int
+    ) -> None:
+        """
+        Imposta id_tax=0% sulle righe ordine mantenendo total_price_with_tax invariato.
+        Riusa calculate_price_without_tax (stesso pattern di order_detail_service._calculate_price_fields).
+        """
+        order_details = session.query(OrderDetail).filter(
+            OrderDetail.id_order == order_id,
+            or_(
+                OrderDetail.id_order_document.is_(None),
+                OrderDetail.id_order_document == 0,
+            ),
+        ).all()
+
+        for od in order_details:
+            qty = od.product_qty or 1
+            total_with_tax = float(od.total_price_with_tax or 0.0)
+            unit_with_tax = (
+                float(od.unit_price_with_tax)
+                if od.unit_price_with_tax is not None
+                else (total_with_tax / qty if qty else 0.0)
+            )
+            od.id_tax = zero_tax_id
+            od.unit_price_with_tax = round(unit_with_tax, 2)
+            od.total_price_with_tax = round(total_with_tax, 2)
+            od.unit_price_net = calculate_price_without_tax(od.unit_price_with_tax, 0.0)
+            od.total_price_net = round(total_with_tax, 2)
+            session.add(od)
+
+    def _emit_vies_exemption_event(
+        self,
+        order_id: int,
+        previous_vies_status: Optional[str],
+        applied_by_user_id: int,
+    ) -> None:
+        emit_event(
+            Event(
+                event_type=EventType.ORDER_VIES_EXEMPTION_APPLIED.value,
+                data={
+                    "order_id": order_id,
+                    "previous_vies_status": previous_vies_status,
+                    "applied_by_user_id": applied_by_user_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                metadata={"source": "order_service.apply_vies_exemption"},
+            )
+        )
+
+    def _apply_vies_exemption_core(
+        self, order_id: int, user_id: int
+    ) -> tuple[Order, Optional[str]]:
+        session = self._order_repository.session
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise NotFoundException("Order", order_id, {"order_id": order_id})
+
+        previous_vies_status = (
+            order.vies_status.value if order.vies_status is not None else None
+        )
+        zero_tax_id = self._get_zero_tax_id(session)
+        self._recalculate_order_lines_for_zero_tax(session, order_id, zero_tax_id)
+        self.recalculate_totals_for_order(order_id, commit=False)
+        order = self._order_repository.get_by_id(_id=order_id)
+        order.vies_status = ViesStatus.ELIGIBLE
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+        session.add(order)
+        return order, previous_vies_status
+
+    async def apply_vies_exemption(self, order_id: int, user_id: int) -> Order:
+        session = self._order_repository.session
+        try:
+            order, previous_vies_status = self._apply_vies_exemption_core(order_id, user_id)
+            session.commit()
+            session.refresh(order)
+            self._emit_vies_exemption_event(order_id, previous_vies_status, user_id)
+            return order
+        except Exception:
+            session.rollback()
+            raise
+
+    async def bulk_apply_vies_exemption(
+        self, order_ids: List[int], user_id: int
+    ) -> Dict[str, Any]:
+        if not order_ids:
+            raise BusinessRuleException(
+                "order_ids cannot be empty",
+                details={"order_ids": order_ids},
+            )
+
+        unique_ids = list(dict.fromkeys(order_ids))
+        session = self._order_repository.session
+
+        existing = (
+            session.query(Order.id_order)
+            .filter(Order.id_order.in_(unique_ids))
+            .all()
+        )
+        existing_ids = {row[0] for row in existing}
+        missing = [oid for oid in unique_ids if oid not in existing_ids]
+        if missing:
+            raise NotFoundException(
+                "Order",
+                missing[0],
+                {"missing_order_ids": missing, "requested_order_ids": unique_ids},
+            )
+
+        events_to_emit: List[tuple[int, Optional[str]]] = []
+        try:
+            for oid in unique_ids:
+                order, previous = self._apply_vies_exemption_core(oid, user_id)
+                events_to_emit.append((order.id_order, previous))
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+
+        for oid, previous in events_to_emit:
+            self._emit_vies_exemption_event(oid, previous, user_id)
+
+        return {"processed": len(unique_ids), "order_ids": unique_ids}

@@ -134,6 +134,16 @@ curl -X POST "http://localhost:8000/api/v1/sync/test-connection" \
 - `id_payment` ← da `ps_orders.payment`
 - `total_price` ← `ps_orders.total_paid_tax_excl`
 - `is_invoice_requested` ← `ps_orders.fattura`
+- `vies_status` ← calcolato al sync (snapshot) con decision tree VIES:
+  - Paese fatturazione (`id_address_invoice` → `countries.iso_code`) = `IT` → `NULL`
+  - Paese ≠ `IT`, fattura non richiesta → `NULL`
+  - Paese ≠ `IT`, fattura richiesta, P.IVA assente su indirizzo fatturazione → `NULL`
+  - Paese ≠ `IT`, fattura + P.IVA, esito VIES da PS → `eligible` / `not_eligible`
+  - Esito VIES assente su payload PS → `NULL` (nessuna inferenza runtime)
+
+**Campi PrestaShop per esito VIES** (primo match): `vies_valid`, `vat_number_valid`, `valid_vat`, `vies`, `vies_checked`, `vies_status`.
+
+Logica in `src/services/vies/vies_status_resolver.py`, invocata da `prestashop_service._process_all_orders_and_create_sql`.
 
 ## Caratteristiche tecniche
 

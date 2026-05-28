@@ -1,5 +1,5 @@
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaxSchema(BaseModel):
@@ -20,6 +20,15 @@ class TaxResponseSchema(BaseModel):
     percentage: int
     electronic_code: Optional[str]
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaxCountryDefaultResponseSchema(TaxResponseSchema):
+    """Tax default per paese con metadati paese (endpoint country-defaults)."""
+
+    country_iso_code: Optional[str] = None
+    country_name: Optional[str] = None
+
 
 class AllTaxesResponseSchema(BaseModel):
     taxes: list[TaxResponseSchema]
@@ -27,6 +36,11 @@ class AllTaxesResponseSchema(BaseModel):
     page: int
     limit: int
 
+    model_config = ConfigDict(from_attributes=True)
 
-class ConfigDict:
-    from_attributes = True
+
+class CountryTaxDefaultsListResponseSchema(BaseModel):
+    """Lista flat dei default IVA per paese."""
+
+    country_defaults: List[TaxCountryDefaultResponseSchema]
+    count: int
