@@ -9,12 +9,35 @@
 
 | Area | Done | In corso | Backlog | Epic |
 |---|---|---|---|---|
-| Backend | 25 (…, BE-VIES-2, BE-VIES-CLEANUP-SEED) | 0 | 4 (BE-1, BE-TAX-DECIMAL, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC) | 0 |
+| Backend | 26 (…, BE-VIES-CLEANUP-SEED, BE-VIES-FALLBACK-GLOBAL) | 0 | 4 + epic aliquote (vedi `PROGRAMMA_BE_aliquote_vies.md`: BE-ALIQ-01…08) | 0 |
 | Frontend | 6 (FE-3, FE-7, FE-9, FE-11, FE-AUTOTAB ⚠️ deprecato, FE-MULTISHIP-BADGE) | 0 | 13 (FE-1, FE-4, FE-5, FE-6, FE-8, FE-10, FE-12, FE-13, T1, FE-REFACT, REPLAN-SHIPMENT-WORKFLOW, FE-BORDERO, FE-ORDER-CANCEL) | 2 (N1, N2) |
 
 ---
 
 ## ✅ Task completati (storico)
+
+### BE-VIES-FALLBACK-GLOBAL — Tax globali fallback + reverse_charge (chiuso 2026-05-27)
+
+**Scope:** Default IVA globale (`id_country IS NULL`) + setting VIES reverse charge.
+
+**Tax CRUD:**
+- `POST/PUT /api/v1/taxes/` accettano `id_country: null`
+- `PUT /api/v1/taxes/{id}/set-country-default` funziona per default paese **e** globale
+- `GET /api/v1/taxes/global-default` — default fallback globale
+- `set_global_default_atomic` — un solo `is_default=1` con `id_country IS NULL`
+- `get_tax_info_by_country` — fallback: default paese → globale → app_config
+
+**Settings (refactor su app_configurations):**
+- `reverse_charge_id_tax` in `app_configurations` (`category=vies`, `name=reverse_charge_id_tax`, `value` = id_tax)
+- `GET/PUT /api/v1/settings/` — facade compatibile FE
+- `/api/v1/init/` static: `settings.reverse_charge_id_tax`
+- Helper: `src/vies/vies_app_configuration.py`
+
+**Risoluzione documento:** `src/vies/tax_resolution.py` → `resolve_tax_id_for_delivery()`
+
+**Migration:** `20260527_0002` (storico settings), `20260527_0003` (migra → app_configurations, drop `settings`)
+
+**Test:** `test_tax_global_default.py`, `test_settings_reverse_charge.py`, `test_tax_resolution.py`
 
 ### BE-VIES-CLEANUP-SEED — Rimozione seed BE-VIES-1 da DB (chiuso 2026-05-27)
 
@@ -459,6 +482,26 @@ Sblocca la chiusura del task FE-ORDER-CANCEL — il FE può ora chiamare `DELETE
 ## 🟦 Backlog aperto
 
 ### Backend — debito tecnico VIES / Tax
+
+> **Programma operativo:** [.cursor/tasks_claude/PROGRAMMA_BE_aliquote_vies.md](.cursor/tasks_claude/PROGRAMMA_BE_aliquote_vies.md)  
+> Ordine: BE-ALIQ-00 → 01 (wiring resolver, **bloccante**) → 02 → 08 → 03 → 04 → [07 API] → 05 → 06
+
+#### BE-ALIQ-01 / 01M — VIES non invasiva (✅ chiuso 2026-06-03)
+
+**Scope:** Solo `apply-vies-exemption` (KO→OK) + `POST /orders` con `vies_status=eligible` esplicito. Sync PS invariato (no resolver VIES).  
+**Codice:** `tax_resolution.py`, `order_service`, `order_repository.create` / `generate_shipping`.  
+**BE-ALIQ-01S annullato** (non modificare regole sync attuali).
+
+#### BE-ALIQ-02 — Delete Tax errore strutturato `TAX_IN_USE`
+
+**Tipo:** Feature  
+**Scope:** Backend  
+**Priorità:** Alta  
+**Stima:** 4–6 h
+
+#### BE-ALIQ-03 / 04 / 06 / 07 — Cache init, serializzazione `id_country`, seed CI, consolidamento API
+
+Dettaglio in `PROGRAMMA_BE_aliquote_vies.md`.
 
 #### BE-TAX-DECIMAL — Tax.percentage Integer → Numeric(5,2)
 

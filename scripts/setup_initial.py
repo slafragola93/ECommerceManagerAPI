@@ -118,6 +118,8 @@ APP_CONFIGURATIONS_DATA = [
     ("order_reference", "order_reference_counter_global", "Contatore internal_reference", False),
     # invoicing
     ("invoicing", "default_tav", "Percentuale IVA di default", False),
+    # vies (BE-VIES-FALLBACK-GLOBAL — valore id_tax impostato da UI Settings)
+    ("vies", "reverse_charge_id_tax", "ID Tax aliquota 0% reverse charge VIES", False),
 ]
 
 def setup_order_states(db):
@@ -324,6 +326,49 @@ def setup_orders_vies_status_column(db):
     print("  ✅ Colonna vies_status aggiunta.")
 
 
+def setup_taxes_percentage_decimal_column(db):
+    """Migra taxes.percentage a DECIMAL(5,2) se ancora INTEGER (idempotente)."""
+    print("\n💶 Colonna taxes.percentage → DECIMAL(5,2)...")
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if "taxes" not in inspector.get_table_names():
+        print("  ⚠️  Tabella taxes non trovata — skip.")
+        return
+    percentage_col = next(
+        (c for c in inspector.get_columns("taxes") if c["name"] == "percentage"),
+        None,
+    )
+    if percentage_col is None:
+        print("  ⚠️  Colonna percentage non trovata — skip.")
+        return
+    col_type = str(percentage_col["type"]).upper()
+    if "DECIMAL" in col_type or "NUMERIC" in col_type:
+        print("  ℹ️  taxes.percentage già DECIMAL/NUMERIC.")
+        return
+    dialect = bind.dialect.name
+    if dialect == "mysql":
+        db.execute(
+            text(
+                "ALTER TABLE taxes MODIFY COLUMN percentage "
+                "DECIMAL(5,2) NOT NULL DEFAULT 0.00"
+            )
+        )
+    elif dialect == "sqlite":
+        print(
+            "  ℹ️  SQLite: skip ALTER (test usa create_all con Numeric dal modello)."
+        )
+        return
+    else:
+        db.execute(
+            text(
+                "ALTER TABLE taxes ALTER COLUMN percentage "
+                "TYPE NUMERIC(5,2) USING percentage::numeric(5,2)"
+            )
+        )
+    db.commit()
+    print("  ✅ taxes.percentage migrata a DECIMAL(5,2).")
+
+
 def main():
     print("🚀 ECommerceManagerAPI - Setup Iniziale")
     print("=" * 50)
@@ -339,6 +384,7 @@ def main():
         setup_admin_user(db)
         setup_company_fiscal_info(db)
         setup_orders_vies_status_column(db)
+        setup_taxes_percentage_decimal_column(db)
 
         if os.environ.get("SEED_EU_VAT_TAXES", "").strip().lower() in ("1", "true", "yes"):
             setup_eu_country_taxes(db)

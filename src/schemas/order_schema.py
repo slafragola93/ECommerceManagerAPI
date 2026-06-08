@@ -40,6 +40,7 @@ class OrderSchema(BaseModel):
     id_origin: Optional[int] = 0
     reference: Optional[str] = None
     is_invoice_requested: bool
+    vies_status: Optional[ViesStatus] = None
     is_payed: Optional[int] = 0
     payment_date: Optional[datetime] = None
     total_weight: Optional[float] = None
@@ -225,6 +226,7 @@ class OrderIdSchema(BaseModel):
     ecommerce_reference: Optional[str] = None
     # Campi dati
     is_invoice_requested: bool
+    vies_status: Optional[ViesStatus] = None
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
     total_weight: Optional[float]

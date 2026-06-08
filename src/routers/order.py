@@ -353,7 +353,10 @@ async def create_order(
         "message": "Ordine creato con successo",
         "id_order": created_order.id_order,
         "internal_reference": created_order.internal_reference,
-        "total_price_with_tax": float(created_order.total_price_with_tax or 0)
+        "total_price_with_tax": float(created_order.total_price_with_tax or 0),
+        "vies_status": (
+            created_order.vies_status.value if created_order.vies_status else None
+        ),
     }
 
 

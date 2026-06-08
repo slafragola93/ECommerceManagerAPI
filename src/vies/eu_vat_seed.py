@@ -8,6 +8,7 @@ Usato da:
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Iterable, List, Sequence, Tuple
 
 from sqlalchemy import text
@@ -17,35 +18,35 @@ from sqlalchemy.orm import Session
 from src.models.country import Country
 from src.models.tax import Tax
 
-# Aliquote IVA standard UE — FI ufficiale 25.5%, Tax.percentage Integer → 25 (BE-TAX-DECIMAL)
-EU_VAT_STANDARD_RATES: Sequence[Tuple[str, int]] = (
-    ("AT", 20),
-    ("BE", 21),
-    ("BG", 20),
-    ("HR", 25),
-    ("CY", 19),
-    ("CZ", 21),
-    ("DK", 25),
-    ("EE", 22),
-    ("FI", 25),
-    ("FR", 20),
-    ("DE", 19),
-    ("GR", 24),
-    ("HU", 27),
-    ("IE", 23),
-    ("IT", 22),
-    ("LV", 21),
-    ("LT", 21),
-    ("LU", 17),
-    ("MT", 18),
-    ("NL", 21),
-    ("PL", 23),
-    ("PT", 23),
-    ("RO", 19),
-    ("SK", 23),
-    ("SI", 22),
-    ("ES", 21),
-    ("SE", 25),
+# Aliquote IVA standard UE (DECIMAL 5,2 — BE-ALIQ-05)
+EU_VAT_STANDARD_RATES: Sequence[Tuple[str, Decimal]] = (
+    ("AT", Decimal("20.00")),
+    ("BE", Decimal("21.00")),
+    ("BG", Decimal("20.00")),
+    ("HR", Decimal("25.00")),
+    ("CY", Decimal("19.00")),
+    ("CZ", Decimal("21.00")),
+    ("DK", Decimal("25.00")),
+    ("EE", Decimal("22.00")),
+    ("FI", Decimal("25.50")),
+    ("FR", Decimal("20.00")),
+    ("DE", Decimal("19.00")),
+    ("GR", Decimal("24.00")),
+    ("HU", Decimal("27.00")),
+    ("IE", Decimal("23.00")),
+    ("IT", Decimal("22.00")),
+    ("LV", Decimal("21.00")),
+    ("LT", Decimal("21.00")),
+    ("LU", Decimal("17.00")),
+    ("MT", Decimal("18.00")),
+    ("NL", Decimal("21.00")),
+    ("PL", Decimal("23.00")),
+    ("PT", Decimal("23.00")),
+    ("RO", Decimal("19.00")),
+    ("SK", Decimal("23.00")),
+    ("SI", Decimal("22.00")),
+    ("ES", Decimal("21.00")),
+    ("SE", Decimal("25.00")),
 )
 
 EU_ISO_CODES: frozenset[str] = frozenset(iso for iso, _ in EU_VAT_STANDARD_RATES)
@@ -63,8 +64,19 @@ def is_be_vies_1_seed_note(note: str | None) -> bool:
     return SEED_NOTE_MARKER in note
 
 
-def seed_tax_name(iso_code: str, rate: int) -> str:
-    return f"IVA {iso_code.upper()} {rate}%"
+def _same_tax_rate(left, right) -> bool:
+    return Decimal(str(left)).quantize(Decimal("0.01")) == Decimal(str(right)).quantize(
+        Decimal("0.01")
+    )
+
+
+def seed_tax_name(iso_code: str, rate: Decimal) -> str:
+    normalized = Decimal(str(rate)).normalize()
+    if normalized == normalized.to_integral_value():
+        rate_label = str(int(normalized))
+    else:
+        rate_label = format(normalized, "f").rstrip("0").rstrip(".")
+    return f"IVA {iso_code.upper()} {rate_label}%"
 
 
 def seed_tax_code(iso_code: str) -> str:
@@ -182,7 +194,7 @@ def setup_eu_country_taxes(db: Session) -> list:
             .first()
         )
 
-        if existing_default and existing_default.percentage == rate:
+        if existing_default and _same_tax_rate(existing_default.percentage, rate):
             summary.append((iso_upper, rate, "skipped"))
             print(f"  ℹ️  {iso_upper}: skipped (default già {rate}%)")
             continue
@@ -200,7 +212,7 @@ def setup_eu_country_taxes(db: Session) -> list:
             )
             continue
 
-        if existing_default and existing_default.percentage != rate:
+        if existing_default and not _same_tax_rate(existing_default.percentage, rate):
             existing_default.is_default = 0
 
         if matching_rate:
@@ -241,8 +253,4 @@ def setup_eu_country_taxes(db: Session) -> list:
         f"\n  Riepilogo seed UE: created={created}, promoted={promoted}, "
         f"skipped={skipped}, skipped_no_country={skipped_nc}"
     )
-    if any(s[0] == "FI" for s in summary):
-        print(
-            "  ℹ️  Finlandia (FI): aliquota seed 25% (ufficiale 25.5% — vedi BE-TAX-DECIMAL)."
-        )
     return summary

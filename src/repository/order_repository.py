@@ -415,7 +415,20 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             return [{"state": r.state_name, "data": format_datetime_ddmmyyyy_hhmm(r.date_add)} for r in rows]
         except Exception:
             return []
-    
+
+    def _resolve_id_tax_for_order_context(
+        self, data: OrderSchema, country_id: int
+    ) -> int:
+        """Tax spedizione: VIES solo se creazione ordine con vies_status=eligible esplicito."""
+        from src.vies.tax_resolution import (
+            is_vies_eligible_status,
+            resolve_vies_exemption_tax_id_with_fallback,
+        )
+
+        if is_vies_eligible_status(getattr(data, "vies_status", None)):
+            return resolve_vies_exemption_tax_id_with_fallback(self.session)
+        return self.tax_repository.define_tax(country_id)
+
     def generate_shipping(self, data: OrderSchema) -> int:
         """
         Genera una spedizione di default basata sull'indirizzo di consegna.
@@ -434,8 +447,8 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         else:
             country_id = 1  # Default fallback
         
-        id_tax = self.tax_repository.define_tax(country_id)
-        
+        id_tax = self._resolve_id_tax_for_order_context(data, country_id)
+
         # Crea shipping con parametri di default
         return self.shipping_repository.create_and_get_id(ShippingSchema(
             id_carrier_api=1,
@@ -567,10 +580,23 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         # Creazione di Order Details se presenti
         created_order_details = []
         if data.order_details:
+            from src.vies.tax_resolution import (
+                is_vies_eligible_status,
+                resolve_vies_exemption_tax_id_with_fallback,
+            )
+
+            vies_tax_id = None
+            if is_vies_eligible_status(data.vies_status):
+                vies_tax_id = resolve_vies_exemption_tax_id_with_fallback(
+                    self.session
+                )
+
             for detail in data.order_details:
                 # Aggiungi l'id_order a ogni detail
                 detail_data = detail.model_dump()
                 detail_data['id_order'] = order.id_order
+                if vies_tax_id is not None and not detail_data.get('id_tax'):
+                    detail_data['id_tax'] = vies_tax_id
                 created_detail = self.order_detail_repository.create(detail_data)
                 created_order_details.append(created_detail)
         
@@ -671,8 +697,12 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         # Estrai order_packages se presente (non è un campo dell'Order, va gestito separatamente)
         order_packages = entity_updated.pop('order_packages', None)
 
+        nullable_fields = {"vies_status"}
+
         for key, value in entity_updated.items():
-            if not hasattr(edited_order, key) or value is None:
+            if not hasattr(edited_order, key):
+                continue
+            if value is None and key not in nullable_fields:
                 continue
 
             if key in ['id_customer', 'id_address_delivery', 'id_address_invoice',

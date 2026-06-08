@@ -56,6 +56,11 @@ class ITaxService(IBaseService):
         pass
 
     @abstractmethod
+    async def get_global_default(self) -> Optional[TaxResponseSchema]:
+        """Default IVA globale (id_country IS NULL)."""
+        pass
+
+    @abstractmethod
     async def set_country_default(self, id_tax: int) -> Tax:
-        """Imposta il Tax come unico default per il suo id_country."""
+        """Imposta default paese o globale in base a tax.id_country."""
         pass

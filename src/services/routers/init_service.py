@@ -9,6 +9,7 @@ from src.core.cached import cached
 from src.core.settings import TTL_PRESETS
 from src.core.exceptions import InfrastructureException, ErrorCode
 from src.schemas.init_schema import InitDataSchema, CacheInfoSchema
+from src.schemas.tax_schema import serialize_taxes_response
 
 from src.repository.platform_repository import PlatformRepository
 from src.repository.lang_repository import LangRepository
@@ -20,6 +21,7 @@ from src.repository.shipping_state_repository import ShippingStateRepository
 from src.repository.payment_repository import PaymentRepository
 from src.repository.api_carrier_repository import ApiCarrierRepository
 from src.repository.store_repository import StoreRepository
+from src.vies.vies_app_configuration import get_reverse_charge_id_tax
 from src.models.ecommerce_order_state import EcommerceOrderState
 
 
@@ -59,6 +61,7 @@ class InitService:
         payments = self._get_payments()
         carriers = self._get_api_carriers()
         stores = self._get_stores()
+        settings = self._get_settings()
 
         result_dict = {
             "platforms": platforms,
@@ -67,7 +70,8 @@ class InitService:
             "taxes": taxes,
             "payments": payments,
             "carriers": carriers,
-            "stores": stores
+            "stores": stores,
+            "settings": settings,
         }
         
         return result_dict
@@ -143,6 +147,9 @@ class InitService:
         
         # Verifica che tutti i campi richiesti siano presenti
         try:
+            settings_payload = static_data.get("settings") or {
+                "reverse_charge_id_tax": None
+            }
             return InitDataSchema(
                 platforms=static_data.get("platforms", []),
                 languages=static_data.get("languages", []),
@@ -151,6 +158,7 @@ class InitService:
                 payments=static_data.get("payments", []),
                 carriers=static_data.get("carriers", []),
                 stores=stores_list,
+                settings=settings_payload,
                 sectionals=dynamic_data.get("sectionals", []),
                 order_states=dynamic_data.get("order_states", []),
                 shipping_states=dynamic_data.get("shipping_states", []),
@@ -219,23 +227,17 @@ class InitService:
         except Exception as e:
             return []
     
+    def _get_settings(self) -> Dict[str, Any]:
+        try:
+            return {"reverse_charge_id_tax": get_reverse_charge_id_tax(self.db)}
+        except Exception:
+            return {"reverse_charge_id_tax": None}
+
     def _get_taxes(self) -> List[Dict[str, Any]]:
         """Ottiene le tasse"""
         try:
             taxes = self.tax_repo.get_all(limit=10000)
-            return [
-                {
-                    "id_tax": t.id_tax,
-                    "id_country": t.id_country,
-                    "is_default": t.is_default,
-                    "name": t.name,
-                    "note": t.note,
-                    "code": t.code,
-                    "percentage": t.percentage,
-                    "electronic_code": t.electronic_code
-                }
-                for t in taxes
-            ]
+            return serialize_taxes_response(taxes)
         except Exception as e:
             return []
     

@@ -28,6 +28,14 @@ class ApiCarrierInitSchema(BaseModel):
     logo: Optional[str] = Field(None, description="URL o percorso del logo del corriere")
 
 
+class SettingsInitSchema(BaseModel):
+    """Impostazioni VIES esposte in /init/."""
+
+    reverse_charge_id_tax: Optional[int] = Field(
+        None, description="ID Tax reverse charge VIES (0%)"
+    )
+
+
 class StoreInitSchema(BaseModel):
     """Schema per gli store nei dati di inizializzazione"""
     id_store: int = Field(..., description="ID dello store")
@@ -55,6 +63,10 @@ class InitDataSchema(BaseModel):
     payments: List[PaymentInitSchema] = Field(..., description="Lista dei metodi di pagamento")
     carriers: List[ApiCarrierInitSchema] = Field(..., description="Lista degli API carrier attivi")
     stores: List[StoreInitSchema] = Field(..., description="Lista degli store disponibili")
+    settings: Optional[SettingsInitSchema] = Field(
+        None,
+        description="Impostazioni globali (reverse_charge_id_tax VIES)",
+    )
     
     # Dati dinamici (cache giornaliera)
     sectionals: List[SectionalResponseSchema] = Field(..., description="Lista delle sezioni/aree geografiche")

@@ -113,13 +113,98 @@ Prefisso `/api/v1/orders`. Permessi RBAC: `orders.read` (filtro lista), `orders.
 | PATCH | `/api/v1/orders/{id}/apply-vies-exemption` | Applica esenzione: righe a 0% IVA, totale ivato invariato, `vies_status=eligible` |
 | POST | `/api/v1/orders/bulk-apply-vies-exemption` | Stessa logica su `{ "order_ids": [1,2,...] }` in transazione atomica |
 
+Guida FE: [docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md](docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md) — prompt chat FE: [.cursor/tasks_claude/prompt_FE_vies_apply_exemption.md](.cursor/tasks_claude/prompt_FE_vies_apply_exemption.md).
+
 Ricalcolo BE: `calculate_price_without_tax` (righe) + `OrderService.recalculate_totals_for_order` (totali ordine).
 
 Evento: `ORDER_VIES_EXEMPTION_APPLIED`.
 
-Sync PrestaShop: `src/services/vies/vies_status_resolver.py` — snapshot `vies_status` senza chiamate VIES runtime.
+Sync PrestaShop: `src/services/vies/vies_status_resolver.py` — snapshot `vies_status` senza chiamate VIES runtime né riscrittura aliquote in import.
+
+**Logica VIES attiva solo su:**
+- `PATCH /api/v1/orders/{id}/apply-vies-exemption` (rettifica manuale KO → OK; usa `reverse_charge_id_tax` da settings se configurato)
+- `POST /api/v1/orders` con `vies_status: eligible` esplicito — righe senza `id_tax` ricevono l’aliquota VIES configurata
+
+Helper: `src/vies/tax_resolution.py` (`get_vies_exemption_tax_id`, `resolve_vies_exemption_tax_id_with_fallback`).
+
+**Delete tax:** `DELETE /api/v1/taxes/{id}` — se la tax è referenziata restituisce **422** con `error_code: TAX_IN_USE` e `details: { orders, documents, is_reverse_charge }` (BE-ALIQ-02).
 
 ---
+
+## Ultime modifiche (2026-06-05) — BE-ALIQ-05 (Tax.percentage DECIMAL)
+
+- Colonna `taxes.percentage`: `Integer` → `DECIMAL(5,2)` (modello SQLAlchemy + migration Alembic `20260605_0001`).
+- Schema API: `percentage` come `Decimal` con risposta JSON numerica (`25.5`, `22`, …).
+- Seed UE: Finlandia **25.5%** (prima troncata a 25).
+- Setup idempotente: `setup_taxes_percentage_decimal_column()` in `scripts/setup_initial.py`.
+- Deploy DB: `alembic upgrade head` **oppure** `python scripts/setup_initial.py` su MySQL.
+- **Troubleshooting:** se PUT/POST invia `25.5` ma la response restituisce `26`, la colonna DB è ancora `INTEGER`. Verifica con `python scripts/check_tax_percentage_column.py` e applica la migration.
+- Test: `tests/unit/schemas/test_tax_percentage_decimal.py`, `tests/integration/api/v1/test_tax_percentage_decimal.py`.
+
+---
+
+## Ultime modifiche (2026-06-05) — BE-ALIQ-04 (id_country int|null)
+
+- `coerce_optional_int()` + validator Pydantic su `TaxSchema` / `TaxResponseSchema` — accetta input stringa (`"5"`) e serializza sempre `int | null`.
+- Serializzazione centralizzata: `serialize_tax_response()` / `serialize_taxes_response()` usate da router Tax e `InitService._get_taxes`.
+- Endpoint Tax (`GET/POST/PUT`) e `/api/v1/init/?include=static` restituiscono `id_country` tipizzato in modo coerente (niente stringhe difensive lato FE).
+- Test: `tests/unit/schemas/test_tax_id_country.py`, `tests/integration/api/v1/test_tax_id_country.py`.
+
+---
+
+## Ultime modifiche (2026-06-05) — BE-ALIQ-03 (cache init su write Tax/Settings)
+
+- Helper condiviso `invalidate_init_data_cache()` in `src/core/cache.py` — invalida `init_data:static` e `init_data:full`.
+- Chiamato su **tutti** i write: `POST/PUT/DELETE /api/v1/taxes/`, `PUT .../set-country-default`, `PUT /api/v1/settings/` (reverse charge).
+- Nessuna invalidazione se delete tax fallisce con `TAX_IN_USE`.
+- Test: `tests/unit/core/test_init_cache_invalidation.py`, estensioni in `test_tax_service.py` e `test_settings_reverse_charge.py`.
+
+---
+
+## Ultime modifiche (2026-06-05) — BE-ALIQ-02 (delete Tax strutturato)
+
+- Pre-check utilizzo tax prima della delete: righe ordine, dettagli documenti fiscali, `reverse_charge_id_tax` in settings VIES.
+- Errore **422** con `error_code: TAX_IN_USE` (non più 500 generico su FK).
+- File: `src/repository/tax_usages.py`, `TaxRepository.find_usages`, `TaxService.delete_tax`.
+- Test: `tests/unit/repository/test_tax_find_usages.py`, `tests/unit/services/test_tax_service.py` (classe `TestTaxServiceDelete`), `tests/integration/api/v1/test_tax_delete.py`.
+
+---
+
+- Sync PS: regole tax invariate; nessun import di resolver VIES in `prestashop_service`.
+- Esenzione manuale allineata a `reverse_charge_id_tax` (`app_configurations` categoria `vies`).
+- Creazione ordine con `vies_status=eligible`: `id_tax` VIES su righe/spedizione senza tax esplicita.
+- Test: `tests/unit/vies/test_vies_exemption_tax.py`, `tests/unit/repository/test_order_create_vies_eligible_tax.py`.
+
+---
+
+## Ultime modifiche (2026-05-27) — fix `vies_status` PUT/GET MySQL
+
+**Problema:** dopo `PUT /api/v1/orders/{id}` con `"vies_status": "eligible"`, il `GET` restituiva `null`.
+
+**Causa:** SQLAlchemy mappava l'enum MySQL con i **nomi** (`ELIGIBLE`) mentre DB/sync usano i **valori** (`eligible`).
+
+**Fix:** `Enum(ViesStatus, values_callable=...)` in `src/models/order.py`; `OrderRepository.update` consente reset esplicito a `null`.
+
+**Verifica:** `pytest tests/integration/api/v1/test_order_put_vies_status.py` — riavviare `uvicorn` dopo il deploy.
+
+---
+
+## Ultime modifiche (2026-05-27) — BE-VIES-FALLBACK-GLOBAL
+
+**Scope:** Fallback IVA globale + reverse charge VIES (prerequisito FE-VIES-3 STEP 3).
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| GET | `/api/v1/taxes/global-default` | Default IVA globale (`id_country` null) |
+| PUT | `/api/v1/taxes/{id}/set-country-default` | Default paese **o** globale |
+| GET/PUT | `/api/v1/settings/` | Facade: legge/scrive `reverse_charge_id_tax` su `app_configurations` (category `vies`) |
+| GET | `/api/v1/app_configurations/by-category/vies` | Lista configurazioni VIES |
+
+`POST/PUT /api/v1/taxes/` accettano `id_country: null`. `/api/v1/init/` include `settings.reverse_charge_id_tax`.
+
+Persistenza: `app_configurations` — `category=vies`, `name=reverse_charge_id_tax`, `value=<id_tax>`. Nessuna tabella `settings` dedicata.
+
+Migration: `alembic upgrade head` (revision `20260527_0003` migra da `settings` se presente).
 
 ## Ultime modifiche (2026-05-27) — BE-VIES-CLEANUP-SEED
 
@@ -135,7 +220,7 @@ Sync PrestaShop: `src/services/vies/vies_status_resolver.py` — snapshot `vies_
 **Scope:** Fase 2/4 VIES — sync PrestaShop + API gestionale.
 
 - **Sync:** `vies_status_resolver` + bulk INSERT in `prestashop_service`; P.IVA da `vat_number` o `vat`.
-- **Lista:** query param `vies_status` su `GET /api/v1/orders/`.
+- **Lista, dettaglio, creazione:** `vies_status` su `GET /api/v1/orders/`, `GET /api/v1/orders/{id}`, body/response `POST /api/v1/orders/`, body `PUT /api/v1/orders/{id}`.
 - **Esenzione manuale:** `PATCH .../apply-vies-exemption`, `POST .../bulk-apply-vies-exemption`, evento `ORDER_VIES_EXEMPTION_APPLIED`.
 - **Test:** `tests/unit/repository/test_order_repository_vies_filter.py`, `tests/unit/services/test_order_vies_exemption.py`, `tests/integration/api/v1/test_order_vies_exemption.py`.
 

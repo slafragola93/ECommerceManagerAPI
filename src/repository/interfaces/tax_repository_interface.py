@@ -5,6 +5,7 @@ from abc import abstractmethod
 from typing import Optional, List
 from src.core.interfaces import IRepository
 from src.models.tax import Tax
+from src.repository.tax_usages import TaxUsages
 
 class ITaxRepository(IRepository[Tax, int]):
     """Interface per la repository dei tax"""
@@ -50,6 +51,21 @@ class ITaxRepository(IRepository[Tax, int]):
         pass
 
     @abstractmethod
+    def get_global_default(self) -> Optional[Tax]:
+        """Tax fallback globale (id_country IS NULL, is_default=1)."""
+        pass
+
+    @abstractmethod
     def set_country_default_atomic(self, id_tax: int, id_country: int) -> Tax:
         """Imposta un Tax come unico default per il paese (transazione atomica)."""
+        pass
+
+    @abstractmethod
+    def set_global_default_atomic(self, id_tax: int) -> Tax:
+        """Imposta un Tax come unico default globale (id_country IS NULL)."""
+        pass
+
+    @abstractmethod
+    def find_usages(self, id_tax: int) -> TaxUsages:
+        """Conta riferimenti a id_tax su ordini, documenti fiscali e reverse charge."""
         pass

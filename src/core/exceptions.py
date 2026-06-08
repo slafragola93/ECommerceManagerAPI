@@ -16,6 +16,7 @@ class ErrorCode(Enum):
     
     # Business logic errors
     BUSINESS_RULE_VIOLATION = "BUSINESS_RULE_VIOLATION"
+    TAX_IN_USE = "TAX_IN_USE"
     ORDER_NOT_MODIFIABLE = "ORDER_NOT_MODIFIABLE"
     INSUFFICIENT_STOCK = "INSUFFICIENT_STOCK"
     ALREADY_EXISTS = "ALREADY_EXISTS"
@@ -93,9 +94,12 @@ class BusinessRuleException(DomainException):
         self, 
         message: str, 
         error_code: ErrorCode = ErrorCode.BUSINESS_RULE_VIOLATION,
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
+        status_code: int = 400,
     ):
-        super().__init__(message, error_code, details)
+        BaseApplicationException.__init__(
+            self, message, error_code, details, status_code
+        )
 
 class NotFoundException(BaseApplicationException):
     """Entità non trovata"""

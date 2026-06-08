@@ -1,6 +1,7 @@
 """Unit test — apply_vies_exemption (BE-VIES-2)."""
 import pytest
 
+from src.models.app_configuration import AppConfiguration
 from src.models.order import Order, ViesStatus
 from src.models.order_detail import OrderDetail
 from src.models.tax import Tax
@@ -61,6 +62,30 @@ class TestApplyViesExemption:
         assert refreshed_detail.id_tax == zero_tax.id_tax
         assert float(refreshed_detail.total_price_with_tax) == 122.0
         assert float(refreshed_detail.total_price_net) == 122.0
+
+    async def test_uses_reverse_charge_from_settings(
+        self, order_service, db_session, order_with_line, event_bus_spy
+    ):
+        order, detail, _ = order_with_line
+        rc = Tax(name="RC VIES", percentage=0, code="RCV", is_default=0)
+        db_session.add(rc)
+        db_session.commit()
+        db_session.add(
+            AppConfiguration(
+                id_lang=0,
+                category="vies",
+                name="reverse_charge_id_tax",
+                value=str(rc.id_tax),
+                description="test",
+                is_encrypted=False,
+            )
+        )
+        db_session.commit()
+
+        await order_service.apply_vies_exemption(order.id_order, user_id=42)
+        db_session.expire_all()
+        refreshed_detail = db_session.get(OrderDetail, detail.id_order_detail)
+        assert refreshed_detail.id_tax == rc.id_tax
 
     async def test_bulk_atomic_rollback_on_missing_order(
         self, order_service, db_session, order_with_line, event_bus_spy

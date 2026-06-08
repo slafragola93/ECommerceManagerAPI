@@ -1280,6 +1280,12 @@ class OrderService(IOrderService):
         session.flush()
         return tax.id_tax
 
+    def _resolve_vies_exemption_tax_id(self, session: Session) -> int:
+        """Aliquota VIES: reverse_charge da settings, altrimenti prima tax 0% / creazione."""
+        from src.vies.tax_resolution import resolve_vies_exemption_tax_id_with_fallback
+
+        return resolve_vies_exemption_tax_id_with_fallback(session)
+
     def _recalculate_order_lines_for_zero_tax(
         self, session: Session, order_id: int, zero_tax_id: int
     ) -> None:
@@ -1340,8 +1346,8 @@ class OrderService(IOrderService):
         previous_vies_status = (
             order.vies_status.value if order.vies_status is not None else None
         )
-        zero_tax_id = self._get_zero_tax_id(session)
-        self._recalculate_order_lines_for_zero_tax(session, order_id, zero_tax_id)
+        vies_tax_id = self._resolve_vies_exemption_tax_id(session)
+        self._recalculate_order_lines_for_zero_tax(session, order_id, vies_tax_id)
         self.recalculate_totals_for_order(order_id, commit=False)
         order = self._order_repository.get_by_id(_id=order_id)
         order.vies_status = ViesStatus.ELIGIBLE

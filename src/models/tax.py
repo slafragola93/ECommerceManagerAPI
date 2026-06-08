@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, ForeignKey
+from sqlalchemy import Integer, Column, String, ForeignKey, Numeric
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -13,7 +13,7 @@ class Tax(Base):
     name = Column(String(200))
     note = Column(String(200), default=None)
     code = Column(String(10))
-    percentage = Column(Integer, default=0)
+    percentage = Column(Numeric(5, 2), nullable=False, default=0)
     electronic_code = Column(String(10), default="")
 
     country = relationship("Country", back_populates="taxes")

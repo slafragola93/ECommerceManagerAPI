@@ -467,3 +467,16 @@ async def close_cache_manager():
     if _cache_manager:
         await _cache_manager.close()
         _cache_manager = None
+
+
+INIT_DATA_CACHE_KEYS = ("init_data:static", "init_data:full")
+
+
+async def invalidate_init_data_cache() -> None:
+    """Invalida le chiavi init usate dal FE dopo write su Tax/Settings."""
+    try:
+        cache_manager = await get_cache_manager()
+        for key in INIT_DATA_CACHE_KEYS:
+            await cache_manager.delete(key)
+    except Exception as exc:
+        logger.warning("Impossibile invalidare cache init_data: %s", exc)

@@ -40,7 +40,15 @@ class Order(Base):
     id_order_state = Column(Integer, default=1)
     id_ecommerce_state = Column(Integer, ForeignKey('ecommerce_order_states.id_ecommerce_order_state', ondelete='SET NULL'), nullable=True, index=True, comment="ID stato corrente sull'e-commerce remoto (PrestaShop, Shopify, ecc.)")
     is_invoice_requested = Column(Boolean, default=False)
-    vies_status = Column(Enum(ViesStatus), nullable=True, index=True, default=None)
+    vies_status = Column(
+        Enum(
+            ViesStatus,
+            values_callable=lambda choices: [item.value for item in choices],
+        ),
+        nullable=True,
+        index=True,
+        default=None,
+    )
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
     total_weight = Column(Numeric(10, 5), default=0)

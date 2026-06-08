@@ -9,6 +9,8 @@ from src.schemas.tax_schema import (
     TaxSchema,
     TaxResponseSchema,
     AllTaxesResponseSchema,
+    serialize_tax_response,
+    serialize_taxes_response,
 )
 from src.core.exceptions import (
     NotFoundException
@@ -38,7 +40,7 @@ def get_tax_service(db: db_dependency) -> ITaxService:
 
 
 def _tax_to_response_dict(tax) -> dict:
-    return TaxResponseSchema.model_validate(tax).model_dump()
+    return serialize_tax_response(tax)
 
 
 @router.get("/country-defaults", status_code=status.HTTP_200_OK)
@@ -73,6 +75,20 @@ async def get_country_tax_default_by_iso(
     return {"status": "success", "data": tax.model_dump()}
 
 
+@router.get("/global-default", status_code=status.HTTP_200_OK)
+@check_authentication
+async def get_global_tax_default(
+    user: dict = Depends(get_current_user),
+    tax_service: ITaxService = Depends(get_tax_service),
+    _: None = Depends(require_permission("settings", "read")),
+):
+    """Default IVA globale (id_country IS NULL, is_default=1)."""
+    tax = await tax_service.get_global_default()
+    if not tax:
+        raise NotFoundException("Global tax default", "global")
+    return {"status": "success", "data": tax.model_dump()}
+
+
 @router.put("/{tax_id}/set-country-default", status_code=status.HTTP_200_OK)
 @check_authentication
 async def set_country_tax_default(
@@ -82,7 +98,8 @@ async def set_country_tax_default(
     _: None = Depends(require_permission("settings", "update")),
 ):
     """
-    Imposta il Tax come unico default per il suo id_country (transazione atomica).
+    Imposta il Tax come unico default per paese (id_country valorizzato) o globale
+    (id_country null), transazione atomica.
     """
     tax = await tax_service.set_country_default(tax_id)
     return {"status": "success", "data": _tax_to_response_dict(tax)}
@@ -109,7 +126,12 @@ async def get_all_taxes(
 
     total_count = await tax_service.get_taxes_count()
 
-    return {"taxes": taxes, "total": total_count, "page": page, "limit": limit}
+    return {
+        "taxes": serialize_taxes_response(taxes),
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+    }
 
 @router.get("/{tax_id}", status_code=status.HTTP_200_OK, response_model=TaxResponseSchema)
 @check_authentication
@@ -125,7 +147,7 @@ async def get_tax_by_id(
     - **tax_id**: Identificativo della tax da ricercare.
     """
     tax = await tax_service.get_tax(tax_id)
-    return tax
+    return _tax_to_response_dict(tax)
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_description="Tax creata correttamente")
 @check_authentication
@@ -138,7 +160,8 @@ async def create_tax(
     """
     Crea una nuova tax con i dati forniti.
     """
-    return await tax_service.create_tax(tax_data)
+    tax = await tax_service.create_tax(tax_data)
+    return _tax_to_response_dict(tax)
 
 @router.put("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax aggiornata correttamente")
 @check_authentication
@@ -154,7 +177,8 @@ async def update_tax(
 
     - **tax_id**: Identificativo della tax da aggiornare.
     """
-    return await tax_service.update_tax(tax_id, tax_data)
+    tax = await tax_service.update_tax(tax_id, tax_data)
+    return _tax_to_response_dict(tax)
 
 @router.delete("/{tax_id}", status_code=status.HTTP_200_OK, response_description="Tax eliminata correttamente")
 @check_authentication
@@ -168,5 +192,7 @@ async def delete_tax(
     Elimina una tax basata sull'ID specificato.
 
     - **tax_id**: Identificativo della tax da eliminare.
+    - **422**: `error_code=TAX_IN_USE` se la tax è usata in ordini, documenti fiscali
+      o come `reverse_charge_id_tax` nelle impostazioni VIES.
     """
     await tax_service.delete_tax(tax_id)

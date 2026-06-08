@@ -1,10 +1,9 @@
 """
 Tax Service rifattorizzato seguendo i principi SOLID
 """
-import logging
 from typing import Any, Dict, List, Optional
 
-from src.core.cache import get_cache_manager
+from src.core.cache import invalidate_init_data_cache
 from src.core.exceptions import (
     BusinessRuleException,
     ErrorCode,
@@ -15,10 +14,13 @@ from src.events.core.event import EventType
 from src.events.decorators import emit_event_on_success
 from src.models.tax import Tax
 from src.repository.interfaces.tax_repository_interface import ITaxRepository
-from src.schemas.tax_schema import TaxCountryDefaultResponseSchema, TaxResponseSchema, TaxSchema
+from src.schemas.tax_schema import (
+    TaxCountryDefaultResponseSchema,
+    TaxResponseSchema,
+    TaxSchema,
+    coerce_tax_percentage,
+)
 from src.services.interfaces.tax_service_interface import ITaxService
-
-logger = logging.getLogger(__name__)
 
 
 def _extract_tax_country_default_changed_data(*args, **kwargs) -> Dict[str, Any]:
@@ -37,6 +39,25 @@ class TaxService(ITaxService):
     
     def __init__(self, tax_repository: ITaxRepository):
         self._tax_repository = tax_repository
+
+    @staticmethod
+    def _verify_percentage_persisted(expected, tax: Tax) -> None:
+        """Rileva DB ancora INTEGER (25.5 salvato come 26) prima di rispondere al FE."""
+        if expected is None:
+            return
+        expected_q = coerce_tax_percentage(expected)
+        stored_q = coerce_tax_percentage(tax.percentage)
+        if stored_q != expected_q:
+            raise ValidationException(
+                "Tax percentage was rounded on save: database column taxes.percentage "
+                "must be DECIMAL(5,2). Run `alembic upgrade head` or "
+                "`python scripts/setup_initial.py`.",
+                details={
+                    "requested_percentage": float(expected_q),
+                    "stored_percentage": float(stored_q),
+                    "migration": "20260605_0001_tax_percentage_decimal",
+                },
+            )
     
     async def create_tax(self, tax_data: TaxSchema) -> Tax:
         """Crea un nuovo tax con validazioni business"""
@@ -51,10 +72,13 @@ class TaxService(ITaxService):
                     {"name": tax_data.name}
                 )
         
-        # Crea il tax
         try:
-            tax = Tax(**tax_data.model_dump())
+            tax = Tax(**tax_data.model_dump(mode="python"))
             tax = self._tax_repository.create(tax)
+            self._verify_percentage_persisted(tax_data.percentage, tax)
+            if tax.is_default == 1:
+                tax = await self._apply_default_invariant(tax)
+            await self._invalidate_init_tax_cache()
             return tax
         except Exception as e:
             raise ValidationException(f"Error creating tax: {str(e)}")
@@ -75,14 +99,18 @@ class TaxService(ITaxService):
                     {"name": tax_data.name}
                 )
         
-        # Aggiorna il tax
         try:
-            # Aggiorna i campi
-            for field_name, value in tax_data.model_dump(exclude_unset=True).items():
-                if hasattr(tax, field_name) and value is not None:
+            payload = tax_data.model_dump(exclude_unset=True, mode="python")
+            for field_name, value in payload.items():
+                if hasattr(tax, field_name):
                     setattr(tax, field_name, value)
-            
+
             updated_tax = self._tax_repository.update(tax)
+            if "percentage" in payload:
+                self._verify_percentage_persisted(payload["percentage"], updated_tax)
+            if updated_tax.is_default == 1:
+                updated_tax = await self._apply_default_invariant(updated_tax)
+            await self._invalidate_init_tax_cache()
             return updated_tax
         except Exception as e:
             raise ValidationException(f"Error updating tax: {str(e)}")
@@ -113,12 +141,27 @@ class TaxService(ITaxService):
             raise ValidationException(f"Error retrieving taxes: {str(e)}")
     
     async def delete_tax(self, tax_id: int) -> bool:
-        """Elimina un tax"""
-        # Verifica esistenza
+        """Elimina un tax se non referenziato da ordini, documenti o reverse charge."""
         self._tax_repository.get_by_id_or_raise(tax_id)
-        
+
+        usages = self._tax_repository.find_usages(tax_id)
+        if usages.has_any():
+            raise BusinessRuleException(
+                "Tax is in use and cannot be deleted",
+                ErrorCode.TAX_IN_USE,
+                {
+                    "id_tax": tax_id,
+                    "orders": usages.order_count,
+                    "documents": usages.document_count,
+                    "is_reverse_charge": usages.is_reverse_charge,
+                },
+                status_code=422,
+            )
+
         try:
-            return self._tax_repository.delete(tax_id)
+            deleted = self._tax_repository.delete(tax_id)
+            await invalidate_init_data_cache()
+            return deleted
         except Exception as e:
             raise ValidationException(f"Error deleting tax: {str(e)}")
     
@@ -151,13 +194,20 @@ class TaxService(ITaxService):
         payload["country_name"] = country.name if country else None
         return TaxCountryDefaultResponseSchema(**payload)
 
+    async def _apply_default_invariant(self, tax: Tax) -> Tax:
+        """Garantisce un solo default per scope paese o globale."""
+        if tax.id_country is None:
+            return self._tax_repository.set_global_default_atomic(tax.id_tax)
+        return self._tax_repository.set_country_default_atomic(tax.id_tax, tax.id_country)
+
+    async def get_global_default(self) -> Optional[TaxResponseSchema]:
+        tax = self._tax_repository.get_global_default()
+        if not tax:
+            return None
+        return self._to_tax_response(tax)
+
     async def _invalidate_init_tax_cache(self) -> None:
-        try:
-            cache_manager = await get_cache_manager()
-            await cache_manager.delete("init_data:static")
-            await cache_manager.delete("init_data:full")
-        except Exception as exc:
-            logger.warning("Impossibile invalidare cache init dopo modifica tax: %s", exc)
+        await invalidate_init_data_cache()
 
     async def get_default_by_country(self, id_country: int) -> Optional[TaxResponseSchema]:
         tax = self._tax_repository.get_default_by_country(id_country)
@@ -191,13 +241,17 @@ class TaxService(ITaxService):
         if not tax:
             raise NotFoundException("Tax", id_tax)
 
-        if tax.id_country is None or tax.id_country <= 0:
+        if tax.id_country is None:
+            updated = self._tax_repository.set_global_default_atomic(id_tax)
+        elif tax.id_country <= 0:
             raise BusinessRuleException(
-                "Tax must have id_country set before it can be a country default",
+                "Invalid id_country for tax default",
                 ErrorCode.BUSINESS_RULE_VIOLATION,
-                {"id_tax": id_tax},
+                {"id_tax": id_tax, "id_country": tax.id_country},
             )
-
-        updated = self._tax_repository.set_country_default_atomic(id_tax, tax.id_country)
+        else:
+            updated = self._tax_repository.set_country_default_atomic(
+                id_tax, tax.id_country
+            )
         await self._invalidate_init_tax_cache()
         return updated

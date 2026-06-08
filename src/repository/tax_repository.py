@@ -6,10 +6,14 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc
 from src.models.tax import Tax
 from src.models.country import Country
+from src.models.order_detail import OrderDetail
+from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.repository.interfaces.tax_repository_interface import ITaxRepository
+from src.repository.tax_usages import TaxUsages
 from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException, NotFoundException
 from src.services import QueryUtils
+from src.vies.vies_app_configuration import get_reverse_charge_id_tax
 
 class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
     """Tax Repository rifattorizzato seguendo SOLID"""
@@ -160,21 +164,26 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
                 "id_tax": tax.id_tax
             }
         
-        # 2. Se non trovata, cerca tax default
-        default_tax = self._session.query(Tax).filter(
-            Tax.is_default == 1
-        ).first()
-        
-        if default_tax and default_tax.percentage is not None:
+        # 2. Default per paese (is_default=1 sullo stesso id_country)
+        country_default = self.get_default_by_country(id_country)
+        if country_default and country_default.percentage is not None:
             return {
-                "percentage": float(default_tax.percentage),
-                "id_tax": default_tax.id_tax
+                "percentage": float(country_default.percentage),
+                "id_tax": country_default.id_tax,
+            }
+
+        # 3. Fallback globale (id_country IS NULL, is_default=1)
+        global_default = self.get_global_default()
+        if global_default and global_default.percentage is not None:
+            return {
+                "percentage": float(global_default.percentage),
+                "id_tax": global_default.id_tax,
             }
         
-        # 3. Se non trovata, recupera percentage da app_configuration
+        # 4. Percentuale da app_configuration
         default_percentage = self.get_default_tax_percentage_from_app_config(22.0)
-        
-        # 4. Fallback finale: usa 22% e id_tax=1
+
+        # 5. Fallback finale: usa 22% e id_tax=1
         return {
             "percentage": default_percentage,
             "id_tax": 1
@@ -230,6 +239,19 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
                 f"Database error listing country default taxes: {str(e)}"
             )
 
+    def get_global_default(self) -> Optional[Tax]:
+        """Tax con id_country IS NULL e is_default=1 (fallback globale)."""
+        try:
+            return (
+                self._session.query(Tax)
+                .filter(Tax.id_country.is_(None), Tax.is_default == 1)
+                .first()
+            )
+        except Exception as e:
+            raise InfrastructureException(
+                f"Database error retrieving global default tax: {str(e)}"
+            )
+
     def set_country_default_atomic(self, id_tax: int, id_country: int) -> Tax:
         """Imposta un Tax come unico default per il paese (transazione atomica)."""
         try:
@@ -255,4 +277,56 @@ class TaxRepository(BaseRepository[Tax, int], ITaxRepository):
             self._session.rollback()
             raise InfrastructureException(
                 f"Database error setting country default tax: {str(e)}"
+            )
+
+    def set_global_default_atomic(self, id_tax: int) -> Tax:
+        """Imposta un Tax come unico default globale (id_country IS NULL)."""
+        try:
+            tax = self.get_tax_by_id(id_tax)
+            if not tax:
+                raise NotFoundException("Tax", id_tax)
+
+            self._session.query(Tax).filter(
+                Tax.id_country.is_(None),
+                Tax.is_default == 1,
+                Tax.id_tax != id_tax,
+            ).update({Tax.is_default: 0}, synchronize_session=False)
+
+            tax.id_country = None
+            tax.is_default = 1
+            self._session.commit()
+            self._session.refresh(tax)
+            return tax
+        except NotFoundException:
+            raise
+        except Exception as e:
+            self._session.rollback()
+            raise InfrastructureException(
+                f"Database error setting global default tax: {str(e)}"
+            )
+
+    def find_usages(self, id_tax: int) -> TaxUsages:
+        """Conta riferimenti a id_tax su order_details, fiscal_document_details e reverse charge."""
+        try:
+            order_count = (
+                self._session.query(func.count())
+                .select_from(OrderDetail)
+                .filter(OrderDetail.id_tax == id_tax)
+                .scalar()
+            ) or 0
+            document_count = (
+                self._session.query(func.count())
+                .select_from(FiscalDocumentDetail)
+                .filter(FiscalDocumentDetail.id_tax == id_tax)
+                .scalar()
+            ) or 0
+            reverse_charge_id = get_reverse_charge_id_tax(self._session)
+            return TaxUsages(
+                order_count=int(order_count),
+                document_count=int(document_count),
+                is_reverse_charge=reverse_charge_id == id_tax,
+            )
+        except Exception as e:
+            raise InfrastructureException(
+                f"Database error checking tax usages for id {id_tax}: {str(e)}"
             )

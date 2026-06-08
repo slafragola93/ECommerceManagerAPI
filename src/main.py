@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero
+    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings
 from src.database import Base, engine
 
 # Import new cache system
@@ -419,7 +419,7 @@ async def business_rule_exception_handler(request: Request, exc: BusinessRuleExc
     })
     
     return JSONResponse(
-        status_code=400,
+        status_code=exc.status_code,
         content=exc.to_dict()
     )
 
@@ -608,6 +608,7 @@ app.include_router(sectional.router)
 app.include_router(message.router)
 app.include_router(payment.router)
 app.include_router(tax.router)
+app.include_router(settings.router)
 app.include_router(order_state.router)
 app.include_router(shipping.router)
 app.include_router(order_package.router)
