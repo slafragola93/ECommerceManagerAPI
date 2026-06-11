@@ -109,10 +109,11 @@ Dopo `notify-print` il tracking è in DB ma Angular richiede F5. Soluzione: `emi
 **Decisioni chiuse:** SSE (no WebSocket, no polling, no epic N2); fan-out in-memory v1; emit non blocca notify-print.
 
 **Acceptance:**
-- [ ] `ORDER_TRACKING_UPDATED` + emit in `notify_print` dopo commit
-- [ ] `GET /api/v1/events/stream` — SSE + auth JWT
-- [ ] Test: notify-print → client SSE riceve evento
-- [ ] (FE) `OrderEventsService` aggiorna lista/dettaglio ordine
+- [x] `ORDER_TRACKING_UPDATED` + emit in `notify_print` dopo commit
+- [x] `GET /api/v1/events/stream` — SSE + auth JWT
+- [x] Test: notify-print → client SSE riceve evento
+- [x] (FE creative_light3) `OrderEventsService` + NgRx patch tracking
+- [ ] QA congiunto BE+FE (checklist `docs/FE_HANDOFF_SSE_TRACKING.md`)
 
 ---
 

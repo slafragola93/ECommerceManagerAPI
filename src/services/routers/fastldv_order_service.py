@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from src.core.exceptions import BusinessRuleException, ErrorCode, NotFoundException
 from src.core.settings import get_fastldv_settings
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
 from src.models.address import Address
 from src.models.carrier_api import CarrierApi
 from src.models.country import Country
@@ -152,7 +154,8 @@ class FastLdvOrderService(IFastLdvOrderService):
                 {"code": request.id_origin, "reason": "Nessuna spedizione associata"},
             )
 
-        self._shipping_repository.update_tracking(id_shipping, request.tracking.strip())
+        tracking = request.tracking.strip()
+        self._shipping_repository.update_tracking(id_shipping, tracking)
         self._session.commit()
 
         logger.info(
@@ -161,15 +164,15 @@ class FastLdvOrderService(IFastLdvOrderService):
             db_id_origin,
             order.id_order,
             id_shipping,
-            request.tracking,
+            tracking,
         )
-
         return FastLdvNotifyPrintResponseSchema(
             data={
                 "id_origin": db_id_origin,
                 "id_order": order.id_order,
                 "id_shipping": id_shipping,
-                "tracking": request.tracking.strip(),
+                "tracking": tracking,
+                "awb": tracking or None,
             }
         )
 

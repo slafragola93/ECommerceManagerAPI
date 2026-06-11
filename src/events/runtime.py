@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from .config.config_loader import EventConfigLoader
 from .core.event import Event
@@ -11,7 +11,11 @@ from .core.event_bus import EventBus
 from .marketplace.marketplace_client import MarketplaceClient
 from .plugin_manager import PluginManager
 
+if TYPE_CHECKING:
+    from .sse.sse_fanout_service import SseFanoutService
+
 _event_bus: Optional[EventBus] = None
+_sse_fanout: Optional[Any] = None
 _plugin_manager: Optional[PluginManager] = None
 _config_loader: Optional[EventConfigLoader] = None
 _marketplace_client: Optional[MarketplaceClient] = None
@@ -37,6 +41,17 @@ def get_plugin_manager() -> PluginManager:
     if _plugin_manager is None:
         raise RuntimeError("PluginManager has not been initialised")
     return _plugin_manager
+
+
+def set_sse_fanout(service: Optional["SseFanoutService"]) -> None:
+    global _sse_fanout
+    _sse_fanout = service
+
+
+def get_sse_fanout() -> "SseFanoutService":
+    if _sse_fanout is None:
+        raise RuntimeError("SseFanoutService has not been initialised")
+    return _sse_fanout
 
 
 def emit_event(event: Event) -> None:

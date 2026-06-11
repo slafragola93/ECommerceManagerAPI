@@ -18,7 +18,7 @@ Il gestionale espone API via `/api/v1/fastldv/…`. **Miglioramento rispetto a S
 
 1. **GET ordine** — lookup `{code}`, dati spedizione, righe, blocco `validation` (sostituisce entrambe le chiamate Smarty) — ✅ `BE-FASTLDV-1`
 2. **POST notify-print** — tracking post-stampa su `shipping.tracking` — ✅ `BE-FASTLDV-2`
-3. **Emit + SSE** — push verso Angular quando il tracking cambia (dopo notify-print) — 🟦 `BE-FASTLDV-EVT` (vedi § dedicata)
+3. **Emit + SSE** — push verso Angular quando il tracking cambia (dopo notify-print) — ✅ `BE-FASTLDV-EVT` + FE creative_light3 (vedi § dedicata, handoff `FE_HANDOFF_SSE_TRACKING.md`)
 4. **Opzionale PATCH shipping-params** — colli/peso/contrassegno (modalità Verifica) — `BE-FASTLDV-3`
 
 La **generazione ZPL/PDF** (`fastldvGetPdfPrint`) resta fuori scope iniziale BE — va migrata verso API corrieri (`POST /api/v1/shippings/{id_order}/create`) o adapter dedicato in un secondo step.
@@ -351,7 +351,7 @@ Content-Type: application/json
 
 In `logStampaAfterPrint()` aggiungere POST verso questa API oltre/ al posto del re-fetch Smarty.
 
-**Oggi:** notify-print persiste il tracking e risponde `200`, ma **non emette eventi** verso il gestionale Angular — la lista ordini si aggiorna solo con refresh manuale (F5).
+**Dopo BE-FASTLDV-EVT:** notify-print persiste il tracking, risponde `200` ed emette `order.tracking.updated` verso i client SSE connessi.
 
 ---
 
@@ -377,7 +377,7 @@ FastLDV → POST notify-print → DB aggiornato ✅
 | **Trigger emit** | Dopo `commit` riuscito in `notify_print` | Tracking già salvato; emit non blocca la risposta a FastLDV |
 | **Infrastruttura emit** | `emit_event()` → **EventBus** esistente + nuovo handler **SSE fan-out** | Stesso pattern di `SHIPMENT_CREATED` in `shipments.py`; riuso bus plugin |
 | **Tipo evento** | `order.tracking.updated` (nuovo `EventType`) | Specifico per tracking FastLDV; estendibile ad altre fonti |
-| **Payload evento** | `id_order`, `tracking`, `source: fastldv`, `timestamp` | Angular lavora sempre sulla PK interna — vedi § Identificatori |
+| **Payload evento** | `id_order`, `tracking`, `awb` (= tracking su notify-print), `source: fastldv`, `timestamp` | Angular lavora sempre sulla PK interna — vedi § Identificatori |
 | **Errore emit/SSE** | Log warning; **non** fallisce notify-print | Fire-and-forget lato magazzino |
 | **Auth stream** | JWT + permesso `orders:read` | Coerente con API gestionale |
 | **Scope v1** | Fan-out **in-memory** (singola istanza API) | Redis pub/sub solo se scaling orizzontale |
@@ -409,7 +409,7 @@ sequenceDiagram
 
 ```
 event: order.tracking.updated
-data: {"id_order":48564,"tracking":"BRT123456789","source":"fastldv","timestamp":"2026-06-09T14:30:00Z"}
+data: {"id_order":48564,"tracking":"BRT123456789","awb":"BRT123456789","source":"fastldv","timestamp":"2026-06-09T14:30:00Z"}
 ```
 
 Keepalive ogni ~30s (`: ping`) per connessioni long-lived.
@@ -421,17 +421,20 @@ Keepalive ogni ~30s (`: ping`) per connessioni long-lived.
 | Step | Contenuto |
 |------|-----------|
 | A | `EventType.ORDER_TRACKING_UPDATED` in `src/events/core/event.py` |
-| B | `emit_event(...)` in `FastLdvOrderService.notify_print` dopo commit |
+| B | `emit_event(...)` in router `notify_fastldv_print` (async) dopo `notify_print` |
 | C | `SseFanoutService` — subscriber EventBus, code `asyncio.Queue` per client |
 | D | `GET /api/v1/events/stream` — `StreamingResponse`, `text/event-stream` |
 | E | Init subscriber in `lifespan` (`main.py`) |
 | F | Test integration: notify-print → client SSE riceve evento |
 
-### Lavoro FE Angular (`webmarke26`, ~4–5 h dopo contratto BE)
+### Lavoro FE Angular — ✅ completato (creative_light3, 2026-06-11)
 
-- `OrderEventsService` — subscribe SSE (JWT via `fetch` stream o equivalente)
-- Su `order.tracking.updated`: patch lista e/o `loadById(id_order)`
-- Reconnect automatico con backoff
+Handoff: [`FE_HANDOFF_SSE_TRACKING.md`](FE_HANDOFF_SSE_TRACKING.md)
+
+- `OrderEventsService` + parser SSE (`fetch` + JWT)
+- NgRx `trackingUpdatedFromEvent`, patch lista + modale
+- Reconnect backoff; SSE solo su route `/orders`
+- **QA congiunto:** da eseguire con BE deployato
 
 ### Dipendenze
 
@@ -518,8 +521,9 @@ Swagger (dopo implementazione): sezione **FastLDV**.
 - [ ] Test unitari `FastLdvOrderService` + integration API
 - [ ] (Opz.) `PATCH .../shipping-params` — BE-FASTLDV-3
 - [ ] (Opz.) blocco `legacy` in response per adapter PHP transitorio
-- [ ] `BE-FASTLDV-EVT` — `emit_event` in notify-print + `GET /api/v1/events/stream` (SSE)
-- [ ] (FE `webmarke26`) `OrderEventsService` — subscribe `order.tracking.updated`
+- [x] `BE-FASTLDV-EVT` — `emit_event` in notify-print + `GET /api/v1/events/stream` (SSE)
+- [x] (FE creative_light3) `OrderEventsService` — subscribe `order.tracking.updated`
+- [ ] QA congiunto BE+FE lista ordini + modale (checklist in `FE_HANDOFF_SSE_TRACKING.md`)
 
 ---
 
@@ -543,9 +547,9 @@ Swagger (dopo implementazione): sezione **FastLDV**.
 | Backlog `BE-FASTLDV-1/2/3` | ✅ |
 | Prompt app `prompt_FE_fastldv_migration.md` | ✅ |
 | `BE-FASTLDV-1/2` in codice + test | ✅ |
-| `BE-FASTLDV-EVT` (emit + SSE) | ❌ da implementare |
+| `BE-FASTLDV-EVT` (emit + SSE) | ✅ |
 | Cutover app FastLDV | ❌ (dopo deploy BE core) |
-| SSE Angular (`webmarke26`) | ❌ (dopo `BE-FASTLDV-EVT`) |
+| SSE Angular (creative_light3) | ✅ implementato — QA congiunto pending |
 | Magazzino in produzione | Smarty (invariato fino a cutover) |
 
 ### Decisioni da chiudere prima del codice BE
@@ -653,7 +657,7 @@ Sostituire `fastldvGetPdfPrint` → API corrieri gestionale. Zero Smarty.
 |------|--------|--------|
 | 0 Allineamento | ½ g | Prima del codice |
 | 1 BE core (`1/2`) | 1,5–2 g | ✅ fatto |
-| **1.5 SSE tracking** | ~1 g | **Prossimo** (BE + FE Angular) |
+| **1.5 SSE tracking** | ~1 g | ✅ BE+FE fatti — **QA congiunto** |
 | 2 BE Verifica | ½ g | Opzionale |
 | 3 Cutover app FastLDV | 1–2 g | Dopo deploy BE core (parallelo possibile a 1.5) |
 | 4 Etichette | 2–4 g | Da pianificare |

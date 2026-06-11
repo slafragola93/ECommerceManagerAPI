@@ -1,4 +1,5 @@
-# Event System Overview
+
++# Event System Overview
 
 This document describes the event-driven architecture introduced for order state changes.
 
@@ -47,6 +48,12 @@ marketplace:
 ```
 
 `src/main.py` initialises the EventBus, PluginManager, marketplace client and exposes management routers (`/api/v1/events`, `/api/v1/plugins`).
+
+## Client SSE stream (BE-FASTLDV-EVT)
+
+- `GET /api/v1/events/stream` – Server-Sent Events verso il gestionale Angular (JWT + permesso `orders:read`)
+- Eventi v1: `order.tracking.updated` (emit da `FastLdvOrderService.notify_print` dopo commit tracking)
+- Bridge: `SseFanoutService` (`src/events/sse/sse_fanout_service.py`) iscritto all'EventBus all'avvio
 
 ## Management Endpoints
 

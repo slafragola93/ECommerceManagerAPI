@@ -23,9 +23,10 @@ if str(project_root) not in sys.path:
 from src.main import app
 from src.database import Base, get_db
 from src.services.routers.auth_service import get_current_user
-from src.events.runtime import set_event_bus
+from src.events.runtime import set_event_bus, set_sse_fanout
 from src.events.core.event_bus import EventBus
-from src.events.core.event import Event
+from src.events.core.event import Event, EventType
+from src.events.sse import SseFanoutService, attach_sse_fanout
 from src.factories.services.carrier_service_factory import CarrierServiceFactory
 from src.services.interfaces.shipment_service_interface import IShipmentService
 from src.repository.interfaces.api_carrier_repository_interface import IApiCarrierRepository
@@ -104,12 +105,17 @@ class EventBusSpy(EventBus):
 
 @pytest.fixture(scope="function")
 def event_bus_spy() -> EventBusSpy:
-    """Fixture per EventBus spy"""
+    """Fixture per EventBus spy + SSE fan-out bridge (come in produzione)."""
+    import asyncio
+
     spy = EventBusSpy()
     set_event_bus(spy)
+    sse = SseFanoutService()
+    set_sse_fanout(sse)
+    asyncio.run(attach_sse_fanout(spy, sse))
     yield spy
-    # Reset dopo il test
     set_event_bus(None)
+    set_sse_fanout(None)
 
 
 # ============================================================================

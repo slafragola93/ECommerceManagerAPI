@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import StreamingResponse
 
 from src.events.plugin_manager import PluginManager
 from src.events.marketplace.plugin_installer import PluginInstaller
@@ -12,6 +13,7 @@ from src.events.runtime import (
     get_config_loader,
     get_marketplace_client,
     get_plugin_manager,
+    get_sse_fanout,
 )
 from src.services.core.wrap import check_authentication
 from src.services.routers.auth_service import get_current_user, require_permission
@@ -45,6 +47,47 @@ def get_installer() -> PluginInstaller:
 
 
 router = APIRouter(prefix="/api/v1/events", tags=["Event System"])
+
+
+def _get_sse_service():
+    try:
+        return get_sse_fanout()
+    except RuntimeError as exc:
+        logger.exception("SSE fan-out not initialised")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get(
+    "/stream",
+    summary="Stream eventi real-time (SSE)",
+    response_description="Server-Sent Events verso client gestionale",
+)
+@check_authentication
+async def events_stream(
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("orders", "read")),
+    sse_service=Depends(_get_sse_service),
+):
+    """
+    Connessione long-lived per aggiornamenti ordini (es. tracking FastLDV).
+
+    Eventi supportati in v1: ``order.tracking.updated``.
+    """
+    client = await sse_service.register(user["id"])
+
+    async def generate():
+        async for chunk in sse_service.stream(client):
+            yield chunk
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

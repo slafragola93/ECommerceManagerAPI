@@ -53,10 +53,12 @@ from src.events.marketplace import MarketplaceClient
 from src.events.plugin_loader import PluginLoader
 from src.events.plugin_manager import PluginManager
 from src.events.runtime import (
+    get_event_bus,
     set_config_loader,
     set_event_bus,
     set_marketplace_client,
     set_plugin_manager,
+    set_sse_fanout,
 )
 
 # Legacy cache (keep for compatibility)
@@ -200,7 +202,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         plugin_manager = initialize_event_system()
         await plugin_manager.initialise()
+        from src.events.sse import SseFanoutService, attach_sse_fanout
+
+        sse_fanout = SseFanoutService()
+        set_sse_fanout(sse_fanout)
+        await attach_sse_fanout(get_event_bus(), sse_fanout)
         print("✓ Event system initialized with all plugins")
+        print("✓ SSE fan-out bridge attached")
     except Exception as e:
         print(f"⚠ Event system warning: {e}")
     

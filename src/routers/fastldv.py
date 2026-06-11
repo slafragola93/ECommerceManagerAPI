@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from src.core.container_config import get_configured_container
 from src.core.fastldv_auth import verify_fastldv_api_key
 from src.database import get_db
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
 from src.schemas.fastldv_schema import (
     FastLdvNotifyPrintRequestSchema,
     FastLdvNotifyPrintResponseSchema,
@@ -84,4 +86,30 @@ async def notify_fastldv_print(
     body: FastLdvNotifyPrintRequestSchema,
     service: IFastLdvOrderService = Depends(_resolve_fastldv_service),
 ):
-    return service.notify_print(body)
+    result = service.notify_print(body)
+    try:
+        emit_event(
+            Event(
+                event_type=EventType.ORDER_TRACKING_UPDATED.value,
+                data={
+                    "id_order": result.data["id_order"],
+                    "tracking": result.data["tracking"],
+                    "awb": result.data.get("awb"),
+                    "id_shipping": result.data["id_shipping"],
+                    "source": "fastldv",
+                },
+                metadata={
+                    "source": "fastldv.notify_print",
+                    "id_origin_db": result.data["id_origin"],
+                    "scan_code": body.id_origin,
+                },
+            )
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to emit ORDER_TRACKING_UPDATED for order %s: %s",
+            result.data.get("id_order"),
+            exc,
+            exc_info=True,
+        )
+    return result

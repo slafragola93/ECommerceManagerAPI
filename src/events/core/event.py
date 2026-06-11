@@ -32,6 +32,7 @@ class EventType(str, Enum):
     ORDER_UPDATED = "order_updated"
     ORDER_DELETED = "order_deleted"
     ORDER_VIES_EXEMPTION_APPLIED = "order_vies_exemption_applied"
+    ORDER_TRACKING_UPDATED = "order.tracking.updated"
 
     # ===== CUSTOMER =====
     CUSTOMER_CREATED = "customer_created"

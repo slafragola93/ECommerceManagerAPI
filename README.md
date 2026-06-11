@@ -231,9 +231,19 @@ Esempio smoke test:
 curl -H "X-FastLDV-Key: $FASTLDV_API_KEY" "http://localhost:8000/api/v1/fastldv/order/69099?carrier=BRT+NAPOLI"
 ```
 
-Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md). **Prossimo step:** `BE-FASTLDV-EVT` — emit + SSE (`GET /api/v1/events/stream`) per aggiornare Angular quando notify-print scrive il tracking.
+Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md).
 
-**Test:** `pytest tests/unit/services/test_fastldv_order_service.py tests/integration/api/v1/test_fastldv.py -v`
+**Real-time tracking (BE-FASTLDV-EVT):** dopo `notify-print` il BE emette `order.tracking.updated` (payload: `id_order`, `tracking`, `awb`); FE Angular consuma `GET /api/v1/events/stream`. Handoff: [docs/FE_HANDOFF_SSE_TRACKING.md](docs/FE_HANDOFF_SSE_TRACKING.md).
+
+**Test:** `pytest tests/unit/services/test_fastldv_order_service.py tests/integration/api/v1/test_fastldv.py tests/integration/api/v1/test_events_sse.py -v`
+
+## Ultime modifiche (2026-06-11) — BE-FASTLDV-EVT
+
+**Scope:** Real-time tracking verso Angular dopo stampa FastLDV.
+
+- `EventType.ORDER_TRACKING_UPDATED` (`order.tracking.updated`) + emit in `POST /fastldv/notify-print`
+- `SseFanoutService` + `GET /api/v1/events/stream` (JWT, `text/event-stream`)
+- Test: `tests/integration/api/v1/test_events_sse.py`, `tests/unit/events/test_sse_fanout_service.py`
 
 ## Ultime modifiche (2026-06-09) — BE-FASTLDV-1/2
 
