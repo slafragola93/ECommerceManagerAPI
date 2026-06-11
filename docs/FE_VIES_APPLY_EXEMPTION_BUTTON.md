@@ -46,16 +46,37 @@ Authorization: Bearer <token>
 - **404:** ordine inesistente  
 - **401/403:** auth / permessi (gestiti dall’`ErrorInterceptor` esistente)
 
-### Bulk (lista ordini)
+### Bulk (lista ordini) — ✅ integrato FE-D.4 (2026-06-08)
 
 ```http
 POST /api/v1/orders/bulk-apply-vies-exemption
+Authorization: Bearer <token>
 Content-Type: application/json
 
 { "order_ids": [1, 2, 3] }
 ```
 
+- **Permesso RBAC:** `orders` + azione `update`
+- **Request:** `BulkApplyViesExemptionSchema` → `{ "order_ids": number[] }` (`min_length: 1`)
+- **200:** `BulkApplyViesExemptionResponseSchema` incapsulato in `{ status, data }`
+
+```json
+{
+  "status": "success",
+  "data": {
+    "processed": 1,
+    "order_ids": [69099]
+  }
+}
+```
+
+- `processed` = numero ordini effettivamente aggiornati
+- `order_ids` = id degli ordini su cui l'esenzione è stata applicata
+- **Esempio reale (1 ordine):** `{ "status":"success", "data":{ "processed":1, "order_ids":[69099] } }`
+
 Transazione atomica: se un id non esiste → errore e rollback di tutto il batch.
+
+> **Nota FE-D.4:** il bulk apply dalla lista ordini usa questo endpoint. L'apply singolo dal modale usa `PATCH /orders/{id}/apply-vies-exemption`. Il toggle generico `PATCH /orders/{id}/vies-status` (D.3) **non è usato** (revoca/toggle non previsto nel flusso corrente).
 
 ---
 
@@ -230,4 +251,4 @@ Swagger: http://localhost:8000/docs → sezione **Order** → `apply_vies_exempt
 - [ ] Dialog di conferma
 - [ ] Success solo dopo risposta 200 (no toast ottimista)
 - [ ] Aggiornamento modello ordine + righe in UI
-- [ ] (Opzionale) Bulk su griglia ordini
+- [x] Bulk su griglia ordini (FE-D.4 — `POST /bulk-apply-vies-exemption`)

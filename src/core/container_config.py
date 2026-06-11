@@ -180,6 +180,11 @@ def configure_container():
     container.register_transient(ICarrierAssignmentService, CarrierAssignmentService)
     container.register_transient(IOrderDetailService, OrderDetailService)
     container.register_transient(IFiscalDocumentService, FiscalDocumentService)
+
+    from src.services.interfaces.fastldv_order_service_interface import IFastLdvOrderService
+    from src.services.routers.fastldv_order_service import FastLdvOrderService
+
+    container.register_transient(IFastLdvOrderService, FastLdvOrderService)
     
     # BRT Configuration
     from src.repository.interfaces.brt_configuration_repository_interface import IBrtConfigurationRepository

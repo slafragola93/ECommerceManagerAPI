@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings
+    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
 from src.database import Base, engine
 
 # Import new cache system
@@ -623,6 +623,7 @@ app.include_router(shipments.router)
 app.include_router(bordero.router)
 app.include_router(events.router)
 app.include_router(csv_import.router)
+app.include_router(fastldv.router)
 
 @app.options("/{full_path:path}")
 async def options_handler(request: Request, full_path: str):

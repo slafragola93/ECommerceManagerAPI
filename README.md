@@ -46,6 +46,7 @@ Modifica `.env` con almeno:
 
 - `DATABASE_MAIN_USER`, `DATABASE_MAIN_PASSWORD`, `DATABASE_MAIN_ADDRESS`, `DATABASE_MAIN_PORT`, `DATABASE_MAIN_NAME`
 - `SECRET_KEY` (per JWT)
+- `FASTLDV_API_KEY` (per app magazzino FastLDV; vedi sotto)
 
 Applica le migrazioni al database:
 
@@ -206,6 +207,45 @@ Persistenza: `app_configurations` — `category=vies`, `name=reverse_charge_id_t
 
 Migration: `alembic upgrade head` (revision `20260527_0003` migra da `settings` se presente).
 
+## Integrazione FastLDV (magazzino)
+
+API dedicate per l’app browser FastLDV (sostituisce `checkOrderData` + `validate.php` di Smarty con **una sola GET**). Autenticazione tramite header `X-FastLDV-Key` (no JWT).
+
+| Metodo | Endpoint | Descrizione |
+|--------|----------|-------------|
+| GET | `/api/v1/fastldv/order/{code}` | Dati ordine + righe + `validation` (`200` stampabile, `422` bloccato con payload completo) |
+| POST | `/api/v1/fastldv/notify-print` | Aggiorna `shipping.tracking` dopo stampa etichetta |
+
+**Identificatori:** `id_order` = PK interna incrementale; `id_origin` = ID PrestaShop o **`0`** se ordine nato in app (non viene sostituito con `id_order`). Per ordini PS i due numeri differiscono (es. `id_origin=457300`, `id_order=48564`). Barcode `{code}`: ID PS se sync, altrimenti `id_order`. Etichetta: `document.num_doc`. Angular/SSE: sempre `id_order`.
+
+**Nota:** la **multispedizione** (`is_multishipping`, più spedizioni per ordine) è **accantonata in v1**: GET e notify-print usano solo la spedizione principale (`orders.id_shipping`).
+
+Variabili `.env`:
+
+- `FASTLDV_API_KEY` — chiave obbligatoria per gli endpoint sopra
+- `FASTLDV_BYPASS_VALIDATE_IDS` — (opz.) lista `id_origin` separati da virgola che saltano la validazione
+
+Esempio smoke test:
+
+```bash
+curl -H "X-FastLDV-Key: $FASTLDV_API_KEY" "http://localhost:8000/api/v1/fastldv/order/69099?carrier=BRT+NAPOLI"
+```
+
+Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md). **Prossimo step:** `BE-FASTLDV-EVT` — emit + SSE (`GET /api/v1/events/stream`) per aggiornare Angular quando notify-print scrive il tracking.
+
+**Test:** `pytest tests/unit/services/test_fastldv_order_service.py tests/integration/api/v1/test_fastldv.py -v`
+
+## Ultime modifiche (2026-06-09) — BE-FASTLDV-1/2
+
+**Scope:** Fase 1 backend integrazione FastLDV (ordine unificato + notify-print).
+
+- Router `src/routers/fastldv.py`, service `FastLdvOrderService`, auth `X-FastLDV-Key`, settings `FASTLDV_API_KEY` / `FASTLDV_BYPASS_VALIDATE_IDS`.
+- `OrderRepository.get_by_origin_id(id_origin, id_store?)` con filtro opzionale multi-negozio.
+- Validazione allineata a `validate.php` (priorità bypass → annullato → bloccato → non pagato → già spedito → non pronto → OK/ristampa).
+- Alias legacy Smarty in risposta (`data.legacy`) per transizione adapter PHP.
+- Multispedizione esplicitamente fuori scope v1 (solo `orders.id_shipping`).
+- Dual lookup FastLDV: `id_origin` PrestaShop oppure `id_order` per ordini gestionale (`id_origin=0`).
+
 ## Ultime modifiche (2026-05-27) — BE-VIES-CLEANUP-SEED
 
 **Scope:** Rimozione seed aliquote UE (BE-VIES-1) da prod/stage.
@@ -240,3 +280,4 @@ Migration: `alembic upgrade head` (revision `20260527_0003` migra da `settings` 
 - [DOCUMENTAZIONE.md](DOCUMENTAZIONE.md) – panoramica e architettura  
 - [QUICK_START.md](QUICK_START.md) – avvio rapido e comandi  
 - [docs/](docs/) – guide specifiche (eventi, plugin, sync, ecc.)
+- [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md) – integrazione app magazzino FastLDV

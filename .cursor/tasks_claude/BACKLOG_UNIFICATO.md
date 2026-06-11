@@ -1,7 +1,7 @@
 # Backlog Unificato — Elettronew Gestionale e-commerce
 
 > Generato il 2026-06-08 dalla fusione di `BACKLOG.md` (PC FE `webmarke26`) e `BACKLOG.md` (PC BE `webmarke22`).
-> Aggiornato 2026-06-08 con recap implementazione VIES/ALIQ dal BE.
+> Aggiornato 2026-06-09: contratto FastLDV da `app.js` + `validate.php` → `docs/BE_FASTLDV_INTEGRATION.md`.
 > Fonte di verità consolidata per proseguire il lavoro su entrambi i PC.
 
 ---
@@ -10,60 +10,52 @@
 
 | Area | ✅ Done | 🟦 Backlog aperto | 🌟 Epic |
 |---|---|---|---|
-| **Backend** | 35+ (..., BE-VIES-ORDERS-AREA-C ✅) | 6 (BE-FASTLDV-1/2, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
-| **Frontend** | 20+ (vedi storico) | 9 (FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
+| **Backend** | 35+ (..., BE-VIES-ORDERS-AREA-C ✅) | 6 (BE-FASTLDV-1/2/3, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
+| **Frontend** | 21+ (..., FE-D.4 ✅) | 9 (FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
 
 ---
 
 ## 🔴 PRIORITÀ ALTA — Da fare subito
 
-### BE-FASTLDV-1 — `GET /api/v1/fastldv/order/{id}`
+### BE-FASTLDV-1 — `GET /api/v1/fastldv/order/{code}` (unificato: dati + validazione + righe)
 
 **Tipo:** Feature backend
 **Scope:** Backend
 **PC:** `webmarke22`
 **Priorità:** Alta
-**Stima:** 2-3 ore
-**Dipendenza:** allineamento con chi gestisce FastLDV su quale `{id}` viene scansionato (id_order interno o id_ecommerce PrestaShop)
+**Stima:** 3-4 ore
+**Documento:** `docs/BE_FASTLDV_INTEGRATION.md`
 
 **Contesto:**
-FastLDV custom sostituirà le chiamate verso GestionaleSmarty (`validate.php` + `checkOrderData`) con questo endpoint. Restituisce i dati necessari per validazione e pannello articoli.
+**Unifica** `checkOrderData` + `validate.php` in **una sola chiamata** (miglioramento vs Smarty). Lookup `{code}`: `id_origin` PrestaShop oppure `id_order` se ordine gestionale (`id_origin=0`). Nessun prefisso `SM`.
 
-**Response:**
+**Response `200`** — ordine stampabile o avviso ristampa:
 ```json
 {
-  "id_order": 123,
-  "carrier": "BRT",
-  "id_carrier_api": 5,
-  "colli": 2,
-  "peso": 1.5,
-  "contrassegno": "0.00",
-  "tracking": "",
-  "paid": true,
-  "locked": false,
-  "canceled": false,
-  "shipped": false,
-  "shipping_confirmed": false,
-  "lines": [
-    { "quantity": "2", "sku": "ABC123", "name": "Prodotto X" }
-  ]
+  "status": "success",
+  "data": {
+    "id_origin": 69099,
+    "id_order": 1234,
+    "carrier": { "id_carrier_api": 5, "name": "BRT NAPOLI", "layout_type": "zebra" },
+    "shipping": { "colli": 2, "peso": 1.5, "contrassegno": "0.00", "tracking": "", "country_iso": "IT" },
+    "document": { "num_doc": "69099" },
+    "lines": [{ "quantity": 2, "sku": "ABC123", "name": "Prodotto X" }],
+    "validation": { "printable": true, "severity": "ok", "code": "OK", "message": "OK" }
+  }
 }
 ```
 
-**Flag di validazione** (logica identica a `validate.php` Smarty):
-- `canceled: true` → blocca
-- `locked: true` → blocca
-- `paid: false` → blocca
-- `shipped: false` → blocca
-- `shipping_confirmed: true` → blocca
-- `tracking` non vuoto → avviso ristampa (non bloccante)
+**Response `422`** — ordine trovato ma non stampabile: **stesso payload** + `validation.printable: false` + `validation.code` (es. `ORDER_NOT_PAID`). Miglioramento: UI ha righe e corriere senza seconda richiesta.
 
-**Decisioni aperte prima dell'implementazione:**
-- Quale `{id}` scansiona il magazziniere? `id_order` interno o `id_ecommerce` PrestaShop?
-- Autenticazione: API key statica in header (`X-FastLDV-Key`) o rete locale trusted?
+**Query:** `carrier`, `printer`, `id_store`, `skip_log`.
 
-**Pattern architetturale:** Router → Service → Repository → Model (standard progetto)
-**RBAC:** valutare bypass con API key dedicata invece del sistema operatori
+**Validazione:** regole da `validate.php`; ristampa → `severity: warning`, `code: LABEL_ALREADY_PRINTED` (non HTTP 202 separato).
+
+**Opzionale:** blocco `data.legacy` con alias Smarty (`corrieri_*`, `id_doc`) per adapter PHP transitorio.
+
+**Decisioni chiuse:** `id_origin` = PrestaShop. **Aperta:** auth `X-FastLDV-Key`; mapping `ready`/stati ordine.
+
+**Pattern:** Router → `FastLdvOrderService` → Repository. Auth API key, no RBAC JWT.
 
 ---
 
@@ -75,32 +67,81 @@ FastLDV custom sostituirà le chiamate verso GestionaleSmarty (`validate.php` + 
 **Priorità:** Alta
 **Stima:** 1-2 ore
 **Dipendenza:** BE-FASTLDV-1 (stessa autenticazione)
+**Documento:** `docs/BE_FASTLDV_INTEGRATION.md`
 
 **Contesto:**
-Chiamato da FastLDV dopo ogni stampa etichetta riuscita. Aggiorna `shipping.tracking` sull'ordine.
+**Nuovo** rispetto all'app attuale (oggi solo `log_stampa.php` locale + re-fetch Smarty). Scrive tracking sul gestionale dopo stampa etichetta.
 
 **Request body:**
 ```json
 {
-  "id_order": 123,
+  "id_origin": 69099,
   "tracking": "BRT123456789",
   "colli": 2,
-  "carrier": "BRT",
+  "carrier": "BRT NAPOLI",
   "operatore": "mario",
   "stampante": "ZDesigner ZT410"
 }
 ```
 
 **Comportamento:**
-- Aggiorna `shipping.tracking` (e `shipping.awb` se applicabile)
-- Risposta `200 OK` — FastLDV non blocca sulla risposta
-- Nessun cambio stato ordine (solo tracking, per decisione di prodotto)
+- `id_origin` → `orders.id_shipping` → `update_tracking` (**multispedizione accantonata v1**)
+- Nessun cambio `id_order_state`
+- `200 OK` fire-and-forget
 
-**Acceptance criteria:**
-- [ ] GET restituisce struttura attesa con flag validazione corretti
-- [ ] POST aggiorna `shipping.tracking`
-- [ ] Autenticazione definita e implementata
-- [ ] Test per entrambi gli endpoint
+**Modifica FastLDV (fase 2):** aggiungere POST in `logStampaAfterPrint()` (`app.js`) — adapter PHP.
+
+---
+
+### BE-FASTLDV-EVT — Emit + SSE tracking post-stampa (Angular real-time)
+
+**Tipo:** Feature backend (+ coordinamento FE Angular)
+**Scope:** Backend + FE gestionale
+**PC:** `webmarke22` (BE), `webmarke26` (FE)
+**Priorità:** Alta (dopo BE-FASTLDV-2)
+**Stima:** ~1 giornata BE + 4–5 h FE
+**Documento:** `docs/BE_FASTLDV_INTEGRATION.md` § BE-FASTLDV-EVT
+**Origine:** nota FE `NOTA_BE_fastldv_tracking_events.md`
+
+**Contesto:**
+Dopo `notify-print` il tracking è in DB ma Angular richiede F5. Soluzione: `emit_event` su EventBus + `GET /api/v1/events/stream` (SSE, JWT). Evento `order.tracking.updated` con **`id_order`** (PK gestionale), non il codice PS del body notify.
+
+**Decisioni chiuse:** SSE (no WebSocket, no polling, no epic N2); fan-out in-memory v1; emit non blocca notify-print.
+
+**Acceptance:**
+- [ ] `ORDER_TRACKING_UPDATED` + emit in `notify_print` dopo commit
+- [ ] `GET /api/v1/events/stream` — SSE + auth JWT
+- [ ] Test: notify-print → client SSE riceve evento
+- [ ] (FE) `OrderEventsService` aggiorna lista/dettaglio ordine
+
+---
+
+### BE-FASTLDV-3 — `PATCH /api/v1/fastldv/order/{code}/shipping-params`
+
+**Tipo:** Feature backend
+**Scope:** Backend
+**PC:** `webmarke22`
+**Priorità:** Media
+**Stima:** 1-2 ore
+**Dipendenza:** BE-FASTLDV-1
+**Documento:** `docs/BE_FASTLDV_INTEGRATION.md`
+
+**Contesto:**
+Sostituisce `updateOrderData` — solo modalità **Verifica** in `app.js` (`eseguiVerifica`). Body: `colli`, `peso`, `contrassegno`, `rigenera` (0|1).
+
+Necessario se si mantiene modifica colli (solo BRT NAPOLI in UI attuale) e rigenera spedizione.
+
+---
+
+**Acceptance criteria FastLDV (1 + 2):**
+- [ ] GET unificato: dati spedizione + `lines` + `validation` in una response
+- [ ] `200` se stampabile (ok o warning ristampa); `422` se bloccato con payload completo
+- [ ] `validation.code` enum + messaggi IT da `validate.php`
+- [ ] POST notify-print aggiorna `shipping.tracking`
+- [ ] Auth `X-FastLDV-Key` implementata
+- [ ] Test `FastLdvOrderService` + integration API
+
+**Fuori scope iniziale:** `fastldvGetPdfPrint` / generazione ZPL — fase successiva verso API corrieri gestionale.
 
 ---
 
@@ -136,6 +177,38 @@ Usare sempre `PATCH apply-vies-exemption`, mai `PUT /orders/{id}` con solo `vies
 - [ ] `PATCH /orders/{id}/vies-status` presente e funzionante
 - [ ] `vies_status` esposto su `OrderDTO` (filtro client-side FE)
 - [ ] Smoke test 3 endpoint su DB reale
+
+---
+
+### ~~FE-D.4~~ — ✅ CHIUSO (2026-06-08) — Bulk apply VIES dalla lista ordini
+
+**Tipo:** Feature frontend
+**Scope:** Frontend
+**PC:** `webmarke26`
+**Priorità:** Alta
+
+**Esito:**
+Bulk apply esenzione VIES dalla lista ordini integrato con `POST /api/v1/orders/bulk-apply-vies-exemption`.
+Apply singolo da modale già OK (`PATCH /orders/{id}/apply-vies-exemption`).
+
+**Contratto bulk (verificato lato BE — vedi `docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md`):**
+```http
+POST /api/v1/orders/bulk-apply-vies-exemption
+Body: { "order_ids": [69099] }
+Response 200: { "status": "success", "data": { "processed": 1, "order_ids": [69099] } }
+```
+Schemi BE: `BulkApplyViesExemptionSchema` (request) / `BulkApplyViesExemptionResponseSchema` (`processed`, `order_ids`). RBAC `orders:update`.
+
+**Verifica `vies_status` su OrderDTO — ✅ OK:**
+`vies_status` esposto su tutti i DTO ordine in `src/schemas/order_schema.py`:
+- `OrderSimpleResponseSchema` (GET lista) ✓
+- `OrderResponseSchema` (response completa) ✓
+- `OrderIdSchema` (GET by id) ✓
+
+Il filtro lista può quindi essere fatto client-side.
+
+**Note collegate:**
+- Toggle `PATCH /orders/{id}/vies-status` (D.3) **non usato** → D.3 in pausa (revoca/toggle generico non previsto nel flusso corrente, solo KO→OK).
 
 ---
 
@@ -405,6 +478,12 @@ Campanella notifiche eventi silenti (nuovo ordine, fattura emessa, stock basso, 
 - **BE:** Router → Service → Repository → Model; DI via `src/core/container.py`
 - **FE:** Component → dispatch → Effect → Service → Reducer → Selector; zero HTTP nei component
 
+### Integrazione FastLDV (magazzino)
+- **Doc:** `docs/BE_FASTLDV_INTEGRATION.md` — contratto da `app.js` / `validate.php`
+- **ID API:** `id_origin` (PrestaShop); auth proposta `X-FastLDV-Key`
+- **Task:** BE-FASTLDV-1 (GET unificato), 2 (notify-print), 3 opz. (shipping-params)
+- **Prompt app magazzino:** `prompt_FE_fastldv_migration.md` (fase 2 adapter PHP)
+
 ### Principio VIES (vincolante)
 La logica VIES è **non invasiva**. Si attiva solo in due punti espliciti:
 - Rettifica manuale KO→OK: `PATCH apply-vies-exemption` → righe a 0%, totale ivato invariato
@@ -423,6 +502,9 @@ La sync PrestaShop resta invariata: solo snapshot informativo di `vies_status`, 
 
 | Data | Evento |
 |---|---|
+| 2026-06-09 | BE-FASTLDV: endpoint unificato GET order (dati+validate+righe), `validation.code`, 422 con payload completo. Task 1/2/3. Doc + prompt aggiornati |
+| 2026-06-09 | BE-FASTLDV: contratto iniziale da `app.js` + `validate.php`, `id_origin`. Doc `docs/BE_FASTLDV_INTEGRATION.md` |
+| 2026-06-08 | FE-D.4 chiuso: bulk apply VIES dalla lista ordini su `POST /bulk-apply-vies-exemption` (contratto `{status,data:{processed,order_ids}}`). Apply singolo OK. Toggle PATCH vies-status non usato (D.3 in pausa). Verificato `vies_status` su tutti i DTO ordine (lista + by id) |
 | 2026-06-08 | Aggiornamento con recap BE VIES/ALIQ: BE-ALIQ-00/02, BE-TAX-DECIMAL@modello, filtro vies_status lista, delete TAX_IN_USE marcati come chiusi |
 | 2026-06-08 | Aggiunti BE-FASTLDV-1/2 (integrazione app magazzino) |
 | 2026-06-08 | BE-VIES-ORDERS-AREA-C chiuso: toggle singolo vies_status eliminato dallo scope (flusso solo KO→OK, revoca non prevista) |

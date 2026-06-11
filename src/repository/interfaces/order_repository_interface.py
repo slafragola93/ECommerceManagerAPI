@@ -115,8 +115,20 @@ class IOrderRepository(ABC):
         pass
     
     @abstractmethod
-    def get_by_origin_id(self, id_origin: int) -> Optional[Order]:
-        """Recupera un ordine per origin ID"""
+    def get_by_origin_id(
+        self, id_origin: int, id_store: Optional[int] = None
+    ) -> Optional[Order]:
+        """Recupera un ordine per origin ID (PrestaShop), opzionalmente filtrato per negozio."""
+        pass
+
+    @abstractmethod
+    def get_by_fastldv_code(
+        self, code: int, id_store: Optional[int] = None
+    ) -> Optional[Order]:
+        """
+        Risolve ordine per codice scansionato FastLDV:
+        prima id_origin (PrestaShop), poi id_order se id_origin è 0 (ordine gestionale).
+        """
         pass
     
     @abstractmethod

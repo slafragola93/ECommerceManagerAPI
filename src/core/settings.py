@@ -95,6 +95,38 @@ def get_carrier_integration_settings() -> CarrierIntegrationSettings:
     return CarrierIntegrationSettings()
 
 
+class FastLdvSettings(BaseSettings):
+    """FastLDV warehouse app integration settings."""
+
+    fastldv_api_key: str = Field(default="", env="FASTLDV_API_KEY")
+    fastldv_bypass_validate_ids: str = Field(
+        default="",
+        env="FASTLDV_BYPASS_VALIDATE_IDS",
+        description="Comma-separated id_origin values that skip validation",
+    )
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+        extra = "ignore"
+
+    def get_bypass_ids(self) -> set[int]:
+        if not self.fastldv_bypass_validate_ids.strip():
+            return set()
+        result: set[int] = set()
+        for part in self.fastldv_bypass_validate_ids.split(","):
+            part = part.strip()
+            if part.isdigit():
+                result.add(int(part))
+        return result
+
+
+@lru_cache()
+def get_fastldv_settings() -> FastLdvSettings:
+    """Get cached FastLDV settings instance."""
+    return FastLdvSettings()
+
+
 # TTL presets for different data types
 TTL_PRESETS = {
     # Static lookup tables

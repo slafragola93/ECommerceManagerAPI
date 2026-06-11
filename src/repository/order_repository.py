@@ -1614,11 +1614,37 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             logger.error(f"Error retrieving multishippings for order {order_id}: {str(e)}", exc_info=True)
             return []
     
-    def get_by_origin_id(self, id_origin: int) -> Optional[Order]:
-        """Get order by origin ID (PrestaShop ID)"""
+    def get_by_origin_id(
+        self, id_origin: int, id_store: Optional[int] = None
+    ) -> Optional[Order]:
+        """Get order by origin ID (PrestaShop ID), optionally scoped by store."""
         try:
-            return self.session.query(Order).filter(Order.id_origin == id_origin).first()
-        except Exception as e:
+            query = self.session.query(Order).filter(Order.id_origin == id_origin)
+            if id_store is not None:
+                query = query.filter(Order.id_store == id_store)
+            return query.first()
+        except Exception:
+            return None
+
+    def get_by_fastldv_code(
+        self, code: int, id_store: Optional[int] = None
+    ) -> Optional[Order]:
+        """
+        Lookup ordine per barcode FastLDV: id_origin (PrestaShop) oppure id_order (gestionale).
+        """
+        try:
+            order = self.get_by_origin_id(code, id_store)
+            if order:
+                return order
+
+            query = self.session.query(Order).filter(
+                Order.id_order == code,
+                or_(Order.id_origin.is_(None), Order.id_origin == 0),
+            )
+            if id_store is not None:
+                query = query.filter(Order.id_store == id_store)
+            return query.first()
+        except Exception:
             return None
     
     def get_id_by_origin_id(self, id_origin: int) -> Optional[int]:
