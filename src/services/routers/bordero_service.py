@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from src.repository.order_repository import OrderRepository
-from src.schemas.bordero_schema import BorderoRow
+from src.schemas.bordero_schema import BorderoRow, BorderoZeroHintSchema
 from src.services.pdf.bordero_pdf_service import BorderoPDFService
 from src.services.routers.order_document_service import OrderDocumentService
 from src.services.routers.order_service import OrderService
@@ -48,7 +48,7 @@ class BorderoService:
         update_status: bool,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
-    ) -> Tuple[bytes, int, str, List[int]]:
+    ) -> Tuple[bytes, int, str, List[int], Optional[BorderoZeroHintSchema]]:
         """Genera il PDF borderò e opzionalmente aggiorna lo stato degli ordini.
 
         Args:
@@ -62,9 +62,10 @@ class BorderoService:
             date_to: Estremo finale opzionale per `orders.date_add` (inclusivo).
 
         Returns:
-            Tupla `(pdf_bytes, order_count, carrier_name, order_ids)`.
+            Tupla `(pdf_bytes, order_count, carrier_name, order_ids, zero_hint)`.
             Quando non ci sono ordini idonei, ritorna comunque un PDF "vuoto"
-            con `order_count=0` e `order_ids=[]` (no eccezione).
+            con `order_count=0`, `order_ids=[]` e `zero_hint` valorizzato
+            (no eccezione).
         """
         date_from_str = date_from.isoformat() if date_from else None
         date_to_str = date_to.isoformat() if date_to else None
@@ -126,7 +127,18 @@ class BorderoService:
         if update_status and order_ids:
             await self._update_orders_status_best_effort(order_ids)
 
-        return pdf_bytes, len(bordero_rows), carrier_name, order_ids
+        zero_hint = None
+        if not bordero_rows:
+            hint_data = self.order_repo.get_bordero_zero_hints(
+                carrier_id=carrier_id,
+                carrier_name=carrier_name,
+                date_from=date_from_str,
+                date_to=date_to_str,
+            )
+            if hint_data:
+                zero_hint = BorderoZeroHintSchema(**hint_data)
+
+        return pdf_bytes, len(bordero_rows), carrier_name, order_ids, zero_hint
 
     def _resolve_carrier_name(self, carrier_id: int) -> str:
         """Risolve il nome del corriere dal DB (anche se inattivo / 0 ordini).

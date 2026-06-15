@@ -20,6 +20,7 @@ l'`EventBusSpy` per intercettare gli eventi senza far partire i listener reali.
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, Tuple
+from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -184,6 +185,10 @@ class TestBorderoGenerateZeroOrders:
         assert response.headers["content-type"] == "application/pdf"
         assert response.headers["x-bordero-order-count"] == "0"
         assert response.headers["x-bordero-order-ids"] == ""
+        assert response.headers["x-bordero-hint-code"] == "NO_ORDERS_FOR_CARRIER"
+        assert "Nessun ordine in stato Spediti" in unquote(
+            response.headers["x-bordero-hint-message"]
+        )
         assert response.content.startswith(b"%PDF"), (
             "Il body deve essere un PDF valido anche con 0 ordini"
         )
@@ -199,6 +204,7 @@ class TestBorderoGenerateZeroOrders:
 
         assert response.status_code == 200
         assert response.headers["x-bordero-order-count"] == "0"
+        assert response.headers["x-bordero-hint-code"] == "NO_ORDERS_FOR_CARRIER"
         assert response.content.startswith(b"%PDF")
 
 
@@ -430,6 +436,31 @@ class TestBorderoEligibilityFilters:
             "Solo le spedizioni con tracking non-null e non-stringa-vuota "
             "vanno nel borderò"
         )
+        assert "x-bordero-hint-code" not in response.headers
+
+    def test_missing_tracking_returns_hint_header(
+        self,
+        admin_full_crud_client,
+        seed_carrier_brt,
+        seed_order_states,
+        db_session,
+    ):
+        """Ordini Spediti con corriere corretto ma senza tracking → hint mirato."""
+        _seed_shipment(db_session, 1, tracking="")
+        _seed_shipment(db_session, 1, tracking=None)
+
+        response = admin_full_crud_client.post(
+            "/api/v1/bordero/generate",
+            json={"carrier_id": 1, "update_status": False},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["x-bordero-order-count"] == "0"
+        assert response.headers["x-bordero-hint-code"] == "MISSING_TRACKING"
+        assert response.headers["x-bordero-missing-tracking-count"] == "2"
+        assert "senza tracking valorizzato" in unquote(
+            response.headers["x-bordero-hint-message"]
+        )
 
     def test_orders_in_other_states_excluded(
         self,
@@ -482,7 +513,11 @@ class TestBorderoResponseHeaders:
         expose = response.headers["access-control-expose-headers"]
         assert "X-Bordero-Order-Count" in expose
         assert "X-Bordero-Order-Ids" in expose
+        assert "X-Bordero-Hint-Code" in expose
+        assert "X-Bordero-Hint-Message" in expose
+        assert "X-Bordero-Missing-Tracking-Count" in expose
         assert "Content-Disposition" in expose
+        assert "x-bordero-hint-code" not in response.headers
 
 
 @pytest.mark.integration

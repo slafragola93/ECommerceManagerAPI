@@ -909,6 +909,119 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
 
         return self.session.execute(stmt).all()
 
+    def _bordero_date_conditions(
+        self,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> List:
+        conditions = []
+        if date_from:
+            conditions.append(Order.date_add >= date_from)
+        if date_to:
+            conditions.append(Order.date_add <= date_to)
+        return conditions
+
+    def _count_bordero_candidates(
+        self,
+        carrier_id: int,
+        extra_conditions: List,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> int:
+        """Conta ordini Spediti collegati al corriere API, con filtri extra opzionali."""
+        conditions = [
+            Order.id_order_state == 3,
+            Shipping.id_carrier_api == carrier_id,
+            *self._bordero_date_conditions(date_from, date_to),
+            *extra_conditions,
+        ]
+        stmt = (
+            select(func.count(Order.id_order))
+            .select_from(Shipping)
+            .join(Order, Order.id_shipping == Shipping.id_shipping)
+            .join(CarrierApi, CarrierApi.id_carrier_api == Shipping.id_carrier_api)
+            .where(and_(*conditions))
+        )
+        return int(self.session.execute(stmt).scalar() or 0)
+
+    def get_bordero_zero_hints(
+        self,
+        carrier_id: int,
+        carrier_name: str,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Spiega perché il borderò è vuoto (count=0) con messaggio mirato per il FE."""
+        carrier_label = (carrier_name or "").strip() or f"corriere #{carrier_id}"
+        has_tracking = and_(
+            Shipping.tracking.isnot(None),
+            Shipping.tracking != "",
+        )
+        no_tracking = or_(
+            Shipping.tracking.is_(None),
+            Shipping.tracking == "",
+        )
+
+        missing_tracking_count = self._count_bordero_candidates(
+            carrier_id,
+            [CarrierApi.is_active.is_(True), no_tracking],
+            date_from,
+            date_to,
+        )
+        if missing_tracking_count > 0:
+            order_word = "ordine" if missing_tracking_count == 1 else "ordini"
+            return {
+                "code": "MISSING_TRACKING",
+                "message": (
+                    f"Ci sono {missing_tracking_count} {order_word} in stato Spediti "
+                    f"per {carrier_label} senza tracking valorizzato. "
+                    "Inserire l'AWB prima di stampare il borderò."
+                ),
+                "missing_tracking_count": missing_tracking_count,
+            }
+
+        inactive_with_tracking = self._count_bordero_candidates(
+            carrier_id,
+            [CarrierApi.is_active.is_(False), has_tracking],
+            date_from,
+            date_to,
+        )
+        if inactive_with_tracking > 0:
+            order_word = "ordine" if inactive_with_tracking == 1 else "ordini"
+            return {
+                "code": "INACTIVE_CARRIER",
+                "message": (
+                    f"Ci sono {inactive_with_tracking} {order_word} con tracking "
+                    f"per {carrier_label}, ma il corriere è disattivato."
+                ),
+                "missing_tracking_count": 0,
+            }
+
+        shipped_for_carrier = self._count_bordero_candidates(
+            carrier_id,
+            [],
+            date_from,
+            date_to,
+        )
+        if shipped_for_carrier == 0:
+            return {
+                "code": "NO_ORDERS_FOR_CARRIER",
+                "message": (
+                    f"Nessun ordine in stato Spediti per {carrier_label} "
+                    "con i filtri selezionati."
+                ),
+                "missing_tracking_count": 0,
+            }
+
+        return {
+            "code": "GENERIC",
+            "message": (
+                f"Nessuna spedizione idonea per {carrier_label} "
+                "con i filtri selezionati."
+            ),
+            "missing_tracking_count": 0,
+        }
+
     def get_product_names_by_order_ids(self, order_ids: List[int]) -> dict:
         """Recupera i product_name di tutti gli order_details per un set di ordini.
 

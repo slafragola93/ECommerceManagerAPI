@@ -231,11 +231,19 @@ Esempio smoke test:
 curl -H "X-FastLDV-Key: $FASTLDV_API_KEY" "http://localhost:8000/api/v1/fastldv/order/69099?carrier=BRT+NAPOLI"
 ```
 
-Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md).
+Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md). Handoff team app magazzino: [docs/PROMPT_FASTLDV_APP_CUTOVER.md](docs/PROMPT_FASTLDV_APP_CUTOVER.md).
 
 **Real-time tracking (BE-FASTLDV-EVT):** dopo `notify-print` il BE emette `order.tracking.updated` (payload: `id_order`, `tracking`, `awb`); FE Angular consuma `GET /api/v1/events/stream`. Handoff: [docs/FE_HANDOFF_SSE_TRACKING.md](docs/FE_HANDOFF_SSE_TRACKING.md).
 
 **Test:** `pytest tests/unit/services/test_fastldv_order_service.py tests/integration/api/v1/test_fastldv.py tests/integration/api/v1/test_events_sse.py -v`
+
+## Ultime modifiche (2026-06-12) — Fix calcolo totali preventivi
+
+**Scope:** Correzione errore 500 su `GET /api/v1/preventivi`.
+
+- `calculate_order_totals` / `calculate_price_with_tax`: conversione sicura di aliquote IVA `Decimal` (colonna `Tax.percentage`) in `float` prima dei calcoli.
+- `OrderDocumentService.calculate_totals`: mappa aliquote normalizzata a `float`.
+- Test: `tests/unit/services/test_calculate_order_totals.py`.
 
 ## Ultime modifiche (2026-06-11) — BE-FASTLDV-EVT
 
@@ -282,6 +290,36 @@ Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md)
 - **Tax:** riuso `Tax(id_country, is_default)` per default IVA per paese; endpoint `country-defaults`; evento `TAX_COUNTRY_DEFAULT_CHANGED`; invalidazione cache `init_data:static` / `init_data:full` su `set-country-default`.
 - **Setup:** `scripts/setup_initial.py` — DDL `vies_status` + seed 27 aliquote UE (FI a 25% per limite `Tax.percentage` Integer).
 - **Test:** `tests/unit/repository/test_tax_repository.py`, `tests/unit/services/test_tax_service.py`, `tests/integration/api/v1/test_tax_country_defaults.py`, `tests/scripts/test_setup_initial_eu_taxes.py`.
+
+---
+
+## API — Borderò spedizioni
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| POST | `/api/v1/bordero/generate` | PDF riepilogo spedizioni in stato **Spediti** (`id_order_state=3`) per `carriers_api.id_carrier_api`, con tracking valorizzato |
+
+**Body:** `{ "carrier_id": int, "update_status": bool, "date_from"?: "YYYY-MM-DD", "date_to"?: "YYYY-MM-DD" }`
+
+**Header risposta (PDF blob):**
+
+| Header | Descrizione |
+|--------|-------------|
+| `X-Bordero-Order-Count` | Spedizioni incluse nel PDF |
+| `X-Bordero-Order-Ids` | CSV `id_order` inclusi |
+| `X-Bordero-Hint-Code` | Solo se count=0: `MISSING_TRACKING`, `NO_ORDERS_FOR_CARRIER`, `INACTIVE_CARRIER`, `GENERIC` |
+| `X-Bordero-Hint-Message` | Messaggio operatore in italiano, URL-encoded (`decodeURIComponent` in FE) |
+| `X-Bordero-Missing-Tracking-Count` | Ordini Spediti con corriere corretto ma senza AWB |
+
+Permesso RBAC: `shipments.create`. Test: `tests/integration/api/v1/test_bordero.py`.
+
+---
+
+## Ultime modifiche (2026-06-15) — Borderò hint diagnostici (count=0)
+
+- Quando `X-Bordero-Order-Count=0`, la risposta include header `X-Bordero-Hint-*` con la causa reale (es. ordini Spediti **senza tracking** vs assenza ordini per corriere).
+- Il FE può mostrare `X-Bordero-Hint-Message` invece del messaggio generico "nessun ordine per questo corriere".
+- File: `OrderRepository.get_bordero_zero_hints`, `BorderoService`, `src/routers/bordero.py`.
 
 ---
 

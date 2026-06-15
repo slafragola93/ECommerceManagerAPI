@@ -79,10 +79,13 @@ def calculate_price_with_tax(base_price: float, tax_percentage: float, quantity:
     Returns:
         float: Prezzo totale con tasse applicate
     """
-    if base_price is None or base_price < 0:
+    base_price = safe_float(base_price, 0.0)
+    tax_percentage = safe_float(tax_percentage, 0.0)
+
+    if base_price < 0:
         return 0.0
     
-    if tax_percentage is None or tax_percentage < 0:
+    if tax_percentage < 0:
         tax_percentage = 0.0
     
     if quantity is None or quantity <= 0:
@@ -117,11 +120,13 @@ def calculate_order_total_with_taxes(order_details: list, tax_percentages: dict 
         # Usa la tassa specifica dell'order_detail
         current_tax_percentage = 0.0
         if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
-            current_tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+            current_tax_percentage = safe_float(
+                tax_percentages.get(order_detail.id_tax, 0.0), 0.0
+            )
         
         # Calcola il prezzo con tasse per questo order_detail
         price_with_tax = calculate_price_with_tax(
-            base_price=order_detail.product_price or 0.0,
+            base_price=safe_float(order_detail.product_price, 0.0),
             tax_percentage=current_tax_percentage,
             quantity=order_detail.product_qty or 1
         )
@@ -176,14 +181,18 @@ def calculate_order_totals(order_details: list, tax_percentages: dict = None) ->
             else:
                 tax_percentage = 0.0
                 if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
-                    tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+                    tax_percentage = safe_float(
+                        tax_percentages.get(order_detail.id_tax, 0.0), 0.0
+                    )
                 price_with_tax = total_net * (1 + tax_percentage / 100)
         else:
             product_price = float(order_detail.product_price) if order_detail.product_price is not None else 0.0
             price_base = product_price * (order_detail.product_qty or 1)
             tax_percentage = 0.0
             if hasattr(order_detail, 'id_tax') and order_detail.id_tax and tax_percentages:
-                tax_percentage = tax_percentages.get(order_detail.id_tax, 0.0)
+                tax_percentage = safe_float(
+                    tax_percentages.get(order_detail.id_tax, 0.0), 0.0
+                )
             price_with_tax = price_base * (1 + tax_percentage / 100)
         
         total_price_base += price_base

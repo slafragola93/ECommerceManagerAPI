@@ -258,7 +258,10 @@ class OrderDocumentService:
         tax_percentages = {}
         if tax_ids:
             taxes = self.db.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
-            tax_percentages = {tax.id_tax: tax.percentage for tax in taxes}
+            tax_percentages = {
+                tax.id_tax: float(tax.percentage) if tax.percentage is not None else 0.0
+                for tax in taxes
+            }
         
         # Usa la funzione standard per calcolare i totali (include sconti)
         totals = calculate_order_totals(articoli, tax_percentages)

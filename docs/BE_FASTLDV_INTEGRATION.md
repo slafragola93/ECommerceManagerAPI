@@ -6,7 +6,7 @@ Guida per **ECommerceManagerAPI** e per l’app magazzino FastLDV (PHP + `app.js
 
 **Backlog:** [.cursor/tasks_claude/BACKLOG_UNIFICATO.md](../.cursor/tasks_claude/BACKLOG_UNIFICATO.md) — task `BE-FASTLDV-1/2/3`, `BE-FASTLDV-EVT` (SSE tracking).
 
-**Prompt FastLDV:** [.cursor/tasks_claude/prompt_FE_fastldv_migration.md](../.cursor/tasks_claude/prompt_FE_fastldv_migration.md)
+**Prompt cutover app FastLDV:** [PROMPT_FASTLDV_APP_CUTOVER.md](PROMPT_FASTLDV_APP_CUTOVER.md) · legacy: [.cursor/tasks_claude/prompt_FE_fastldv_migration.md](../.cursor/tasks_claude/prompt_FE_fastldv_migration.md)
 
 ---
 

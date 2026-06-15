@@ -43,6 +43,28 @@ class BorderoGenerateRequest(BaseModel):
     )
 
 
+class BorderoZeroHintSchema(BaseModel):
+    """Diagnostica quando il borderò non include spedizioni (count=0).
+
+    Esposta al FE via header HTTP (`X-Bordero-Hint-*`) per messaggi mirati
+    invece del generico "nessun ordine per questo corriere".
+    """
+
+    code: str = Field(
+        ...,
+        description=(
+            "Codice machine-readable. Valori: `MISSING_TRACKING`, "
+            "`INACTIVE_CARRIER`, `NO_ORDERS_FOR_CARRIER`, `GENERIC`."
+        ),
+    )
+    message: str = Field(..., description="Messaggio operatore in italiano.")
+    missing_tracking_count: int = Field(
+        default=0,
+        ge=0,
+        description="Ordini Spediti con corriere corretto ma senza tracking.",
+    )
+
+
 class BorderoRow(BaseModel):
     """Una riga normalizzata del PDF bordero (1 riga = 1 spedizione)."""
 

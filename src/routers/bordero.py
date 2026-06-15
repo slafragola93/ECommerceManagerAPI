@@ -7,6 +7,7 @@ di cambio stato automatico a "Spedizione Confermata".
 import re
 from datetime import datetime
 from io import BytesIO
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, status
 from fastapi.responses import StreamingResponse
@@ -59,9 +60,12 @@ def _carrier_filename_token(name: str) -> str:
         "l'evento `ORDER_STATUS_CHANGED`.\n\n"
         "**Header di risposta:**\n"
         "- `X-Bordero-Order-Count`: numero di spedizioni incluse nel PDF.\n"
-        "- `X-Bordero-Order-Ids`: CSV degli `id_order` inclusi (per sync ottimistico FE).\n\n"
+        "- `X-Bordero-Order-Ids`: CSV degli `id_order` inclusi (per sync ottimistico FE).\n"
+        "- Se count=0: `X-Bordero-Hint-Code`, `X-Bordero-Hint-Message` "
+        "(URL-encoded UTF-8, decodificare con `decodeURIComponent`), "
+        "`X-Bordero-Missing-Tracking-Count` (diagnostica per messaggio FE mirato).\n\n"
         "**Caso 0 ordini:** ritorna comunque 200 con PDF 'vuoto' e count=0 "
-        "(il FE mostra alert info senza aprire il PDF)."
+        "(il FE mostra alert info senza aprire il PDF, usando gli hint se presenti)."
     ),
     response_description="File PDF binario del borderò spedizioni",
 )
@@ -93,7 +97,7 @@ async def generate_bordero(
     service: BorderoService = Depends(get_bordero_service),
     _: None = Depends(require_permission("shipments", "create")),
 ):
-    pdf_bytes, order_count, carrier_name, order_ids = await service.generate_bordero(
+    pdf_bytes, order_count, carrier_name, order_ids, zero_hint = await service.generate_bordero(
         carrier_id=request.carrier_id,
         update_status=request.update_status,
         date_from=request.date_from,
@@ -105,17 +109,29 @@ async def generate_bordero(
         f"{datetime.now().strftime('%Y%m%d')}.pdf"
     )
 
+    response_headers = {
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/pdf",
+        "X-Bordero-Order-Count": str(order_count),
+        "X-Bordero-Order-Ids": ",".join(str(oid) for oid in order_ids),
+        "Access-Control-Expose-Headers": (
+            "X-Bordero-Order-Count, X-Bordero-Order-Ids, "
+            "X-Bordero-Hint-Code, X-Bordero-Hint-Message, "
+            "X-Bordero-Missing-Tracking-Count, Content-Disposition"
+        ),
+    }
+    if zero_hint:
+        response_headers["X-Bordero-Hint-Code"] = zero_hint.code
+        response_headers["X-Bordero-Hint-Message"] = quote(
+            zero_hint.message, safe=""
+        )
+        response_headers["X-Bordero-Missing-Tracking-Count"] = str(
+            zero_hint.missing_tracking_count
+        )
+
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'inline; filename="{filename}"',
-            "Cache-Control": "no-cache",
-            "Content-Type": "application/pdf",
-            "X-Bordero-Order-Count": str(order_count),
-            "X-Bordero-Order-Ids": ",".join(str(oid) for oid in order_ids),
-            "Access-Control-Expose-Headers": (
-                "X-Bordero-Order-Count, X-Bordero-Order-Ids, Content-Disposition"
-            ),
-        },
+        headers=response_headers,
     )

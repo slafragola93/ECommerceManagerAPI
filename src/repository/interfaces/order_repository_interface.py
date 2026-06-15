@@ -169,6 +169,17 @@ class IOrderRepository(ABC):
         pass
 
     @abstractmethod
+    def get_bordero_zero_hints(
+        self,
+        carrier_id: int,
+        carrier_name: str,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Diagnostica quando `find_shipments_for_bordero` ritorna 0 righe."""
+        pass
+
+    @abstractmethod
     def get_product_names_by_order_ids(self, order_ids: List[int]) -> Dict[int, List[str]]:
         """Recupera i product_name degli order_details raggruppati per ordine."""
         pass

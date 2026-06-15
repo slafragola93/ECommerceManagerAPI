@@ -1,5 +1,7 @@
 # Prompt sessione FE — Migrazione FastLDV → ECommerceManagerAPI
 
+> **Versione aggiornata e completa:** [`docs/PROMPT_FASTLDV_APP_CUTOVER.md`](../docs/PROMPT_FASTLDV_APP_CUTOVER.md) — usare quel file per il handoff al team app magazzino.
+
 Copia tutto il contenuto sotto la riga `---` e incollalo in una nuova chat Cursor/Claude sul **progetto FastLDV** (`fastldv/` — `assets/app.js`, `proxy.php`).
 
 **Prerequisito:** BE deployato con `GET /api/v1/fastldv/order/{code}` + `POST /api/v1/fastldv/notify-print` testati. Contratto: `docs/BE_FASTLDV_INTEGRATION.md` nel repo ECommerceManagerAPI.
@@ -202,7 +204,7 @@ fetch('proxy.php?action=notifyPrint', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    id_origin: lastOrderContext.order.id_doc,  // data.id_origin dalla GET
+    id_origin: lastScannedCode,  // codice scansionato — NON data.id_origin (0 se gestionale)
     tracking: awb,
     colli: lastOrderContext.order.colli,
     carrier: lastOrderContext.order.carrier,
