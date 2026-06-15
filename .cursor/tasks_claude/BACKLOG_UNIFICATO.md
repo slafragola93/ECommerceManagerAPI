@@ -1,7 +1,7 @@
 # Backlog Unificato — Elettronew Gestionale e-commerce
 
 > Generato il 2026-06-08 dalla fusione di `BACKLOG.md` (PC FE `webmarke26`) e `BACKLOG.md` (PC BE `webmarke22`).
-> Aggiornato 2026-06-09: contratto FastLDV da `app.js` + `validate.php` → `docs/BE_FASTLDV_INTEGRATION.md`.
+> Aggiornato 2026-06-15: stampa PDF singolo ordine (BE ✅, FE-ORDER-PRINT-PDF aperto) → `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`.
 > Fonte di verità consolidata per proseguire il lavoro su entrambi i PC.
 
 ---
@@ -10,8 +10,8 @@
 
 | Area | ✅ Done | 🟦 Backlog aperto | 🌟 Epic |
 |---|---|---|---|
-| **Backend** | 35+ (..., BE-VIES-ORDERS-AREA-C ✅) | 6 (BE-FASTLDV-1/2/3, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
-| **Frontend** | 21+ (..., FE-D.4 ✅) | 9 (FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
+| **Backend** | 36+ (..., BE-ORDER-PRINT-PDF ✅) | 6 (BE-FASTLDV-1/2/3, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
+| **Frontend** | 21+ (..., FE-D.4 ✅) | 10 (FE-ORDER-PRINT-PDF, FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
 
 ---
 
@@ -210,6 +210,72 @@ Il filtro lista può quindi essere fatto client-side.
 
 **Note collegate:**
 - Toggle `PATCH /orders/{id}/vies-status` (D.3) **non usato** → D.3 in pausa (revoca/toggle generico non previsto nel flusso corrente, solo KO→OK).
+
+---
+
+### ~~BE-ORDER-PRINT-PDF~~ — ✅ CHIUSO (2026-06-15) — Stampa PDF singolo ordine
+
+**Tipo:** Feature backend
+**Scope:** Backend
+**PC:** `webmarke22`
+**Priorità:** Alta
+**Stima:** ~3-4 ore
+
+**Esito:**
+Endpoint `GET /api/v1/orders/{id_order}/pdf` con layout elettronew (logo, barcode Code39, Intestazione / Indirizzo di consegna, tabella righe Impon./IVA/Sconto, totali a destra, note).
+
+**File BE:**
+- `src/services/pdf/order_pdf_service.py`
+- `src/services/routers/order_service.py` → `generate_order_pdf`
+- `src/routers/order.py` → `download_order_pdf`
+
+**Contratto:**
+- RBAC: `orders.read`
+- Response: `application/pdf`, `Content-Disposition: inline; filename="Ordine-{id_order}.pdf"`
+- Identificatore path: sempre **`id_order`** (PK gestionale)
+
+**Handoff FE:** `docs/FE_HANDOFF_ORDER_PRINT_PDF.md` · prompt chat: `.cursor/tasks_claude/prompt_FE_order_print_pdf.md`
+
+---
+
+### FE-ORDER-PRINT-PDF — Bottone «Stampa ordine» (modale dettaglio)
+
+**Tipo:** Feature frontend
+**Scope:** Frontend
+**PC:** `webmarke26`
+**Priorità:** Alta
+**Stima:** 1-2 ore
+**Dipendenza:** BE-ORDER-PRINT-PDF ✅
+**Documento:** `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`
+**Prompt sessione:** `.cursor/tasks_claude/prompt_FE_order_print_pdf.md`
+
+**Contesto:**
+Il BE genera il PDF ordine (layout cartaceo elettronew). Il FE **non** compone più HTML di stampa: scarica blob e apre nuova tab (pattern già usato per preventivo / borderò).
+
+**API:**
+```http
+GET /api/v1/orders/{id_order}/pdf
+Authorization: Bearer <JWT>
+→ 200 application/pdf (inline)
+```
+
+**Task FE:**
+1. `orders.service.ts` → `downloadOrderPdf(id_order): Observable<Blob>` (`responseType: 'blob'`)
+2. Bottone toolbar modale dettaglio ordine — «Stampa ordine» (icona `print`)
+3. `URL.createObjectURL` + `window.open`; fallback download se popup blocker
+4. Gestione errori 404/500 su risposta blob (parse JSON da `Blob`)
+5. (Opzionale) voce menu lista ordini; (opzionale) `window.print()` auto come borderò
+
+**Pattern da riusare:**
+- `quotes.service.ts` → `downloadPdf(id)`
+- `orders.service.ts` → `generateBordero(...)` + apertura tab
+
+**Acceptance criteria:**
+- [ ] Click stampa → PDF in nuova tab, layout completo (logo, righe, totali)
+- [ ] Usa `id_order`, non `id_origin`
+- [ ] 404/500 con messaggio utente
+- [ ] Loading / no doppio click
+- [ ] Nessuna regressione stampa preventivo / borderò
 
 ---
 
@@ -485,6 +551,11 @@ Campanella notifiche eventi silenti (nuovo ordine, fattura emessa, stock basso, 
 - **Task:** BE-FASTLDV-1 (GET unificato), 2 (notify-print), 3 opz. (shipping-params)
 - **Prompt app magazzino:** `prompt_FE_fastldv_migration.md` (fase 2 adapter PHP)
 
+### Stampa PDF ordine (gestionale Angular)
+- **BE:** ✅ `GET /api/v1/orders/{id_order}/pdf` — layout elettronew server-side
+- **FE:** task **FE-ORDER-PRINT-PDF** (bottone modale dettaglio)
+- **Doc:** `docs/FE_HANDOFF_ORDER_PRINT_PDF.md` · prompt: `.cursor/tasks_claude/prompt_FE_order_print_pdf.md`
+
 ### Principio VIES (vincolante)
 La logica VIES è **non invasiva**. Si attiva solo in due punti espliciti:
 - Rettifica manuale KO→OK: `PATCH apply-vies-exemption` → righe a 0%, totale ivato invariato
@@ -503,6 +574,7 @@ La sync PrestaShop resta invariata: solo snapshot informativo di `vies_status`, 
 
 | Data | Evento |
 |---|---|
+| 2026-06-15 | BE-ORDER-PRINT-PDF ✅: `GET /orders/{id}/pdf`, `OrderPDFService`, handoff FE `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`. Aperto FE-ORDER-PRINT-PDF (bottone stampa modale) |
 | 2026-06-09 | BE-FASTLDV: endpoint unificato GET order (dati+validate+righe), `validation.code`, 422 con payload completo. Task 1/2/3. Doc + prompt aggiornati |
 | 2026-06-09 | BE-FASTLDV: contratto iniziale da `app.js` + `validate.php`, `id_origin`. Doc `docs/BE_FASTLDV_INTEGRATION.md` |
 | 2026-06-08 | FE-D.4 chiuso: bulk apply VIES dalla lista ordini su `POST /bulk-apply-vies-exemption` (contratto `{status,data:{processed,order_ids}}`). Apply singolo OK. Toggle PATCH vies-status non usato (D.3 in pausa). Verificato `vies_status` su tutti i DTO ordine (lista + by id) |

@@ -113,6 +113,7 @@ Prefisso `/api/v1/orders`. Permessi RBAC: `orders.read` (filtro lista), `orders.
 | GET | `/api/v1/orders/?vies_status=eligible\|not_eligible\|null` | Filtro snapshot VIES (`null` = solo `vies_status` IS NULL; assenza param = tutti) |
 | PATCH | `/api/v1/orders/{id}/apply-vies-exemption` | Applica esenzione: righe a 0% IVA, totale ivato invariato, `vies_status=eligible` |
 | POST | `/api/v1/orders/bulk-apply-vies-exemption` | Stessa logica su `{ "order_ids": [1,2,...] }` in transazione atomica |
+| GET | `/api/v1/orders/{id}/pdf` | PDF stampa singolo ordine (layout elettronew: logo, barcode, intestazione/consegna, righe, totali) |
 
 Guida FE: [docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md](docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md) — prompt chat FE: [.cursor/tasks_claude/prompt_FE_vies_apply_exemption.md](.cursor/tasks_claude/prompt_FE_vies_apply_exemption.md).
 
@@ -312,6 +313,17 @@ Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md)
 | `X-Bordero-Missing-Tracking-Count` | Ordini Spediti con corriere corretto ma senza AWB |
 
 Permesso RBAC: `shipments.create`. Test: `tests/integration/api/v1/test_bordero.py`.
+
+---
+
+## Ultime modifiche (2026-06-15) — Stampa PDF singolo ordine
+
+- Nuovo endpoint `GET /api/v1/orders/{id}/pdf` con layout allineato al documento ordine elettronew (logo + anagrafica, barcode Code39, blocchi Intestazione / Indirizzo di consegna, tabella righe con Impon./IVA/Sconto, riepilogo totali a destra).
+- Servizio: `src/services/pdf/order_pdf_service.py`; orchestrazione in `OrderService.generate_order_pdf`.
+- Permesso RBAC: `orders.read`. Risposta: PDF inline (`Content-Disposition: inline`).
+- **Fix righe ordine (2026-06-15):** query PDF include `id_order_document IS NULL OR = 0` (sync PrestaShop salva `0`, non NULL).
+- **Layout tabella righe:** colonne ribilanciate (Codice 40 mm, troncatura per larghezza con `get_string_width`, descrizione su max 2 righe).
+- Handoff FE: [docs/FE_HANDOFF_ORDER_PRINT_PDF.md](docs/FE_HANDOFF_ORDER_PRINT_PDF.md) — prompt chat: [.cursor/tasks_claude/prompt_FE_order_print_pdf.md](.cursor/tasks_claude/prompt_FE_order_print_pdf.md).
 
 ---
 

@@ -7,6 +7,7 @@ from src.services.pdf.preventivo_pdf_service import PreventivoPDFService
 from src.services.pdf.ddt_pdf_service import DDTPDFService
 from src.services.pdf.fiscal_document_pdf_service import FiscalDocumentPDFService
 from src.services.pdf.bordero_pdf_service import BorderoPDFService
+from src.services.pdf.order_pdf_service import OrderPDFService
 
 __all__ = [
     'BasePDFService',
@@ -14,4 +15,5 @@ __all__ = [
     'DDTPDFService',
     'FiscalDocumentPDFService',
     'BorderoPDFService',
+    'OrderPDFService',
 ]

@@ -5,14 +5,16 @@ Tutte le funzioni helper e la logica business sono nel service.
 import json
 import logging
 import pprint
+from io import BytesIO
 from typing import Literal, Optional
 from src.models.address import Address
 from src.models.order import Order
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette import status
 
-from src.core.exceptions import BusinessRuleException
+from src.core.exceptions import BusinessRuleException, NotFoundException
 from src.database import get_db
 from src.repository.order_detail_repository import OrderDetailRepository
 from src.repository.product_repository import ProductRepository
@@ -310,6 +312,44 @@ async def get_order_by_id(order_id: int = Path(gt=0),
 
     # Restituisce sempre i dettagli completi
     return or_repo.formatted_output(order, show_details=True)
+
+
+@router.get(
+    "/{order_id}/pdf",
+    status_code=status.HTTP_200_OK,
+    summary="Stampa PDF ordine",
+    description="Genera il PDF di stampa del singolo ordine (layout elettronew).",
+    response_description="File PDF dell'ordine",
+)
+@check_authentication
+async def download_order_pdf(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine"),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service),
+    _: None = Depends(require_permission("orders", "read")),
+):
+    """Scarica il PDF di riepilogo ordine per stampa/archivio."""
+    try:
+        pdf_content = order_service.generate_order_pdf(order_id)
+    except NotFoundException:
+        raise HTTPException(status_code=404, detail="Ordine non trovato")
+    except Exception as e:
+        logger.error("Errore generazione PDF ordine %s: %s", order_id, e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Errore durante la generazione del PDF: {str(e)}",
+        )
+
+    filename = f"Ordine-{order_id}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_content),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/pdf",
+        },
+    )
 
 
 @router.get("/{order_id}/history", status_code=status.HTTP_200_OK, summary="Storico stato ordine")

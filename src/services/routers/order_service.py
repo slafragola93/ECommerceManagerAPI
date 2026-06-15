@@ -1,6 +1,7 @@
 """
 Order Service per gestione logica business ordini seguendo principi SOLID
 """
+import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from fastapi import HTTPException, status
@@ -1407,3 +1408,91 @@ class OrderService(IOrderService):
             self._emit_vies_exemption_event(oid, previous, user_id)
 
         return {"processed": len(unique_ids), "order_ids": unique_ids}
+
+    def generate_order_pdf(self, order_id: int) -> bytes:
+        """Genera il PDF di stampa del singolo ordine (layout elettronew)."""
+        session = self._order_repository.session
+        order = self._order_repository.get_by_id(order_id)
+        if not order:
+            raise NotFoundException("Order", order_id)
+
+        from src.models.address import Address
+        from src.models.payment import Payment
+        from src.models.order_detail import OrderDetail
+        from src.models.tax import Tax
+        from src.models.store import Store
+        from src.services.media.media_utils import get_store_logo_path
+        from src.services.pdf.order_pdf_service import OrderPDFService
+        from sqlalchemy.orm import joinedload
+
+        # Righe ordine: id_order_document NULL o 0 (PS sync usa 0, non NULL)
+        order_details = (
+            session.query(OrderDetail)
+            .filter(
+                OrderDetail.id_order == order_id,
+                or_(
+                    OrderDetail.id_order_document.is_(None),
+                    OrderDetail.id_order_document == 0,
+                ),
+            )
+            .order_by(OrderDetail.id_order_detail)
+            .all()
+        )
+
+        invoice_address = None
+        if order.id_address_invoice:
+            invoice_address = (
+                session.query(Address)
+                .options(joinedload(Address.country))
+                .filter(Address.id_address == order.id_address_invoice)
+                .first()
+            )
+        delivery_address = None
+        if order.id_address_delivery:
+            delivery_address = (
+                session.query(Address)
+                .options(joinedload(Address.country))
+                .filter(Address.id_address == order.id_address_delivery)
+                .first()
+            )
+
+        payment_name = "-"
+        if order.id_payment:
+            payment = session.query(Payment).filter(Payment.id_payment == order.id_payment).first()
+            if payment and payment.name:
+                payment_name = payment.name
+
+        shipping = None
+        if order.id_shipping:
+            shipping = session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
+
+        tax_ids = {d.id_tax for d in order_details if d.id_tax}
+        tax_percentages: Dict[int, float] = {}
+        if tax_ids:
+            for tax in session.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all():
+                tax_percentages[tax.id_tax] = float(tax.percentage or 0)
+
+        order_doc_service = OrderDocumentService(session)
+        company_config = order_doc_service.get_company_info()
+
+        logo_path = None
+        if order.id_store:
+            store = session.query(Store).filter(Store.id_store == order.id_store).first()
+            if store:
+                fallback = company_config.get("company_logo")
+                logo_path = get_store_logo_path(store, fallback_path=fallback)
+        if not logo_path:
+            logo_path = company_config.get("company_logo")
+
+        pdf_service = OrderPDFService()
+        return pdf_service.generate_pdf(
+            order=order,
+            order_details=order_details,
+            company_config=company_config,
+            invoice_address=invoice_address,
+            delivery_address=delivery_address,
+            payment_name=payment_name,
+            shipping=shipping,
+            tax_percentages=tax_percentages,
+            logo_path=logo_path if logo_path and os.path.exists(logo_path) else None,
+        )
