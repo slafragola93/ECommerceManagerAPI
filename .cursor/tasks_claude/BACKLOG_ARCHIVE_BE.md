@@ -16,6 +16,16 @@
 
 ## ✅ Task completati (storico)
 
+### BE-DDT-PRINT-PDF — Fix PDF DDT Fase 1–2 (chiuso 2026-06-16)
+
+**Scope:** Endpoint `GET /api/v1/ddt/pdf/{id_order_document}` — fix 500 (`Decimal` vs `float`), IVA righe via `TaxRepository`, sconti, colli da `packages`, error handling router.
+
+**File:** `ddt_pdf_service.py`, `ddt_service.py`, `ddt.py`, `tests/unit/services/pdf/test_ddt_pdf_service.py`
+
+**Handoff FE:** `docs/FE_HANDOFF_DDT_PRINT_PDF.md` · task aperto **FE-DDT-PRINT-PDF** in `BACKLOG_UNIFICATO.md`
+
+---
+
 ### BE-VIES-FALLBACK-GLOBAL — Tax globali fallback + reverse_charge (chiuso 2026-05-27)
 
 **Scope:** Default IVA globale (`id_country IS NULL`) + setting VIES reverse charge.

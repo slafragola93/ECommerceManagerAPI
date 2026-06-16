@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy.orm import Session
@@ -25,6 +26,8 @@ router = APIRouter(
     prefix="/api/v1/ddt",
     tags=["DDT"]
 )
+
+logger = logging.getLogger(__name__)
 
 # Dependency per servizio DDT
 def get_ddt_service(db: Session = Depends(get_db)) -> DDTService:
@@ -321,19 +324,33 @@ async def generate_ddt_pdf(
     - File PDF con nome `DDT-{document_number}.pdf`
     """
     service = get_ddt_service(db)
-    
-    # Verifica che il DDT esista
+
     ddt = service.get_ddt_complete(id_order_document)
     if not ddt:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="DDT non trovato"
+            detail="DDT non trovato",
         )
-    
-    # Genera il PDF
-    pdf_content = service.generate_ddt_pdf(id_order_document)
-    
-    # Crea un buffer per il PDF
+
+    try:
+        pdf_content = service.generate_ddt_pdf(id_order_document)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(
+            "Errore generazione PDF DDT %s: %s",
+            id_order_document,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Errore durante la generazione del PDF: {str(e)}",
+        )
+
     pdf_buffer = BytesIO(pdf_content)
     
     # Determina nome file

@@ -1,6 +1,7 @@
 # Backlog Unificato — Elettronew Gestionale e-commerce
 
 > Generato il 2026-06-08 dalla fusione di `BACKLOG.md` (PC FE `webmarke26`) e `BACKLOG.md` (PC BE `webmarke22`).
+> Aggiornato 2026-06-16: stampa PDF DDT (BE ✅ Fase 1–2, FE-DDT-PRINT-PDF aperto) → `docs/FE_HANDOFF_DDT_PRINT_PDF.md`.
 > Aggiornato 2026-06-15: stampa PDF singolo ordine (BE ✅, FE-ORDER-PRINT-PDF aperto) → `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`.
 > Fonte di verità consolidata per proseguire il lavoro su entrambi i PC.
 
@@ -10,8 +11,8 @@
 
 | Area | ✅ Done | 🟦 Backlog aperto | 🌟 Epic |
 |---|---|---|---|
-| **Backend** | 36+ (..., BE-ORDER-PRINT-PDF ✅) | 6 (BE-FASTLDV-1/2/3, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
-| **Frontend** | 21+ (..., FE-D.4 ✅) | 10 (FE-ORDER-PRINT-PDF, FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
+| **Backend** | 37+ (..., BE-DDT-PRINT-PDF ✅ Fase 1–2) | 6 (BE-FASTLDV-1/2/3, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
+| **Frontend** | 21+ (..., FE-D.4 ✅) | 11 (FE-DDT-PRINT-PDF, FE-ORDER-PRINT-PDF, FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
 
 ---
 
@@ -235,6 +236,74 @@ Endpoint `GET /api/v1/orders/{id_order}/pdf` con layout elettronew (logo, barcod
 - Identificatore path: sempre **`id_order`** (PK gestionale)
 
 **Handoff FE:** `docs/FE_HANDOFF_ORDER_PRINT_PDF.md` · prompt chat: `.cursor/tasks_claude/prompt_FE_order_print_pdf.md`
+
+---
+
+### BE-DDT-PRINT-PDF ✅ — Fix + PDF DDT (Fase 1–2)
+
+**Tipo:** Bugfix + hardening backend
+**Scope:** Backend
+**PC:** `webmarke22`
+**Priorità:** Alta
+**Stima:** ~2–3 ore
+**Stato:** ✅ Chiuso 2026-06-16 (Fase 1–2). Fase 3 BE (test integrazione opz.) rimandata.
+
+**Esito:**
+Endpoint `GET /api/v1/ddt/pdf/{id_order_document}` operativo. Fix 500 (`Decimal` vs `float`), IVA righe via `TaxRepository`, sconti riga, colli da `packages`, router con error handling strutturato.
+
+**File BE:**
+- `src/services/pdf/ddt_pdf_service.py`
+- `src/services/routers/ddt_service.py` → `generate_ddt_pdf`, shipping float + `vat_percentage`
+- `src/routers/ddt.py` → `generate_ddt_pdf`
+
+**Contratto:**
+- RBAC: `ddt.read`
+- Response: `application/pdf`, `Content-Disposition: attachment; filename="DDT-{document_number}.pdf"`
+- Identificatore path: sempre **`id_order_document`** (PK documento)
+
+**Handoff FE:** `docs/FE_HANDOFF_DDT_PRINT_PDF.md` · prompt chat: `.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md`
+
+---
+
+### FE-DDT-PRINT-PDF — Bottone «Stampa DDT» (dettaglio documento)
+
+**Tipo:** Feature frontend
+**Scope:** Frontend
+**PC:** `webmarke26`
+**Priorità:** Alta
+**Stima:** 1–2 ore
+**Dipendenza:** BE-DDT-PRINT-PDF ✅ (Fase 1–2)
+**Documento:** `docs/FE_HANDOFF_DDT_PRINT_PDF.md`
+**Prompt sessione:** `.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md`
+
+**Contesto:**
+Il BE genera il PDF DDT (mittente, destinatario, articoli, IVA, spedizione, colli). Il FE scarica blob e apre nuova tab (pattern preventivo / ordine).
+
+**API:**
+```http
+GET /api/v1/ddt/pdf/{id_order_document}
+Authorization: Bearer <JWT>
+→ 200 application/pdf (attachment)
+```
+
+**Task FE:**
+1. `ddt.service.ts` → `downloadDdtPdf(id_order_document): Observable<Blob>` (`responseType: 'blob'`)
+2. Bottone toolbar dettaglio DDT — «Stampa DDT» (icona `print`)
+3. `URL.createObjectURL` + `window.open`; fallback download se popup blocker
+4. Gestione errori 404/500 su risposta blob (parse JSON da `Blob`)
+5. **Non** usare `id_order` nel path PDF
+6. (Opzionale) voce menu lista DDT; (opzionale) `window.print()` auto
+
+**Pattern da riusare:**
+- `quotes.service.ts` → `downloadPdf(id)`
+- `orders.service.ts` → `downloadOrderPdf(id)` / `generateBordero(...)`
+
+**Acceptance criteria:**
+- [ ] Click stampa → PDF in nuova tab, layout completo
+- [ ] Usa `id_order_document`, non `id_order` / `document_number`
+- [ ] 404/500 con messaggio utente
+- [ ] Loading / no doppio click
+- [ ] Nessuna regressione stampa preventivo / ordine / borderò
 
 ---
 
@@ -556,6 +625,11 @@ Campanella notifiche eventi silenti (nuovo ordine, fattura emessa, stock basso, 
 - **FE:** task **FE-ORDER-PRINT-PDF** (bottone modale dettaglio)
 - **Doc:** `docs/FE_HANDOFF_ORDER_PRINT_PDF.md` · prompt: `.cursor/tasks_claude/prompt_FE_order_print_pdf.md`
 
+### Stampa PDF DDT (gestionale Angular)
+- **BE:** ✅ `GET /api/v1/ddt/pdf/{id_order_document}` — fix 500 + IVA/colli (Fase 1–2, 2026-06-16)
+- **FE:** task **FE-DDT-PRINT-PDF** (bottone dettaglio DDT)
+- **Doc:** `docs/FE_HANDOFF_DDT_PRINT_PDF.md` · prompt: `.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md`
+
 ### Principio VIES (vincolante)
 La logica VIES è **non invasiva**. Si attiva solo in due punti espliciti:
 - Rettifica manuale KO→OK: `PATCH apply-vies-exemption` → righe a 0%, totale ivato invariato
@@ -574,6 +648,7 @@ La sync PrestaShop resta invariata: solo snapshot informativo di `vies_status`, 
 
 | Data | Evento |
 |---|---|
+| 2026-06-16 | BE-DDT-PRINT-PDF ✅ Fase 1–2: fix PDF DDT (`Decimal`/IVA/colli), test unit `test_ddt_pdf_service.py`. Handoff FE `docs/FE_HANDOFF_DDT_PRINT_PDF.md`. Aperto **FE-DDT-PRINT-PDF** |
 | 2026-06-15 | BE-ORDER-PRINT-PDF ✅: `GET /orders/{id}/pdf`, `OrderPDFService`, handoff FE `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`. Aperto FE-ORDER-PRINT-PDF (bottone stampa modale) |
 | 2026-06-09 | BE-FASTLDV: endpoint unificato GET order (dati+validate+righe), `validation.code`, 422 con payload completo. Task 1/2/3. Doc + prompt aggiornati |
 | 2026-06-09 | BE-FASTLDV: contratto iniziale da `app.js` + `validate.php`, `id_origin`. Doc `docs/BE_FASTLDV_INTEGRATION.md` |

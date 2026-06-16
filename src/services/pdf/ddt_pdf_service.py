@@ -9,10 +9,40 @@ import os
 from src.services.pdf.base_pdf_service import BasePDFService
 
 
+def _to_float(value, default: float = 0.0) -> float:
+    """Normalizza Decimal/float/int da ORM o dict prima dei calcoli PDF."""
+    if value is None:
+        return default
+    return float(value)
+
+
 class DDTPDFService(BasePDFService):
     """Servizio per generazione PDF di DDT"""
+
+    def __init__(self, tax_repo=None):
+        self.tax_repo = tax_repo
+
+    def _resolve_vat_rate(self, id_tax: Optional[int]) -> float:
+        """Risolve la percentuale IVA dall'id_tax (non confondere con la PK)."""
+        if not id_tax or not self.tax_repo:
+            return 0.0
+        return _to_float(self.tax_repo.get_percentage_by_id(int(id_tax)))
+
+    @staticmethod
+    def _package_count(ddt_data) -> int:
+        packages = getattr(ddt_data, 'packages', None) or []
+        return len(packages) if packages else 1
+
+    @staticmethod
+    def _primary_vat_label(vat_rates: List[float]) -> str:
+        if not vat_rates:
+            return '-'
+        rate = max(vat_rates)
+        if rate == int(rate):
+            return f"{int(rate)}%"
+        return f"{rate:g}%"
     
-    def generate_pdf(self, ddt_data, sender: Optional[Any] = None, 
+    def generate_pdf(self, ddt_data, sender: Optional[Any] = None,
                      customer_data: Optional[Dict[str, Any]] = None,
                      address_delivery_data: Optional[Dict[str, Any]] = None,
                      shipping_data: Optional[Dict[str, Any]] = None) -> bytes:
@@ -98,18 +128,28 @@ class DDTPDFService(BasePDFService):
             total_with_vat_sum = 0.0
             total_quantity = 0
             total_weight = 0.0
+            vat_rates_used: List[float] = []
             
             if hasattr(ddt_data, 'details') and ddt_data.details:
                 for detail in ddt_data.details:
                     code = (detail.product_reference or '')[:15]
                     description = (detail.product_name or '')[:30]
-                    quantity = detail.product_qty or 0
-                    unit_price = detail.product_price or 0.0
-                    vat_rate = detail.id_tax or 0
-                    
-                    # Calcola totale riga (DDT non ha sconti come nel preventivo)
-                    total_amount = unit_price * quantity
+                    quantity = int(detail.product_qty or 0)
+                    unit_price = _to_float(detail.product_price)
+                    vat_rate = self._resolve_vat_rate(detail.id_tax)
+                    if vat_rate:
+                        vat_rates_used.append(vat_rate)
                     vat_multiplier = 1 + (vat_rate / 100.0) if vat_rate else 1.0
+
+                    reduction = 0.0
+                    if detail.reduction_percent and detail.reduction_percent > 0:
+                        reduction = (unit_price * quantity) * (
+                            _to_float(detail.reduction_percent) / 100.0
+                        )
+                    elif detail.reduction_amount and detail.reduction_amount > 0:
+                        reduction = _to_float(detail.reduction_amount)
+
+                    total_amount = (unit_price * quantity) - reduction
                     total_with_vat = total_amount * vat_multiplier
                     
                     self.add_items_table_row(
@@ -125,22 +165,28 @@ class DDTPDFService(BasePDFService):
                     subtotal += total_amount
                     total_with_vat_sum += total_with_vat
                     total_quantity += quantity
+                    if detail.product_weight:
+                        total_weight += _to_float(detail.product_weight) * quantity
             
-            # Calcola peso totale
-            if hasattr(ddt_data, 'total_weight'):
-                total_weight = ddt_data.total_weight or 0.0
-            else:
-                total_weight = 0.0
+            # Peso: preferisci totale documento, altrimenti somma righe
+            doc_total_weight = _to_float(
+                ddt_data.total_weight if hasattr(ddt_data, 'total_weight') else None
+            )
+            if doc_total_weight > 0:
+                total_weight = doc_total_weight
+            
+            colli_count = self._package_count(ddt_data)
             
             # Sezione Info Spedizione e Riepilogo
             self.create_section_title(pdf, 'INFORMAZIONI SPEDIZIONE E RIEPILOGO', spacing_after=2.0)
             
             # Box con info spedizione
-            total_weight_kg = total_weight if total_weight > 0 else (shipping.get('weight', 0.0) if shipping else 0.0)
+            shipping_weight = _to_float(shipping.get('weight')) if shipping else 0.0
+            total_weight_kg = total_weight if total_weight > 0 else shipping_weight
             self.create_simple_table(
                 pdf=pdf,
                 headers=['Tot. Quant.', 'Peso (Kg)', 'Colli'],
-                rows=[[str(int(total_quantity)), f"{total_weight_kg:.3f}", '1']],
+                rows=[[str(int(total_quantity)), f"{total_weight_kg:.3f}", str(colli_count)]],
                 column_width=63,
                 spacing_after=2.0
             )
@@ -158,13 +204,17 @@ class DDTPDFService(BasePDFService):
             self.create_section_title(pdf, 'RIEPILOGO IVA E TOTALI', spacing_after=1.0)
             
             # Calcolo spese trasporto
-            shipping_cost = shipping.get('price_tax_excl', 0.0) if shipping else 0.0
-            shipping_cost_with_vat = shipping.get('price_tax_incl', 0.0) if shipping else 0.0
-            shipping_vat_percentage = shipping.get('vat_percentage', 0) if shipping else 0
+            shipping_cost = _to_float(shipping.get('price_tax_excl')) if shipping else 0.0
+            shipping_cost_with_vat = _to_float(shipping.get('price_tax_incl')) if shipping else 0.0
+            shipping_vat_percentage = _to_float(shipping.get('vat_percentage')) if shipping else 0.0
             
             # Calcola totali
-            total_doc = ddt_data.total_price_with_tax if hasattr(ddt_data, 'total_price_with_tax') else 0.0
-            total_vat = total_doc - subtotal if total_doc > 0 else 0.0
+            total_doc = _to_float(
+                ddt_data.total_price_with_tax if hasattr(ddt_data, 'total_price_with_tax') else None
+            )
+            if total_doc <= 0:
+                total_doc = total_with_vat_sum + shipping_cost_with_vat
+            total_vat = total_doc - subtotal - shipping_cost
             
             # Preparazione label spese trasporto
             shipping_label = 'Spese trasporto'
@@ -174,7 +224,7 @@ class DDTPDFService(BasePDFService):
             # Tabella riepilogo IVA
             self.create_vat_summary_table(
                 pdf=pdf,
-                vat_rate='22%',
+                vat_rate=self._primary_vat_label(vat_rates_used),
                 merchandise_amount=subtotal,
                 shipping_amount=shipping_cost,
                 total_vat=total_vat,

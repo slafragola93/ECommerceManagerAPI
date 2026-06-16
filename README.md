@@ -316,6 +316,28 @@ Permesso RBAC: `shipments.create`. Test: `tests/integration/api/v1/test_bordero.
 
 ---
 
+## API — DDT PDF
+
+Prefisso `/api/v1/ddt`. Permesso RBAC: `ddt.read`.
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| GET | `/api/v1/ddt/pdf/{id_order_document}` | PDF Documento di Trasporto (`Content-Disposition: attachment`) |
+
+Identificatore: PK gestionale `id_order_document` (non `id_order`).
+
+Handoff FE: [docs/FE_HANDOFF_DDT_PRINT_PDF.md](docs/FE_HANDOFF_DDT_PRINT_PDF.md) — prompt chat: [.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md](.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md).
+
+---
+
+## Ultime modifiche (2026-06-16) — Fix PDF DDT (Fase 1 + 2)
+
+- **Fase 1 — Fix 500:** conversione esplicita `Decimal` → `float` in `DDTPDFService` e serializzazione spedizione in `DDTService.get_ddt_complete` (allineato al preventivo). Router con `try/except` 404/500.
+- **Fase 2 — Correttezza layout:** IVA righe risolta via `TaxRepository.get_percentage_by_id` (non più `id_tax` come percentuale). Totali riga con sconto `%` / importo. Colli da `packages` (fallback `1`). Riepilogo IVA con aliquota dominante dalle righe.
+- Test: `tests/unit/services/pdf/test_ddt_pdf_service.py`.
+
+---
+
 ## Ultime modifiche (2026-06-15) — Stampa PDF singolo ordine
 
 - Nuovo endpoint `GET /api/v1/orders/{id}/pdf` con layout allineato al documento ordine elettronew (logo + anagrafica, barcode Code39, blocchi Intestazione / Indirizzo di consegna, tabella righe con Impon./IVA/Sconto, riepilogo totali a destra).

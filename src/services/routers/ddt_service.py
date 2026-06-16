@@ -2,6 +2,7 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from src.repository.ddt_repository import DDTRepository
+from src.repository.tax_repository import TaxRepository
 from src.services.routers.order_document_service import OrderDocumentService
 from src.models.app_configuration import AppConfiguration
 from src.schemas.ddt_schema import (
@@ -39,6 +40,7 @@ class DDTService:
     def __init__(self, db: Session):
         self.db = db
         self.ddt_repo = DDTRepository(db)
+        self.tax_repo = TaxRepository(db)
         self.order_doc_service = OrderDocumentService(db)
     
     @emit_event_on_success(
@@ -178,18 +180,24 @@ class DDTService:
                     "phone": address.phone
                 }
         
-        # Recupera dati spedizione
+        # Recupera dati spedizione (float espliciti: evita Decimal in calcoli PDF)
         shipping_data = None
         if ddt.id_shipping:
             shipping = self.db.query(Shipping).filter(Shipping.id_shipping == ddt.id_shipping).first()
             if shipping:
+                shipping_vat_percentage = 0.0
+                if shipping.id_tax:
+                    shipping_vat_percentage = float(
+                        self.tax_repo.get_percentage_by_id(int(shipping.id_tax)) or 0.0
+                    )
                 shipping_data = {
                     "id_shipping": shipping.id_shipping,
                     "tracking": shipping.tracking,
-                    "weight": shipping.weight,
-                    "price_tax_incl": shipping.price_tax_incl,
-                    "price_tax_excl": shipping.price_tax_excl,
-                    "shipping_message": shipping.shipping_message
+                    "weight": float(shipping.weight) if shipping.weight is not None else 0.0,
+                    "price_tax_incl": float(shipping.price_tax_incl) if shipping.price_tax_incl is not None else 0.0,
+                    "price_tax_excl": float(shipping.price_tax_excl) if shipping.price_tax_excl is not None else 0.0,
+                    "vat_percentage": shipping_vat_percentage,
+                    "shipping_message": shipping.shipping_message,
                 }
         
         # Recupera dati mittente
@@ -265,22 +273,14 @@ class DDTService:
         Returns:
             bytes: Contenuto del PDF
         """
-        try:
-            from src.services.pdf.ddt_pdf_service import DDTPDFService
-            
-            # Recupera i dati del DDT
-            ddt_data = self.get_ddt_complete(id_order_document)
-            if not ddt_data:
-                raise ValueError("DDT non trovato")
-            
-            # Usa DDTPDFService per generare il PDF
-            pdf_service = DDTPDFService()
-            return pdf_service.generate_pdf(ddt_data=ddt_data)
-            
-        except ImportError:
-            raise Exception("Libreria fpdf2 non installata. Installare con: pip install fpdf2")
-        except Exception as e:
-            raise Exception(f"Errore durante la generazione del PDF: {str(e)}")
+        from src.services.pdf.ddt_pdf_service import DDTPDFService
+
+        ddt_data = self.get_ddt_complete(id_order_document)
+        if not ddt_data:
+            raise ValueError("DDT non trovato")
+
+        pdf_service = DDTPDFService(tax_repo=self.tax_repo)
+        return pdf_service.generate_pdf(ddt_data=ddt_data)
     
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_UPDATED,
