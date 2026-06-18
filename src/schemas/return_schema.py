@@ -16,7 +16,14 @@ class ReturnItemSchema(BaseModel):
     """Schema per un singolo articolo da restituire"""
     id_order_detail: int = Field(..., description="ID del dettaglio ordine")
     quantity: int = Field(..., gt=0, description="Quantità da restituire")
-    unit_price: Optional[float] = Field(None, gt=0, description="Prezzo unitario (se None, usa quello dell'order_detail)")
+    unit_price: Optional[float] = Field(
+        None,
+        gt=0,
+        description=(
+            "Prezzo unitario legacy: se coincide con il totale con IVA dell'ordine "
+            "originale viene usato l'imponibile; se omesso si usa order_detail.unit_price_net"
+        ),
+    )
     id_tax:int = Field(..., gt=0, description="ID della tassa applicata")
     
     @validator('quantity')

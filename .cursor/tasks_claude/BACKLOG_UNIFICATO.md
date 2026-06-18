@@ -1,6 +1,7 @@
 # Backlog Unificato — Elettronew Gestionale e-commerce
 
 > Generato il 2026-06-08 dalla fusione di `BACKLOG.md` (PC FE `webmarke26`) e `BACKLOG.md` (PC BE `webmarke22`).
+> Aggiornato 2026-06-18: riconciliazione BE vs codice (FastLDV 1/2/EVT ✅, serie BE-ALIQ-02..05 ✅, fix resi ✅).
 > Aggiornato 2026-06-16: stampa PDF DDT (BE ✅ Fase 1–2, FE-DDT-PRINT-PDF aperto) → `docs/FE_HANDOFF_DDT_PRINT_PDF.md`.
 > Aggiornato 2026-06-15: stampa PDF singolo ordine (BE ✅, FE-ORDER-PRINT-PDF aperto) → `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`.
 > Fonte di verità consolidata per proseguire il lavoro su entrambi i PC.
@@ -11,14 +12,16 @@
 
 | Area | ✅ Done | 🟦 Backlog aperto | 🌟 Epic |
 |---|---|---|---|
-| **Backend** | 37+ (..., BE-DDT-PRINT-PDF ✅ Fase 1–2) | 6 (BE-FASTLDV-1/2/3, BE-VIES-4, BE-ALIQ-03..08, BE-1, BE-TAX-DEFINE-FIX, BE-INFRA-ALEMBIC, REPLAN-AS400-PR7) | — |
-| **Frontend** | 21+ (..., FE-D.4 ✅) | 11 (FE-DDT-PRINT-PDF, FE-ORDER-PRINT-PDF, FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1) | 2 (N1, N2) |
+| **Backend** | 45+ (…, BE-FASTLDV-1/2, BE-FASTLDV-EVT impl., BE-ALIQ-02..05, BE-RETURN-PRICE-FIX) | 10 (REPLAN-AS400-PR7, BE-FASTLDV-3, BE-FASTLDV-EVT QA, BE-ALIQ-06/07/08, BE-1, BE-TAX-DEFINE-FIX, BE-VIES-4, BE-INFRA-ALEMBIC, T1) | — |
+| **Frontend** | 21+ (..., FE-D.4 ✅) | 11 (FE-DDT-PRINT-PDF, FE-ORDER-PRINT-PDF, FE-4, FE-1, FE-5, FE-6, FE-8, FE-10, FE-13, FE-REFACT, T1*) | 2 (N1, N2) |
+
+\* T1 è task BE ma elencato anche lato FE nel backlog storico (test infrastructure condivisa).
 
 ---
 
 ## 🔴 PRIORITÀ ALTA — Da fare subito
 
-### BE-FASTLDV-1 — `GET /api/v1/fastldv/order/{code}` (unificato: dati + validazione + righe)
+### ~~BE-FASTLDV-1~~ — ✅ CHIUSO (2026-06-09) — GET ordine unificato
 
 **Tipo:** Feature backend
 **Scope:** Backend
@@ -27,70 +30,30 @@
 **Stima:** 3-4 ore
 **Documento:** `docs/BE_FASTLDV_INTEGRATION.md`
 
-**Contesto:**
-**Unifica** `checkOrderData` + `validate.php` in **una sola chiamata** (miglioramento vs Smarty). Lookup `{code}`: `id_origin` PrestaShop oppure `id_order` se ordine gestionale (`id_origin=0`). Nessun prefisso `SM`.
+**Esito:**
+Endpoint `GET /api/v1/fastldv/order/{code}` con payload unificato (carrier, shipping, document, lines, validation). Lookup dual: `id_origin` PrestaShop oppure `id_order` se `id_origin=0`. HTTP 200 (stampabile/warning ristampa) e 422 (bloccato con payload completo). Auth `X-FastLDV-Key`, alias `data.legacy` per adapter PHP.
 
-**Response `200`** — ordine stampabile o avviso ristampa:
-```json
-{
-  "status": "success",
-  "data": {
-    "id_origin": 69099,
-    "id_order": 1234,
-    "carrier": { "id_carrier_api": 5, "name": "BRT NAPOLI", "layout_type": "zebra" },
-    "shipping": { "colli": 2, "peso": 1.5, "contrassegno": "0.00", "tracking": "", "country_iso": "IT" },
-    "document": { "num_doc": "69099" },
-    "lines": [{ "quantity": 2, "sku": "ABC123", "name": "Prodotto X" }],
-    "validation": { "printable": true, "severity": "ok", "code": "OK", "message": "OK" }
-  }
-}
-```
+**File BE:** `src/routers/fastldv.py`, `src/services/routers/fastldv_order_service.py`, `src/core/fastldv_auth.py`, `src/schemas/fastldv_schema.py`
 
-**Response `422`** — ordine trovato ma non stampabile: **stesso payload** + `validation.printable: false` + `validation.code` (es. `ORDER_NOT_PAID`). Miglioramento: UI ha righe e corriere senza seconda richiesta.
-
-**Query:** `carrier`, `printer`, `id_store`, `skip_log`.
-
-**Validazione:** regole da `validate.php`; ristampa → `severity: warning`, `code: LABEL_ALREADY_PRINTED` (non HTTP 202 separato).
-
-**Opzionale:** blocco `data.legacy` con alias Smarty (`corrieri_*`, `id_doc`) per adapter PHP transitorio.
-
-**Decisioni chiuse:** `id_origin` = PrestaShop. **Aperta:** auth `X-FastLDV-Key`; mapping `ready`/stati ordine.
-
-**Pattern:** Router → `FastLdvOrderService` → Repository. Auth API key, no RBAC JWT.
+**Test:** `tests/unit/services/test_fastldv_order_service.py`, `tests/integration/api/v1/test_fastldv.py`
 
 ---
 
-### BE-FASTLDV-2 — `POST /api/v1/fastldv/notify-print`
+### ~~BE-FASTLDV-2~~ — ✅ CHIUSO (2026-06-09) — notify-print
 
 **Tipo:** Feature backend
 **Scope:** Backend
 **PC:** `webmarke22`
 **Priorità:** Alta
 **Stima:** 1-2 ore
-**Dipendenza:** BE-FASTLDV-1 (stessa autenticazione)
 **Documento:** `docs/BE_FASTLDV_INTEGRATION.md`
 
-**Contesto:**
-**Nuovo** rispetto all'app attuale (oggi solo `log_stampa.php` locale + re-fetch Smarty). Scrive tracking sul gestionale dopo stampa etichetta.
+**Esito:**
+Endpoint `POST /api/v1/fastldv/notify-print` aggiorna `shipping.tracking` via `orders.id_shipping` (multispedizione accantonata v1). Emit evento `order.tracking.updated` dopo commit (vedi BE-FASTLDV-EVT).
 
-**Request body:**
-```json
-{
-  "id_origin": 69099,
-  "tracking": "BRT123456789",
-  "colli": 2,
-  "carrier": "BRT NAPOLI",
-  "operatore": "mario",
-  "stampante": "ZDesigner ZT410"
-}
-```
+**Test:** `tests/integration/api/v1/test_fastldv.py` (`test_notify_print_200`)
 
-**Comportamento:**
-- `id_origin` → `orders.id_shipping` → `update_tracking` (**multispedizione accantonata v1**)
-- Nessun cambio `id_order_state`
-- `200 OK` fire-and-forget
-
-**Modifica FastLDV (fase 2):** aggiungere POST in `logStampaAfterPrint()` (`app.js`) — adapter PHP.
+**Prossimo step operativo:** cutover app magazzino (Fase 3, prompt `docs/PROMPT_FASTLDV_APP_CUTOVER.md`) — fuori scope BE core.
 
 ---
 
@@ -99,21 +62,17 @@
 **Tipo:** Feature backend (+ coordinamento FE Angular)
 **Scope:** Backend + FE gestionale
 **PC:** `webmarke22` (BE), `webmarke26` (FE)
-**Priorità:** Alta (dopo BE-FASTLDV-2)
-**Stima:** ~1 giornata BE + 4–5 h FE
+**Priorità:** Alta — **implementazione ✅, QA congiunto pending**
+**Stima residua:** ~2 h QA
 **Documento:** `docs/BE_FASTLDV_INTEGRATION.md` § BE-FASTLDV-EVT
-**Origine:** nota FE `NOTA_BE_fastldv_tracking_events.md`
 
-**Contesto:**
-Dopo `notify-print` il tracking è in DB ma Angular richiede F5. Soluzione: `emit_event` su EventBus + `GET /api/v1/events/stream` (SSE, JWT). Evento `order.tracking.updated` con **`id_order`** (PK gestionale), non il codice PS del body notify.
+**Esito BE (2026-06-11):**
+- `EventType.ORDER_TRACKING_UPDATED` + emit in `notify_print` dopo commit
+- `SseFanoutService` + `GET /api/v1/events/stream` (SSE, JWT)
+- Test: `tests/integration/api/v1/test_events_sse.py`, `tests/unit/events/test_sse_fanout_service.py`
+- (FE creative_light3) `OrderEventsService` + NgRx patch tracking — implementato
 
-**Decisioni chiuse:** SSE (no WebSocket, no polling, no epic N2); fan-out in-memory v1; emit non blocca notify-print.
-
-**Acceptance:**
-- [x] `ORDER_TRACKING_UPDATED` + emit in `notify_print` dopo commit
-- [x] `GET /api/v1/events/stream` — SSE + auth JWT
-- [x] Test: notify-print → client SSE riceve evento
-- [x] (FE creative_light3) `OrderEventsService` + NgRx patch tracking
+**Acceptance residua:**
 - [ ] QA congiunto BE+FE (checklist `docs/FE_HANDOFF_SSE_TRACKING.md`)
 
 ---
@@ -125,60 +84,41 @@ Dopo `notify-print` il tracking è in DB ma Angular richiede F5. Soluzione: `emi
 **PC:** `webmarke22`
 **Priorità:** Media
 **Stima:** 1-2 ore
-**Dipendenza:** BE-FASTLDV-1
+**Dipendenza:** BE-FASTLDV-1 ✅
 **Documento:** `docs/BE_FASTLDV_INTEGRATION.md`
+**Stato:** **Aperto (opzionale)** — necessario solo se si mantiene modifica colli in modalità Verifica al cutover app
 
 **Contesto:**
 Sostituisce `updateOrderData` — solo modalità **Verifica** in `app.js` (`eseguiVerifica`). Body: `colli`, `peso`, `contrassegno`, `rigenera` (0|1).
 
-Necessario se si mantiene modifica colli (solo BRT NAPOLI in UI attuale) e rigenera spedizione.
+**Verifica codice (2026-06-18):** endpoint **non implementato** in `src/routers/fastldv.py`.
 
 ---
 
 **Acceptance criteria FastLDV (1 + 2):**
-- [ ] GET unificato: dati spedizione + `lines` + `validation` in una response
-- [ ] `200` se stampabile (ok o warning ristampa); `422` se bloccato con payload completo
-- [ ] `validation.code` enum + messaggi IT da `validate.php`
-- [ ] POST notify-print aggiorna `shipping.tracking`
-- [ ] Auth `X-FastLDV-Key` implementata
-- [ ] Test `FastLdvOrderService` + integration API
+- [x] GET unificato: dati spedizione + `lines` + `validation` in una response
+- [x] `200` se stampabile (ok o warning ristampa); `422` se bloccato con payload completo
+- [x] `validation.code` enum + messaggi IT da `validate.php`
+- [x] POST notify-print aggiorna `shipping.tracking`
+- [x] Auth `X-FastLDV-Key` implementata
+- [x] Test `FastLdvOrderService` + integration API
 
-**Fuori scope iniziale:** `fastldvGetPdfPrint` / generazione ZPL — fase successiva verso API corrieri gestionale.
+**Fuori scope iniziale:** `fastldvGetPdfPrint` / generazione ZPL — fase successiva verso API corrieri gestionale. Cutover app magazzino: `docs/PROMPT_FASTLDV_APP_CUTOVER.md`.
 
 ---
 
-### ~~BE-VIES-ORDERS-AREA-C~~ — ✅ CHIUSO
+### ~~BE-VIES-ORDERS-AREA-C~~ — ✅ CHIUSO (2026-06-08)
 
 **Tipo:** Feature backend (scope ridotto)
 **Scope:** Backend
 **PC:** `webmarke22`
-**Priorità:** Alta
-**Stima:** 1-2 ore
 
-**Contesto:**
-Dal recap BE: `apply-vies-exemption`, `bulk-apply-vies-exemption`, `bulk-vies-status` e il filtro `?vies_status=` sulla lista sono già implementati. Il filtro server-side rimane (non rimosso — era una decisione precedente da rivalutare ora che il BE lo ha già). Rimane da verificare/completare il toggle singolo.
+**Esito:**
+- `PATCH apply-vies-exemption`, `POST bulk-apply-vies-exemption`, filtro `?vies_status=` — implementati e testati
+- Toggle generico `PATCH /orders/{id}/vies-status` **eliminato dallo scope** (flusso solo KO→OK via apply-vies-exemption; revoca non prevista)
+- `vies_status` esposto su tutti i DTO ordine (`OrderSimpleResponseSchema`, `OrderResponseSchema`, `OrderIdSchema`)
 
-**Scope residuo:**
-
-1. **`PATCH /api/v1/orders/{id}/vies-status`** — verifica se già presente o da aggiungere
-   ```http
-   Body: { "vies_status": "eligible" | "not_eligible" | null, "vies_operator_note": string | null }
-   Response: OrderDTO completo aggiornato
-   ```
-   Nota: distinto da `apply-vies-exemption` (che ricalcola le righe KO→OK). Questo è il toggle/revoca generico con ricalcolo IVA. Il FE usa `patchOrderViesStatus` in `orders.service.ts`.
-
-2. **Smoke test** dei 3 endpoint già creati contro DB reale:
-   - `PATCH apply-vies-exemption`
-   - `POST bulk-apply-vies-exemption`
-   - `GET /orders/?vies_status=eligible|not_eligible|null`
-
-**Regola chiave FE (da `docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md`):**
-Usare sempre `PATCH apply-vies-exemption`, mai `PUT /orders/{id}` con solo `vies_status` (non ricalcola le righe).
-
-**Acceptance criteria:**
-- [ ] `PATCH /orders/{id}/vies-status` presente e funzionante
-- [ ] `vies_status` esposto su `OrderDTO` (filtro client-side FE)
-- [ ] Smoke test 3 endpoint su DB reale
+**Regola FE:** usare sempre `PATCH apply-vies-exemption`, mai `PUT /orders/{id}` con solo `vies_status`.
 
 ---
 
@@ -384,27 +324,54 @@ this.alertService.success('Aliquota Eliminata!', ...); // ← OTTIMISTA, BUG
 **PC:** `webmarke22`
 **Priorità:** Alta
 **Stima:** ~1 ora
+**Stato:** **Aperto** — codice non ancora allineato
 
 Handler AS400 caso OK: sposta ordine a stato **3 (Spediti)**, non più a 2 (Pronti per la Spedizione).
 Handler AS400 caso NOK: niente rollback, ordine resta in stato 2.
+
+**Verifica codice (2026-06-18):** `validation_handler.py` conferma ancora stato **2** su OK e fa rollback a **1** su NOK/errore.
+
+**File:** `src/events/plugins/customs/as400_validate_order_megawatt/handlers/validation_handler.py`
+
+---
+
+### ~~BE-RETURN-PRICE-FIX~~ — ✅ CHIUSO (2026-06-16) — Fix calcolo righe reso (doppia IVA)
+
+**Tipo:** Bugfix backend
+**Scope:** Backend
+**PC:** `webmarke22`
+**Priorità:** Alta
+
+**Problema:** in creazione/aggiornamento reso, se il FE inviava `unit_price` con importo **con IVA** dell'ordine, il BE lo trattava come imponibile e ricalcolava l'IVA (totale errato).
+
+**Esito:** helper `resolve_return_unit_prices` in `src/services/core/tool.py`; applicato in `FiscalDocumentService`, `FiscalDocumentRepository` (create/update/totali).
+
+**Test:** `tests/unit/services/core/test_resolve_return_unit_prices.py`
 
 ---
 
 ## 🟡 PRIORITÀ MEDIA — Da pianificare
 
-### BE-ALIQ-03/04/06/07/08 — Completamento serie aliquote
+### BE-ALIQ-06/07/08 — Completamento serie aliquote (residuo)
 
 **Tipo:** Feature / Debito tecnico
 **Scope:** Backend
 **PC:** `webmarke22`
 **Priorità:** Media
-**Programma:** `PROGRAMMA_BE_aliquote_vies.md` (sequenza: 08 → 03 → 04 → 07 → 05 → 06)
+**Programma:** `PROGRAMMA_BE_aliquote_vies.md`
 
-- **BE-ALIQ-03:** serializzazione corretta di `id_country` (nullable) nelle risposte Tax
-- **BE-ALIQ-04:** invalidazione cache `/api/v1/init/` su modifica aliquote
-- **BE-ALIQ-06:** seed aliquote per CI/testing
+**Chiusi (2026-06-05, verificati in codice):**
+- ~~**BE-ALIQ-02:**~~ delete Tax `TAX_IN_USE` strutturato (`tax_usages.py`, test integration)
+- ~~**BE-ALIQ-03:**~~ invalidazione cache `/api/v1/init/` su write Tax/Settings (`invalidate_init_data_cache`)
+- ~~**BE-ALIQ-04:**~~ serializzazione `id_country` nullable (`serialize_tax_response`, test schema)
+- ~~**BE-ALIQ-05:**~~ migrazione `Tax.percentage` → `DECIMAL(5,2)` (modello + setup idempotente)
+
+**Ancora aperti:**
+- **BE-ALIQ-06:** seed aliquote dedicato CI/testing (oggi solo `SEED_EU_VAT_TAXES=1` opzionale in `setup_initial.py`)
 - **BE-ALIQ-07:** consolidamento API Tax (review endpoint, documentazione OpenAPI)
-- **BE-ALIQ-08:** pulizia codice residuo multispedizione (`shipping_service.py:597`)
+- **BE-ALIQ-08:** pulizia codice residuo multispedizione — **`shipping_service.py:597`** (`update_order_status(..., 7)`) ancora presente
+
+**Ordine suggerito:** `08 → 06 → 07`
 
 ---
 
@@ -483,23 +450,29 @@ Risultato atteso: da 8702 a ~1800-2500 righe TS.
 **PC:** `webmarke22`
 **Priorità:** Media
 **Stima:** 3-4 ore
+**Stato:** **Parzialmente aperto**
 
-- Fix errore di collect: completare `user_client_async` fixture (manca `yield ac`)
-- Aggiornare fixture RBAC: `admin_user` con `role_type='full_crud'`, `manager_user` con `role_type='custom'`
-- Scrivere `test_permissions.py`: bypass full_crud, accesso negato permission_zero/module_not_found
-- Valutare SQLite vs MySQL per i test
+**Verifica codice (2026-06-18):**
+- [x] Fixture `user_client_async` completa (`yield ac` presente in `tests/conftest.py`)
+- [ ] Fixture RBAC centralizzate: `admin_user` in conftest usa ancora schema legacy (`roles[].permissions`), non `role_type='full_crud'` / `custom` come in produzione
+- [ ] `test_permissions.py` dedicato — **assente** (403 bypass/negato non coperti in un unico modulo)
+- [ ] Valutare SQLite vs MySQL per i test
+
+**Nota:** diversi test integration usano già override locali `_admin_full_crud_user()` (es. `test_bordero.py`, `test_tax_delete.py`); manca consolidamento in conftest.
 
 ---
 
 ## 🔵 PRIORITÀ BASSA — Debito tecnico
 
-### BE-TAX-DECIMAL — Completamento migrazione Numeric(5,2)
+### ~~BE-TAX-DECIMAL~~ — ✅ CHIUSO (2026-06-05) — come BE-ALIQ-05
 
 **Tipo:** Debito tecnico
 **Scope:** Backend
 **PC:** `webmarke22`
 
-Il modello `Tax.percentage` è già `Numeric(5,2)` a livello di codice (fatto). Rimane da verificare che la colonna DB sia stata migrata e che tutti i consumatori (`order_repository`, `prestashop_service`, `fiscal_document`, `fatturapa`, `csv_import`, plugin AS400) gestiscano correttamente i decimali.
+**Esito:** colonna `taxes.percentage` → `DECIMAL(5,2)`; schema API `Decimal`; seed Finlandia 25.5%; setup idempotente in `scripts/setup_initial.py`. Test integration `test_tax_percentage_decimal.py`.
+
+**Verifica operativa residua (non bloccante):** su ambienti legacy eseguire `python scripts/check_tax_percentage_column.py` se PUT/POST tronca i decimali.
 
 ---
 
@@ -508,8 +481,11 @@ Il modello `Tax.percentage` è già `Numeric(5,2)` a livello di codice (fatto). 
 **Tipo:** Bug (non bloccante)
 **Scope:** Backend
 **PC:** `webmarke22`
+**Stato:** **Aperto**
 
-`TaxRepository.define_tax(country_id)` ignora `country_id` e restituisce il primo `Tax` per `id_tax`. Valutare fix o sostituzione con `get_default_by_country`.
+`TaxRepository.define_tax(country_id)` ignora `country_id` e restituisce il primo `Tax` per `id_tax`. Valutare fix o sostituzione con `get_default_by_country` / `get_tax_info_by_country`.
+
+**Verifica codice (2026-06-18):** bug ancora presente in `src/repository/tax_repository.py:55-67`. Usato da `order_repository.py`.
 
 ---
 
@@ -519,10 +495,13 @@ Il modello `Tax.percentage` è già `Numeric(5,2)` a livello di codice (fatto). 
 **Scope:** Backend
 **PC:** `webmarke22`
 **Stima:** 1-2 ore
+**Stato:** **Aperto** — sblocca FE-8
 
 - `PUT /users/me` — modifica nome, email, phone. Schema `UserSelfUpdate`.
 - `PUT /users/me/password` — cambio password con verifica vecchia. Hash bcrypt.
 - Auth: solo `Depends(get_current_user)`, no `require_permission`.
+
+**Verifica codice (2026-06-18):** nessun endpoint `/users/me` in `src/routers/`.
 
 ---
 
@@ -532,8 +511,11 @@ Il modello `Tax.percentage` è già `Numeric(5,2)` a livello di codice (fatto). 
 **Scope:** Backend + FatturaPA
 **PC:** `webmarke22`
 **Priorità:** Da pianificare
+**Stato:** **Aperto**
 
-Integrazione natura `N3.2` (art. 41 DL 331/93) nella generazione FatturaPA per ordini `vies_status = eligible`.
+Integrazione natura **`N3.2`** (art. 41 DL 331/93) nella generazione FatturaPA per ordini `vies_status = eligible`.
+
+**Verifica codice (2026-06-18):** `fatturapa_service.py` usa `tax.electronic_code` generico, non ramo VIES/N3.2 su `vies_status`. Validator accetta N1–N7 ma nessuna logica business collega ordine eligible → N3.2.
 
 ---
 
@@ -542,8 +524,11 @@ Integrazione natura `N3.2` (art. 41 DL 331/93) nella generazione FatturaPA per o
 **Tipo:** Infrastruttura
 **Scope:** Backend
 **PC:** `webmarke22`
+**Stato:** **Parzialmente aperto**
 
-`alembic/versions/` vuoto; schema gestito da `scripts/setup_initial.py`. Task indipendente da VIES.
+Alembic configurato (`alembic/env.py`) ma **`alembic/versions/` è in `.gitignore`** — le revisioni non sono versionate nel repo. Schema baseline ancora da `scripts/setup_initial.py` + migration locali non condivise.
+
+**Task residuo:** committare revisioni (rimuovere da gitignore o policy alternativa), baseline documentata, `alembic upgrade head` come unico path deploy.
 
 ---
 
@@ -616,9 +601,10 @@ Campanella notifiche eventi silenti (nuovo ordine, fattura emessa, stock basso, 
 
 ### Integrazione FastLDV (magazzino)
 - **Doc:** `docs/BE_FASTLDV_INTEGRATION.md` — contratto da `app.js` / `validate.php`
-- **ID API:** `id_origin` (PrestaShop); auth proposta `X-FastLDV-Key`
-- **Task:** BE-FASTLDV-1 (GET unificato), 2 (notify-print), 3 opz. (shipping-params)
-- **Prompt app magazzino:** `prompt_FE_fastldv_migration.md` (fase 2 adapter PHP)
+- **BE core:** ✅ `BE-FASTLDV-1/2` (GET unificato + notify-print), ✅ `BE-FASTLDV-EVT` (SSE)
+- **Aperto BE:** `BE-FASTLDV-3` opz. (`PATCH shipping-params`); QA congiunto SSE
+- **Cutover app magazzino:** Fase 3 — `docs/PROMPT_FASTLDV_APP_CUTOVER.md` (adapter PHP, fuori repo BE)
+- **ID API:** `id_origin` (PrestaShop); auth `X-FastLDV-Key`
 
 ### Stampa PDF ordine (gestionale Angular)
 - **BE:** ✅ `GET /api/v1/orders/{id_order}/pdf` — layout elettronew server-side
@@ -639,8 +625,10 @@ La logica VIES è **non invasiva**. Si attiva solo in due punti espliciti:
 La sync PrestaShop resta invariata: solo snapshot informativo di `vies_status`, nessun ricalcolo prezzi.
 
 ### Debiti tecnici noti trasversali
-- `BE-ALIQ-08` (bassa): rimuovere `update_order_status(request.id_order, 7)` da `shipping_service.py:597`
+- `BE-ALIQ-08` (bassa): rimuovere `update_order_status(request.id_order, 7)` da `shipping_service.py:597` — **ancora presente**
+- `BE-TAX-DEFINE-FIX`: `define_tax(country_id)` ignora il paese — **ancora presente**
 - Test VIES rapido: `pytest tests/unit/vies/ tests/unit/services/test_tax_service.py tests/unit/services/test_order_vies_exemption.py tests/unit/repository/test_order_create_vies_eligible_tax.py -v`
+- Test FastLDV: `pytest tests/unit/services/test_fastldv_order_service.py tests/integration/api/v1/test_fastldv.py tests/integration/api/v1/test_events_sse.py -v`
 
 ---
 
@@ -648,6 +636,8 @@ La sync PrestaShop resta invariata: solo snapshot informativo di `vies_status`, 
 
 | Data | Evento |
 |---|---|
+| 2026-06-18 | Riconciliazione backlog vs codice: chiusi BE-FASTLDV-1/2, BE-FASTLDV-EVT (impl.), BE-ALIQ-02..05, BE-TAX-DECIMAL, BE-RETURN-PRICE-FIX. Aggiornati stati REPLAN-AS400-PR7, BE-1, BE-VIES-4, T1, BE-INFRA-ALEMBIC |
+| 2026-06-16 | BE-RETURN-PRICE-FIX ✅: `resolve_return_unit_prices` — fix doppia IVA su righe reso |
 | 2026-06-16 | BE-DDT-PRINT-PDF ✅ Fase 1–2: fix PDF DDT (`Decimal`/IVA/colli), test unit `test_ddt_pdf_service.py`. Handoff FE `docs/FE_HANDOFF_DDT_PRINT_PDF.md`. Aperto **FE-DDT-PRINT-PDF** |
 | 2026-06-15 | BE-ORDER-PRINT-PDF ✅: `GET /orders/{id}/pdf`, `OrderPDFService`, handoff FE `docs/FE_HANDOFF_ORDER_PRINT_PDF.md`. Aperto FE-ORDER-PRINT-PDF (bottone stampa modale) |
 | 2026-06-09 | BE-FASTLDV: endpoint unificato GET order (dati+validate+righe), `validation.code`, 422 con payload completo. Task 1/2/3. Doc + prompt aggiornati |

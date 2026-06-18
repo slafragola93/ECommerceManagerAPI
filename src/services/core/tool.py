@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional, Tuple
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -223,6 +223,78 @@ def calculate_amount_with_percentage(amount: float, percentage: float) -> float:
         calculate_amount_with_percentage(50.5, 10) → 5.05
     """
     return amount * (percentage / 100)
+
+
+RETURN_PRICE_TOLERANCE = 0.02
+
+
+def resolve_return_unit_prices(
+    *,
+    unit_price_net: Optional[float] = None,
+    unit_price_with_tax: Optional[float] = None,
+    unit_price: Optional[float] = None,
+    reference_unit_price_net: Optional[float] = None,
+    reference_unit_price_with_tax: Optional[float] = None,
+    tax_percentage: Optional[float] = None,
+) -> Tuple[float, float]:
+    """
+    Risolve prezzo unitario netto e lordo per una riga reso.
+
+    Il campo legacy ``unit_price`` può contenere l'importo con IVA dell'ordine
+    originale: se coincide con il prezzo lordo di riferimento, usa l'imponibile
+    dell'ordine per evitare una doppia applicazione dell'IVA.
+    """
+    ref_net = safe_float(reference_unit_price_net, 0.0)
+    ref_gross = safe_float(reference_unit_price_with_tax, 0.0)
+    tax_pct = safe_float(tax_percentage, 0.0) if tax_percentage is not None else 0.0
+
+    explicit_net = safe_float(unit_price_net, 0.0) if unit_price_net else 0.0
+    explicit_gross = safe_float(unit_price_with_tax, 0.0) if unit_price_with_tax else 0.0
+    legacy_price = safe_float(unit_price, 0.0) if unit_price else 0.0
+
+    if explicit_net > 0:
+        resolved_net = explicit_net
+    elif legacy_price > 0:
+        if ref_gross > 0 and abs(legacy_price - ref_gross) <= RETURN_PRICE_TOLERANCE:
+            resolved_net = ref_net
+        elif ref_net > 0 and abs(legacy_price - ref_net) <= RETURN_PRICE_TOLERANCE:
+            resolved_net = ref_net
+        elif (
+            ref_gross > 0
+            and ref_net > 0
+            and abs(legacy_price - ref_gross) < abs(legacy_price - ref_net)
+        ):
+            resolved_net = ref_net
+        else:
+            resolved_net = legacy_price
+    elif ref_net > 0:
+        resolved_net = ref_net
+    else:
+        resolved_net = 0.0
+
+    if explicit_gross > 0:
+        resolved_gross = explicit_gross
+    elif explicit_net > 0 and ref_net > 0 and abs(explicit_net - ref_net) > RETURN_PRICE_TOLERANCE:
+        resolved_gross = (
+            calculate_price_with_tax(explicit_net, tax_pct, quantity=1)
+            if tax_pct > 0
+            else explicit_net
+        )
+    elif ref_gross > 0 and (
+        legacy_price == 0
+        or (legacy_price > 0 and abs(legacy_price - ref_gross) <= RETURN_PRICE_TOLERANCE)
+    ):
+        resolved_gross = ref_gross
+    elif resolved_net > 0 and tax_pct > 0:
+        resolved_gross = calculate_price_with_tax(resolved_net, tax_pct, quantity=1)
+    elif ref_gross > 0:
+        resolved_gross = ref_gross
+    elif resolved_net > 0:
+        resolved_gross = resolved_net
+    else:
+        resolved_gross = 0.0
+
+    return resolved_net, resolved_gross
 
 
 def calculate_price_without_tax(price_with_tax: float, tax_percentage: float) -> float:

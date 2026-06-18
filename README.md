@@ -232,11 +232,15 @@ Esempio smoke test:
 curl -H "X-FastLDV-Key: $FASTLDV_API_KEY" "http://localhost:8000/api/v1/fastldv/order/69099?carrier=BRT+NAPOLI"
 ```
 
-Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md). Handoff team app magazzino: [docs/PROMPT_FASTLDV_APP_CUTOVER.md](docs/PROMPT_FASTLDV_APP_CUTOVER.md).
+Guida completa: [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md). Traccia implementazione BE: [.cursor/tasks_claude/fastLdv/IMPLEMENTAZIONE_TECNICA_FASTLDV.md](.cursor/tasks_claude/fastLdv/IMPLEMENTAZIONE_TECNICA_FASTLDV.md). Handoff team app magazzino: [docs/PROMPT_FASTLDV_APP_CUTOVER.md](docs/PROMPT_FASTLDV_APP_CUTOVER.md).
 
 **Real-time tracking (BE-FASTLDV-EVT):** dopo `notify-print` il BE emette `order.tracking.updated` (payload: `id_order`, `tracking`, `awb`); FE Angular consuma `GET /api/v1/events/stream`. Handoff: [docs/FE_HANDOFF_SSE_TRACKING.md](docs/FE_HANDOFF_SSE_TRACKING.md).
 
 **Test:** `pytest tests/unit/services/test_fastldv_order_service.py tests/integration/api/v1/test_fastldv.py tests/integration/api/v1/test_events_sse.py -v`
+
+## Ultime modifiche (2026-06-18) — Documentazione FastLDV
+
+**Scope:** Traccia tecnica implementazione FastLDV in `.cursor/tasks_claude/fastLdv/IMPLEMENTAZIONE_TECNICA_FASTLDV.md` (architettura, flussi, mapping, test, stato task BE-FASTLDV-1/2/EVT).
 
 ## Ultime modifiche (2026-06-12) — Fix calcolo totali preventivi
 
@@ -330,6 +334,33 @@ Handoff FE: [docs/FE_HANDOFF_DDT_PRINT_PDF.md](docs/FE_HANDOFF_DDT_PRINT_PDF.md)
 
 ---
 
+## Ultime modifiche (2026-06-18) — Backlog FatturaPA implementazione
+
+Creato backlog operativo dei task ancora da sviluppare per FatturaPA (gap analysis rispetto al codice esistente):
+
+- [`.cursor/tasks_claude/fatturapa_backlog_implementazione.md`](.cursor/tasks_claude/fatturapa_backlog_implementazione.md) — task P0–P3, ordine di implementazione, checklist go-live
+- Piano tecnico di riferimento: [`.cursor/tasks_claude/fatturapa_riassunto_piano.md`](.cursor/tasks_claude/fatturapa_riassunto_piano.md)
+
+---
+
+## Ultime modifiche (2026-06-18) — Riconciliazione backlog BE
+
+Backlog unificato allineato allo stato del codice: [`.cursor/tasks_claude/BACKLOG_UNIFICATO.md`](.cursor/tasks_claude/BACKLOG_UNIFICATO.md).
+
+**Chiusi:** BE-FASTLDV-1/2, BE-FASTLDV-EVT (implementazione), BE-ALIQ-02..05, BE-TAX-DECIMAL, BE-RETURN-PRICE-FIX.
+
+**Ancora aperti (BE):** REPLAN-AS400-PR7, BE-FASTLDV-3 (opz.), BE-FASTLDV-EVT (QA), BE-ALIQ-06/07/08, BE-1, BE-TAX-DEFINE-FIX, BE-VIES-4, BE-INFRA-ALEMBIC, T1.
+
+---
+
+## Ultime modifiche (2026-06-16) — Fix calcolo righe reso (doppia IVA)
+
+- **Problema:** in creazione/aggiornamento reso, se il FE inviava `unit_price` con l'importo **con IVA** dell'ordine (es. 289,97 €), il backend lo trattava come imponibile e ricalcolava l'IVA (totale errato, es. 363,91 € invece di 289,97 €).
+- **Fix:** helper `resolve_return_unit_prices` in `src/services/core/tool.py` — se `unit_price` coincide con `order_detail.unit_price_with_tax`, usa `unit_price_net` dell'ordine originale. Applicato in `FiscalDocumentService.create_return`, `FiscalDocumentRepository.create_return`, `calculate_return_totals` e `update_fiscal_document_detail`.
+- Test: `tests/unit/services/core/test_resolve_return_unit_prices.py`.
+
+---
+
 ## Ultime modifiche (2026-06-16) — Fix PDF DDT (Fase 1 + 2)
 
 - **Fase 1 — Fix 500:** conversione esplicita `Decimal` → `float` in `DDTPDFService` e serializzazione spedizione in `DDTService.get_ddt_complete` (allineato al preventivo). Router con `try/except` 404/500.
@@ -362,4 +393,7 @@ Handoff FE: [docs/FE_HANDOFF_DDT_PRINT_PDF.md](docs/FE_HANDOFF_DDT_PRINT_PDF.md)
 - [DOCUMENTAZIONE.md](DOCUMENTAZIONE.md) – panoramica e architettura  
 - [QUICK_START.md](QUICK_START.md) – avvio rapido e comandi  
 - [docs/](docs/) – guide specifiche (eventi, plugin, sync, ecc.)
+- [.cursor/tasks_claude/BACKLOG_UNIFICATO.md](.cursor/tasks_claude/BACKLOG_UNIFICATO.md) – backlog unificato FE+BE (fonte di verità task; riconciliato 2026-06-18)
+- [.cursor/tasks_claude/fatturapa_backlog_implementazione.md](.cursor/tasks_claude/fatturapa_backlog_implementazione.md) – task FatturaPA da implementare (P0–P3, go-live)
+- [.cursor/tasks_claude/fatturapa_riassunto_piano.md](.cursor/tasks_claude/fatturapa_riassunto_piano.md) – riassunto normativa FatturaPA e piano fasi
 - [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md) – integrazione app magazzino FastLDV

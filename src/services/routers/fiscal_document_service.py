@@ -21,6 +21,7 @@ from src.events.extractors import (
     extract_invoice_created_data,
     extract_credit_note_created_data
 )
+from src.services.core.tool import resolve_return_unit_prices
 
 
 class FiscalDocumentService(IFiscalDocumentService):
@@ -94,12 +95,26 @@ class FiscalDocumentService(IFiscalDocumentService):
             # Converte i dati dello schema in formato dict
             items_to_return = []
             for item in return_data.order_details:
+                order_detail = self._order_detail_repository.get_by_order_detail_id(
+                    item.id_order_detail
+                )
+                ref_net = float(order_detail.unit_price_net or 0) if order_detail else None
+                ref_gross = (
+                    float(order_detail.unit_price_with_tax or 0) if order_detail else None
+                )
+                unit_price_net, unit_price_with_tax = resolve_return_unit_prices(
+                    unit_price_net=getattr(item, "unit_price_net", None),
+                    unit_price_with_tax=getattr(item, "unit_price_with_tax", None),
+                    unit_price=item.unit_price,
+                    reference_unit_price_net=ref_net,
+                    reference_unit_price_with_tax=ref_gross,
+                )
                 items_to_return.append({
                     'id_order_detail': item.id_order_detail,
                     'quantity': item.quantity,
-                    'unit_price_net': getattr(item, 'unit_price_net', getattr(item, 'unit_price', 0.0)),
-                    'unit_price_with_tax': getattr(item, 'unit_price_with_tax', 0.0),
-                    'id_tax': item.id_tax
+                    'unit_price_net': unit_price_net,
+                    'unit_price_with_tax': unit_price_with_tax,
+                    'id_tax': item.id_tax or (order_detail.id_tax if order_detail else None),
                 })
             
             items_already_returned = await self.get_items_returned_by_order(order.id_order)

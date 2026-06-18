@@ -19,7 +19,8 @@ from src.models.payment import Payment
 from src.models.product import Product
 from src.services.core.tool import (
     calculate_amount_with_percentage,
-    calculate_price_with_tax
+    calculate_price_with_tax,
+    resolve_return_unit_prices,
 )
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
@@ -801,33 +802,50 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         self._session.flush()  # Per ottenere id_fiscal_document
         
         # Crea i dettagli del reso
-        for item in order_details:            
-            # Usa l'id_tax fornito o quello dell'ordine originale
-            id_tax = item.get('id_tax')
-            unit_price_net = item.get('unit_price_net', item.get('unit_price', 0.0))
-            unit_price_with_tax = item.get('unit_price_with_tax', 0.0)
-            quantity = item['quantity']
-            
-            # Calcola totali
-            total_price_net = quantity * unit_price_net
-            
-            # Calcola total_price_with_tax usando la percentuale di id_tax
-            total_price_with_tax = total_price_net
+        for item in order_details:
+            order_detail_for_rda = next(
+                (od for od in original_order_details if od.id_order_detail == item['id_order_detail']),
+                None,
+            )
+            id_tax = item.get('id_tax') or (
+                order_detail_for_rda.id_tax if order_detail_for_rda else None
+            )
+            ref_net = (
+                float(order_detail_for_rda.unit_price_net or 0)
+                if order_detail_for_rda
+                else None
+            )
+            ref_gross = (
+                float(order_detail_for_rda.unit_price_with_tax or 0)
+                if order_detail_for_rda
+                else None
+            )
+            tax_percentage = None
             if id_tax:
                 tax = self._tax_repository.get_tax_by_id(id_tax)
                 if tax and tax.percentage is not None:
                     tax_percentage = float(tax.percentage)
-                    total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-            
-            # Se unit_price_with_tax non è fornito, calcolalo
-            if unit_price_with_tax == 0.0 and unit_price_net > 0 and id_tax:
-                tax = self._tax_repository.get_tax_by_id(id_tax)
-                if tax and tax.percentage is not None:
-                    tax_percentage = float(tax.percentage)
-                    unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
 
-            # RDA dall'order detail originale (come in order_detail)
-            order_detail_for_rda = next((od for od in original_order_details if od.id_order_detail == item['id_order_detail']), None)
+            unit_price_net, unit_price_with_tax = resolve_return_unit_prices(
+                unit_price_net=item.get('unit_price_net'),
+                unit_price_with_tax=item.get('unit_price_with_tax'),
+                unit_price=item.get('unit_price'),
+                reference_unit_price_net=ref_net,
+                reference_unit_price_with_tax=ref_gross,
+                tax_percentage=tax_percentage,
+            )
+            quantity = item['quantity']
+
+            # Calcola totali
+            total_price_net = quantity * unit_price_net
+            total_price_with_tax = total_price_net
+            if id_tax and tax_percentage is not None:
+                total_price_with_tax = calculate_price_with_tax(
+                    total_price_net, tax_percentage, quantity=1
+                )
+            elif unit_price_with_tax > 0:
+                total_price_with_tax = quantity * unit_price_with_tax
+
             rda_value = order_detail_for_rda.rda if order_detail_for_rda else None
 
             detail = FiscalDocumentDetail(
@@ -856,27 +874,48 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         if not detail:
             raise ValueError(f"Dettaglio {id_detail} non trovato")
-        
+
+        order_detail = self._session.query(OrderDetail).filter(
+            OrderDetail.id_order_detail == detail.id_order_detail
+        ).first()
+        ref_net = float(order_detail.unit_price_net or 0) if order_detail else None
+        ref_gross = float(order_detail.unit_price_with_tax or 0) if order_detail else None
+        resolved_id_tax = id_tax if id_tax is not None else detail.id_tax
+        tax_percentage = None
+        if resolved_id_tax:
+            tax = self._tax_repository.get_tax_by_id(resolved_id_tax)
+            if tax and tax.percentage is not None:
+                tax_percentage = float(tax.percentage)
+
         # Aggiorna i campi se forniti
         if quantity is not None:
             detail.product_qty = quantity
         if unit_price is not None:
-            detail.unit_price_net = unit_price
+            unit_price_net, unit_price_with_tax = resolve_return_unit_prices(
+                unit_price=unit_price,
+                reference_unit_price_net=ref_net,
+                reference_unit_price_with_tax=ref_gross,
+                tax_percentage=tax_percentage,
+            )
+            detail.unit_price_net = unit_price_net
+            detail.unit_price_with_tax = unit_price_with_tax
         if id_tax is not None:
             detail.id_tax = id_tax
-        
+
         # Ricalcola i totali
         unit_price_net = detail.unit_price_net or 0.0
         detail.total_price_net = detail.product_qty * unit_price_net
-        
-        # Calcola total_price_with_tax usando la percentuale di id_tax
+
         detail.total_price_with_tax = detail.total_price_net
         if detail.id_tax:
             tax = self._tax_repository.get_tax_by_id(detail.id_tax)
             tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
             if tax_percentage is not None:
-                tax_percentage = float(tax_percentage)
-                detail.total_price_with_tax = calculate_price_with_tax(detail.total_price_net, tax_percentage, quantity=1)
+                detail.total_price_with_tax = calculate_price_with_tax(
+                    detail.total_price_net, tax_percentage, quantity=1
+                )
+        elif detail.unit_price_with_tax:
+            detail.total_price_with_tax = detail.product_qty * float(detail.unit_price_with_tax)
         
         # Ricalcola il totale del documento fiscale
         self.recalculate_fiscal_document_total(detail.id_fiscal_document)
@@ -1119,31 +1158,34 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         # Calcola il totale dei prodotti
         for item in order_details:
             quantity = item['quantity']
-            unit_price_net = item.get('unit_price_net', item.get('unit_price', 0.0))
-            id_tax = item.get('id_tax')
-            
-            # Se unit_price_net non è specificato, recupera dall'order_detail
-            if unit_price_net == 0.0:
-                order_detail = self._session.query(OrderDetail).filter(
-                    OrderDetail.id_order_detail == item['id_order_detail']
-                ).first()
-                if order_detail:
-                    unit_price_net = order_detail.unit_price_net or order_detail.product_price or 0.0
-                    if not id_tax:
-                        id_tax = order_detail.id_tax
-            
-            # Calcola il totale della riga senza IVA
-            line_total_net = quantity * unit_price_net
-            
-            # Applica l'IVA se presente (per il totale del documento fiscale)
-            line_total_with_tax = line_total_net
+            order_detail = self._session.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == item['id_order_detail']
+            ).first()
+            id_tax = item.get('id_tax') or (order_detail.id_tax if order_detail else None)
+            ref_net = float(order_detail.unit_price_net or 0) if order_detail else None
+            ref_gross = float(order_detail.unit_price_with_tax or 0) if order_detail else None
+            tax_percentage = None
             if id_tax:
                 tax = self._tax_repository.get_tax_by_id(id_tax)
-                tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
-                if tax_percentage is not None:
-                    tax_percentage = float(tax_percentage)
-                    line_total_with_tax = calculate_price_with_tax(line_total_net, tax_percentage, quantity=1)
-            
+                if tax and tax.percentage is not None:
+                    tax_percentage = float(tax.percentage)
+
+            unit_price_net, _ = resolve_return_unit_prices(
+                unit_price_net=item.get('unit_price_net'),
+                unit_price_with_tax=item.get('unit_price_with_tax'),
+                unit_price=item.get('unit_price'),
+                reference_unit_price_net=ref_net,
+                reference_unit_price_with_tax=ref_gross,
+                tax_percentage=tax_percentage,
+            )
+
+            line_total_net = quantity * unit_price_net
+            line_total_with_tax = line_total_net
+            if id_tax and tax_percentage is not None:
+                line_total_with_tax = calculate_price_with_tax(
+                    line_total_net, tax_percentage, quantity=1
+                )
+
             total_amount += line_total_with_tax
         
         # Aggiungi spese di spedizione se richieste
