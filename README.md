@@ -133,6 +133,34 @@ Helper: `src/vies/tax_resolution.py` (`get_vies_exemption_tax_id`, `resolve_vies
 
 ---
 
+## Ultime modifiche (2026-06-22) — `taxes.electronic_code` + FatturaPA Natura (step 1)
+
+**Contratto API Tax (allineato a FatturaPA):**
+
+| Campo | Contenuto | Uso XML FatturaPA |
+|-------|-----------|-------------------|
+| `electronic_code` | Codice natura breve (es. `N3.1`, `N3.2`) | tag `<Natura>` |
+| `note` | Descrizione normativa (es. `Non imponibili - esportazioni`) | tag `<RiferimentoNormativo>` |
+
+Il FE invia codice e descrizione su campi separati; non concatenare `CODICE - DESCRIZIONE` in `electronic_code`.
+
+**DB:** colonna `taxes.electronic_code` portata a `VARCHAR(255)` (migration `20260622_0001`; head applicata).
+
+**FatturaPA (step 1):**
+
+- Fix bug riga 527: rimosso `{tax_electronic_code:.2f}` (crash su stringhe).
+- `_prepare_order_data_from_fiscal_document` passa `tax_electronic_code` e `tax_note` da `Tax`.
+- Helper `src/services/external/fatturapa_natura.py` — normalizza codice per `<Natura>`.
+- Validator: accetta sottocodici `N3.1`–`N6.9`, rifiuta stringhe estese.
+
+**Prossimi step (non in questo commit):** Natura per riga ordine, ramo VIES `N3.2`, tax per `id_tax` riga.
+
+**Handoff FE:** [docs/FE_HANDOFF_TAX_ELECTRONIC_CODE.md](docs/FE_HANDOFF_TAX_ELECTRONIC_CODE.md)
+
+Test: `tests/unit/services/external/test_fatturapa_natura.py`, `tests/integration/api/v1/test_tax_electronic_code_length.py`.
+
+---
+
 ## Ultime modifiche (2026-06-05) — BE-ALIQ-05 (Tax.percentage DECIMAL)
 
 - Colonna `taxes.percentage`: `Integer` → `DECIMAL(5,2)` (modello SQLAlchemy + migration Alembic `20260605_0001`).

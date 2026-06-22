@@ -560,23 +560,20 @@ class FatturaPAValidator:
     
     def _validate_natura_iva(self, value: str) -> Tuple[bool, Optional[str]]:
         """
-        Valida natura operazione (N1-N7)
-        
-        Args:
-            value: Natura da validare
-            
-        Returns:
-            (is_valid, error_message)
+        Valida codice natura operazione (N1–N7 con eventuale sottocodice, es. N3.1).
         """
         if not value:
             return True, None  # Opzionale
-        
-        valid_nature = {'N1', 'N2', 'N3', 'N4', 'N5', 'N6', 'N7'}
-        
-        if value not in valid_nature:
-            return False, f"Natura '{value}' non valida (valori ammessi: N1-N7)"
-        
-        return True, None
+
+        from src.services.external.fatturapa_natura import normalize_natura_code
+
+        if normalize_natura_code(value):
+            return True, None
+
+        return False, (
+            f"Natura '{value}' non valida "
+            "(formato atteso: N1–N7 con eventuale sottocodice, es. N3.1)"
+        )
     
     def _validate_modalita_pagamento(self, value: str) -> Tuple[bool, Optional[str]]:
         """

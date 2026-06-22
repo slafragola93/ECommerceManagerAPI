@@ -369,6 +369,49 @@ def setup_taxes_percentage_decimal_column(db):
     print("  ✅ taxes.percentage migrata a DECIMAL(5,2).")
 
 
+def setup_taxes_electronic_code_length(db) -> None:
+    """Allarga taxes.electronic_code a VARCHAR(255) se ancora VARCHAR(10) (idempotente)."""
+    print("\n📋 Colonna taxes.electronic_code → VARCHAR(255)...")
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if "taxes" not in inspector.get_table_names():
+        print("  ⚠️  Tabella taxes non trovata — skip.")
+        return
+    electronic_code_col = next(
+        (c for c in inspector.get_columns("taxes") if c["name"] == "electronic_code"),
+        None,
+    )
+    if electronic_code_col is None:
+        print("  ⚠️  Colonna electronic_code non trovata — skip.")
+        return
+    col_type = str(electronic_code_col["type"]).upper()
+    if "255" in col_type or "TEXT" in col_type:
+        print("  ℹ️  taxes.electronic_code già estesa (≥255).")
+        return
+    dialect = bind.dialect.name
+    if dialect == "mysql":
+        db.execute(
+            text(
+                "ALTER TABLE taxes MODIFY COLUMN electronic_code "
+                "VARCHAR(255) NULL DEFAULT ''"
+            )
+        )
+    elif dialect == "sqlite":
+        print(
+            "  ℹ️  SQLite: skip ALTER (test usa create_all con String(255) dal modello)."
+        )
+        return
+    else:
+        db.execute(
+            text(
+                "ALTER TABLE taxes ALTER COLUMN electronic_code "
+                "TYPE VARCHAR(255)"
+            )
+        )
+    db.commit()
+    print("  ✅ taxes.electronic_code migrata a VARCHAR(255).")
+
+
 def main():
     print("🚀 ECommerceManagerAPI - Setup Iniziale")
     print("=" * 50)
@@ -385,6 +428,7 @@ def main():
         setup_company_fiscal_info(db)
         setup_orders_vies_status_column(db)
         setup_taxes_percentage_decimal_column(db)
+        setup_taxes_electronic_code_length(db)
 
         if os.environ.get("SEED_EU_VAT_TAXES", "").strip().lower() in ("1", "true", "yes"):
             setup_eu_country_taxes(db)
@@ -401,6 +445,7 @@ def main():
         print("  - Role ADMIN (CRUD), Utente admin (admin / admin)")
         print("  - CompanyFiscalInfo Elettronew")
         print("  - orders.vies_status (se assente)")
+        print("  - taxes.electronic_code VARCHAR(255) (se ancora VARCHAR(10))")
         print(
             "  - Tax UE: solo se SEED_EU_VAT_TAXES=1 "
             "(prod/stage: aliquote create dall'utente; cleanup: alembic upgrade head)"

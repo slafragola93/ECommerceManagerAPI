@@ -47,7 +47,11 @@ class TaxSchema(BaseModel):
     name: str = Field(..., min_length=5, max_length=200)
     note: Optional[str] = ""
     percentage: Optional[Decimal] = Field(default=Decimal("0.00"), ge=0, le=100)
-    electronic_code: Optional[str] = ""
+    electronic_code: Optional[str] = Field(
+        default="",
+        max_length=255,
+        description="Codice natura FatturaPA (es. N3.1). Descrizione normativa in note.",
+    )
 
     @field_validator("id_country", mode="before")
     @classmethod
@@ -67,7 +71,7 @@ class TaxResponseSchema(BaseModel):
     name: str
     note: Optional[str] = None
     percentage: Decimal = Field(..., ge=0, le=100)
-    electronic_code: Optional[str] = None
+    electronic_code: Optional[str] = Field(default=None, max_length=255)
 
     model_config = ConfigDict(from_attributes=True)
 

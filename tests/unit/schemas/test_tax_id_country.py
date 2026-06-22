@@ -40,6 +40,22 @@ class TestTaxSchemaIdCountry:
         assert schema.id_country is None
 
 
+class TestTaxSchemaElectronicCode:
+    EXTENDED = "N3.1 - Non imponibili - esportazioni"
+
+    def test_accepts_extended_electronic_code(self):
+        schema = TaxSchema(name="IVA Test 0%", electronic_code=self.EXTENDED)
+        assert schema.electronic_code == self.EXTENDED
+
+    def test_rejects_electronic_code_over_255_chars(self):
+        with pytest.raises(ValueError):
+            TaxSchema(name="IVA Test 0%", electronic_code="X" * 256)
+
+    def test_short_electronic_code_still_valid(self):
+        schema = TaxSchema(name="IVA Test 22%", electronic_code="N3.1")
+        assert schema.electronic_code == "N3.1"
+
+
 class TestTaxResponseSchemaIdCountry:
     def test_from_orm_with_null_country(self, db_session):
         tax = Tax(name="IVA Global", percentage=22, code="G", is_default=1)

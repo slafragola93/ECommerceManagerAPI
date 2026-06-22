@@ -15,6 +15,7 @@ from src.repository.app_configuration_repository import AppConfigurationReposito
 from src.repository.tax_repository import TaxRepository
 from src.services.external.province_service import province_service
 from src.services.external.fatturapa_validator import FatturaPAValidator
+from src.services.external.fatturapa_natura import normalize_natura_code
 
 logger = logging.getLogger(__name__)
 
@@ -457,9 +458,9 @@ class FatturaPAService:
         self._create_element(dati_generali_documento, "Numero", str(numero_sequenziale))
         self._create_element(dati_generali_documento, "ImportoTotaleDocumento", f"{total_amount:.2f}")
         
-        # DatiCassaPrevidenziale - solo se electronic_code è presente
-        tax_electronic_code = order_data.get('tax_electronic_code')
-        #if tax_electronic_code and tax_electronic_code.strip():
+        # Natura (codice breve) + RiferimentoNormativo (tax.note)
+        tax_electronic_code = normalize_natura_code(order_data.get("tax_electronic_code"))
+        tax_note = (order_data.get("tax_note") or "").strip() or None
         
         # DatiBeniServizi
         dati_beni_servizi = self._create_element(body, "DatiBeniServizi")
@@ -523,8 +524,8 @@ class FatturaPAService:
             self._create_element(dettaglio_linea, "PrezzoTotale", f"{prezzo_totale_netto:.2f}")
             
             self._create_element(dettaglio_linea, "AliquotaIVA", f"{tax_rate:.2f}")
-            if tax_electronic_code and tax_electronic_code.strip():
-                self._create_element(dettaglio_linea, "Natura", f"{tax_electronic_code:.2f}")
+            if tax_electronic_code:
+                self._create_element(dettaglio_linea, "Natura", tax_electronic_code)
         
         # Aggiungi linea per sconti se total_discounts > 0
         total_discounts = float(order_data.get('total_discounts', 0))
@@ -563,11 +564,9 @@ class FatturaPAService:
         dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
         self._create_element(dati_riepilogo, "AliquotaIVA", f"{tax_rate:.2f}")
 
-        if tax_electronic_code and tax_electronic_code.strip():
+        if tax_electronic_code:
             self._create_element(dati_riepilogo, "Natura", tax_electronic_code)
-            # Usa il campo note della tassa per RiferimentoNormativo
-            tax_note = order_data.get('tax_note')
-            if tax_note and tax_note.strip():
+            if tax_note:
                 self._create_element(dati_riepilogo, "RiferimentoNormativo", tax_note)
 
         # Arrotonda i totali usando ROUND_HALF_UP
@@ -905,6 +904,15 @@ class FatturaPAService:
             if not provincia_abbreviation:
                 # Se non trova, usa le prime 2 lettere maiuscole come fallback
                 provincia_abbreviation = address.state[:2].upper() if len(address.state) >= 2 else address.state.upper()
+
+        tax_electronic_code = None
+        tax_note = None
+        id_tax = customer.get("id_tax")
+        if id_tax:
+            tax = self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+            if tax:
+                tax_electronic_code = tax.electronic_code
+                tax_note = tax.note
         
         return {
             'id_order': order.id_order,
@@ -943,6 +951,8 @@ class FatturaPAService:
             'shipping_price_tax_excl': customer.get('shipping_price_tax_excl', 0.0),
             'shipping_tax_percentage': customer.get('shipping_tax_percentage', 22.0),
             'id_tax': customer.get('id_tax'),
+            'tax_electronic_code': tax_electronic_code,
+            'tax_note': tax_note,
             'tax_percentage_customer': customer.get('tax_percentage_customer')  # Percentuale IVA del paese di delivery
         }
     
