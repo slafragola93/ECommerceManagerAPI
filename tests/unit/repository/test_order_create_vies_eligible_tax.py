@@ -75,7 +75,7 @@ class TestOrderCreateViesEligibleTax:
         order = db_session.get(Order, order_id)
         assert order.vies_status == ViesStatus.ELIGIBLE
 
-    def test_explicit_id_tax_not_overwritten(
+    def test_explicit_id_tax_gets_vies_exemption_and_net_prices(
         self, db_session, order_state, reverse_charge_tax
     ):
         other = Tax(name="IVA 22%", percentage=22, code="T22", is_default=0)
@@ -110,4 +110,8 @@ class TestOrderCreateViesEligibleTax:
             .filter(OrderDetail.id_order == order_id)
             .first()
         )
-        assert detail.id_tax == other.id_tax
+        assert detail.id_tax == reverse_charge_tax.id_tax
+        assert float(detail.total_price_with_tax) == 100.0
+        assert float(detail.total_price_net) == 100.0
+        order = db_session.get(Order, order_id)
+        assert order.vies_status == ViesStatus.ELIGIBLE

@@ -60,8 +60,12 @@ class TestApplyViesExemption:
         zero_tax = db_session.query(Tax).filter(Tax.percentage == 0).first()
         assert zero_tax is not None
         assert refreshed_detail.id_tax == zero_tax.id_tax
-        assert float(refreshed_detail.total_price_with_tax) == 122.0
-        assert float(refreshed_detail.total_price_net) == 122.0
+        assert float(refreshed_detail.total_price_with_tax) == 100.0
+        assert float(refreshed_detail.total_price_net) == 100.0
+        db_session.expire_all()
+        refreshed_order = db_session.get(Order, order.id_order)
+        assert float(refreshed_order.total_price_with_tax) == 100.0
+        assert float(refreshed_order.products_total_price_with_tax) == 100.0
 
     async def test_uses_reverse_charge_from_settings(
         self, order_service, db_session, order_with_line, event_bus_spy

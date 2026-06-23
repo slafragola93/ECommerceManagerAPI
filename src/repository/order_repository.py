@@ -506,7 +506,27 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         if isinstance(data.shipping, ShippingSchema):
             # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
             shipping_data = data.shipping.model_dump()
-            if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
+            from src.vies.tax_resolution import (
+                is_vies_eligible_status,
+                resolve_vies_exemption_tax_id_with_fallback,
+            )
+            from src.vies.exemption_calculation import (
+                apply_vies_prices_to_shipping_dict,
+                resolve_source_tax_percentage,
+            )
+
+            vies_eligible = is_vies_eligible_status(data.vies_status)
+            if vies_eligible and shipping_data.get("price_tax_incl"):
+                vies_tax_id = resolve_vies_exemption_tax_id_with_fallback(self.session)
+                source_pct = resolve_source_tax_percentage(
+                    self.session,
+                    shipping_data.get("id_tax"),
+                    order.id_address_delivery,
+                )
+                apply_vies_prices_to_shipping_dict(
+                    shipping_data, source_pct, vies_tax_id
+                )
+            elif (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
                 if order.id_address_delivery:
                     tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
                     shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
@@ -584,18 +604,32 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 is_vies_eligible_status,
                 resolve_vies_exemption_tax_id_with_fallback,
             )
+            from src.vies.exemption_calculation import (
+                apply_vies_prices_to_detail_dict,
+                resolve_source_tax_percentage,
+            )
 
-            vies_tax_id = None
-            if is_vies_eligible_status(data.vies_status):
-                vies_tax_id = resolve_vies_exemption_tax_id_with_fallback(
-                    self.session
-                )
+            vies_eligible = is_vies_eligible_status(data.vies_status)
+            vies_tax_id = (
+                resolve_vies_exemption_tax_id_with_fallback(self.session)
+                if vies_eligible
+                else None
+            )
 
             for detail in data.order_details:
                 # Aggiungi l'id_order a ogni detail
                 detail_data = detail.model_dump()
                 detail_data['id_order'] = order.id_order
-                if vies_tax_id is not None and not detail_data.get('id_tax'):
+                if vies_eligible and vies_tax_id is not None:
+                    source_pct = resolve_source_tax_percentage(
+                        self.session,
+                        detail_data.get("id_tax"),
+                        order.id_address_delivery,
+                    )
+                    apply_vies_prices_to_detail_dict(
+                        detail_data, source_pct, vies_tax_id
+                    )
+                elif vies_tax_id is not None and not detail_data.get('id_tax'):
                     detail_data['id_tax'] = vies_tax_id
                 created_detail = self.order_detail_repository.create(detail_data)
                 created_order_details.append(created_detail)

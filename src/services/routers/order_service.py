@@ -1287,35 +1287,25 @@ class OrderService(IOrderService):
 
         return resolve_vies_exemption_tax_id_with_fallback(session)
 
-    def _recalculate_order_lines_for_zero_tax(
-        self, session: Session, order_id: int, zero_tax_id: int
+    def _apply_vies_real_exemption(
+        self, session: Session, order: Order, vies_tax_id: int
     ) -> None:
         """
-        Imposta id_tax=0% sulle righe ordine mantenendo total_price_with_tax invariato.
-        Riusa calculate_price_without_tax (stesso pattern di order_detail_service._calculate_price_fields).
+        Esenzione VIES reale: sottrae IVA da righe e spedizione (lordo → netto a 0%).
         """
-        order_details = session.query(OrderDetail).filter(
-            OrderDetail.id_order == order_id,
-            or_(
-                OrderDetail.id_order_document.is_(None),
-                OrderDetail.id_order_document == 0,
-            ),
-        ).all()
+        from src.vies.exemption_calculation import (
+            apply_vies_exemption_to_order_lines,
+            apply_vies_exemption_to_order_shipping,
+            get_order_delivery_country_id,
+        )
 
-        for od in order_details:
-            qty = od.product_qty or 1
-            total_with_tax = float(od.total_price_with_tax or 0.0)
-            unit_with_tax = (
-                float(od.unit_price_with_tax)
-                if od.unit_price_with_tax is not None
-                else (total_with_tax / qty if qty else 0.0)
-            )
-            od.id_tax = zero_tax_id
-            od.unit_price_with_tax = round(unit_with_tax, 2)
-            od.total_price_with_tax = round(total_with_tax, 2)
-            od.unit_price_net = calculate_price_without_tax(od.unit_price_with_tax, 0.0)
-            od.total_price_net = round(total_with_tax, 2)
-            session.add(od)
+        id_country = get_order_delivery_country_id(session, order)
+        apply_vies_exemption_to_order_lines(
+            session, order.id_order, vies_tax_id, id_country
+        )
+        apply_vies_exemption_to_order_shipping(
+            session, order, vies_tax_id, id_country
+        )
 
     def _emit_vies_exemption_event(
         self,
@@ -1348,7 +1338,7 @@ class OrderService(IOrderService):
             order.vies_status.value if order.vies_status is not None else None
         )
         vies_tax_id = self._resolve_vies_exemption_tax_id(session)
-        self._recalculate_order_lines_for_zero_tax(session, order_id, vies_tax_id)
+        self._apply_vies_real_exemption(session, order, vies_tax_id)
         self.recalculate_totals_for_order(order_id, commit=False)
         order = self._order_repository.get_by_id(_id=order_id)
         order.vies_status = ViesStatus.ELIGIBLE

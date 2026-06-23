@@ -103,15 +103,14 @@ async def test_vies_apply_trace_with_shipping(
 
     assert o.vies_status == ViesStatus.ELIGIBLE
     assert d.id_tax == zero_tax.id_tax
-    assert float(d.total_price_with_tax) == 122.00
-    assert float(d.total_price_net) == 122.00
-    # Spedizione invariata
-    assert s.id_tax == tax22.id_tax
-    assert float(s.price_tax_incl) == 12.20
+    assert float(d.total_price_with_tax) == 100.00
+    assert float(d.total_price_net) == 100.00
+    # Spedizione: IVA rimossa (12,20 → 10)
+    assert s.id_tax == zero_tax.id_tax
+    assert float(s.price_tax_incl) == 10.00
     assert float(s.price_tax_excl) == 10.00
-    # Totali ordine: prodotti a 0% + spedizione ancora con IVA 22%
-    assert float(o.products_total_price_net) == 122.00
-    assert float(o.products_total_price_with_tax) == 122.00
-    assert float(o.total_price_with_tax) == 134.20
-    assert float(o.total_price_net) == 132.00
-    assert float(o.total_price_with_tax) - float(o.total_price_net) == pytest.approx(2.20)
+    # Totali ordine: prodotti + spedizione netti
+    assert float(o.products_total_price_net) == 100.00
+    assert float(o.products_total_price_with_tax) == 100.00
+    assert float(o.total_price_with_tax) == 110.00
+    assert float(o.total_price_net) == 110.00

@@ -11,8 +11,9 @@ Guida per il gestionale Angular (repo FE separato). Il backend **ECommerceManage
 | Prima | Dopo click |
 |-------|------------|
 | `vies_status`: `not_eligible` o `null` | `eligible` |
-| Righe ordine con IVA (es. 22%) | `id_tax` = aliquota VIES (`reverse_charge_id_tax` da Impostazioni, altrimenti prima tax 0%) |
-| Totali **ivati** riga | **Invariati** (ricalcolo solo imponibile) |
+| Righe ordine con IVA (es. 22%) | `id_tax` = aliquota VIES; **lordo e netto** scendono al netto reale (es. 122 € → 100 €) |
+| Spedizione con IVA | Stessa logica (es. 12,20 € → 10 €) |
+| Totali ordine | **Diminuiscono** del valore IVA rimosso |
 
 **Non** usare `PUT /orders/{id}` con solo `vies_status: eligible` — non ricalcola le righe. Usare l’endpoint dedicato.
 

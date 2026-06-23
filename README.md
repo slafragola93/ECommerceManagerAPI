@@ -111,7 +111,7 @@ Prefisso `/api/v1/orders`. Permessi RBAC: `orders.read` (filtro lista), `orders.
 | Metodo | Path | Descrizione |
 |--------|------|-------------|
 | GET | `/api/v1/orders/?vies_status=eligible\|not_eligible\|null` | Filtro snapshot VIES (`null` = solo `vies_status` IS NULL; assenza param = tutti) |
-| PATCH | `/api/v1/orders/{id}/apply-vies-exemption` | Applica esenzione: righe a 0% IVA, totale ivato invariato, `vies_status=eligible` |
+| PATCH | `/api/v1/orders/{id}/apply-vies-exemption` | Applica esenzione: sottrae IVA reale da righe e spedizione, `vies_status=eligible` |
 | POST | `/api/v1/orders/bulk-apply-vies-exemption` | Stessa logica su `{ "order_ids": [1,2,...] }` in transazione atomica |
 | GET | `/api/v1/orders/{id}/pdf` | PDF stampa singolo ordine (layout elettronew: logo, barcode, intestazione/consegna, righe, totali) |
 
@@ -127,7 +127,19 @@ Sync PrestaShop: `src/services/vies/vies_status_resolver.py` — snapshot `vies_
 - `PATCH /api/v1/orders/{id}/apply-vies-exemption` (rettifica manuale KO → OK; usa `reverse_charge_id_tax` da settings se configurato)
 - `POST /api/v1/orders` con `vies_status: eligible` esplicito — righe senza `id_tax` ricevono l’aliquota VIES configurata
 
-Helper: `src/vies/tax_resolution.py` (`get_vies_exemption_tax_id`, `resolve_vies_exemption_tax_id_with_fallback`).
+Helper: `src/vies/tax_resolution.py` (`get_vies_exemption_tax_id`, `resolve_vies_exemption_tax_id_with_fallback`); calcolo prezzi: `src/vies/exemption_calculation.py`.
+
+## Ultime modifiche (2026-06-22) — VIES esenzione reale
+
+**Scope:** apply-vies-exemption e creazione ordine con `vies_status=eligible` sottraggono l'IVA reale (righe + spedizione); sync PrestaShop invariato.
+
+- **Prima:** lordo riga invariato, imponibile gonfiato a 0% IVA; spedizione non toccata.
+- **Dopo:** lordo = netto al netto reale (es. 122 € @ 22% → 100 €); spedizione stessa logica; totali ordine diminuiscono.
+- **Fallback aliquota** (se `id_tax` assente): default paese consegna → default globale → 0%.
+- **Righe già a 0%:** nessuna sottrazione (importi invariati), solo normalizzazione `id_tax` VIES.
+- **Sync PS** con `eligible` e IVA 0%: dati copiati fedelmente, nessuna sovrascrittura.
+
+**Test:** `tests/unit/vies/test_vies_exemption_calculation.py`, `tests/unit/services/test_order_vies_exemption*.py`, `tests/unit/repository/test_order_create_vies_eligible_tax.py`, `tests/integration/api/v1/test_order_vies_exemption.py` (totali in response PATCH + persistenza GET).
 
 **Delete tax:** `DELETE /api/v1/taxes/{id}` — se la tax è referenziata restituisce **422** con `error_code: TAX_IN_USE` e `details: { orders, documents, is_reverse_charge }` (BE-ALIQ-02).
 
@@ -156,6 +168,8 @@ Il FE invia codice e descrizione su campi separati; non concatenare `CODICE - DE
 **Prossimi step (non in questo commit):** Natura per riga ordine, ramo VIES `N3.2`, tax per `id_tax` riga.
 
 **Handoff FE:** [docs/FE_HANDOFF_TAX_ELECTRONIC_CODE.md](docs/FE_HANDOFF_TAX_ELECTRONIC_CODE.md)
+
+**Handoff FE — Aliquote vs Default paese:** [docs/FE_HANDOFF_TAX_DEFAULT_VS_CATALOG.md](docs/FE_HANDOFF_TAX_DEFAULT_VS_CATALOG.md) — chiarimento `is_default` (non usare come toggle “attiva aliquota”); catalogo multiplo per paese vs un solo default automatico.
 
 Test: `tests/unit/services/external/test_fatturapa_natura.py`, `tests/integration/api/v1/test_tax_electronic_code_length.py`.
 
