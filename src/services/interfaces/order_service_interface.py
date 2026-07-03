@@ -4,7 +4,7 @@ Interfaccia per Order Service seguendo ISP (Interface Segregation Principle)
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
-from src.models.order import Order
+from src.models.order import Order, ViesStatus
 from src.core.interfaces import IBaseService
 from src.schemas.order_schema import (
     OrderSchema,
@@ -84,6 +84,13 @@ class IOrderService(IBaseService):
     @abstractmethod
     async def apply_vies_exemption(self, order_id: int, user_id: int) -> Order:
         """Applica esenzione VIES su un ordine (righe a 0% IVA, totale riga invariato)."""
+        pass
+
+    @abstractmethod
+    async def update_vies_status(
+        self, order_id: int, target_status: ViesStatus, user_id: int
+    ) -> Order:
+        """Aggiorna stato VIES ordine (eligible / not_eligible) con side-effect coerenti."""
         pass
 
     @abstractmethod

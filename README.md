@@ -111,7 +111,8 @@ Prefisso `/api/v1/orders`. Permessi RBAC: `orders.read` (filtro lista), `orders.
 | Metodo | Path | Descrizione |
 |--------|------|-------------|
 | GET | `/api/v1/orders/?vies_status=eligible\|not_eligible\|null` | Filtro snapshot VIES (`null` = solo `vies_status` IS NULL; assenza param = tutti) |
-| PATCH | `/api/v1/orders/{id}/apply-vies-exemption` | Applica esenzione: sottrae IVA reale da righe e spedizione, `vies_status=eligible` |
+| PATCH | `/api/v1/orders/{id}/vies-status` | **Nuovo (03/07):** aggiornamento bidirezionale `{ "status": "eligible" \| "not_eligible" }`. `eligible` = esenzione completa (righe + spedizione + totali). `not_eligible` = label + IVA spedizione; righe/totali da FE |
+| PATCH | `/api/v1/orders/{id}/apply-vies-exemption` | Legacy — equivalente a `vies-status` con `eligible` |
 | POST | `/api/v1/orders/bulk-apply-vies-exemption` | Stessa logica su `{ "order_ids": [1,2,...] }` in transazione atomica |
 | GET | `/api/v1/orders/{id}/pdf` | PDF stampa singolo ordine (layout elettronew: logo, barcode, intestazione/consegna, righe, totali) |
 
@@ -119,15 +120,26 @@ Guida FE: [docs/FE_VIES_APPLY_EXEMPTION_BUTTON.md](docs/FE_VIES_APPLY_EXEMPTION_
 
 Ricalcolo BE: `calculate_price_without_tax` (righe) + `OrderService.recalculate_totals_for_order` (totali ordine).
 
-Evento: `ORDER_VIES_EXEMPTION_APPLIED`.
+Eventi: `ORDER_VIES_STATUS_CHANGED` (PATCH vies-status), `ORDER_VIES_EXEMPTION_APPLIED` (solo su `eligible`).
 
-Sync PrestaShop: `src/services/vies/vies_status_resolver.py` — snapshot `vies_status` senza chiamate VIES runtime né riscrittura aliquote in import.
+## Ultime modifiche (2026-07-03) — BE-1 bridge persist-if-complete
 
-**Logica VIES attiva solo su:**
-- `PATCH /api/v1/orders/{id}/apply-vies-exemption` (rettifica manuale KO → OK; usa `reverse_charge_id_tax` da settings se configurato)
-- `POST /api/v1/orders` con `vies_status: eligible` esplicito — righe senza `id_tax` ricevono l’aliquota VIES configurata
+**Scope:** il BE persiste i prezzi inviati dal FE quando il payload riga è completo; altrimenti mantiene il calcolo legacy.
 
-Helper: `src/vies/tax_resolution.py` (`get_vies_exemption_tax_id`, `resolve_vies_exemption_tax_id_with_fallback`); calcolo prezzi: `src/vies/exemption_calculation.py`.
+- Helper: `src/services/core/price_persistence.py` (`resolve_price_fields`, `has_complete_price_update_payload`).
+- Integrato in `order_service.add/update_order_detail` e `order_detail_service`.
+- Payload completo PUT riga: `id_tax` + `unit_price_net` + `unit_price_with_tax` + `total_price_net` + `total_price_with_tax`.
+- `OrderDetailCreateSchema`: aggiunti `unit_price_net` / `total_price_net` opzionali.
+- **Test:** `tests/unit/services/test_price_persistence.py`, `tests/unit/services/test_order_detail_price_bridge.py`.
+
+## Ultime modifiche (2026-07-03) — PATCH vies-status bidirezionale
+
+**Scope:** endpoint `PATCH /api/v1/orders/{id}/vies-status` per CTA FE Applica VIES / Update stato VIES.
+
+- **`eligible`:** riusa logica esenzione (righe 0% keep_gross, spedizione 0%, ricalcolo totali).
+- **`not_eligible`:** aggiorna `vies_status` e riattiva IVA sulla spedizione (`id_tax` standard + `price_tax_incl` da imponibile); **non** modifica righe né totali ordine (valori da operatore via PUT).
+- Helper: `reactivate_shipping_vat_for_order` in `src/vies/exemption_calculation.py`.
+- **Test:** `tests/unit/vies/test_reactivate_shipping_vat.py`, `tests/integration/api/v1/test_order_patch_vies_status.py`.
 
 ## Ultime modifiche (2026-06-22) — VIES esenzione reale
 

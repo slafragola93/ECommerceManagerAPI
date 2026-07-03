@@ -137,6 +137,8 @@ class OrderDetailCreateSchema(BaseModel):
     product_weight: float = Field(..., ge=0, description="Peso prodotto (obbligatorio)")
     unit_price_with_tax: float = Field(..., ge=0, description="Prezzo unitario con IVA (obbligatorio)")
     total_price_with_tax: float = Field(..., ge=0, description="Totale con IVA (obbligatorio)")
+    unit_price_net: Optional[float] = Field(None, ge=0, description="Prezzo unitario senza IVA (opzionale se calcolato dal BE)")
+    total_price_net: Optional[float] = Field(None, ge=0, description="Totale senza IVA (opzionale se calcolato dal BE)")
     product_reference: Optional[str] = Field(None, max_length=100)
     reduction_percent: Optional[float] = Field(0.0, ge=0)
     reduction_amount: Optional[float] = Field(0.0, ge=0)
@@ -152,8 +154,8 @@ class OrderDetailCreateSchema(BaseModel):
                 raise ValueError('rda_quantity non può superare product_qty')
         return v
     
-    @validator('unit_price_with_tax', 'total_price_with_tax', 'product_weight', 
-               'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
+    @validator('unit_price_with_tax', 'total_price_with_tax', 'unit_price_net', 'total_price_net',
+               'product_weight', 'reduction_percent', 'reduction_amount', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
         if v is None:
             return None

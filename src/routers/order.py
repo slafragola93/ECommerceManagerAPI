@@ -37,6 +37,7 @@ from ..schemas.order_schema import (
     OrderStatusUpdateItem,
     BulkOrderStatusUpdateResponseSchema,
     BulkApplyViesExemptionSchema,
+    OrderViesStatusUpdateSchema,
 )
 from src.services.routers.order_service import OrderService
 from src.services.interfaces.order_service_interface import IOrderService
@@ -592,6 +593,33 @@ async def apply_vies_exemption(
     """
     user_id = user.get("id") or user.get("user_id") or 0
     order = await order_service.apply_vies_exemption(order_id, user_id)
+    data = or_repo.formatted_output(order, show_details=False, include_order_history=False)
+    return {"status": "success", "data": data}
+
+
+@router.patch(
+    "/{order_id}/vies-status",
+    status_code=status.HTTP_200_OK,
+    response_description="Stato VIES ordine aggiornato",
+)
+@check_authentication
+async def update_order_vies_status(
+    order_id: int = Path(gt=0),
+    body: OrderViesStatusUpdateSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    order_service: IOrderService = Depends(get_order_service),
+    or_repo: OrderRepository = Depends(get_repository),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    """
+    Aggiorna lo stato VIES dell'ordine in modo bidirezionale.
+
+    - `eligible`: applica esenzione VIES su righe e spedizione (keep_gross), ricalcola totali.
+    - `not_eligible`: aggiorna label e riattiva IVA sulla spedizione; righe e totali ordine
+      restano a carico del FE (PUT order_detail / PUT order).
+    """
+    user_id = user.get("id") or user.get("user_id") or 0
+    order = await order_service.update_vies_status(order_id, body.status, user_id)
     data = or_repo.formatted_output(order, show_details=False, include_order_history=False)
     return {"status": "success", "data": data}
 

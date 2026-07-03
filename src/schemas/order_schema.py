@@ -341,6 +341,17 @@ class BulkApplyViesExemptionResponseSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="ignore")
 
 
+class OrderViesStatusUpdateSchema(BaseModel):
+    """Aggiornamento stato VIES ordine (eligible / not_eligible)."""
+
+    status: ViesStatus = Field(
+        ...,
+        description="Stato VIES target: eligible (applica esenzione) o not_eligible",
+    )
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+
 class OrderStateSyncResponseSchema(BaseModel):
     """Schema per la risposta di sincronizzazione stato ordine con ecommerce platform"""
     order_id: int = Field(description="ID dell'ordine sincronizzato")

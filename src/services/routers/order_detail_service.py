@@ -17,8 +17,12 @@ from src.core.exceptions import (
 from src.services.interfaces.order_service_interface import IOrderService
 from src.services.routers.product_service import ProductService
 from src.repository.product_repository import ProductRepository
-from src.services.core.tool import calculate_price_with_tax, calculate_price_without_tax
-from src.models.tax import Tax
+from src.services.core.price_persistence import (
+    calculate_price_fields_legacy,
+    has_complete_price_update_payload,
+    persisted_price_fields,
+    resolve_price_fields,
+)
 
 
 def _collect_tracked_values(order_detail: OrderDetail) -> Dict[str, Any]:
@@ -33,60 +37,16 @@ def _collect_tracked_values(order_detail: OrderDetail) -> Dict[str, Any]:
         "reduction_amount": getattr(order_detail, "reduction_amount", None),
     }
 
+
 def _calculate_price_fields(order_detail_data: OrderDetailSchema, db: Session) -> Dict[str, float]:
-    """
-    Calcola i campi prezzo mancanti basandosi sui campi forniti e id_tax.
-    Restituisce un dizionario con tutti i campi prezzo calcolati.
-    """
-    unit_price_net = order_detail_data.unit_price_net
-    unit_price_with_tax = order_detail_data.unit_price_with_tax
-    quantity = order_detail_data.product_qty or 1
-    id_tax = order_detail_data.id_tax
-    
-    # Recupera tax_percentage se id_tax è fornito
-    tax_percentage = 0.0
-    if id_tax:
-        tax = db.query(Tax).filter(Tax.id_tax == id_tax).first()
-        if tax and tax.percentage is not None:
-            tax_percentage = float(tax.percentage)
-    
-    # Se unit_price_with_tax è fornito ma unit_price_net no, calcola unit_price_net
-    if unit_price_with_tax is not None and unit_price_with_tax > 0 and (unit_price_net is None or unit_price_net == 0):
-        unit_price_net = calculate_price_without_tax(unit_price_with_tax, tax_percentage)
-    
-    # Se unit_price_net è fornito ma unit_price_with_tax no, calcola unit_price_with_tax
-    if unit_price_net is not None and unit_price_net > 0 and (unit_price_with_tax is None or unit_price_with_tax == 0):
-        unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
-    
-    # Calcola totali base (prima degli sconti)
-    total_base_net = (unit_price_net or 0.0) * quantity
-    total_base_with_tax = (unit_price_with_tax or 0.0) * quantity
-    
-    # Applica sconti
-    reduction_percent = order_detail_data.reduction_percent or 0.0
-    reduction_amount = order_detail_data.reduction_amount or 0.0
-    
-    if reduction_percent > 0:
-        from src.services.core.tool import calculate_amount_with_percentage
-        discount = calculate_amount_with_percentage(total_base_net, reduction_percent)
-        total_price_net = total_base_net - discount
-    elif reduction_amount > 0:
-        total_price_net = total_base_net - reduction_amount
-    else:
-        total_price_net = total_base_net
-    
-    # Calcola total_price_with_tax dopo gli sconti
-    if total_price_net > 0 and tax_percentage > 0:
-        total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-    else:
-        total_price_with_tax = total_base_with_tax
-    
-    return {
-        'unit_price_net': unit_price_net or 0.0,
-        'unit_price_with_tax': unit_price_with_tax or 0.0,
-        'total_price_net': total_price_net,
-        'total_price_with_tax': total_price_with_tax
-    }
+    """Delega a resolve_price_fields (bridge persist-if-complete / legacy)."""
+    return resolve_price_fields(
+        order_detail_data,
+        db,
+        product_qty=order_detail_data.product_qty,
+        reduction_percent=order_detail_data.reduction_percent,
+        reduction_amount=order_detail_data.reduction_amount,
+    )
 
 class OrderDetailService(IOrderDetailService):
     """Order Detail Service rifattorizzato seguendo SRP, OCP, LSP, ISP, DIP"""
@@ -214,10 +174,26 @@ class OrderDetailService(IOrderDetailService):
             update_payload = order_detail_data.model_dump(exclude_unset=True)
             
             # Calcola i campi prezzo mancanti se necessario
-            if 'unit_price_net' in update_payload or 'unit_price_with_tax' in update_payload or 'id_tax' in update_payload:
-                # Crea un OrderDetailSchema temporaneo con i valori aggiornati
-                temp_data = OrderDetailSchema(**{**order_detail.model_dump(), **update_payload})
-                price_fields = _calculate_price_fields(temp_data, self._db)
+            if (
+                'unit_price_net' in update_payload
+                or 'unit_price_with_tax' in update_payload
+                or 'id_tax' in update_payload
+                or 'total_price_net' in update_payload
+                or 'total_price_with_tax' in update_payload
+            ):
+                if has_complete_price_update_payload(update_payload):
+                    price_fields = persisted_price_fields(update_payload)
+                else:
+                    temp_data = OrderDetailSchema(**{**order_detail.model_dump(), **update_payload})
+                    price_fields = calculate_price_fields_legacy(
+                        id_tax=temp_data.id_tax,
+                        unit_price_net=temp_data.unit_price_net,
+                        unit_price_with_tax=temp_data.unit_price_with_tax,
+                        product_qty=temp_data.product_qty or 1,
+                        reduction_percent=float(temp_data.reduction_percent or 0.0),
+                        reduction_amount=float(temp_data.reduction_amount or 0.0),
+                        db=self._db,
+                    )
                 update_payload.update(price_fields)
             
             for field_name, value in update_payload.items():

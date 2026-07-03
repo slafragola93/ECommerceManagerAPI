@@ -35,8 +35,13 @@ from src.events.extractors import extract_order_created_data, extract_order_dele
 from src.core.exceptions import BusinessRuleException, NotFoundException
 from src.models.ecommerce_order_state import EcommerceOrderState
 from src.services.ecommerce.service_factory import create_ecommerce_service
-from src.services.core.tool import calculate_order_totals, calculate_price_without_tax,calculate_amount_with_percentage
-from src.repository.tax_repository import TaxRepository
+from src.services.core.tool import calculate_order_totals
+from src.services.core.price_persistence import (
+    calculate_price_fields_legacy,
+    has_complete_price_update_payload,
+    persisted_price_fields,
+    resolve_price_fields,
+)
 from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.order_detail_schema import OrderDetailCreateSchema, OrderDetailUpdateSchema
 import logging
@@ -445,30 +450,15 @@ class OrderService(IOrderService):
             raise ValueError(f"Ordine {order_id} non trovato")
         
         session = self._order_repository.session
-        
-        # Recupera la percentuale IVA
-        tax_repo = TaxRepository(session)
-        tax_percentage = tax_repo.get_percentage_by_id(order_detail_data.id_tax)
-        
-        # Calcola unit_price_net da unit_price_with_tax
-        unit_price_net = calculate_price_without_tax(order_detail_data.unit_price_with_tax, tax_percentage)
-        
-        # Calcola total_price_net_base da total_price_with_tax (assumendo che total_price_with_tax sia già il totale finale)
-        total_price_net_base = calculate_price_without_tax(order_detail_data.total_price_with_tax, tax_percentage)
-        
-        # Applica sconti se presenti (gli sconti vengono applicati al totale netto)
-        total_price_net = total_price_net_base
-        if order_detail_data.reduction_percent and order_detail_data.reduction_percent > 0:
-            discount = calculate_amount_with_percentage(total_price_net_base, order_detail_data.reduction_percent)
-            total_price_net = total_price_net_base - discount
-        elif order_detail_data.reduction_amount and order_detail_data.reduction_amount > 0:
-            total_price_net = total_price_net_base - order_detail_data.reduction_amount
-        
-        # Ricalcola total_price_with_tax dal total_price_net finale (dopo sconti)
-        from src.services.core.tool import calculate_price_with_tax
-        total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-        
-        # Crea l'order_detail
+
+        price_fields = resolve_price_fields(
+            order_detail_data,
+            session,
+            product_qty=order_detail_data.product_qty,
+            reduction_percent=order_detail_data.reduction_percent,
+            reduction_amount=order_detail_data.reduction_amount,
+        )
+
         order_detail = OrderDetail(
             id_order=order_id,
             id_order_document=0,
@@ -478,10 +468,10 @@ class OrderService(IOrderService):
             product_name=order_detail_data.product_name,
             product_reference=order_detail_data.product_reference or "",
             product_qty=order_detail_data.product_qty,
-            unit_price_net=unit_price_net,
-            unit_price_with_tax=order_detail_data.unit_price_with_tax,
-            total_price_net=total_price_net,
-            total_price_with_tax=total_price_with_tax,
+            unit_price_net=price_fields["unit_price_net"],
+            unit_price_with_tax=price_fields["unit_price_with_tax"],
+            total_price_net=price_fields["total_price_net"],
+            total_price_with_tax=price_fields["total_price_with_tax"],
             product_weight=order_detail_data.product_weight,
             reduction_percent=order_detail_data.reduction_percent or 0.0,
             reduction_amount=order_detail_data.reduction_amount or 0.0,
@@ -557,85 +547,45 @@ class OrderService(IOrderService):
         
         # Prepara i dati da aggiornare (solo campi forniti)
         update_data = order_detail_data.model_dump(exclude_unset=True)
-        
-        # Se viene modificato id_tax, unit_price_with_tax o total_price_with_tax, 
-        # calcola i prezzi netti se necessario
-        if 'id_tax' in update_data or 'unit_price_with_tax' in update_data or 'total_price_with_tax' in update_data:
-            # Usa id_tax aggiornato o quello esistente (non usare `or`: id_tax=0 sarebbe ignorato)
-            id_tax = update_data['id_tax'] if 'id_tax' in update_data else order_detail.id_tax
-            if id_tax is None or id_tax <= 0:
-                raise ValueError("id_tax è obbligatorio per calcolare i prezzi netti")
-            
-            tax_repo = TaxRepository(session)
-            tax_percentage = tax_repo.get_percentage_by_id(id_tax)
-            
-            # Se unit_price_with_tax è fornito ma unit_price_net no, calcola unit_price_net
-            if 'unit_price_with_tax' in update_data and 'unit_price_net' not in update_data:
-                update_data['unit_price_net'] = calculate_price_without_tax(
-                    update_data['unit_price_with_tax'], 
-                    tax_percentage
-                )
-            
-            # Se total_price_with_tax è fornito ma total_price_net no, calcola total_price_net
-            if 'total_price_with_tax' in update_data and 'total_price_net' not in update_data:
-                update_data['total_price_net'] = calculate_price_without_tax(
-                    update_data['total_price_with_tax'], 
-                    tax_percentage
-                )
-        
-        # Se vengono modificati reduction_percent o reduction_amount, ricalcola i totali
-        if 'reduction_percent' in update_data or 'reduction_amount' in update_data:
-            # Usa i valori aggiornati o quelli esistenti (no `or`: 0 è un valore valido per prezzo/qty)
-            id_tax = update_data['id_tax'] if 'id_tax' in update_data else order_detail.id_tax
-            unit_price_net = (
-                update_data['unit_price_net'] if 'unit_price_net' in update_data else order_detail.unit_price_net
-            )
-            product_qty = (
-                update_data['product_qty'] if 'product_qty' in update_data else order_detail.product_qty
-            )
 
-            if id_tax is None or id_tax <= 0:
-                raise ValueError("id_tax è necessario per applicare gli sconti")
-            if unit_price_net is None:
-                raise ValueError("unit_price_net è necessario per applicare gli sconti")
-            if product_qty is None:
-                raise ValueError("product_qty è necessario per applicare gli sconti")
-            
-            # Calcola il totale base (prima degli sconti); float() evita TypeError Decimal/float da SQLAlchemy
-            total_base_net = float(unit_price_net) * int(product_qty)
-            
-            # Applica gli sconti (stesso criterio `in update_data` del resto: 0 è valido)
-            rp = (
-                update_data['reduction_percent']
-                if 'reduction_percent' in update_data
-                else order_detail.reduction_percent
-            )
-            ra = (
-                update_data['reduction_amount']
-                if 'reduction_amount' in update_data
-                else order_detail.reduction_amount
-            )
-            reduction_percent = float(rp if rp is not None else 0.0)
-            reduction_amount = float(ra if ra is not None else 0.0)
-            
-            if reduction_percent > 0:
-                discount = calculate_amount_with_percentage(total_base_net, reduction_percent)
-                total_price_net = total_base_net - discount
-            elif reduction_amount > 0:
-                total_price_net = total_base_net - reduction_amount
+        price_related = {
+            "id_tax", "unit_price_net", "unit_price_with_tax",
+            "total_price_net", "total_price_with_tax",
+        }
+        touches_prices = bool(price_related.intersection(update_data))
+
+        if touches_prices:
+            if has_complete_price_update_payload(update_data):
+                update_data.update(persisted_price_fields(update_data))
             else:
-                total_price_net = total_base_net
-            
-            # Calcola total_price_with_tax dal total_price_net finale
-            tax_repo = TaxRepository(session)
-            tax_percentage = tax_repo.get_percentage_by_id(id_tax)
-            from src.services.core.tool import calculate_price_with_tax
-            total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-            
-            # Aggiorna i totali
-            update_data['total_price_net'] = total_price_net
-            update_data['total_price_with_tax'] = total_price_with_tax
-        
+                rp = (
+                    update_data["reduction_percent"]
+                    if "reduction_percent" in update_data
+                    else order_detail.reduction_percent
+                )
+                ra = (
+                    update_data["reduction_amount"]
+                    if "reduction_amount" in update_data
+                    else order_detail.reduction_amount
+                )
+                pq = (
+                    update_data["product_qty"]
+                    if "product_qty" in update_data
+                    else order_detail.product_qty
+                )
+                legacy_prices = calculate_price_fields_legacy(
+                    id_tax=update_data.get("id_tax", order_detail.id_tax),
+                    unit_price_net=update_data.get("unit_price_net", order_detail.unit_price_net),
+                    unit_price_with_tax=update_data.get(
+                        "unit_price_with_tax", order_detail.unit_price_with_tax
+                    ),
+                    product_qty=pq or 1,
+                    reduction_percent=float(rp if rp is not None else 0.0),
+                    reduction_amount=float(ra if ra is not None else 0.0),
+                    db=session,
+                )
+                update_data.update(legacy_prices)
+
         # Applica gli aggiornamenti
         for field_name, value in update_data.items():
             if hasattr(order_detail, field_name) and value is not None:
@@ -1326,6 +1276,28 @@ class OrderService(IOrderService):
             )
         )
 
+    def _emit_vies_status_changed_event(
+        self,
+        order_id: int,
+        previous_vies_status: Optional[str],
+        new_vies_status: str,
+        user_id: int,
+        source: str,
+    ) -> None:
+        emit_event(
+            Event(
+                event_type=EventType.ORDER_VIES_STATUS_CHANGED.value,
+                data={
+                    "order_id": order_id,
+                    "previous_vies_status": previous_vies_status,
+                    "new_vies_status": new_vies_status,
+                    "applied_by_user_id": user_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                metadata={"source": source},
+            )
+        )
+
     def _apply_vies_exemption_core(
         self, order_id: int, user_id: int
     ) -> tuple[Order, Optional[str]]:
@@ -1346,17 +1318,78 @@ class OrderService(IOrderService):
         session.add(order)
         return order, previous_vies_status
 
-    async def apply_vies_exemption(self, order_id: int, user_id: int) -> Order:
+    def _apply_not_eligible_vies_core(
+        self, order_id: int
+    ) -> tuple[Order, Optional[str]]:
+        """
+        Revoca label VIES e riattiva IVA spedizione.
+        Non modifica righe ordine né ricalcola totali header (valori da FE).
+        """
+        from src.vies.exemption_calculation import reactivate_shipping_vat_for_order
+
         session = self._order_repository.session
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise NotFoundException("Order", order_id, {"order_id": order_id})
+
+        previous_vies_status = (
+            order.vies_status.value if order.vies_status is not None else None
+        )
+
+        reactivate_shipping_vat_for_order(session, order)
+        order.vies_status = ViesStatus.NOT_ELIGIBLE
+        order.updated_at = format_datetime_ddmmyyyy_hhmmss(datetime.now())
+        session.add(order)
+        return order, previous_vies_status
+
+    async def update_vies_status(
+        self, order_id: int, target_status: ViesStatus, user_id: int
+    ) -> Order:
+        session = self._order_repository.session
+        order = self._order_repository.get_by_id(_id=order_id)
+        if not order:
+            raise NotFoundException("Order", order_id, {"order_id": order_id})
+
+        if order.vies_status == target_status:
+            return order
+
+        previous_vies_status = (
+            order.vies_status.value if order.vies_status is not None else None
+        )
+
         try:
-            order, previous_vies_status = self._apply_vies_exemption_core(order_id, user_id)
+            if target_status == ViesStatus.ELIGIBLE:
+                order, previous_vies_status = self._apply_vies_exemption_core(
+                    order_id, user_id
+                )
+            elif target_status == ViesStatus.NOT_ELIGIBLE:
+                order, previous_vies_status = self._apply_not_eligible_vies_core(
+                    order_id
+                )
+            else:
+                raise BusinessRuleException(
+                    f"Stato VIES non supportato: {target_status}",
+                    details={"target_status": str(target_status)},
+                )
+
             session.commit()
             session.refresh(order)
-            self._emit_vies_exemption_event(order_id, previous_vies_status, user_id)
+            self._emit_vies_status_changed_event(
+                order_id,
+                previous_vies_status,
+                target_status.value,
+                user_id,
+                source="order_service.update_vies_status",
+            )
+            if target_status == ViesStatus.ELIGIBLE:
+                self._emit_vies_exemption_event(order_id, previous_vies_status, user_id)
             return order
         except Exception:
             session.rollback()
             raise
+
+    async def apply_vies_exemption(self, order_id: int, user_id: int) -> Order:
+        return await self.update_vies_status(order_id, ViesStatus.ELIGIBLE, user_id)
 
     async def bulk_apply_vies_exemption(
         self, order_ids: List[int], user_id: int

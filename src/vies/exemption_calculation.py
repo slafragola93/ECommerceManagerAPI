@@ -15,7 +15,7 @@ from src.models.order import Order
 from src.models.order_detail import OrderDetail
 from src.models.shipping import Shipping
 from src.repository.tax_repository import TaxRepository
-from src.services.core.tool import calculate_price_without_tax
+from src.services.core.tool import calculate_price_without_tax, calculate_price_with_tax
 
 
 def get_order_delivery_country_id(session: Session, order: Order) -> Optional[int]:
@@ -200,4 +200,59 @@ def apply_vies_exemption_to_order_shipping(
         session, shipping.id_tax, id_country_delivery
     )
     apply_vies_prices_to_shipping(shipping, source_pct, vies_tax_id)
+    session.add(shipping)
+
+
+def resolve_standard_tax_for_order(
+    session: Session,
+    order: Order,
+) -> Dict[str, float | int]:
+    """
+    Aliquota standard per paese di consegna (id_tax + percentage).
+    Fallback: default globale, poi 22% / id_tax=1.
+    """
+    tax_repo = TaxRepository(session)
+    id_country = get_order_delivery_country_id(session, order)
+    if id_country and id_country > 0:
+        tax_info = tax_repo.get_tax_info_by_country(id_country)
+        if tax_info:
+            return tax_info
+
+    global_default = tax_repo.get_global_default()
+    if global_default is not None and global_default.percentage is not None:
+        return {
+            "id_tax": global_default.id_tax,
+            "percentage": float(global_default.percentage),
+        }
+
+    default_pct = tax_repo.get_default_tax_percentage_from_app_config(22.0)
+    return {"id_tax": 1, "percentage": default_pct}
+
+
+def reactivate_shipping_vat_for_order(session: Session, order: Order) -> None:
+    """
+    Riattiva IVA sulla spedizione (not_eligible): imposta id_tax standard e ricalcola
+    price_tax_incl da price_tax_excl. Non tocca righe ordine né totali header.
+    """
+    if not order.id_shipping:
+        return
+
+    shipping = (
+        session.query(Shipping)
+        .filter(Shipping.id_shipping == order.id_shipping)
+        .first()
+    )
+    if not shipping:
+        return
+
+    tax_info = resolve_standard_tax_for_order(session, order)
+    standard_tax_id = int(tax_info["id_tax"])
+    standard_pct = float(tax_info["percentage"])
+
+    excl = float(shipping.price_tax_excl or shipping.price_tax_incl or 0.0)
+    incl = calculate_price_with_tax(excl, standard_pct, quantity=1)
+
+    shipping.id_tax = standard_tax_id
+    shipping.price_tax_excl = round(excl, 2)
+    shipping.price_tax_incl = round(incl, 2)
     session.add(shipping)
