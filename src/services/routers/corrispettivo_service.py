@@ -158,14 +158,14 @@ class CorrispettivoService:
             request.year, request.month, filter_dict
         )
 
-        riepilogo_all = self.get_riepilogo(request.year, request.month, request.filters)
-        riepilogo_by_country = {}
+        summary_all = self.get_daily_summary(request.year, request.month, request.filters)
+        summary_by_country = {}
         base_filter_data = request.filters.model_dump(exclude_none=True) if request.filters else {}
         for iso in country_codes:
             country_filters = CorrispettivoFiltersSchema(
                 **{**base_filter_data, "delivery_country_iso": iso}
             )
-            riepilogo_by_country[iso] = self.get_riepilogo(
+            summary_by_country[iso] = self.get_daily_summary(
                 request.year,
                 request.month,
                 country_filters,
@@ -173,6 +173,6 @@ class CorrispettivoService:
 
         excel_service = CorrispettiviExcelService()
         return excel_service.build_registri_zip(
-            consolidated=riepilogo_all,
-            by_country=riepilogo_by_country,
+            consolidated=summary_all,
+            by_country=summary_by_country,
         )

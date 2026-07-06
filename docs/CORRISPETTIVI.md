@@ -37,6 +37,30 @@ I corrispettivi sono un **report fiscale interno** (no SDI, no servizi esterni).
 - È possibile consultare **mesi passati** (`year` + `month` qualsiasi).
 - I totali **possono cambiare nel tempo** se un ordine viene fatturato dopo la data ordine (query live, nessuno snapshot congelato).
 
+### Filtro ordini non fatturati (implementazione)
+
+Criterio identico a `OrderRepository` con `has_invoice=false`:
+
+```sql
+NOT EXISTS (
+  SELECT 1 FROM fiscal_documents fd
+  WHERE fd.id_order = orders.id_order
+    AND fd.document_type = 'invoice'
+)
+```
+
+| Caso | Incluso nei corrispettivi? |
+|---|---|
+| Ordine senza documenti fiscali | Sì (vendite) |
+| Ordine con solo `credit_note` o `return` (nessuna `invoice`) | Sì |
+| Ordine con aliquota `invoice` (qualsiasi `status`) | **No** |
+| Reso su ordine fatturato | **No** |
+| Reso su ordine non fatturato | Sì (contato alla data del reso) |
+
+**Nota:** non si usa `Order.is_invoice_requested`; conta solo la presenza effettiva di una fattura in `fiscal_documents`.
+
+Test automatici: `tests/unit/repository/test_corrispettivo_repository.py`
+
 ---
 
 ## 2. Organizzazione endpoint
@@ -322,11 +346,20 @@ Authorization: Bearer <token>
 | `registro_DE.xlsx` | Solo consegne DE |
 | … | Un file per ogni ISO con movimenti nel mese |
 
-**Struttura Excel (ogni file):**
+**Struttura Excel (ogni file)** — importi **con IVA inclusa**:
 
-- Header: `Giorno`, `Data`, per ogni aliquota `{label} Vendite` + `{label} Resi`, poi `Netto Vendite`, `Netto Resi`, `Netto`, `Sped. Vendite`, `Sped. Resi`
-- Righe: solo giorni con movimento
-- Ultima riga: totali mese
+| Colonna | Contenuto |
+|---|---|
+| `Data` | Giorno con movimento (`YYYY-MM-DD`) |
+| `Totale vendite` | Somma vendite giornaliere (ordini non fatturati) |
+| `Tot resi` | Somma resi giornalieri |
+| `Totale netto` | Vendite − resi |
+| `Netto prodotti` | Netto imputato ai prodotti |
+| `Netto spedizione` | Netto imputato alla spedizione |
+
+- Una riga per ogni giorno con movimento
+- Ultima riga: totali mese (`Totale MM/YYYY`)
+- Nessuna colonna per aliquota IVA (solo totali giornalieri)
 
 **FE — download blob:**
 ```typescript
@@ -563,6 +596,8 @@ pytest tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py -v
 
 | Data | Modifica |
 |---|---|
+| 2026-07-06 | Export Excel semplificato: 6 colonne con importi IVA incl. (data, vendite, resi, netto tot/prodotti/spedizione) |
+| 2026-07-06 | Test repository filtro non fatturati + documentazione criterio `NOT EXISTS invoice` |
 | 2026-07-06 | Diagnostica 401 migliorata (`authorization_header_present` in log e body); alias `/riepilogo/` e `/summary` |
 | 2026-07-06 | Rimosso `GET /aliquote` (ridondante: header aliquote in `/riepilogo` → `columns`) |
 | 2026-07-06 | Fix SQLAlchemy `EXISTS` correlazione su filtro ordini non fatturati (500 su GET `/`) |

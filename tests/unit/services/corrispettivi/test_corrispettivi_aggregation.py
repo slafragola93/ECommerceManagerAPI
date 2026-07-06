@@ -79,42 +79,39 @@ def test_build_riepilogo_rows_and_month_totals():
 
 
 def test_build_registri_zip_contains_expected_files():
-    riepilogo = CorrispettivoRiepilogoResponseSchema(
+    from src.schemas.corrispettivo_schema import (
+        CorrispettivoDaySummarySchema,
+        CorrispettivoListResponseSchema,
+        CorrispettivoSplitTotalsSchema,
+    )
+
+    day_summary = CorrispettivoDaySummarySchema(
+        date=date(2026, 5, 15),
+        sales=CorrispettivoSplitTotalsSchema(
+            total_with_tax=Decimal("122.00"),
+            products_with_tax=Decimal("122.00"),
+            shipping_with_tax=Decimal("0.00"),
+        ),
+        returns=CorrispettivoSplitTotalsSchema(
+            total_with_tax=Decimal("12.20"),
+            products_with_tax=Decimal("12.20"),
+        ),
+        net=CorrispettivoSplitTotalsSchema(
+            total_with_tax=Decimal("109.80"),
+            products_with_tax=Decimal("109.80"),
+            shipping_with_tax=Decimal("0.00"),
+        ),
+    )
+    summary = CorrispettivoListResponseSchema(
         year=2026,
         month=5,
-        columns=[CorrispettivoTaxColumnSchema(id_tax=1, label="22", percentage=22.0)],
-        rows=[
-            CorrispettivoRiepilogoRowSchema(
-                day=15,
-                date=date(2026, 5, 15),
-                cells={
-                    "1": CorrispettivoAmountSchema(
-                        sales_net=Decimal("100.00"),
-                        returns_net=Decimal("10.00"),
-                        net=Decimal("90.00"),
-                    )
-                },
-                row_net=CorrispettivoAmountSchema(
-                    sales_net=Decimal("100.00"),
-                    returns_net=Decimal("10.00"),
-                    net=Decimal("90.00"),
-                ),
-                shipping=CorrispettivoShippingDaySchema(
-                    sales_net=Decimal("5.00"),
-                    returns_net=Decimal("0.00"),
-                ),
-            )
-        ],
-        month_totals=CorrispettivoAmountSchema(
-            sales_net=Decimal("100.00"),
-            returns_net=Decimal("10.00"),
-            net=Decimal("90.00"),
-        ),
+        days=[day_summary],
+        month_totals=day_summary.net,
     )
 
     zip_bytes = CorrispettiviExcelService().build_registri_zip(
-        consolidated=riepilogo,
-        by_country={"IT": riepilogo, "DE": riepilogo},
+        consolidated=summary,
+        by_country={"IT": summary, "DE": summary},
     )
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
@@ -122,3 +119,49 @@ def test_build_registri_zip_contains_expected_files():
         assert "registro.xlsx" in names
         assert "registro_IT.xlsx" in names
         assert "registro_DE.xlsx" in names
+
+
+def test_build_workbook_has_simplified_with_tax_columns():
+    from openpyxl import load_workbook
+
+    from src.schemas.corrispettivo_schema import (
+        CorrispettivoDaySummarySchema,
+        CorrispettivoListResponseSchema,
+        CorrispettivoSplitTotalsSchema,
+    )
+
+    day = CorrispettivoDaySummarySchema(
+        date=date(2026, 5, 15),
+        sales=CorrispettivoSplitTotalsSchema(
+            total_with_tax=Decimal("122.00"),
+            products_with_tax=Decimal("100.00"),
+            shipping_with_tax=Decimal("22.00"),
+        ),
+        returns=CorrispettivoSplitTotalsSchema(
+            total_with_tax=Decimal("24.40"),
+            products_with_tax=Decimal("20.00"),
+            shipping_with_tax=Decimal("4.40"),
+        ),
+        net=CorrispettivoSplitTotalsSchema(
+            total_with_tax=Decimal("97.60"),
+            products_with_tax=Decimal("80.00"),
+            shipping_with_tax=Decimal("17.60"),
+        ),
+    )
+    summary = CorrispettivoListResponseSchema(
+        year=2026,
+        month=5,
+        days=[day],
+        month_totals=day.net,
+    )
+
+    workbook_bytes = CorrispettiviExcelService().build_workbook(summary)
+    sheet = load_workbook(io.BytesIO(workbook_bytes)).active
+
+    assert [cell.value for cell in sheet[1]] == CorrispettiviExcelService.HEADERS
+    assert sheet[2][0].value == "2026-05-15"
+    assert sheet[2][1].value == 122.0
+    assert sheet[2][2].value == 24.4
+    assert sheet[2][3].value == 97.6
+    assert sheet[2][4].value == 80.0
+    assert sheet[2][5].value == 17.6

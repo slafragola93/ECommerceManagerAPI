@@ -157,13 +157,9 @@ Eventi: `ORDER_VIES_STATUS_CHANGED` (PATCH vies-status), `ORDER_VIES_EXEMPTION_A
 
 ---
 
-## Ultime modifiche (2026-07-06) — Corrispettivi: diagnostica 401
+## Ultime modifiche (2026-07-06) — Export Excel semplificato
 
-- Risposta 401 arricchita con `authorization_header_present` e hint per il FE.
-- Alias route: `/riepilogo/` (trailing slash) e `/summary` → stesso handler di `/`.
-- Log server: su 401 viene registrato se l'header `Authorization` era presente.
-
-Endpoint attivi: `/riepilogo`, `/`, `POST /export`.
+I file `registro.xlsx` / `registro_{ISO}.xlsx` nel ZIP contengono solo: **Data**, **Totale vendite**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione** (tutti gli importi **con IVA**).
 
 ---
 
@@ -183,7 +179,7 @@ Documentazione: [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md) (reference comp
 
 Dipendenza aggiunta: `openpyxl` (export Excel).
 
-Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`
+Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`, `tests/unit/repository/test_corrispettivo_repository.py` (filtro ordini non fatturati)
 
 ---
 
