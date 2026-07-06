@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
+    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
 from src.database import Base, engine
 
 # Import new cache system
@@ -509,11 +509,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Handler per HTTPException di Starlette"""
-    logger.info(f"HTTP exception: {exc.status_code} - {exc.detail}", extra={
-        "status_code": exc.status_code,
-        "path": str(request.url)
-    })
-    
+    auth_header_present = bool(request.headers.get("authorization"))
+    logger.info(
+        f"HTTP exception: {exc.status_code} - {exc.detail}",
+        extra={
+            "status_code": exc.status_code,
+            "path": str(request.url),
+            "authorization_header_present": auth_header_present,
+        },
+    )
+
     # Se exc.detail è un dict strutturato (es. _raise_permission_denied),
     # "spalmiamo" i suoi campi nel wrapper standard preservando la struttura.
     if isinstance(exc.detail, dict):
@@ -526,14 +531,21 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
                 "status_code": exc.status_code,
             }
         )
-    
+
+    details: dict = {}
+    if exc.status_code == 401 and str(exc.detail) == "Not authenticated":
+        details = {
+            "authorization_header_present": auth_header_present,
+            "hint": "Inviare header Authorization: Bearer <access_token> su ogni richiesta API",
+        }
+
     # Fallback: exc.detail è una stringa (FastAPI standard) o altro
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error_code": "HTTP_ERROR",
             "message": str(exc.detail),
-            "details": {},
+            "details": details,
             "status_code": exc.status_code
         }
     )
@@ -624,6 +636,7 @@ app.include_router(sync.router)
 app.include_router(preventivi.router)
 app.include_router(ddt.router)
 app.include_router(fiscal_documents.router)
+app.include_router(corrispettivi.router)
 app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)

@@ -157,7 +157,35 @@ Eventi: `ORDER_VIES_STATUS_CHANGED` (PATCH vies-status), `ORDER_VIES_EXEMPTION_A
 
 ---
 
-## Ultime modifiche (2026-06-22) — `taxes.electronic_code` + FatturaPA Natura (step 1)
+## Ultime modifiche (2026-07-06) — Corrispettivi: diagnostica 401
+
+- Risposta 401 arricchita con `authorization_header_present` e hint per il FE.
+- Alias route: `/riepilogo/` (trailing slash) e `/summary` → stesso handler di `/`.
+- Log server: su 401 viene registrato se l'header `Authorization` era presente.
+
+Endpoint attivi: `/riepilogo`, `/`, `POST /export`.
+
+---
+
+Report fiscale interno su ordini **non fatturati**, con matrice giornaliera per aliquota IVA e export Excel per paese di consegna.
+
+**Endpoint** (`/api/v1/corrispettivi`, permesso `fiscal_documents:read`):
+
+| Metodo | Path | Descrizione |
+|---|---|---|
+| GET | `/riepilogo?year=&month=` | Matrice giorni × aliquote (vendite nette, resi netti, netto); include `columns` con header aliquote |
+| GET | `/?year=&month=` | Totali giornalieri con split prodotti/spedizione |
+| POST | `/export` | ZIP `Registri.zip` (`registro.xlsx` + `registro_{ISO}.xlsx`) |
+
+Filtri opzionali: `id_platform`, `id_store`, `delivery_country_iso`, `day`. Timezone aggregazione: `Europe/Rome`. Nessuna tabella DB dedicata (query live).
+
+Documentazione: [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md) (reference completa per FE: schemi TypeScript, NgRx, export blob)
+
+Dipendenza aggiunta: `openpyxl` (export Excel).
+
+Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`
+
+---
 
 **Contratto API Tax (allineato a FatturaPA):**
 

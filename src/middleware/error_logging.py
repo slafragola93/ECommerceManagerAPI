@@ -166,14 +166,21 @@ class SecurityLoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             
             if response.status_code >= 400:
+                extra = {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "client_ip": request.client.host if request.client else None,
+                }
+                if response.status_code == 401:
+                    extra["authorization_header_present"] = bool(
+                        request.headers.get("authorization")
+                    )
+                    extra["referer"] = request.headers.get("referer")
+                    extra["origin"] = request.headers.get("origin")
                 logger.warning(
                     f"Error response: {request.method} {request.url.path} - {response.status_code}",
-                    extra={
-                        "method": request.method,
-                        "path": request.url.path,
-                        "status_code": response.status_code,
-                        "client_ip": request.client.host if request.client else None,
-                    }
+                    extra=extra,
                 )
             
             return response
