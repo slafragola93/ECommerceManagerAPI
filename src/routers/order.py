@@ -775,7 +775,7 @@ async def update_return(
 @router.delete("/returns/{id_fiscal_document}", 
               status_code=status.HTTP_200_OK,
               summary="Elimina un reso",
-              description="Elimina un documento di reso (solo se in stato pending)",
+              description="Elimina un documento di reso (eliminabile in qualsiasi stato)",
               response_description="Reso eliminato con successo")
 @check_authentication
 async def delete_return(
@@ -786,10 +786,14 @@ async def delete_return(
 ):
     """
     Elimina un documento di reso.
-    
-    Nota: Solo i resi in stato 'pending' possono essere eliminati.
+
+    I resi sono creati con stato `issued` e restano eliminabili indipendentemente dallo stato.
     """
-    return await fiscal_document_service.delete_fiscal_document(id_fiscal_document)
+    await fiscal_document_service.delete_fiscal_document(id_fiscal_document)
+    return {
+        "message": "Reso eliminato con successo",
+        "id_fiscal_document": id_fiscal_document,
+    }
 
 
 
@@ -838,10 +842,14 @@ async def delete_return_detail(
 ):
     """
     Elimina un singolo dettaglio (articolo) da un reso.
-    
-    Il totale del reso viene ricalcolato automaticamente.
+
+    Solo righe appartenenti a documenti `return`. Il totale del reso viene ricalcolato.
     """
-    return await fiscal_document_service.delete_fiscal_document_detail(id_fiscal_document_detail)
+    await fiscal_document_service.delete_fiscal_document_detail(id_fiscal_document_detail)
+    return {
+        "message": "Dettaglio reso eliminato con successo",
+        "id_fiscal_document_detail": id_fiscal_document_detail,
+    }
 
 
 @router.get("/returns/", 

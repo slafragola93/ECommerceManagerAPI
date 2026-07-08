@@ -18,28 +18,32 @@ I corrispettivi sono un **report fiscale interno** (no SDI, no servizi esterni).
 | `orders` | Vendite (ordini non fatturati) |
 | `order_details` | Imponibile prodotti per aliquota (`id_tax`) |
 | `shipments` | Imponibile spedizione per aliquota |
-| `fiscal_documents` + `fiscal_document_details` | Resi su ordini non fatturati |
+| `fiscal_documents` + `fiscal_document_details` | Resi eleggibili (vedi regole resi sotto) |
+| `ricevute` | Decurtazione/imputazione ordini con ricevuta emessa (BE-3.1) |
 
 ### Regole di business
 
 | Regola | Dettaglio |
 |---|---|
 | Perimetro vendite | Ordini **senza** `FiscalDocument` con `document_type = "invoice"` |
+| Stato pagamento (vendite) | Solo ordini con **`is_payed = true`** (Pagato) |
 | Data vendite | `Order.date_add` (giorno in timezone `Europe/Rome`) |
+| Ricevute emesse | Decurtazione su `ricevute.data_incasso`, imputazione su `ricevute.data_emissione` (importo live da ordine collegato) |
+| Ordini con ricevuta emessa | **Esclusi** dalle vendite su `date_add` (contati solo via imputazione) |
 | Data resi | `FiscalDocument.date_add` del documento reso |
-| Perimetro resi | Solo resi collegati a ordini non fatturati |
+| Perimetro resi | Ordine **pagato** e (**non fatturato** oppure con **nota di credito** collegata) |
+| Stato pagamento (resi) | Stesso flag `is_payed = true` sull'ordine collegato |
 | Giorni in response | **Solo giorni con almeno un movimento** (vendita e/o reso) |
 | Export | **Un solo mese** per richiesta |
-| Note di credito | Fuori scope |
 
 ### Retroattività
 
 - È possibile consultare **mesi passati** (`year` + `month` qualsiasi).
 - I totali **possono cambiare nel tempo** se un ordine viene fatturato dopo la data ordine (query live, nessuno snapshot congelato).
 
-### Filtro ordini non fatturati (implementazione)
+### Filtro ordini — vendite vs resi
 
-Criterio identico a `OrderRepository` con `has_invoice=false`:
+**Vendite** — criterio identico a `OrderRepository` con `has_invoice=false` **e** ordine pagato:
 
 ```sql
 NOT EXISTS (
@@ -47,19 +51,80 @@ NOT EXISTS (
   WHERE fd.id_order = orders.id_order
     AND fd.document_type = 'invoice'
 )
+AND orders.is_payed = 1
 ```
 
-| Caso | Incluso nei corrispettivi? |
+**Resi** — regole distinte: l'ordine deve essere pagato e non fatturato **oppure** avere una nota di credito:
+
+```sql
+orders.is_payed = 1
+AND (
+  NOT EXISTS (
+    SELECT 1 FROM fiscal_documents fd
+    WHERE fd.id_order = orders.id_order
+      AND fd.document_type = 'invoice'
+  )
+  OR EXISTS (
+    SELECT 1 FROM fiscal_documents fd
+    WHERE fd.id_order = orders.id_order
+      AND fd.document_type = 'credit_note'
+  )
+)
+```
+
+| Caso | Vendite | Resi |
+|---|---|---|
+| Ordine pagato, senza documenti fiscali | Sì | Sì |
+| Ordine **non pagato** (`is_payed = false`) | **No** | **No** |
+| Ordine con solo `credit_note` o `return` (nessuna `invoice`), pagato | Sì | Sì |
+| Ordine con fattura (`invoice`, qualsiasi `status`) | **No** | **No** |
+| Ordine fatturato **con nota di credito**, pagato | **No** | **Sì** (contato alla data del reso) |
+| Reso su ordine non fatturato **e pagato** | — | Sì (contato alla data del reso) |
+
+**Nota:** non si usa `Order.is_invoice_requested`; conta la presenza effettiva di una fattura in `fiscal_documents` e il flag `is_payed`.
+
+Test automatici: `tests/unit/repository/test_corrispettivo_repository.py`, `tests/unit/repository/test_corrispettivo_ricevute.py`
+
+### Ricevute estero (BE-3.1)
+
+Per ordini con **ricevuta emessa** (`ricevute.stato = 'emessa'`):
+
+1. L'ordine **non** entra più nel corrispettivo vendite alla `Order.date_add`.
+2. **Decurtazione** (importo negativo, imponibile per aliquota): giorno `ricevute.data_incasso` (= `payment_date` ordine).
+3. **Imputazione** (importo positivo): giorno `ricevute.data_emissione`.
+4. Ricevuta **annullata** → l'ordine torna nel flusso vendite standard su `date_add`.
+
+Importi sempre live da `order_details` / spedizione ordine (stesso perimetro vendite: pagato, non fatturato).
+
+### BE-3.2 — Breakdown vendite (UNION ALL)
+
+`fetch_sales_gross_breakdown_by_day` aggrega in **una sola query** (`UNION ALL`):
+
+| Componente | Origine |
 |---|---|
-| Ordine senza documenti fiscali | Sì (vendite) |
-| Ordine con solo `credit_note` o `return` (nessuna `invoice`) | Sì |
-| Ordine con aliquota `invoice` (qualsiasi `status`) | **No** |
-| Reso su ordine fatturato | **No** |
-| Reso su ordine non fatturato | Sì (contato alla data del reso) |
+| `base` | Vendite standard su `Order.date_add` (senza ricevuta emessa) |
+| `ricevute_decurtazione` | Lordo negativo su `ricevute.data_incasso` |
+| `ricevute_imputazione` | Lordo positivo su `ricevute.data_emissione` |
+| `net` | Somma dei tre |
 
-**Nota:** non si usa `Order.is_invoice_requested`; conta solo la presenza effettiva di una fattura in `fiscal_documents`.
+Esposto in `GET /api/v1/corrispettivi` (e alias `/summary`) nel campo opzionale `days[].sales_breakdown` per audit UI.
 
-Test automatici: `tests/unit/repository/test_corrispettivo_repository.py`
+Range: qualsiasi mese/giorno storico via `year` + `month` (+ `day` opzionale) — nessun loop applicativo per singolo giorno.
+
+### BE-3.3 — Compatibilità ricevute + resi
+
+I resi restano conteggiati alla **data del documento reso** (`FiscalDocument.date_add`). Le ricevute agiscono solo sulle **vendite** (incasso/emissione). I due flussi sono indipendenti:
+
+| Scenario | Comportamento atteso |
+|---|---|
+| Ordine con ricevuta emessa + reso | Imputazione/decurtazione ricevuta invariata; reso in `returns_net` alla data reso |
+| Eliminazione reso (ordine con ricevuta) | Sparisce solo il movimento reso; aggiustamenti ricevuta invariati |
+| Eliminazione reso (ordine senza ricevuta) | Vendita su `date_add` invariata; reso rimosso |
+| Ricevuta annullata dopo delete reso | Ordine torna in vendite standard su `date_add` |
+
+Essendo tutto **live**, delete reso = il corrispettivo si ricalcola al prossimo GET (nessuna persistenza).
+
+Test: `tests/unit/repository/test_corrispettivo_ricevute_returns.py`
 
 ---
 
@@ -239,11 +304,18 @@ interface CorrispettivoSplitTotals {
   return_count: number;   // solo in blocco "returns"
 }
 
+interface CorrispettivoSalesBreakdown {
+  base: CorrispettivoSplitTotals;
+  ricevute_decurtazione: CorrispettivoSplitTotals;
+  ricevute_imputazione: CorrispettivoSplitTotals;
+}
+
 interface CorrispettivoDaySummary {
   date: string;           // ISO "2026-05-15"
   sales: CorrispettivoSplitTotals;
   returns: CorrispettivoSplitTotals;
   net: CorrispettivoSplitTotals;   // sales - returns per campo
+  sales_breakdown?: CorrispettivoSalesBreakdown | null;  // BE-3.2 audit ricevute
 }
 ```
 
@@ -506,11 +578,18 @@ export interface CorrispettivoSplitTotals {
   return_count: number;
 }
 
+export interface CorrispettivoSalesBreakdown {
+  base: CorrispettivoSplitTotals;
+  ricevute_decurtazione: CorrispettivoSplitTotals;
+  ricevute_imputazione: CorrispettivoSplitTotals;
+}
+
 export interface CorrispettivoDaySummary {
   date: string;
   sales: CorrispettivoSplitTotals;
   returns: CorrispettivoSplitTotals;
   net: CorrispettivoSplitTotals;
+  sales_breakdown?: CorrispettivoSalesBreakdown | null;
 }
 
 export interface CorrispettivoListResponse {
@@ -596,6 +675,8 @@ pytest tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py -v
 
 | Data | Modifica |
 |---|---|
+| 2026-07-06 | Resi: regole distinte dalle vendite — eleggibili se ordine pagato e (non fatturato **oppure** con `credit_note`) |
+| 2026-07-06 | Filtro corrispettivi: solo ordini **pagati** (`is_payed=true`) oltre a non fatturati |
 | 2026-07-06 | Export Excel semplificato: 6 colonne con importi IVA incl. (data, vendite, resi, netto tot/prodotti/spedizione) |
 | 2026-07-06 | Test repository filtro non fatturati + documentazione criterio `NOT EXISTS invoice` |
 | 2026-07-06 | Diagnostica 401 migliorata (`authorization_header_present` in log e body); alias `/riepilogo/` e `/summary` |

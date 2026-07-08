@@ -13,6 +13,7 @@ from src.schemas.corrispettivo_schema import (
     CorrispettivoListResponseSchema,
     CorrispettivoRiepilogoResponseSchema,
     CorrispettivoRiepilogoRowSchema,
+    CorrispettivoSalesBreakdownSchema,
     CorrispettivoShippingDaySchema,
     CorrispettivoSplitTotalsSchema,
     CorrispettivoTaxColumnSchema,
@@ -81,6 +82,19 @@ class CorrispettivoService:
             month_totals=CorrispettivoAmountSchema(**build_month_totals(rows_data)),
         )
 
+    @staticmethod
+    def _split_totals_from_bucket(data: dict, *, order_count: int = 0, return_count: int = 0):
+        return CorrispettivoSplitTotalsSchema(
+            total_with_tax=data.get("total_with_tax", 0),
+            total_net=data.get("total_net", 0),
+            products_with_tax=data.get("products_with_tax", 0),
+            products_net=data.get("products_net", 0),
+            shipping_with_tax=data.get("shipping_with_tax", 0),
+            shipping_net=data.get("shipping_net", 0),
+            order_count=order_count,
+            return_count=return_count,
+        )
+
     def get_daily_summary(
         self,
         year: int,
@@ -100,23 +114,11 @@ class CorrispettivoService:
             returns_data = bucket.get("returns", {})
             order_count, return_count = daily_counts.get(movement_date, (0, 0))
 
-            sales = CorrispettivoSplitTotalsSchema(
-                total_with_tax=sales_data.get("total_with_tax", 0),
-                total_net=sales_data.get("total_net", 0),
-                products_with_tax=sales_data.get("products_with_tax", 0),
-                products_net=sales_data.get("products_net", 0),
-                shipping_with_tax=sales_data.get("shipping_with_tax", 0),
-                shipping_net=sales_data.get("shipping_net", 0),
-                order_count=order_count,
+            sales = self._split_totals_from_bucket(
+                sales_data, order_count=order_count
             )
-            returns = CorrispettivoSplitTotalsSchema(
-                total_with_tax=returns_data.get("total_with_tax", 0),
-                total_net=returns_data.get("total_net", 0),
-                products_with_tax=returns_data.get("products_with_tax", 0),
-                products_net=returns_data.get("products_net", 0),
-                shipping_with_tax=returns_data.get("shipping_with_tax", 0),
-                shipping_net=returns_data.get("shipping_net", 0),
-                return_count=return_count,
+            returns = self._split_totals_from_bucket(
+                returns_data, return_count=return_count
             )
             net = CorrispettivoSplitTotalsSchema(
                 total_with_tax=sales.total_with_tax - returns.total_with_tax,
@@ -127,12 +129,26 @@ class CorrispettivoService:
                 shipping_net=sales.shipping_net - returns.shipping_net,
             )
 
+            sales_breakdown_data = bucket.get("sales_breakdown")
+            sales_breakdown = None
+            if sales_breakdown_data:
+                sales_breakdown = CorrispettivoSalesBreakdownSchema(
+                    base=self._split_totals_from_bucket(sales_breakdown_data["base"]),
+                    ricevute_decurtazione=self._split_totals_from_bucket(
+                        sales_breakdown_data["ricevute_decurtazione"]
+                    ),
+                    ricevute_imputazione=self._split_totals_from_bucket(
+                        sales_breakdown_data["ricevute_imputazione"]
+                    ),
+                )
+
             days.append(
                 CorrispettivoDaySummarySchema(
                     date=movement_date,
                     sales=sales,
                     returns=returns,
                     net=net,
+                    sales_breakdown=sales_breakdown,
                 )
             )
 

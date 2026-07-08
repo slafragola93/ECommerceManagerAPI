@@ -52,7 +52,12 @@ Applica le migrazioni al database:
 
 ```bash
 alembic upgrade head
+
+# Tabella ricevute (feature Ricevute estero — obbligatoria prima dei GET /api/v1/ricevute):
+python scripts/migrations/create_ricevute_table.py
 ```
+
+> **Nota:** finché `ricevute` non esiste, le API ricevute rispondono **500**. Eseguire lo script su ogni ambiente (dev/staging/prod) dopo il deploy del codice BE.
 
 ---
 
@@ -122,6 +127,97 @@ Ricalcolo BE: `calculate_price_without_tax` (righe) + `OrderService.recalculate_
 
 Eventi: `ORDER_VIES_STATUS_CHANGED` (PATCH vies-status), `ORDER_VIES_EXEMPTION_APPLIED` (solo su `eligible`).
 
+---
+
+## API — Ricevute estero (BE-1 + BE-2.2)
+
+Documenti fiscali interni (no SDI) per clienti esteri privati senza P.IVA. Dati ordine/cliente/righe sempre **live** (nessuna tabella righe o snapshot).
+
+Prefisso `/api/v1/ricevute`. Permesso RBAC: `fiscal_documents:read` (come corrispettivi).
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| GET | `/api/v1/ricevute` | Lista paginata con filtri `id_order`, `id_customer`, `stato`, `data_emissione_from`, `data_emissione_to` |
+| GET | `/api/v1/ricevute/{id_ricevuta}` | Dettaglio con ordine, cliente, indirizzi e `order_details` live |
+| POST | `/api/v1/ricevute` | Crea ricevuta da ordine (`id_order`, `data_emissione` opzionale); genera PDF |
+| PUT | `/api/v1/ricevute/{id_ricevuta}` | Aggiorna `data_emissione`; rigenera PDF |
+| DELETE | `/api/v1/ricevute/{id_ricevuta}` | Soft delete (`stato=annullata`) |
+| GET | `/api/v1/ricevute/{id_ricevuta}/pdf` | Download PDF (rigenera se assente); `?regenerate=1` forza nuovo template |
+| POST | `/api/v1/ricevute/{id_ricevuta}/pdf` | Rigenera PDF (sovrascrive) |
+| GET | `/api/v1/ricevute/{id_ricevuta}/export?fmt=csv\|xlsx` | Export singola ricevuta con `order_details` |
+| GET | `/api/v1/ricevute/export?fmt=csv\|xlsx&...` | Export massivo (stessi filtri lista, max 5000 righe) |
+
+Permessi write: `fiscal_documents:create|update|delete`.
+
+**Migration:** modello `src/models/ricevuta.py`, script `scripts/migrations/create_ricevute_table.py`. Numerazione annuale `(numero, anno)` con `UNIQUE` e `get_next_numero()` (`SELECT FOR UPDATE`).
+
+Test: `tests/unit/repository/test_ricevuta_repository.py`, `tests/unit/services/test_ricevuta_service.py`, `tests/unit/services/test_ricevuta_create.py`, `tests/unit/services/pdf/test_ricevuta_pdf_service.py`
+
+**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {data}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra, sezione NOTE. Non riusa più il layout fattura SDI.
+
+Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
+
+**Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
+
+## Ultime modifiche (2026-07-08) — BE-2.5 Export CSV/Excel
+
+- `GET /api/v1/ricevute/{id}/export?fmt=csv|xlsx` — dettaglio + righe prodotto.
+- `GET /api/v1/ricevute/export?fmt=...` — export massivo filtrato (max 5000).
+- Service: `src/services/export/ricevuta_export_service.py`.
+
+## Ultime modifiche (2026-07-08) — Template PDF ricevuta elettronew
+
+- Nuovo layout B/N allineato al documento legacy (non più layout fattura con box VENDITORE/CLIENTE).
+- File: `src/services/pdf/ricevuta_pdf_layout.py` + refactor `ricevuta_pdf_service.py`.
+- Label localizzate FR (`En-tête`, `Prix`, `TVA`, `Frais de collecte`, …) in base a `country.iso_code` del cliente.
+- Colonna IVA: preferisce `Tax.code` (es. `20FR`), altrimenti `{percentuale}{iso}`.
+- Test: `tests/unit/services/pdf/test_ricevuta_pdf_service.py`.
+
+## Ultime modifiche (2026-07-08) — BE-3.3 Ricevute + resi
+
+- Test integrazione: delete reso su ordine con/senza ricevuta; annullo ricevuta post-delete.
+- Fix normalizzazione date movimenti corrispettivi (chiavi `date` coerenti su SQLite/MySQL).
+
+## Ultime modifiche (2026-07-08) — BE-3.2 Corrispettivi UNION ALL
+
+- `fetch_sales_gross_breakdown_by_day`: base / decurtazione / imputazione in un'unica query.
+- `GET /api/v1/corrispettivi` → `days[].sales_breakdown` per audit ricevute.
+
+## Ultime modifiche (2026-07-08) — BE-3.1 Corrispettivi + ricevute
+
+- Ordini con ricevuta emessa esclusi da vendite su `date_add`.
+- Decurtazione su `data_incasso`, imputazione su `data_emissione` (imponibile per aliquota + lordo in summary).
+- Test: `tests/unit/repository/test_corrispettivo_ricevute.py`. Doc: `docs/CORRISPETTIVI.md`.
+
+## Ultime modifiche (2026-07-08) — Naming allineato app
+
+- Dettaglio ricevuta: `righe` → **`order_details`** (come ordini/resi); tipo `RicevutaOrderDetailEmbedSchema`.
+
+## Ultime modifiche (2026-07-08) — Contratto API ricevute snellito
+
+- Dettaglio: rimossi `id_order`/`id_customer`/`pdf_hash` duplicati in root; `customer`/`order`/`address*` embed leggeri.
+- Se consegna = fatturazione → un solo campo `address` (niente doppio oggetto identico).
+- `is_modifiable` solo a livello ricevuta; indirizzi senza customer annidato.
+
+## Ultime modifiche (2026-07-08) — Fix PDF ricevuta (Decimal MySQL)
+
+- Fix generazione PDF: cast esplicito `Decimal` → `float` in `FiscalDocumentPDFService` (spedizione/totali da MySQL).
+- Se il PDF fallisce in `POST /ricevute`, il record viene rollback (delete) e risposta **400** invece di 500.
+
+## Ultime modifiche (2026-07-08) — Ricevute BE-2.1 / BE-2.3 / BE-2.4
+
+- `POST /api/v1/ricevute` — creazione da ordine, numerazione annuale, `data_incasso` da `payment_date`.
+- PDF automatico alla creazione; `GET/POST .../pdf` download/rigenerazione; file in `media/ricevute/{anno}/`.
+- `PUT` (data emissione) e `DELETE` soft (annullata); blocco se `id_order_state == 4` o ordine già fatturato.
+- Helper condiviso `resolve_order_payment_date` per allineamento corrispettivi (BE-3).
+
+## Ultime modifiche (2026-07-08) — Ricevute BE-1 + BE-2.2
+
+- Tabella `ricevute` (modello SQLAlchemy, migration script).
+- Endpoint GET lista/dettaglio con join live ordine/cliente/righe.
+- Flag `is_modifiable` derivato da `id_order_state != 4` (Spedizione Confermata).
+- Registrazione DI (`IRicevutaRepository`, `IRicevutaService`) e router in `main.py`.
+
 ## Ultime modifiche (2026-07-03) — BE-1 bridge persist-if-complete
 
 **Scope:** il BE persiste i prezzi inviati dal FE quando il payload riga è completo; altrimenti mantiene il calcolo legacy.
@@ -157,13 +253,30 @@ Eventi: `ORDER_VIES_STATUS_CHANGED` (PATCH vies-status), `ORDER_VIES_EXEMPTION_A
 
 ---
 
-## Ultime modifiche (2026-07-06) — Export Excel semplificato
+## Ultime modifiche (2026-07-06) — Corrispettivi: regole vendite vs resi
+
+**Vendite:** solo ordini **non fatturati** e **pagati** (`is_payed = true`).
+
+**Resi:** ordine **pagato** e (**non fatturato** oppure con **nota di credito**). Un reso su ordine fatturato senza NC resta escluso; con NC collegata entra nei corrispettivi.
+
+Test: `tests/unit/repository/test_corrispettivo_repository.py`
+
+---
+
+- **Resi** eliminabili in qualsiasi stato (`DELETE /api/v1/orders/returns/{id}`); fatture/NC solo se `pending`.
+- Risposta JSON strutturata al delete reso/dettaglio; errori 404/400 non più mascherati in 400 generico.
+- Delete dettaglio consentito solo su documenti `return`.
+- Test: `tests/unit/repository/test_fiscal_document_delete_return.py`.
+
+---
+
+## Ultime modifiche (2026-07-06) — Export Excel corrispettivi semplificato
 
 I file `registro.xlsx` / `registro_{ISO}.xlsx` nel ZIP contengono solo: **Data**, **Totale vendite**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione** (tutti gli importi **con IVA**).
 
 ---
 
-Report fiscale interno su ordini **non fatturati**, con matrice giornaliera per aliquota IVA e export Excel per paese di consegna.
+Report fiscale interno: vendite su ordini **non fatturati e pagati**; resi su ordini **pagati** non fatturati **o** fatturati con **nota di credito**.
 
 **Endpoint** (`/api/v1/corrispettivi`, permesso `fiscal_documents:read`):
 
@@ -179,7 +292,7 @@ Documentazione: [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md) (reference comp
 
 Dipendenza aggiunta: `openpyxl` (export Excel).
 
-Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`, `tests/unit/repository/test_corrispettivo_repository.py` (filtro ordini non fatturati)
+Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`, `tests/unit/repository/test_corrispettivo_repository.py` (filtri non fatturati + pagati)
 
 ---
 

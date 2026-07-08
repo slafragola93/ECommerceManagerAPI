@@ -40,3 +40,4 @@ class Customer(Base):
     store = relationship("Store", back_populates="customers")
     addresses = relationship("Address", back_populates="customer")
     orders_document = relationship("OrderDocument", back_populates="customer")
+    ricevute = relationship("Ricevuta", back_populates="customer")

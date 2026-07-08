@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from src.database import get_db
 from src.core.container import container
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
+from src.services.interfaces.ricevuta_service_interface import IRicevutaService
 from src.services.routers.auth_service import get_current_user
 from src.models.platform import Platform
 from src.services.ecommerce.service_factory import create_ecommerce_service
@@ -24,6 +25,11 @@ user_dependency = Depends(get_current_user)
 def get_fiscal_document_service(db: Session = Depends(get_db)) -> IFiscalDocumentService:
     """Dependency per ottenere il servizio dei documenti fiscali"""
     return container.resolve_with_session(IFiscalDocumentService, db)
+
+
+def get_ricevuta_service(db: Session = Depends(get_db)) -> IRicevutaService:
+    """Dependency per ottenere il servizio ricevute"""
+    return container.resolve_with_session(IRicevutaService, db)
 
 
 def get_ecommerce_service(store_id: int, db: Session, new_elements: bool = None, **kwargs):

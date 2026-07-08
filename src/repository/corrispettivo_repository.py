@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Dict, List, Optional, Set, Tuple
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session
 
 from src.models.address import Address
@@ -13,6 +14,7 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
+from src.models.ricevuta import Ricevuta, RicevutaStato
 from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.services.corrispettivi.aggregation import MovementRow, decimal_or_zero
@@ -20,6 +22,9 @@ from src.services.corrispettivi.aggregation import MovementRow, decimal_or_zero
 
 class CorrispettivoRepository:
     TIMEZONE = "Europe/Rome"
+    SALES_COMPONENT_BASE = "base"
+    SALES_COMPONENT_RICEVUTE_DECURTAZIONE = "ricevute_decurtazione"
+    SALES_COMPONENT_RICEVUTE_IMPUTAZIONE = "ricevute_imputazione"
 
     def __init__(self, session: Session):
         self._session = session
@@ -32,6 +37,49 @@ class CorrispettivoRepository:
                 FiscalDocument.document_type == "invoice",
             )
         ).correlate(Order)
+
+    def _has_credit_note_filter(self):
+        """Ordine con almeno una nota di credito collegata."""
+        return exists(
+            select(FiscalDocument.id_fiscal_document).where(
+                FiscalDocument.id_order == Order.id_order,
+                FiscalDocument.document_type == "credit_note",
+            )
+        ).correlate(Order)
+
+    def _has_active_ricevuta_filter(self):
+        """Ordine con ricevuta emessa (escluso dal corrispettivo vendite su date_add)."""
+        return exists(
+            select(Ricevuta.id_ricevuta).where(
+                Ricevuta.id_order == Order.id_order,
+                Ricevuta.stato == RicevutaStato.EMESSA,
+            )
+        ).correlate(Order)
+
+    def _corrispettivi_sales_order_filters(self):
+        """Vendite corrispettivi: ordini non fatturati, pagati, senza ricevuta emessa."""
+        return (
+            self._no_invoice_filter(),
+            Order.is_payed.is_(True),
+            ~self._has_active_ricevuta_filter(),
+        )
+
+    def _ricevuta_order_eligibility_filters(self):
+        """Ordine eleggibile sotto una ricevuta emessa (stesse regole vendite)."""
+        return (
+            self._no_invoice_filter(),
+            Order.is_payed.is_(True),
+        )
+
+    def _corrispettivi_return_order_filters(self):
+        """Resi corrispettivi: ordine pagato e (non fatturato oppure con nota di credito)."""
+        return (
+            Order.is_payed.is_(True),
+            or_(
+                self._no_invoice_filter(),
+                self._has_credit_note_filter(),
+            ),
+        )
 
     def _period_bounds(self, year: int, month: int, day: Optional[int] = None) -> tuple[date, date]:
         if day is not None:
@@ -56,6 +104,252 @@ class CorrispettivoRepository:
                 func.upper(Country.iso_code) == filters["delivery_country_iso"].upper()
             )
         return query
+
+    @staticmethod
+    def _as_date(value) -> date:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(str(value))
+
+    @staticmethod
+    def _empty_gross_bucket() -> dict:
+        return {
+            "total_with_tax": Decimal("0"),
+            "total_net": Decimal("0"),
+            "products_with_tax": Decimal("0"),
+            "products_net": Decimal("0"),
+            "shipping_with_tax": Decimal("0"),
+            "shipping_net": Decimal("0"),
+        }
+
+    @staticmethod
+    def _gross_bucket_from_row(row) -> dict:
+        products_with_tax = decimal_or_zero(row.products_with_tax)
+        products_net = decimal_or_zero(row.products_net)
+        total_with_tax = decimal_or_zero(row.total_with_tax)
+        total_net = decimal_or_zero(row.total_net)
+        return {
+            "total_with_tax": total_with_tax,
+            "total_net": total_net,
+            "products_with_tax": products_with_tax,
+            "products_net": products_net,
+            "shipping_with_tax": total_with_tax - products_with_tax,
+            "shipping_net": total_net - products_net,
+        }
+
+    @staticmethod
+    def _add_gross_bucket(target: dict, source: dict) -> None:
+        for key in target:
+            target[key] += source.get(key, Decimal("0"))
+
+    def fetch_sales_gross_breakdown_by_day(
+        self,
+        start_date: date,
+        end_date: date,
+        filters: Optional[dict] = None,
+    ) -> Dict[date, dict]:
+        """
+        BE-3.2 — Vendite lorde per giorno con scomposizione audit (UNION ALL).
+
+        Componenti per giorno:
+        - `base`: ordini standard su Order.date_add (senza ricevuta emessa)
+        - `ricevute_decurtazione`: negativo su ricevute.data_incasso
+        - `ricevute_imputazione`: positivo su ricevute.data_emissione
+        - `net`: somma dei tre
+        """
+        order_day = self._local_day_expr(Order.date_add)
+
+        base_query = (
+            self._session.query(
+                order_day.label("movement_date"),
+                literal(self.SALES_COMPONENT_BASE).label("component"),
+                func.sum(Order.total_price_with_tax).label("total_with_tax"),
+                func.sum(Order.total_price_net).label("total_net"),
+                func.sum(Order.products_total_price_with_tax).label("products_with_tax"),
+                func.sum(Order.products_total_price_net).label("products_net"),
+            )
+            .select_from(Order)
+            .filter(
+                *self._corrispettivi_sales_order_filters(),
+                order_day >= start_date,
+                order_day <= end_date,
+            )
+            .group_by(order_day)
+        )
+        base_query = self._apply_order_filters(base_query, filters)
+
+        decurtazione_query = (
+            self._session.query(
+                Ricevuta.data_incasso.label("movement_date"),
+                literal(self.SALES_COMPONENT_RICEVUTE_DECURTAZIONE).label("component"),
+                (-func.sum(Order.total_price_with_tax)).label("total_with_tax"),
+                (-func.sum(Order.total_price_net)).label("total_net"),
+                (-func.sum(Order.products_total_price_with_tax)).label("products_with_tax"),
+                (-func.sum(Order.products_total_price_net)).label("products_net"),
+            )
+            .select_from(Ricevuta)
+            .join(Order, Ricevuta.id_order == Order.id_order)
+            .filter(
+                Ricevuta.stato == RicevutaStato.EMESSA,
+                Ricevuta.data_incasso >= start_date,
+                Ricevuta.data_incasso <= end_date,
+                *self._ricevuta_order_eligibility_filters(),
+            )
+            .group_by(Ricevuta.data_incasso)
+        )
+        decurtazione_query = self._apply_order_filters(decurtazione_query, filters)
+
+        imputazione_query = (
+            self._session.query(
+                Ricevuta.data_emissione.label("movement_date"),
+                literal(self.SALES_COMPONENT_RICEVUTE_IMPUTAZIONE).label("component"),
+                func.sum(Order.total_price_with_tax).label("total_with_tax"),
+                func.sum(Order.total_price_net).label("total_net"),
+                func.sum(Order.products_total_price_with_tax).label("products_with_tax"),
+                func.sum(Order.products_total_price_net).label("products_net"),
+            )
+            .select_from(Ricevuta)
+            .join(Order, Ricevuta.id_order == Order.id_order)
+            .filter(
+                Ricevuta.stato == RicevutaStato.EMESSA,
+                Ricevuta.data_emissione >= start_date,
+                Ricevuta.data_emissione <= end_date,
+                *self._ricevuta_order_eligibility_filters(),
+            )
+            .group_by(Ricevuta.data_emissione)
+        )
+        imputazione_query = self._apply_order_filters(imputazione_query, filters)
+
+        combined = union_all(
+            base_query.statement,
+            decurtazione_query.statement,
+            imputazione_query.statement,
+        ).alias("sales_gross_union")
+
+        rows = self._session.query(combined).all()
+
+        by_day: Dict[date, dict] = {}
+        for row in rows:
+            movement_date = self._as_date(row.movement_date)
+            component = row.component
+            bucket = by_day.setdefault(
+                movement_date,
+                {
+                    self.SALES_COMPONENT_BASE: self._empty_gross_bucket(),
+                    self.SALES_COMPONENT_RICEVUTE_DECURTAZIONE: self._empty_gross_bucket(),
+                    self.SALES_COMPONENT_RICEVUTE_IMPUTAZIONE: self._empty_gross_bucket(),
+                    "net": self._empty_gross_bucket(),
+                },
+            )
+            gross = self._gross_bucket_from_row(row)
+            self._add_gross_bucket(bucket[component], gross)
+            self._add_gross_bucket(bucket["net"], gross)
+
+        return by_day
+
+    def _order_detail_line_filter(self):
+        return or_(
+            OrderDetail.id_order_document.is_(None),
+            OrderDetail.id_order_document == 0,
+        )
+
+    def _append_ricevuta_movements(
+        self,
+        movements: List[MovementRow],
+        start_date: date,
+        end_date: date,
+        filters: Optional[dict],
+    ) -> None:
+        """BE-3.1/3.2 — Aggiustamenti ricevuta via UNION ALL (prodotti + spedizione)."""
+        movements.extend(
+            self._fetch_ricevuta_adjustment_movements(start_date, end_date, filters)
+        )
+
+    def _fetch_ricevuta_adjustment_movements(
+        self,
+        start_date: date,
+        end_date: date,
+        filters: Optional[dict],
+    ) -> List[MovementRow]:
+        parts = []
+        for movement_date_col, sign in (
+            (Ricevuta.data_incasso, -1),
+            (Ricevuta.data_emissione, 1),
+        ):
+            product_part = (
+                self._session.query(
+                    movement_date_col.label("movement_date"),
+                    Country.iso_code.label("country_iso"),
+                    OrderDetail.id_tax.label("id_tax"),
+                    (func.sum(OrderDetail.total_price_net) * sign).label("amount"),
+                    literal(0).label("is_shipping"),
+                )
+                .select_from(Ricevuta)
+                .join(Order, Ricevuta.id_order == Order.id_order)
+                .join(OrderDetail, OrderDetail.id_order == Order.id_order)
+                .outerjoin(Address, Order.id_address_delivery == Address.id_address)
+                .outerjoin(Country, Address.id_country == Country.id_country)
+                .filter(
+                    Ricevuta.stato == RicevutaStato.EMESSA,
+                    self._order_detail_line_filter(),
+                    movement_date_col >= start_date,
+                    movement_date_col <= end_date,
+                    *self._ricevuta_order_eligibility_filters(),
+                )
+                .group_by(movement_date_col, Country.iso_code, OrderDetail.id_tax)
+            )
+            product_part = self._apply_order_filters(product_part, filters)
+            parts.append(product_part.statement)
+
+            shipping_part = (
+                self._session.query(
+                    movement_date_col.label("movement_date"),
+                    Country.iso_code.label("country_iso"),
+                    Shipping.id_tax.label("id_tax"),
+                    (func.sum(Shipping.price_tax_excl) * sign).label("amount"),
+                    literal(1).label("is_shipping"),
+                )
+                .select_from(Ricevuta)
+                .join(Order, Ricevuta.id_order == Order.id_order)
+                .join(Shipping, Order.id_shipping == Shipping.id_shipping)
+                .outerjoin(Address, Order.id_address_delivery == Address.id_address)
+                .outerjoin(Country, Address.id_country == Country.id_country)
+                .filter(
+                    Ricevuta.stato == RicevutaStato.EMESSA,
+                    movement_date_col >= start_date,
+                    movement_date_col <= end_date,
+                    Shipping.price_tax_excl.isnot(None),
+                    Shipping.price_tax_excl > 0,
+                    *self._ricevuta_order_eligibility_filters(),
+                )
+                .group_by(movement_date_col, Country.iso_code, Shipping.id_tax)
+            )
+            shipping_part = self._apply_order_filters(shipping_part, filters)
+            parts.append(shipping_part.statement)
+
+        if not parts:
+            return []
+
+        combined = union_all(*parts).alias("ricevuta_movements_union")
+        rows = self._session.query(combined).all()
+
+        result: List[MovementRow] = []
+        for row in rows:
+            amount = decimal_or_zero(row.amount)
+            if amount == 0:
+                continue
+            result.append(
+                MovementRow(
+                    movement_date=self._as_date(row.movement_date),
+                    country_iso=row.country_iso,
+                    id_tax=row.id_tax,
+                    sales_net=amount,
+                    is_shipping=bool(row.is_shipping),
+                )
+            )
+        return result
 
     def fetch_movements(
         self,
@@ -82,7 +376,7 @@ class CorrispettivoRepository:
             .outerjoin(Address, Order.id_address_delivery == Address.id_address)
             .outerjoin(Country, Address.id_country == Country.id_country)
             .filter(
-                self._no_invoice_filter(),
+                *self._corrispettivi_sales_order_filters(),
                 order_day >= start_date,
                 order_day <= end_date,
             )
@@ -96,7 +390,7 @@ class CorrispettivoRepository:
                 continue
             movements.append(
                 MovementRow(
-                    movement_date=row.movement_date,
+                    movement_date=self._as_date(row.movement_date),
                     country_iso=row.iso_code,
                     id_tax=row.id_tax,
                     sales_net=amount,
@@ -114,7 +408,7 @@ class CorrispettivoRepository:
             .outerjoin(Address, Order.id_address_delivery == Address.id_address)
             .outerjoin(Country, Address.id_country == Country.id_country)
             .filter(
-                self._no_invoice_filter(),
+                *self._corrispettivi_sales_order_filters(),
                 order_day >= start_date,
                 order_day <= end_date,
                 Shipping.price_tax_excl.isnot(None),
@@ -130,7 +424,7 @@ class CorrispettivoRepository:
                 continue
             movements.append(
                 MovementRow(
-                    movement_date=row.movement_date,
+                    movement_date=self._as_date(row.movement_date),
                     country_iso=row.iso_code,
                     id_tax=row.id_tax,
                     sales_net=amount,
@@ -151,7 +445,7 @@ class CorrispettivoRepository:
             .outerjoin(Country, Address.id_country == Country.id_country)
             .filter(
                 FiscalDocument.document_type == "return",
-                self._no_invoice_filter(),
+                *self._corrispettivi_return_order_filters(),
                 return_day >= start_date,
                 return_day <= end_date,
             )
@@ -165,7 +459,7 @@ class CorrispettivoRepository:
                 continue
             movements.append(
                 MovementRow(
-                    movement_date=row.movement_date,
+                    movement_date=self._as_date(row.movement_date),
                     country_iso=row.iso_code,
                     id_tax=row.id_tax,
                     returns_net=amount,
@@ -186,7 +480,7 @@ class CorrispettivoRepository:
             .filter(
                 FiscalDocument.document_type == "return",
                 FiscalDocument.includes_shipping.is_(True),
-                self._no_invoice_filter(),
+                *self._corrispettivi_return_order_filters(),
                 return_day >= start_date,
                 return_day <= end_date,
             )
@@ -201,13 +495,15 @@ class CorrispettivoRepository:
                 continue
             movements.append(
                 MovementRow(
-                    movement_date=movement_date,
+                    movement_date=self._as_date(movement_date),
                     country_iso=country_iso,
                     id_tax=shipping_tax_id,
                     returns_net=shipping_net,
                     is_shipping=True,
                 )
             )
+
+        self._append_ricevuta_movements(movements, start_date, end_date, filters)
 
         return movements
 
@@ -252,7 +548,7 @@ class CorrispettivoRepository:
             )
             .select_from(Order)
             .filter(
-                self._no_invoice_filter(),
+                *self._corrispettivi_sales_order_filters(),
                 order_day >= start_date,
                 order_day <= end_date,
             )
@@ -279,7 +575,7 @@ class CorrispettivoRepository:
             .join(Order, FiscalDocument.id_order == Order.id_order)
             .filter(
                 FiscalDocument.document_type == "return",
-                self._no_invoice_filter(),
+                *self._corrispettivi_return_order_filters(),
                 return_day >= start_date,
                 return_day <= end_date,
             )
@@ -299,10 +595,60 @@ class CorrispettivoRepository:
 
         counts: Dict[date, Tuple[int, int]] = {}
         for row in sales_query.all():
-            counts[row.movement_date] = (int(row.order_count or 0), counts.get(row.movement_date, (0, 0))[1])
+            movement_date = self._as_date(row.movement_date)
+            counts[movement_date] = (
+                int(row.order_count or 0),
+                counts.get(movement_date, (0, 0))[1],
+            )
+
+        ricevuta_sales_query = (
+            self._session.query(
+                Ricevuta.data_emissione.label("movement_date"),
+                func.count(func.distinct(Order.id_order)).label("order_count"),
+            )
+            .select_from(Ricevuta)
+            .join(Order, Ricevuta.id_order == Order.id_order)
+            .filter(
+                Ricevuta.stato == RicevutaStato.EMESSA,
+                Ricevuta.data_emissione >= start_date,
+                Ricevuta.data_emissione <= end_date,
+                *self._ricevuta_order_eligibility_filters(),
+            )
+            .group_by(Ricevuta.data_emissione)
+        )
+        if filters:
+            if filters.get("id_platform"):
+                ricevuta_sales_query = ricevuta_sales_query.filter(
+                    Order.id_platform == filters["id_platform"]
+                )
+            if filters.get("id_store"):
+                ricevuta_sales_query = ricevuta_sales_query.filter(
+                    Order.id_store == filters["id_store"]
+                )
+            if filters.get("delivery_country_iso"):
+                ricevuta_sales_query = (
+                    ricevuta_sales_query.outerjoin(
+                        Address, Order.id_address_delivery == Address.id_address
+                    )
+                    .outerjoin(Country, Address.id_country == Country.id_country)
+                    .filter(
+                        func.upper(Country.iso_code)
+                        == filters["delivery_country_iso"].upper()
+                    )
+                )
+
+        for row in ricevuta_sales_query.all():
+            movement_date = self._as_date(row.movement_date)
+            existing = counts.get(movement_date, (0, 0))
+            counts[movement_date] = (
+                existing[0] + int(row.order_count or 0),
+                existing[1],
+            )
+
         for row in returns_query.all():
-            existing = counts.get(row.movement_date, (0, 0))
-            counts[row.movement_date] = (existing[0], int(row.return_count or 0))
+            movement_date = self._as_date(row.movement_date)
+            existing = counts.get(movement_date, (0, 0))
+            counts[movement_date] = (existing[0], int(row.return_count or 0))
         return counts
 
     def fetch_daily_gross_totals(
@@ -314,26 +660,11 @@ class CorrispettivoRepository:
         start_date, end_date = self._period_bounds(
             year, month, filters.get("day") if filters else None
         )
-        order_day = self._local_day_expr(Order.date_add)
         return_day = self._local_day_expr(FiscalDocument.date_add)
 
-        sales_query = (
-            self._session.query(
-                order_day.label("movement_date"),
-                func.sum(Order.total_price_with_tax).label("total_with_tax"),
-                func.sum(Order.total_price_net).label("total_net"),
-                func.sum(Order.products_total_price_with_tax).label("products_with_tax"),
-                func.sum(Order.products_total_price_net).label("products_net"),
-            )
-            .select_from(Order)
-            .filter(
-                self._no_invoice_filter(),
-                order_day >= start_date,
-                order_day <= end_date,
-            )
-            .group_by(order_day)
+        sales_breakdown = self.fetch_sales_gross_breakdown_by_day(
+            start_date, end_date, filters
         )
-        sales_query = self._apply_order_filters(sales_query, filters)
 
         returns_query = (
             self._session.query(
@@ -347,7 +678,7 @@ class CorrispettivoRepository:
             .join(Order, FiscalDocument.id_order == Order.id_order)
             .filter(
                 FiscalDocument.document_type == "return",
-                self._no_invoice_filter(),
+                *self._corrispettivi_return_order_filters(),
                 return_day >= start_date,
                 return_day <= end_date,
             )
@@ -356,28 +687,27 @@ class CorrispettivoRepository:
         returns_query = self._apply_order_filters(returns_query, filters)
 
         result: dict = {}
-        for row in sales_query.all():
-            products_with_tax = decimal_or_zero(row.products_with_tax)
-            products_net = decimal_or_zero(row.products_net)
-            total_with_tax = decimal_or_zero(row.total_with_tax)
-            total_net = decimal_or_zero(row.total_net)
-            result[row.movement_date] = {
-                "sales": {
-                    "total_with_tax": total_with_tax,
-                    "total_net": total_net,
-                    "products_with_tax": products_with_tax,
-                    "products_net": products_net,
-                    "shipping_with_tax": total_with_tax - products_with_tax,
-                    "shipping_net": total_net - products_net,
-                }
+        for movement_date, breakdown in sales_breakdown.items():
+            result[movement_date] = {
+                "sales": breakdown["net"],
+                "sales_breakdown": {
+                    "base": breakdown[self.SALES_COMPONENT_BASE],
+                    "ricevute_decurtazione": breakdown[
+                        self.SALES_COMPONENT_RICEVUTE_DECURTAZIONE
+                    ],
+                    "ricevute_imputazione": breakdown[
+                        self.SALES_COMPONENT_RICEVUTE_IMPUTAZIONE
+                    ],
+                },
             }
 
         for row in returns_query.all():
+            movement_date = self._as_date(row.movement_date)
             products_with_tax = decimal_or_zero(row.products_with_tax)
             products_net = decimal_or_zero(row.products_net)
             total_with_tax = decimal_or_zero(row.total_with_tax)
             total_net = decimal_or_zero(row.total_net)
-            bucket = result.setdefault(row.movement_date, {})
+            bucket = result.setdefault(movement_date, {})
             bucket["returns"] = {
                 "total_with_tax": total_with_tax,
                 "total_net": total_net,

@@ -13,11 +13,17 @@ from src.services.media.media_utils import get_store_logo_path
 
 class FiscalDocumentPDFService(BasePDFService):
     """Servizio per generazione PDF di documenti fiscali"""
+
+    @staticmethod
+    def _as_float(value, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        return float(value)
     
     def generate_pdf(self, fiscal_document, order=None, invoice_address=None,
                      delivery_address=None, details_with_products: List[Dict[str, Any]] = None,
                      payment_name: Optional[str] = None, company_config: Dict[str, Any] = None,
-                     referenced_invoice=None, db=None) -> bytes:
+                     referenced_invoice=None, db=None, doc_title: Optional[str] = None) -> bytes:
         """
         Genera il PDF del documento fiscale
         
@@ -51,7 +57,7 @@ class FiscalDocumentPDFService(BasePDFService):
             
             # Determina tipo documento
             is_credit_note = fiscal_document.document_type == 'credit_note'
-            doc_title = "NOTA DI CREDITO" if is_credit_note else "FATTURA"
+            doc_title = doc_title or ("NOTA DI CREDITO" if is_credit_note else "FATTURA")
             doc_number = fiscal_document.document_number or fiscal_document.internal_number or "N/A"
             doc_date = fiscal_document.date_add.strftime("%d/%m/%Y") if fiscal_document.date_add else ""
             
@@ -107,11 +113,11 @@ class FiscalDocumentPDFService(BasePDFService):
             for detail in details_with_products:
                 code = detail.get('product_reference', '')[:15]
                 description = detail.get('product_name', '')[:30]
-                quantity = detail.get('product_qty')
-                unit_price = detail.get('unit_price', 0.0)
-                total_price_with_tax = detail.get('total_price_with_tax')
-                reduction_percent = detail.get('reduction_percent', 0.0)
-                vat_rate = detail.get('vat_rate', 0)
+                quantity = detail.get('product_qty') or 0
+                unit_price = self._as_float(detail.get('unit_price', 0.0))
+                total_price_with_tax = self._as_float(detail.get('total_price_with_tax'))
+                reduction_percent = self._as_float(detail.get('reduction_percent', 0.0))
+                vat_rate = self._as_float(detail.get('vat_rate', 0))
                 
                 vat_multiplier = 1 + (vat_rate / 100.0) if vat_rate else 1.0
                 total_with_vat = total_price_with_tax * vat_multiplier
@@ -132,7 +138,7 @@ class FiscalDocumentPDFService(BasePDFService):
                 total_quantity += quantity
             
             # Sezione Info Spedizione e Riepilogo
-            total_weight = order.total_weight if order and order.total_weight else 0.0
+            total_weight = self._as_float(order.total_weight if order and order.total_weight else 0.0)
             self.create_shipping_info_section(pdf, total_quantity, total_weight)
             
             # Calcola spese trasporto
@@ -141,24 +147,26 @@ class FiscalDocumentPDFService(BasePDFService):
             shipping_vat_percentage = 0
             
             if order and hasattr(order, 'shipments') and order.shipments:
-                shipping_cost = order.shipments.price_tax_excl if order.shipments.price_tax_excl else 0.0
+                shipping_cost = self._as_float(order.shipments.price_tax_excl)
                 
                 if order.shipments.id_tax and db:
                     from src.repository.tax_repository import TaxRepository
                     tax_repo = TaxRepository(db)
-                    shipping_vat_percentage = tax_repo.get_percentage_by_id(order.shipments.id_tax)
+                    shipping_vat_percentage = self._as_float(
+                        tax_repo.get_percentage_by_id(order.shipments.id_tax)
+                    )
                     
                     if shipping_vat_percentage:
                         shipping_cost_with_vat = shipping_cost * (1 + shipping_vat_percentage / 100.0)
                     else:
-                        shipping_cost_with_vat = order.shipments.price_tax_incl if order.shipments.price_tax_incl else 0.0
+                        shipping_cost_with_vat = self._as_float(order.shipments.price_tax_incl)
                 else:
-                    shipping_cost_with_vat = order.shipments.price_tax_incl if order.shipments.price_tax_incl else 0.0
+                    shipping_cost_with_vat = self._as_float(order.shipments.price_tax_incl)
             
             # Calcola totali
-            total_doc = fiscal_document.total_price_with_tax
+            total_doc = self._as_float(fiscal_document.total_price_with_tax)
             if details_with_products and details_with_products[0].get('vat_rate'):
-                vat_rate_first = details_with_products[0]['vat_rate']
+                vat_rate_first = self._as_float(details_with_products[0].get('vat_rate'))
                 total_imponibile = total_doc / (1 + (vat_rate_first / 100.0))
                 total_vat = total_doc - total_imponibile
             else:

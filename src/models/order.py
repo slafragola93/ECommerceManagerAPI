@@ -74,5 +74,6 @@ class Order(Base):
     shipments = relationship("Shipping", back_populates="orders")
     orders_document = relationship("OrderDocument", back_populates="order")
     fiscal_documents = relationship("FiscalDocument", back_populates="order")
+    ricevute = relationship("Ricevuta", back_populates="order")
     order_packages = relationship("OrderPackage", back_populates="order")
     ecommerce_order_state = relationship("EcommerceOrderState", back_populates="orders")

@@ -45,12 +45,14 @@ def _add_order(
     with_invoice: bool = False,
     with_credit_note: bool = False,
     with_return: bool = False,
+    is_payed: bool = True,
     movement_date: datetime = datetime(2026, 7, 15, 12, 0, 0),
 ):
     order = Order(
         id_order_state=1,
         reference=reference,
         date_add=movement_date,
+        is_payed=is_payed,
         total_price_with_tax=Decimal("122.00"),
         total_price_net=Decimal("100.00"),
         products_total_price_with_tax=Decimal("122.00"),
@@ -145,7 +147,9 @@ class TestCorrispettivoNoInvoiceFilter:
 
         assert sales_net == Decimal("100.00")
 
-    def test_returns_only_on_non_invoiced_orders(self, db_session, repo, tax):
+    def test_returns_excluded_on_invoiced_order_without_credit_note(
+        self, db_session, repo, tax
+    ):
         _add_order(db_session, tax, reference="RET-OK", with_return=True)
         _add_order(
             db_session,
@@ -160,17 +164,44 @@ class TestCorrispettivoNoInvoiceFilter:
 
         assert returns_net == Decimal("30.00")
 
+    def test_returns_included_on_invoiced_order_with_credit_note(
+        self, db_session, repo, tax
+    ):
+        _add_order(
+            db_session,
+            tax,
+            reference="RET-INV-CN",
+            with_invoice=True,
+            with_credit_note=True,
+            with_return=True,
+        )
+
+        movements = repo.fetch_movements(2026, 7)
+        returns_net = sum(m.returns_net for m in movements)
+
+        assert returns_net == Decimal("30.00")
+
+    def test_sales_exclude_unpaid_orders(self, db_session, repo, tax):
+        _add_order(db_session, tax, reference="PAID", is_payed=True)
+        _add_order(db_session, tax, reference="UNPAID", is_payed=False)
+
+        movements = repo.fetch_movements(2026, 7)
+        sales_net = sum(m.sales_net for m in movements)
+
+        assert sales_net == Decimal("100.00")
+
     def test_no_invoice_filter_matches_order_repository_semantics(self, db_session, repo, tax):
-        """Stesso criterio di OrderRepository.has_invoice=false."""
-        included = _add_order(db_session, tax, reference="IN")
-        excluded = _add_order(db_session, tax, reference="OUT", with_invoice=True)
+        """Stesso criterio di OrderRepository.has_invoice=false + is_payed=true."""
+        included = _add_order(db_session, tax, reference="IN", is_payed=True)
+        excluded_invoice = _add_order(db_session, tax, reference="OUT", with_invoice=True)
+        excluded_unpaid = _add_order(db_session, tax, reference="UNPAID", is_payed=False)
 
         order_day = repo._local_day_expr(Order.date_add)
         ids = {
             row[0]
             for row in db_session.query(Order.id_order)
             .filter(
-                repo._no_invoice_filter(),
+                *repo._corrispettivi_sales_order_filters(),
                 order_day >= datetime(2026, 7, 1).date(),
                 order_day <= datetime(2026, 7, 31).date(),
             )
@@ -178,4 +209,5 @@ class TestCorrispettivoNoInvoiceFilter:
         }
 
         assert included.id_order in ids
-        assert excluded.id_order not in ids
+        assert excluded_invoice.id_order not in ids
+        assert excluded_unpaid.id_order not in ids

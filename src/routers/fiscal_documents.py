@@ -432,14 +432,18 @@ async def delete_fiscal_document(
     _: None = Depends(require_permission("fiscal_documents", "delete")),
 ):
     """
-    Elimina documento fiscale (solo se status=pending)
-    
+    Elimina documento fiscale.
+
     ## Regole:
-    - Solo documenti con status='pending' possono essere eliminati
+    - **Resi** (`return`): eliminabili in qualsiasi stato
+    - **Fatture / note di credito**: solo se `status='pending'`
     - Non è possibile eliminare fatture con note di credito collegate
     """
     repo = get_fiscal_repository(db)
-    success = repo.delete_fiscal_document(id_fiscal_document)
+    try:
+        success = repo.delete_fiscal_document(id_fiscal_document)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     
     if not success:
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")

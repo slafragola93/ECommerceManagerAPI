@@ -153,6 +153,14 @@ def configure_container():
     from src.services.routers.store_service import StoreService
     
     container.register_transient(IFiscalDocumentRepository, FiscalDocumentRepository)
+
+    # Ricevute
+    from src.repository.interfaces.ricevuta_repository_interface import IRicevutaRepository
+    from src.repository.ricevuta_repository import RicevutaRepository
+    from src.services.interfaces.ricevuta_service_interface import IRicevutaService
+    from src.services.routers.ricevuta_service import RicevutaService
+
+    container.register_transient(IRicevutaRepository, RicevutaRepository)
     
     # Services - Transient (nuova istanza per ogni richiesta)
     container.register_transient(ICustomerService, CustomerService)
@@ -180,6 +188,7 @@ def configure_container():
     container.register_transient(ICarrierAssignmentService, CarrierAssignmentService)
     container.register_transient(IOrderDetailService, OrderDetailService)
     container.register_transient(IFiscalDocumentService, FiscalDocumentService)
+    container.register_transient(IRicevutaService, RicevutaService)
 
     from src.services.interfaces.fastldv_order_service_interface import IFastLdvOrderService
     from src.services.routers.fastldv_order_service import FastLdvOrderService

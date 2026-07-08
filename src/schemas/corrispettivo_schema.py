@@ -67,11 +67,20 @@ class CorrispettivoSplitTotalsSchema(BaseModel):
         return round(float(value), 2)
 
 
+class CorrispettivoSalesBreakdownSchema(BaseModel):
+    """Scomposizione vendite lorde per audit ricevute (BE-3.2)."""
+
+    base: CorrispettivoSplitTotalsSchema
+    ricevute_decurtazione: CorrispettivoSplitTotalsSchema
+    ricevute_imputazione: CorrispettivoSplitTotalsSchema
+
+
 class CorrispettivoDaySummarySchema(BaseModel):
     date: date
     sales: CorrispettivoSplitTotalsSchema
     returns: CorrispettivoSplitTotalsSchema
     net: CorrispettivoSplitTotalsSchema
+    sales_breakdown: Optional[CorrispettivoSalesBreakdownSchema] = None
 
 
 class CorrispettivoRiepilogoResponseSchema(BaseModel):

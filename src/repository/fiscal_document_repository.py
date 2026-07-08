@@ -710,7 +710,13 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         return doc
     
     def delete_fiscal_document(self, id_fiscal_document: int) -> bool:
-        """Elimina documento fiscale (solo se pending)"""
+        """Elimina documento fiscale.
+
+        Regole:
+        - Resi (`return`): eliminabili in qualsiasi stato.
+        - Fatture/note di credito: solo se `status='pending'`.
+        - Fatture con note di credito collegate: non eliminabili.
+        """
         doc = self.get_fiscal_document_by_id(id_fiscal_document)
         
         if not doc:
@@ -926,14 +932,18 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         return detail
     
     def delete_fiscal_document_detail(self, id_detail: int) -> bool:
-        """Elimina un dettaglio di documento fiscale e ricalcola il totale"""
+        """Elimina un dettaglio di reso e ricalcola il totale del documento."""
         detail = self._session.query(FiscalDocumentDetail).filter(
             FiscalDocumentDetail.id_fiscal_document_detail == id_detail
         ).first()
-        
+
         if not detail:
             return False
-        
+
+        fiscal_doc = self.get_fiscal_document_by_id(detail.id_fiscal_document)
+        if not fiscal_doc or fiscal_doc.document_type != "return":
+            raise ValueError("Solo i dettagli di un documento di reso possono essere eliminati")
+
         fiscal_document_id = detail.id_fiscal_document
         
         self._session.delete(detail)

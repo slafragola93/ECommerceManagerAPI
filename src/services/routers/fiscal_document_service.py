@@ -167,20 +167,27 @@ class FiscalDocumentService(IFiscalDocumentService):
             raise ValidationException(f"Errore nell'aggiornamento del documento fiscale: {str(e)}")
     
     async def delete_fiscal_document(self, id_fiscal_document: int) -> bool:
-        """Elimina un documento fiscale"""
+        """Elimina un documento fiscale (resi in qualsiasi stato; altri tipi solo pending)."""
+        fiscal_doc = self._fiscal_document_repository.get_by_id(id_fiscal_document)
+        if not fiscal_doc:
+            raise NotFoundException("FiscalDocument", id_fiscal_document)
+
+        if fiscal_doc.status != "pending" and fiscal_doc.document_type != "return":
+            raise BusinessRuleException(
+                "Solo i documenti in stato 'pending' possono essere eliminati "
+                "(i resi sono eliminabili in qualsiasi stato)"
+            )
+
         try:
-            # Verifica che il documento esista
-            fiscal_doc = self._fiscal_document_repository.get_by_id(id_fiscal_document)
-            if not fiscal_doc:
-                raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
-            
-            # Solo i documenti in stato 'pending' possono essere eliminati, eccetto i resi
-            if fiscal_doc.status != 'pending' and fiscal_doc.document_type != 'return':
-                raise BusinessRuleException("Solo i documenti in stato 'pending' possono essere eliminati (eccetto i resi)")
-            
-            return self._fiscal_document_repository.delete_fiscal_document(id_fiscal_document)
-        except Exception as e:
-            raise ValidationException(f"Errore nell'eliminazione del documento fiscale: {str(e)}")
+            deleted = self._fiscal_document_repository.delete_fiscal_document(
+                id_fiscal_document
+            )
+        except ValueError as exc:
+            raise BusinessRuleException(str(exc)) from exc
+
+        if not deleted:
+            raise NotFoundException("FiscalDocument", id_fiscal_document)
+        return True
     
     async def update_fiscal_document_detail(self, id_detail: int, update_data: ReturnDetailUpdateSchema) -> FiscalDocumentDetail:
         """Aggiorna un dettaglio di documento fiscale"""
@@ -195,11 +202,17 @@ class FiscalDocumentService(IFiscalDocumentService):
             raise ValidationException(f"Errore nell'aggiornamento del dettaglio: {str(e)}")
     
     async def delete_fiscal_document_detail(self, id_detail: int) -> bool:
-        """Elimina un dettaglio di documento fiscale"""
+        """Elimina un dettaglio di reso e ricalcola il totale del documento."""
         try:
-            return self._fiscal_document_repository.delete_fiscal_document_detail(id_detail)
-        except Exception as e:
-            raise ValidationException(f"Errore nell'eliminazione del dettaglio: {str(e)}")
+            deleted = self._fiscal_document_repository.delete_fiscal_document_detail(
+                id_detail
+            )
+        except ValueError as exc:
+            raise BusinessRuleException(str(exc)) from exc
+
+        if not deleted:
+            raise NotFoundException("FiscalDocumentDetail", id_detail)
+        return True
 
     def _row_to_return_response_schema(self, row) -> Optional[ReturnResponseSchema]:
         """Converte una tupla (doc, addr_del, addr_inv, customer, payment, shipping) in ReturnResponseSchema.

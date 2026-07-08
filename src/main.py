@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
+    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, ricevute, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
 from src.database import Base, engine
 
 # Import new cache system
@@ -637,6 +637,7 @@ app.include_router(preventivi.router)
 app.include_router(ddt.router)
 app.include_router(fiscal_documents.router)
 app.include_router(corrispettivi.router)
+app.include_router(ricevute.router)
 app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)
