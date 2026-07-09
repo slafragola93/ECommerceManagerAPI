@@ -36,6 +36,7 @@ class RicevutaExportService:
         "unit_price_with_tax",
         "total_price_net",
         "total_price_with_tax",
+        "is_shipping",
         "order_total_net",
         "order_total_with_tax",
     ]
@@ -102,7 +103,7 @@ class RicevutaExportService:
         if not ricevuta.order_details:
             return [
                 base
-                + [None, None, None, None, None, None, None, order_total_net, order_total_with_tax]
+                + [None, None, None, None, None, None, None, False, order_total_net, order_total_with_tax]
             ]
 
         rows: List[list] = []
@@ -117,6 +118,7 @@ class RicevutaExportService:
                     line.unit_price_with_tax,
                     line.total_price_net,
                     line.total_price_with_tax,
+                    line.is_shipping,
                     order_total_net,
                     order_total_with_tax,
                 ]

@@ -141,7 +141,7 @@ Prefisso `/api/v1/ricevute`. Permesso RBAC: `fiscal_documents:read` (come corris
 | GET | `/api/v1/ricevute/{id_ricevuta}` | Dettaglio con ordine, cliente, indirizzi e `order_details` live |
 | POST | `/api/v1/ricevute` | Crea ricevuta da ordine (`id_order`, `data_emissione` opzionale); genera PDF |
 | PUT | `/api/v1/ricevute/{id_ricevuta}` | Aggiorna `data_emissione`; rigenera PDF |
-| DELETE | `/api/v1/ricevute/{id_ricevuta}` | Soft delete (`stato=annullata`) |
+| DELETE | `/api/v1/ricevute/{id_ricevuta}` | Cancellazione definitiva (**204 No Content**); rimuove record e PDF |
 | GET | `/api/v1/ricevute/{id_ricevuta}/pdf` | Download PDF (rigenera se assente); `?regenerate=1` forza nuovo template |
 | POST | `/api/v1/ricevute/{id_ricevuta}/pdf` | Rigenera PDF (sovrascrive) |
 | GET | `/api/v1/ricevute/{id_ricevuta}/export?fmt=csv\|xlsx` | Export singola ricevuta con `order_details` |
@@ -153,7 +153,7 @@ Permessi write: `fiscal_documents:create|update|delete`.
 
 Test: `tests/unit/repository/test_ricevuta_repository.py`, `tests/unit/services/test_ricevuta_service.py`, `tests/unit/services/test_ricevuta_create.py`, `tests/unit/services/pdf/test_ricevuta_pdf_service.py`
 
-**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {data}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra, sezione NOTE. Non riusa più il layout fattura SDI.
+**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {data}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra (merce, spedizione, IVA, totale — senza voce spese incasso), sezione NOTE. Non riusa più il layout fattura SDI.
 
 Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
@@ -164,6 +164,30 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 - `GET /api/v1/ricevute/{id}/export?fmt=csv|xlsx` — dettaglio + righe prodotto.
 - `GET /api/v1/ricevute/export?fmt=...` — export massivo filtrato (max 5000).
 - Service: `src/services/export/ricevuta_export_service.py`.
+
+## Ultime modifiche (2026-07-09) — DELETE ricevuta: cancellazione definitiva
+
+- `DELETE /api/v1/ricevute/{id}` restituisce **204 No Content** (non più soft delete `annullata`).
+- Rimuove record DB e file PDF in `media/ricevute/`.
+- Dopo la cancellazione l'ordine può ricevere una nuova ricevuta; i corrispettivi tornano al flusso vendite standard (come per annullo legacy).
+
+## Ultime modifiche (2026-07-09) — PDF ricevuta: rimossa voce Spese incasso
+
+- Nel blocco totali del PDF non compare più la riga **Spese incasso - {metodo pagamento}** (era sempre € 0,00).
+- Rigenerare PDF esistenti con `GET /api/v1/ricevute/{id}/pdf?regenerate=1`.
+
+## Ultime modifiche (2026-07-09) — API ricevuta: spedizione in totali e righe
+
+- `order_details[]` include riga spedizione (`is_shipping: true`) quando presente.
+- `order.shipping_total_price_with_tax` / `shipping_total_price_net` su dettaglio.
+- Logica condivisa PDF + API: `src/services/ricevute/order_lines.py`.
+- Export CSV/XLSX: colonna `is_shipping`.
+
+## Ultime modifiche (2026-07-09) — PDF ricevuta: spedizione in tabella e totali
+
+- Caricamento spedizione via `id_shipping` (come stampa ordine), non solo relationship `shipments`.
+- Riga **Spedizione/Livraison** in tabella prodotti + riga totali con importo IVA inclusa.
+- Fallback: se record spedizione assente, deriva da `total_price_with_tax - products_total_price_with_tax`.
 
 ## Ultime modifiche (2026-07-08) — Template PDF ricevuta elettronew
 
@@ -208,7 +232,7 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 - `POST /api/v1/ricevute` — creazione da ordine, numerazione annuale, `data_incasso` da `payment_date`.
 - PDF automatico alla creazione; `GET/POST .../pdf` download/rigenerazione; file in `media/ricevute/{anno}/`.
-- `PUT` (data emissione) e `DELETE` soft (annullata); blocco se `id_order_state == 4` o ordine già fatturato.
+- `PUT` (data emissione) e `DELETE` (cancellazione definitiva, 204); blocco se `id_order_state == 4` o ordine già fatturato.
 - Helper condiviso `resolve_order_payment_date` per allineamento corrispettivi (BE-3).
 
 ## Ultime modifiche (2026-07-08) — Ricevute BE-1 + BE-2.2
@@ -270,9 +294,21 @@ Test: `tests/unit/repository/test_corrispettivo_repository.py`
 
 ---
 
-## Ultime modifiche (2026-07-06) — Export Excel corrispettivi semplificato
+## Ultime modifiche (2026-07-09) — Export Excel corrispettivi: colonne ricevute
 
-I file `registro.xlsx` / `registro_{ISO}.xlsx` nel ZIP contengono solo: **Data**, **Totale vendite**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione** (tutti gli importi **con IVA**).
+I file `registro.xlsx` / `registro_{ISO}.xlsx` nel ZIP includono il breakdown vendite BE-3.2:
+
+**Data**, **Vendite base**, **Ricevute decurtazione**, **Ricevute imputazione**, **Totale vendite**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione** (importi **con IVA**).
+
+`Totale vendite` = somma delle tre colonne vendite; allineato a `GET /api/v1/corrispettivi` → `days[].sales_breakdown`.
+
+Test: `tests/unit/services/export/test_corrispettivi_excel_service.py`.
+
+---
+
+## Ultime modifiche (2026-07-06) — Export Excel corrispettivi (layout precedente)
+
+Layout storico a 6 colonne (senza breakdown ricevute) — sostituito dal formato sopra.
 
 ---
 
@@ -292,7 +328,7 @@ Documentazione: [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md) (reference comp
 
 Dipendenza aggiunta: `openpyxl` (export Excel).
 
-Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`, `tests/unit/repository/test_corrispettivo_repository.py` (filtri non fatturati + pagati)
+Test: `tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py`, `tests/unit/repository/test_corrispettivo_repository.py`, `tests/unit/services/export/test_corrispettivi_excel_service.py`
 
 ---
 

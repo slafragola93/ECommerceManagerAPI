@@ -36,9 +36,9 @@ class IRicevutaService(ABC):
         pass
 
     @abstractmethod
-    def annulla_ricevuta(
+    def delete_ricevuta(
         self, id_ricevuta: int, user_id: Optional[int] = None
-    ) -> RicevutaResponseSchema:
+    ) -> None:
         pass
 
     @abstractmethod

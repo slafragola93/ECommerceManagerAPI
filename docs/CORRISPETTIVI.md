@@ -92,7 +92,7 @@ Per ordini con **ricevuta emessa** (`ricevute.stato = 'emessa'`):
 1. L'ordine **non** entra più nel corrispettivo vendite alla `Order.date_add`.
 2. **Decurtazione** (importo negativo, imponibile per aliquota): giorno `ricevute.data_incasso` (= `payment_date` ordine).
 3. **Imputazione** (importo positivo): giorno `ricevute.data_emissione`.
-4. Ricevuta **annullata** → l'ordine torna nel flusso vendite standard su `date_add`.
+4. Ricevuta **eliminata** (o legacy **annullata**) → l'ordine torna nel flusso vendite standard su `date_add`.
 
 Importi sempre live da `order_details` / spedizione ordine (stesso perimetro vendite: pagato, non fatturato).
 
@@ -423,7 +423,10 @@ Authorization: Bearer <token>
 | Colonna | Contenuto |
 |---|---|
 | `Data` | Giorno con movimento (`YYYY-MM-DD`) |
-| `Totale vendite` | Somma vendite giornaliere (ordini non fatturati) |
+| `Vendite base` | Vendite standard su `Order.date_add` (senza ricevuta emessa) |
+| `Ricevute decurtazione` | Aggiustamento negativo su `ricevute.data_incasso` |
+| `Ricevute imputazione` | Aggiustamento positivo su `ricevute.data_emissione` |
+| `Totale vendite` | Somma dei tre componenti sopra (= `days[].sales.total_with_tax`) |
 | `Tot resi` | Somma resi giornalieri |
 | `Totale netto` | Vendite − resi |
 | `Netto prodotti` | Netto imputato ai prodotti |

@@ -44,6 +44,10 @@ class RicevutaOrderDetailEmbedSchema(BaseModel):
     total_price_with_tax: Optional[float] = None
     reduction_percent: Optional[float] = None
     reduction_amount: Optional[float] = None
+    is_shipping: bool = Field(
+        False,
+        description="True per la riga spedizione sintetica (id_order_detail=0)",
+    )
 
 
 class RicevutaCustomerEmbedSchema(BaseModel):
@@ -89,6 +93,14 @@ class RicevutaOrderEmbedSchema(BaseModel):
     total_price_net: Optional[float] = None
     products_total_price_with_tax: Optional[float] = None
     products_total_price_net: Optional[float] = None
+    shipping_total_price_with_tax: Optional[float] = Field(
+        None,
+        description="Spedizione lorda (da record shipments o delta ordine/prodotti)",
+    )
+    shipping_total_price_net: Optional[float] = Field(
+        None,
+        description="Spedizione imponibile",
+    )
     total_discounts: Optional[float] = None
     general_note: Optional[str] = None
 
@@ -148,7 +160,7 @@ class RicevutaResponseSchema(BaseModel):
     )
     order_details: List[RicevutaOrderDetailEmbedSchema] = Field(
         default_factory=list,
-        description="Righe prodotto live dall'ordine collegato",
+        description="Righe prodotto live + eventuale riga spedizione (`is_shipping=true`)",
     )
 
 

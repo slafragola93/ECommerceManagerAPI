@@ -232,19 +232,18 @@ async def update_ricevuta(
 
 @router.delete(
     "/{id_ricevuta}",
-    response_model=RicevutaResponseSchema,
-    status_code=status.HTTP_200_OK,
-    summary="Annulla ricevuta (soft delete)",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Elimina ricevuta (cancellazione definitiva)",
 )
 @check_authentication
-async def annulla_ricevuta(
+async def delete_ricevuta(
     id_ricevuta: int = Path(..., gt=0),
     user: dict = user_dependency,
     _: None = delete_permission,
     service: IRicevutaService = Depends(get_ricevuta_service),
-) -> RicevutaResponseSchema:
+) -> None:
     user_id = user.get("id_user") or user.get("user_id")
-    return service.annulla_ricevuta(id_ricevuta, user_id=user_id)
+    service.delete_ricevuta(id_ricevuta, user_id=user_id)
 
 
 @router.get(

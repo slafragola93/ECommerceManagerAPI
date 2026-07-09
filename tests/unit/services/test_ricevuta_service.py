@@ -9,6 +9,7 @@ from src.models.customer import Customer
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
 from src.models.ricevuta import ORDER_STATE_SPEDIZIONE_CONFERMATA, Ricevuta, RicevutaStato
+from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.schemas.ricevuta_schema import RicevutaFiltersSchema, RicevutaStatoSchema
 from src.services.interfaces.ricevuta_service_interface import IRicevutaService
@@ -100,6 +101,80 @@ def test_get_ricevuta_detail_with_live_data(service, fixtures):
     assert result.is_modifiable is True
     assert len(result.order_details) == 1
     assert result.order_details[0].product_name == "Articolo test"
+    assert result.order_details[0].is_shipping is False
+
+
+def test_get_ricevuta_includes_shipping_line_and_totals(service, db_session, tax):
+    customer = Customer(
+        id_lang=1,
+        firstname="Anna",
+        lastname="Bianchi",
+        email="anna@example.com",
+    )
+    db_session.add(customer)
+    db_session.commit()
+    db_session.refresh(customer)
+
+    shipping = Shipping(
+        id_tax=tax.id_tax,
+        price_tax_excl=Decimal("10.00"),
+        price_tax_incl=Decimal("12.20"),
+    )
+    db_session.add(shipping)
+    db_session.commit()
+    db_session.refresh(shipping)
+
+    order = Order(
+        id_customer=customer.id_customer,
+        id_order_state=1,
+        id_shipping=shipping.id_shipping,
+        reference="ORD-SHIP",
+        is_payed=True,
+        payment_date=date(2026, 6, 2),
+        total_price_with_tax=Decimal("134.20"),
+        total_price_net=Decimal("110.00"),
+        products_total_price_with_tax=Decimal("122.00"),
+        products_total_price_net=Decimal("100.00"),
+    )
+    db_session.add(order)
+    db_session.commit()
+    db_session.refresh(order)
+
+    db_session.add(
+        OrderDetail(
+            id_order=order.id_order,
+            id_tax=tax.id_tax,
+            product_name="Prodotto",
+            product_reference="P-1",
+            product_qty=1,
+            unit_price_with_tax=Decimal("122.00"),
+            unit_price_net=Decimal("100.00"),
+            total_price_with_tax=Decimal("122.00"),
+            total_price_net=Decimal("100.00"),
+        )
+    )
+    ricevuta = Ricevuta(
+        numero=8,
+        anno=2026,
+        id_order=order.id_order,
+        id_customer=customer.id_customer,
+        data_incasso=date(2026, 6, 2),
+        data_emissione=date(2026, 6, 3),
+        stato=RicevutaStato.EMESSA,
+    )
+    db_session.add(ricevuta)
+    db_session.commit()
+    db_session.refresh(ricevuta)
+
+    result = service.get_ricevuta(ricevuta.id_ricevuta)
+
+    assert len(result.order_details) == 2
+    assert result.order_details[-1].is_shipping is True
+    assert result.order_details[-1].product_name == "Spedizione"
+    assert result.order.shipping_total_price_with_tax == 12.2
+    assert result.order.total_price_with_tax == 134.2
+    lines_gross = sum(line.total_price_with_tax or 0 for line in result.order_details)
+    assert lines_gross == pytest.approx(result.order.total_price_with_tax)
 
 
 def test_get_ricevuta_not_modifiable_when_order_shipped(service, db_session, fixtures):

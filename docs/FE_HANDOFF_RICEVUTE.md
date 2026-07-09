@@ -16,12 +16,12 @@ Riferimento BE task list: [.cursor/tasks_claude/fatturazione/TASKS_BE_ricevute.m
 | **BE-2.2** GET lista + dettaglio | ✅ | join live ordine/cliente/righe |
 | **BE-2.1** POST creazione | ✅ | da modale ordine (`id_order`, `data_emissione` opz.) |
 | **BE-2.3** PDF | ✅ | auto in POST; `GET/POST .../pdf` |
-| **BE-2.4** PUT / soft DELETE | ✅ | blocco se `id_order_state == 4` |
+| **BE-2.4** PUT / DELETE | ✅ | DELETE = cancellazione definitiva; blocco se `id_order_state == 4` |
 | BE-3 Corrispettivi | ✅ BE-3.1–3.3 | breakdown audit + compatibilità resi |
 | BE-2.5 Export CSV/Excel | ✅ | singola + massiva |
 | BE-2.6 Email | ⏳ | invio PDF |
 
-Il FE può integrare **lista, dettaglio, creazione, PDF, annullo**.
+Il FE può integrare **lista, dettaglio, creazione, PDF, eliminazione**.
 
 ---
 
@@ -45,7 +45,7 @@ Le **ricevute** sono documenti fiscali **interni** (no SDI) per clienti esteri p
 | Permesso RBAC read | `fiscal_documents:read` |
 | Permesso create | `fiscal_documents:create` |
 | Permesso update | `fiscal_documents:update` |
-| Permesso delete (annulla) | `fiscal_documents:delete` |
+| Permesso delete | `fiscal_documents:delete` |
 | Swagger BE | tag **Ricevute** su `/docs` |
 
 Stesso permesso dei **Corrispettivi** — se l’utente vede i corrispettivi, può leggere le ricevute.
@@ -127,17 +127,21 @@ PUT /api/v1/ricevute/{id_ricevuta}
 { "data_emissione": "2026-07-10" }
 ```
 
-Rigenera il PDF. Bloccato se ordine spedito o ricevuta annullata.
+Rigenera il PDF. Bloccato se ordine spedito o ricevuta non emessa.
 
 ---
 
-### DELETE annullo (BE-2.4)
+### DELETE — cancellazione definitiva (BE-2.4)
 
 ```http
 DELETE /api/v1/ricevute/{id_ricevuta}
 ```
 
-Soft delete: `stato=annullata`, `annullata_at`, `annullata_da_user_id`. Response: `RicevutaDetail`.
+**204 No Content** — elimina record DB e file PDF su disco. Dopo la cancellazione l'ordine può ricevere una nuova ricevuta.
+
+Bloccato se `id_order_state == 4` (Spedizione Confermata), come PUT.
+
+> **Nota:** eventuali ricevute legacy con `stato=annullata` restano in DB finché non eliminate manualmente; il DELETE non imposta più `annullata`.
 
 ---
 
@@ -206,7 +210,7 @@ Mostrare come **`{numero}/{anno}`** (es. `7/2026`).
 
 ### Righe prodotto
 
-In dettaglio, `order_details[]` proviene dalla tabella `order_details` dell’ordine collegato (escluse righe con `id_order_document` valorizzato — stessa logica DDT parziale).
+In dettaglio, `order_details[]` proviene da `order_details` dell’ordine (escluse righe con `id_order_document`) **+ eventuale riga spedizione** sintetica (`is_shipping: true`, `id_order_detail: 0`, `product_name: "Spedizione"`). Totali ordine in `order.total_price_with_tax` includono già spedizione; campi dedicati: `order.shipping_total_price_with_tax` / `shipping_total_price_net`.
 
 ### PDF (step 2 — non ancora disponibile)
 
@@ -271,6 +275,8 @@ export interface RicevutaOrderDetail {
   total_price_with_tax: number | null;
   reduction_percent: number | null;
   reduction_amount: number | null;
+  /** Riga spedizione sintetica (`id_order_detail=0`) — non sommare due volte con order.shipping_* */
+  is_shipping: boolean;
 }
 
 export interface RicevutaOrderSummary {
@@ -283,6 +289,8 @@ export interface RicevutaOrderSummary {
   total_price_net: number | null;
   products_total_price_with_tax: number | null;
   products_total_price_net: number | null;
+  shipping_total_price_with_tax: number | null;
+  shipping_total_price_net: number | null;
   total_discounts: number | null;
   general_note: string | null;
 }

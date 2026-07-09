@@ -38,3 +38,12 @@ def read_ricevuta_pdf_bytes(ricevuta: Ricevuta) -> bytes:
         raise FileNotFoundError(f"File PDF non trovato: {ricevuta.pdf_path}")
     with open(path, "rb") as handle:
         return handle.read()
+
+
+def delete_ricevuta_pdf_file(ricevuta: Ricevuta) -> None:
+    """Rimuove il PDF da disco se presente (best effort)."""
+    if not ricevuta.pdf_path:
+        return
+    path = ricevuta.pdf_path.replace("/", os.sep)
+    if os.path.isfile(path):
+        os.remove(path)

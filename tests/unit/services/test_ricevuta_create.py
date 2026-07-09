@@ -1,11 +1,11 @@
-"""Test creazione/annullo ricevute."""
+"""Test creazione/eliminazione ricevute."""
 from datetime import date
 from decimal import Decimal
 
 import pytest
 
 from src.core.container_config import get_configured_container
-from src.core.exceptions import BusinessRuleException
+from src.core.exceptions import BusinessRuleException, NotFoundException
 from src.models.app_configuration import AppConfiguration
 from src.models.customer import Customer
 from src.models.order import Order
@@ -120,11 +120,24 @@ def test_create_ricevuta_blocked_when_shipped(service, db_session, order_setup):
         service.create_ricevuta(RicevutaCreateSchema(id_order=order.id_order))
 
 
-def test_update_and_annulla_ricevuta(service, order_setup):
+def test_delete_ricevuta_blocked_when_shipped(service, db_session, order_setup):
     order = order_setup["order"]
     created = service.create_ricevuta(
         RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 8))
     )
+    order.id_order_state = ORDER_STATE_SPEDIZIONE_CONFERMATA
+    db_session.commit()
+
+    with pytest.raises(BusinessRuleException):
+        service.delete_ricevuta(created.id_ricevuta)
+
+
+def test_update_and_delete_ricevuta(service, order_setup):
+    order = order_setup["order"]
+    created = service.create_ricevuta(
+        RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 8))
+    )
+    pdf_path = created.pdf_path
 
     updated = service.update_ricevuta(
         created.id_ricevuta,
@@ -132,7 +145,18 @@ def test_update_and_annulla_ricevuta(service, order_setup):
     )
     assert updated.data_emissione == date(2026, 7, 10)
 
-    annullata = service.annulla_ricevuta(created.id_ricevuta, user_id=99)
-    assert annullata.stato.value == "annullata"
-    assert annullata.annullata_da_user_id == 99
-    assert annullata.is_modifiable is False or annullata.stato.value == "annullata"
+    service.delete_ricevuta(created.id_ricevuta, user_id=99)
+
+    with pytest.raises(NotFoundException):
+        service.get_ricevuta(created.id_ricevuta)
+
+    if pdf_path:
+        import os
+
+        assert not os.path.isfile(pdf_path.replace("/", os.sep))
+
+    recreated = service.create_ricevuta(
+        RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 11))
+    )
+    assert recreated.stato.value == "emessa"
+    assert recreated.order.id_order == order.id_order

@@ -61,11 +61,9 @@ def _minimal_context():
                 "tax_code": "20FR",
             }
         ],
-        "payment_name": "Card",
         "totals": {
             "merchandise_net": 349.98,
             "shipping_incl": 0.0,
-            "payment_fee": 0.0,
             "total_vat": 70.0,
             "total_gross": 419.98,
         },
@@ -79,7 +77,6 @@ class TestRicevutaPDFLayout:
         labels = _labels_for_country("FR")
         assert labels["billing"] == "En-t\u00eate"
         assert labels["headers"][2] == "Prix"
-        assert labels["payment_fee"] == "Frais de collecte - {payment}"
 
     def test_vat_display_prefers_tax_code(self):
         assert _vat_display(20.0, "20FR", "FR") == "20FR"
@@ -97,6 +94,7 @@ class TestRicevutaPDFService:
     def test_compute_totals_from_order(self):
         order = SimpleNamespace(
             products_total_price_net=Decimal("349.98"),
+            products_total_price_with_tax=Decimal("419.98"),
             total_price_net=Decimal("349.98"),
             total_price_with_tax=Decimal("419.98"),
             shipments=None,
@@ -106,3 +104,18 @@ class TestRicevutaPDFService:
         assert totals["merchandise_net"] == pytest.approx(349.98)
         assert totals["total_vat"] == pytest.approx(70.0)
         assert totals["total_gross"] == pytest.approx(419.98)
+
+    def test_compute_totals_includes_shipping(self):
+        order = SimpleNamespace(
+            products_total_price_net=Decimal("100.00"),
+            products_total_price_with_tax=Decimal("122.00"),
+            total_price_net=Decimal("110.00"),
+            total_price_with_tax=Decimal("134.20"),
+        )
+        shipping = SimpleNamespace(price_tax_excl=Decimal("10.00"), price_tax_incl=Decimal("12.20"))
+        details = [{"total_price_net": 100.0, "is_shipping": False}]
+        totals = RicevutaPDFService._compute_totals(order, details, shipping)
+        assert totals["merchandise_net"] == pytest.approx(100.0)
+        assert totals["shipping_incl"] == pytest.approx(12.2)
+        assert totals["shipping_net"] == pytest.approx(10.0)
+        assert totals["total_gross"] == pytest.approx(134.2)

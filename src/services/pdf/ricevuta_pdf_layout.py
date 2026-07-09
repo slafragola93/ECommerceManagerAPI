@@ -42,7 +42,7 @@ _LABELS_IT = {
     "headers": ["Code", "Description", "Prezzo", "IVA", "Sconto", "Quant.", "Totale"],
     "merchandise": "Totale merce",
     "shipping": "Spedizione",
-    "payment_fee": "Spese incasso - {payment}",
+    "shipping_line": "Spedizione",
     "total_vat": "Totale IVA",
     "grand_total": "Totale - ({qty} pz.)",
     "note": "NOTE:",
@@ -56,7 +56,7 @@ _LABELS_FR = {
     "headers": ["Code", "Description", "Prix", "TVA", "R\u00e9duction", "Quant.", "Total"],
     "merchandise": "Totale merce",
     "shipping": "Spedizione",
-    "payment_fee": "Frais de collecte - {payment}",
+    "shipping_line": "Livraison",
     "total_vat": "TVA totale",
     "grand_total": "Total - ({qty} pz.)",
     "note": "NOTE:",
@@ -112,7 +112,6 @@ class RicevutaPDFLayout:
         order_reference: str,
         order_date: Union[datetime, str],
         details: List[Dict[str, Any]],
-        payment_name: str,
         totals: Dict[str, float],
         note_text: str = "",
         locale_iso: Optional[str] = None,
@@ -164,7 +163,6 @@ class RicevutaPDFLayout:
         cls._draw_totals_block(
             pdf,
             totals=totals,
-            payment_name=payment_name,
             total_qty=total_qty,
             labels=labels,
         )
@@ -387,7 +385,8 @@ class RicevutaPDFLayout:
 
         for detail in details:
             qty = int(detail.get("product_qty") or 0)
-            total_qty += qty
+            if not detail.get("is_shipping"):
+                total_qty += qty
             unit_net = float(detail.get("unit_price") or 0)
             line_net = float(detail.get("total_price_net") or 0)
             reduction_pct = float(detail.get("reduction_percent") or 0)
@@ -446,7 +445,6 @@ class RicevutaPDFLayout:
     def _draw_totals_block(
         pdf,
         totals: Dict[str, float],
-        payment_name: str,
         total_qty: int,
         labels: Dict[str, Any],
     ) -> None:
@@ -462,10 +460,6 @@ class RicevutaPDFLayout:
 
         row(labels["merchandise"], _fmt_eur(totals["merchandise_net"]))
         row(labels["shipping"], _fmt_eur(totals["shipping_incl"]))
-        row(
-            labels["payment_fee"].format(payment=payment_name or "-"),
-            _fmt_eur(totals["payment_fee"]),
-        )
         row(labels["total_vat"], _fmt_eur(totals["total_vat"]))
         pdf.ln(1)
         RicevutaPDFLayout._draw_horizontal_rule(pdf, thick=True)

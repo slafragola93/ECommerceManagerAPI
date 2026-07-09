@@ -39,7 +39,13 @@ from src.services.export.ricevuta_export_service import RicevutaExportService
 from src.services.interfaces.ricevuta_service_interface import IRicevutaService
 from src.services.pdf.ricevuta_pdf_service import RicevutaPDFService
 from src.services.ricevute.date_utils import resolve_order_payment_date
+from src.services.ricevute.order_lines import (
+    build_shipping_line_dict,
+    load_order_shipping,
+    resolve_shipping_amounts,
+)
 from src.services.ricevute.pdf_storage import (
+    delete_ricevuta_pdf_file,
     read_ricevuta_pdf_bytes,
     update_ricevuta_pdf_metadata,
 )
@@ -145,20 +151,16 @@ class RicevutaService(IRicevutaService):
         self._generate_and_persist_pdf(ricevuta, order)
         return self.get_ricevuta(id_ricevuta)
 
-    def annulla_ricevuta(
+    def delete_ricevuta(
         self, id_ricevuta: int, user_id: Optional[int] = None
-    ) -> RicevutaResponseSchema:
+    ) -> None:
         ricevuta = self._ricevuta_repository.get_by_id_or_raise(id_ricevuta)
-        self._ensure_ricevuta_emessa(ricevuta)
+        if ricevuta.stato == RicevutaStato.EMESSA:
+            order = self._get_order_or_raise(ricevuta.id_order)
+            self._ensure_order_modifiable(order)
 
-        order = self._get_order_or_raise(ricevuta.id_order)
-        self._ensure_order_modifiable(order)
-
-        ricevuta.stato = RicevutaStato.ANNULLATA
-        ricevuta.annullata_at = datetime.utcnow()
-        ricevuta.annullata_da_user_id = user_id
-        self._ricevuta_repository.update(ricevuta)
-        return self.get_ricevuta(id_ricevuta)
+        delete_ricevuta_pdf_file(ricevuta)
+        self._ricevuta_repository.delete(id_ricevuta)
 
     def regenerate_pdf(self, id_ricevuta: int) -> bytes:
         ricevuta = self._ricevuta_repository.get_by_id_or_raise(id_ricevuta)
@@ -187,7 +189,8 @@ class RicevutaService(IRicevutaService):
             raise NotFoundException("Order", ricevuta.id_order)
 
         customer = self._customer_repository.get_by_id(ricevuta.id_customer)
-        order_details = self._build_order_details(order.id_order)
+        shipping = load_order_shipping(self._session, order)
+        order_details = self._build_order_details(order, shipping)
         is_modifiable = _order_is_modifiable(order)
         addresses = self._map_addresses(order)
 
@@ -206,7 +209,7 @@ class RicevutaService(IRicevutaService):
             annullata_da_user_id=ricevuta.annullata_da_user_id,
             is_modifiable=is_modifiable,
             customer=self._map_customer(customer),
-            order=self._map_order(order),
+            order=self._map_order(order, shipping),
             address=addresses.get("address"),
             address_delivery=addresses.get("address_delivery"),
             address_invoice=addresses.get("address_invoice"),
@@ -321,13 +324,23 @@ class RicevutaService(IRicevutaService):
                 details={"fmt": fmt},
             ) from exc
 
-    def _build_order_details(self, id_order: int) -> List[RicevutaOrderDetailEmbedSchema]:
-        details = self._order_detail_repository.get_by_order_id(id_order)
+    def _build_order_details(
+        self, order: Order, shipping=None
+    ) -> List[RicevutaOrderDetailEmbedSchema]:
+        details = self._order_detail_repository.get_by_order_id(order.id_order)
         order_details: List[RicevutaOrderDetailEmbedSchema] = []
         for detail in details:
             if detail.id_order_document:
                 continue
             order_details.append(self._map_order_detail(detail))
+
+        if shipping is None:
+            shipping = load_order_shipping(self._session, order)
+        shipping_line = build_shipping_line_dict(order, shipping)
+        if shipping_line:
+            order_details.append(
+                RicevutaOrderDetailEmbedSchema(**shipping_line)
+            )
         return order_details
 
     @staticmethod
@@ -345,6 +358,26 @@ class RicevutaService(IRicevutaService):
             total_price_with_tax=_to_float(detail.total_price_with_tax),
             reduction_percent=_to_float(detail.reduction_percent),
             reduction_amount=_to_float(detail.reduction_amount),
+            is_shipping=False,
+        )
+
+    @staticmethod
+    def _map_order(order: Order, shipping=None) -> RicevutaOrderEmbedSchema:
+        shipping_net, shipping_incl = resolve_shipping_amounts(order, shipping)
+        return RicevutaOrderEmbedSchema(
+            id_order=order.id_order,
+            reference=order.reference,
+            id_order_state=order.id_order_state,
+            is_payed=bool(order.is_payed),
+            payment_date=order.payment_date,
+            total_price_with_tax=_to_float(order.total_price_with_tax) or 0.0,
+            total_price_net=_to_float(order.total_price_net),
+            products_total_price_with_tax=_to_float(order.products_total_price_with_tax),
+            products_total_price_net=_to_float(order.products_total_price_net),
+            shipping_total_price_with_tax=shipping_incl if shipping_incl else None,
+            shipping_total_price_net=shipping_net if shipping_net else None,
+            total_discounts=_to_float(order.total_discounts),
+            general_note=order.general_note,
         )
 
     @staticmethod
@@ -356,22 +389,6 @@ class RicevutaService(IRicevutaService):
             firstname=customer.firstname,
             lastname=customer.lastname,
             email=customer.email,
-        )
-
-    @staticmethod
-    def _map_order(order: Order) -> RicevutaOrderEmbedSchema:
-        return RicevutaOrderEmbedSchema(
-            id_order=order.id_order,
-            reference=order.reference,
-            id_order_state=order.id_order_state,
-            is_payed=bool(order.is_payed),
-            payment_date=order.payment_date,
-            total_price_with_tax=_to_float(order.total_price_with_tax) or 0.0,
-            total_price_net=_to_float(order.total_price_net),
-            products_total_price_with_tax=_to_float(order.products_total_price_with_tax),
-            products_total_price_net=_to_float(order.products_total_price_net),
-            total_discounts=_to_float(order.total_discounts),
-            general_note=order.general_note,
         )
 
     def _map_addresses(self, order: Order) -> dict:
