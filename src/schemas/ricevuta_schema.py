@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -20,13 +19,19 @@ class RicevutaExportFormatSchema(str, Enum):
 
 class RicevutaCreateSchema(BaseModel):
     id_order: int = Field(..., gt=0, description="Ordine collegato")
-    data_emissione: Optional[date] = Field(
-        None, description="Data emissione; default: oggi (Europe/Rome)"
+    data_emissione: Optional[datetime] = Field(
+        None,
+        description=(
+            "Data e ora emissione (Europe/Rome, ISO 8601); "
+            "default: adesso. Accetta anche solo la data (ora corrente)."
+        ),
     )
 
 
 class RicevutaUpdateSchema(BaseModel):
-    data_emissione: date = Field(..., description="Nuova data emissione")
+    data_emissione: datetime = Field(
+        ..., description="Nuova data e ora emissione (Europe/Rome)"
+    )
 
 
 class RicevutaOrderDetailEmbedSchema(BaseModel):
@@ -110,7 +115,7 @@ class RicevutaListItemSchema(BaseModel):
     numero: int
     anno: int
     data_incasso: date
-    data_emissione: date
+    data_emissione: datetime
     stato: RicevutaStatoSchema
     pdf_path: Optional[str] = None
     pdf_generated_at: Optional[datetime] = None
@@ -133,7 +138,7 @@ class RicevutaResponseSchema(BaseModel):
     numero: int
     anno: int
     data_incasso: date
-    data_emissione: date
+    data_emissione: datetime
     stato: RicevutaStatoSchema
     pdf_path: Optional[str] = None
     pdf_generated_at: Optional[datetime] = None
@@ -142,7 +147,10 @@ class RicevutaResponseSchema(BaseModel):
     annullata_at: Optional[datetime] = None
     annullata_da_user_id: Optional[int] = None
     is_modifiable: bool = Field(
-        description="False se l'ordine collegato è in Spedizione Confermata"
+        description=(
+            "False se l'ordine è in Spedizione Confermata (id_order_state=4). "
+            "Indicatore FE per eventuali warning: POST/PUT/DELETE non sono bloccati dal BE."
+        )
     )
     customer: Optional[RicevutaCustomerEmbedSchema] = None
     order: Optional[RicevutaOrderEmbedSchema] = None

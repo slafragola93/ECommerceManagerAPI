@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.services.ricevute.date_utils import format_emission_datetime
 from src.services.pdf.ricevuta_pdf_layout import (
     RicevutaPDFLayout,
     _labels_for_country,
@@ -33,7 +34,7 @@ def _minimal_context():
     return {
         "ricevuta_numero": 7055,
         "ricevuta_anno": 2026,
-        "data_emissione": datetime(2026, 7, 8),
+        "data_emissione": datetime(2026, 7, 8, 12, 30),
         "company_config": {
             "company_name": "Web Market s.r.l.",
             "address": "Corso Vittorio Emanuele, 110/5",
@@ -67,7 +68,6 @@ def _minimal_context():
             "total_vat": 70.0,
             "total_gross": 419.98,
         },
-        "note_text": "",
         "locale_iso": "FR",
     }
 
@@ -84,7 +84,9 @@ class TestRicevutaPDFLayout:
 
     def test_render_produces_valid_pdf_bytes(self):
         pdf = RicevutaPDFLayout.create_pdf()
-        RicevutaPDFLayout.render(pdf, **_minimal_context())
+        ctx = _minimal_context()
+        assert format_emission_datetime(ctx["data_emissione"]) == "08/07/2026 14:30"
+        RicevutaPDFLayout.render(pdf, **ctx)
         out = pdf.output()
         assert isinstance(out, (bytes, bytearray))
         assert out[:4] == b"%PDF"

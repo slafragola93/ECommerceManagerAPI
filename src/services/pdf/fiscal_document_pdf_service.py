@@ -9,6 +9,7 @@ import os
 
 from src.services.pdf.base_pdf_service import BasePDFService
 from src.services.media.media_utils import get_store_logo_path
+from src.services.ricevute.date_utils import format_emission_datetime
 
 
 class FiscalDocumentPDFService(BasePDFService):
@@ -59,7 +60,11 @@ class FiscalDocumentPDFService(BasePDFService):
             is_credit_note = fiscal_document.document_type == 'credit_note'
             doc_title = doc_title or ("NOTA DI CREDITO" if is_credit_note else "FATTURA")
             doc_number = fiscal_document.document_number or fiscal_document.internal_number or "N/A"
-            doc_date = fiscal_document.date_add.strftime("%d/%m/%Y") if fiscal_document.date_add else ""
+            doc_date = (
+                format_emission_datetime(fiscal_document.date_add)
+                if fiscal_document.date_add
+                else ""
+            )
             
             # Recupera logo: prima prova logo store, poi fallback a logo aziendale
             logo_path = company_config.get('company_logo', 'media/logos/logo.png')
@@ -84,7 +89,11 @@ class FiscalDocumentPDFService(BasePDFService):
             # Riferimento fattura per note di credito
             if is_credit_note and referenced_invoice:
                 ref_number = referenced_invoice.document_number or referenced_invoice.internal_number or "N/A"
-                ref_date = referenced_invoice.date_add.strftime("%d/%m/%Y") if referenced_invoice.date_add else ""
+                ref_date = (
+                    format_emission_datetime(referenced_invoice.date_add)
+                    if referenced_invoice.date_add
+                    else ""
+                )
                 self.add_credit_note_reference(pdf, ref_number, ref_date)
             
             # Box Venditore e Cliente (diverso da MITTENTE/DESTINATARIO)
@@ -269,7 +278,7 @@ class FiscalDocumentPDFService(BasePDFService):
         pdf.set_font('Arial', '', 12)
         
         if isinstance(date, datetime):
-            date_str = date.strftime('%d/%m/%Y')
+            date_str = format_emission_datetime(date)
         else:
             date_str = str(date)
         

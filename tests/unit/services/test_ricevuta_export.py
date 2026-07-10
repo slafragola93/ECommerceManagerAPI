@@ -35,7 +35,7 @@ def sample_detail():
         numero=7,
         anno=2026,
         data_incasso=date(2026, 6, 1),
-        data_emissione=date(2026, 6, 5),
+        data_emissione=datetime(2026, 6, 5, 10, 30),
         stato=RicevutaStatoSchema.EMESSA,
         created_at=datetime(2026, 6, 5, 10, 0, 0),
         updated_at=datetime(2026, 6, 5, 10, 0, 0),
@@ -89,7 +89,7 @@ class TestRicevutaExportService:
             numero=3,
             anno=2026,
             data_incasso=date(2026, 7, 1),
-            data_emissione=date(2026, 7, 2),
+            data_emissione=datetime(2026, 7, 2, 9, 15),
             stato=RicevutaStatoSchema.EMESSA,
             id_order=100,
             order_reference="ORD-100",
@@ -167,7 +167,7 @@ class TestRicevutaServiceExport:
                 id_order=order.id_order,
                 id_customer=customer.id_customer,
                 data_incasso=date(2026, 7, 1),
-                data_emissione=date(2026, 7, 2),
+                data_emissione=datetime(2026, 7, 2, 9, 15),
                 stato=RicevutaStato.EMESSA,
             )
         )

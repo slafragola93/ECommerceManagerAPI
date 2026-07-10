@@ -1,5 +1,5 @@
 """Test repository ricevute."""
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -70,24 +70,24 @@ def test_get_next_numero_starts_at_one(repo, db_session):
 
 def test_get_next_numero_increments_within_year(repo, db_session, order, customer):
     _add_ricevuta(
-        db_session, order, customer, numero=5, anno=2026, emissione=date(2026, 3, 15)
+        db_session, order, customer, numero=5, anno=2026, emissione=datetime(2026, 3, 15, 10, 0)
     )
     assert repo.get_next_numero(2026) == 6
 
 
 def test_get_next_numero_resets_each_year(repo, db_session, order, customer):
     _add_ricevuta(
-        db_session, order, customer, numero=99, anno=2025, emissione=date(2025, 12, 31)
+        db_session, order, customer, numero=99, anno=2025, emissione=datetime(2025, 12, 31, 23, 59)
     )
     assert repo.get_next_numero(2026) == 1
 
 
 def test_list_filtered_by_order_and_stato(repo, db_session, order, customer):
     active = _add_ricevuta(
-        db_session, order, customer, numero=1, anno=2026, emissione=date(2026, 4, 1)
+        db_session, order, customer, numero=1, anno=2026, emissione=datetime(2026, 4, 1, 8, 0)
     )
     cancelled = _add_ricevuta(
-        db_session, order, customer, numero=2, anno=2026, emissione=date(2026, 4, 2)
+        db_session, order, customer, numero=2, anno=2026, emissione=datetime(2026, 4, 2, 18, 0)
     )
     cancelled.stato = RicevutaStato.ANNULLATA
     db_session.commit()
@@ -99,10 +99,10 @@ def test_list_filtered_by_order_and_stato(repo, db_session, order, customer):
 
 def test_list_filtered_date_range(repo, db_session, order, customer):
     _add_ricevuta(
-        db_session, order, customer, numero=1, anno=2026, emissione=date(2026, 5, 1)
+        db_session, order, customer, numero=1, anno=2026, emissione=datetime(2026, 5, 1, 12, 0)
     )
     _add_ricevuta(
-        db_session, order, customer, numero=2, anno=2026, emissione=date(2026, 5, 20)
+        db_session, order, customer, numero=2, anno=2026, emissione=datetime(2026, 5, 20, 15, 30)
     )
 
     rows, total = repo.list_filtered(
@@ -111,3 +111,23 @@ def test_list_filtered_date_range(repo, db_session, order, customer):
     )
     assert total == 1
     assert rows[0].numero == 2
+
+
+def test_delete_removes_row_from_database(db_session, repo, order, customer):
+    """DELETE deve rimuovere la riga, non impostare stato=annullata."""
+    ricevuta = _add_ricevuta(
+        db_session, order, customer, numero=10, anno=2026, emissione=datetime(2026, 6, 1, 9, 0)
+    )
+    ricevuta_id = ricevuta.id_ricevuta
+
+    assert db_session.query(Ricevuta).filter(Ricevuta.id_ricevuta == ricevuta_id).count() == 1
+
+    repo.delete(ricevuta_id)
+
+    assert db_session.query(Ricevuta).filter(Ricevuta.id_ricevuta == ricevuta_id).first() is None
+    assert (
+        db_session.query(Ricevuta)
+        .filter(Ricevuta.stato == RicevutaStato.ANNULLATA, Ricevuta.id_ricevuta == ricevuta_id)
+        .count()
+        == 0
+    )

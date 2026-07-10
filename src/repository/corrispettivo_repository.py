@@ -47,21 +47,30 @@ class CorrispettivoRepository:
             )
         ).correlate(Order)
 
-    def _has_active_ricevuta_filter(self):
-        """Ordine con ricevuta emessa (escluso dal corrispettivo vendite su date_add)."""
+    def _order_day_expr(self):
+        return self._local_day_expr(Order.date_add)
+
+    def _ricevuta_emission_day_expr(self):
+        return self._local_day_expr(Ricevuta.data_emissione)
+
+    def _has_deferred_ricevuta_filter(self):
+        """Ordine con ricevuta emessa in giorno diverso da date_add (spostamento corrispettivo)."""
+        order_day = self._order_day_expr()
+        emission_day = self._ricevuta_emission_day_expr()
         return exists(
             select(Ricevuta.id_ricevuta).where(
                 Ricevuta.id_order == Order.id_order,
                 Ricevuta.stato == RicevutaStato.EMESSA,
+                emission_day != order_day,
             )
         ).correlate(Order)
 
     def _corrispettivi_sales_order_filters(self):
-        """Vendite corrispettivi: ordini non fatturati, pagati, senza ricevuta emessa."""
+        """Vendite corrispettivi: ordini non fatturati, pagati; esclusi solo se ricevuta differita."""
         return (
             self._no_invoice_filter(),
             Order.is_payed.is_(True),
-            ~self._has_active_ricevuta_filter(),
+            ~self._has_deferred_ricevuta_filter(),
         )
 
     def _ricevuta_order_eligibility_filters(self):
@@ -154,12 +163,13 @@ class CorrispettivoRepository:
         BE-3.2 — Vendite lorde per giorno con scomposizione audit (UNION ALL).
 
         Componenti per giorno:
-        - `base`: ordini standard su Order.date_add (senza ricevuta emessa)
-        - `ricevute_decurtazione`: negativo su ricevute.data_incasso
-        - `ricevute_imputazione`: positivo su ricevute.data_emissione
+        - `base`: ordini standard su Order.date_add (inclusi ordini con ricevuta same-day)
+        - `ricevute_decurtazione`: negativo su Order.date_add se emissione ≠ date ordine
+        - `ricevute_imputazione`: positivo su ricevute.data_emissione se emissione ≠ date ordine
         - `net`: somma dei tre
         """
-        order_day = self._local_day_expr(Order.date_add)
+        order_day = self._order_day_expr()
+        emission_day = self._ricevuta_emission_day_expr()
 
         base_query = (
             self._session.query(
@@ -182,7 +192,7 @@ class CorrispettivoRepository:
 
         decurtazione_query = (
             self._session.query(
-                Ricevuta.data_incasso.label("movement_date"),
+                order_day.label("movement_date"),
                 literal(self.SALES_COMPONENT_RICEVUTE_DECURTAZIONE).label("component"),
                 (-func.sum(Order.total_price_with_tax)).label("total_with_tax"),
                 (-func.sum(Order.total_price_net)).label("total_net"),
@@ -193,17 +203,18 @@ class CorrispettivoRepository:
             .join(Order, Ricevuta.id_order == Order.id_order)
             .filter(
                 Ricevuta.stato == RicevutaStato.EMESSA,
-                Ricevuta.data_incasso >= start_date,
-                Ricevuta.data_incasso <= end_date,
+                emission_day != order_day,
+                order_day >= start_date,
+                order_day <= end_date,
                 *self._ricevuta_order_eligibility_filters(),
             )
-            .group_by(Ricevuta.data_incasso)
+            .group_by(order_day)
         )
         decurtazione_query = self._apply_order_filters(decurtazione_query, filters)
 
         imputazione_query = (
             self._session.query(
-                Ricevuta.data_emissione.label("movement_date"),
+                emission_day.label("movement_date"),
                 literal(self.SALES_COMPONENT_RICEVUTE_IMPUTAZIONE).label("component"),
                 func.sum(Order.total_price_with_tax).label("total_with_tax"),
                 func.sum(Order.total_price_net).label("total_net"),
@@ -214,11 +225,12 @@ class CorrispettivoRepository:
             .join(Order, Ricevuta.id_order == Order.id_order)
             .filter(
                 Ricevuta.stato == RicevutaStato.EMESSA,
-                Ricevuta.data_emissione >= start_date,
-                Ricevuta.data_emissione <= end_date,
+                emission_day != order_day,
+                emission_day >= start_date,
+                emission_day <= end_date,
                 *self._ricevuta_order_eligibility_filters(),
             )
-            .group_by(Ricevuta.data_emissione)
+            .group_by(emission_day)
         )
         imputazione_query = self._apply_order_filters(imputazione_query, filters)
 
@@ -273,11 +285,26 @@ class CorrispettivoRepository:
         end_date: date,
         filters: Optional[dict],
     ) -> List[MovementRow]:
+        order_day = self._order_day_expr()
+        emission_day = self._ricevuta_emission_day_expr()
         parts = []
-        for movement_date_col, sign in (
-            (Ricevuta.data_incasso, -1),
-            (Ricevuta.data_emissione, 1),
+        for movement_date_col, sign, use_order_day in (
+            (order_day, -1, True),
+            (emission_day, 1, False),
         ):
+            ricevuta_filters = [
+                Ricevuta.stato == RicevutaStato.EMESSA,
+                emission_day != order_day,
+                self._order_detail_line_filter(),
+                *self._ricevuta_order_eligibility_filters(),
+            ]
+            ricevuta_filters.extend(
+                [
+                    movement_date_col >= start_date,
+                    movement_date_col <= end_date,
+                ]
+            )
+
             product_part = (
                 self._session.query(
                     movement_date_col.label("movement_date"),
@@ -291,13 +318,7 @@ class CorrispettivoRepository:
                 .join(OrderDetail, OrderDetail.id_order == Order.id_order)
                 .outerjoin(Address, Order.id_address_delivery == Address.id_address)
                 .outerjoin(Country, Address.id_country == Country.id_country)
-                .filter(
-                    Ricevuta.stato == RicevutaStato.EMESSA,
-                    self._order_detail_line_filter(),
-                    movement_date_col >= start_date,
-                    movement_date_col <= end_date,
-                    *self._ricevuta_order_eligibility_filters(),
-                )
+                .filter(*ricevuta_filters)
                 .group_by(movement_date_col, Country.iso_code, OrderDetail.id_tax)
             )
             product_part = self._apply_order_filters(product_part, filters)
@@ -317,12 +338,9 @@ class CorrispettivoRepository:
                 .outerjoin(Address, Order.id_address_delivery == Address.id_address)
                 .outerjoin(Country, Address.id_country == Country.id_country)
                 .filter(
-                    Ricevuta.stato == RicevutaStato.EMESSA,
-                    movement_date_col >= start_date,
-                    movement_date_col <= end_date,
+                    *ricevuta_filters,
                     Shipping.price_tax_excl.isnot(None),
                     Shipping.price_tax_excl > 0,
-                    *self._ricevuta_order_eligibility_filters(),
                 )
                 .group_by(movement_date_col, Country.iso_code, Shipping.id_tax)
             )
@@ -603,18 +621,18 @@ class CorrispettivoRepository:
 
         ricevuta_sales_query = (
             self._session.query(
-                Ricevuta.data_emissione.label("movement_date"),
+                self._ricevuta_emission_day_expr().label("movement_date"),
                 func.count(func.distinct(Order.id_order)).label("order_count"),
             )
             .select_from(Ricevuta)
             .join(Order, Ricevuta.id_order == Order.id_order)
             .filter(
                 Ricevuta.stato == RicevutaStato.EMESSA,
-                Ricevuta.data_emissione >= start_date,
-                Ricevuta.data_emissione <= end_date,
+                self._ricevuta_emission_day_expr() >= start_date,
+                self._ricevuta_emission_day_expr() <= end_date,
                 *self._ricevuta_order_eligibility_filters(),
             )
-            .group_by(Ricevuta.data_emissione)
+            .group_by(self._ricevuta_emission_day_expr())
         )
         if filters:
             if filters.get("id_platform"):

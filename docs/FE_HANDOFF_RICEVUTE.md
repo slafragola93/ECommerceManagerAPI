@@ -16,7 +16,7 @@ Riferimento BE task list: [.cursor/tasks_claude/fatturazione/TASKS_BE_ricevute.m
 | **BE-2.2** GET lista + dettaglio | ✅ | join live ordine/cliente/righe |
 | **BE-2.1** POST creazione | ✅ | da modale ordine (`id_order`, `data_emissione` opz.) |
 | **BE-2.3** PDF | ✅ | auto in POST; `GET/POST .../pdf` |
-| **BE-2.4** PUT / DELETE | ✅ | DELETE = cancellazione definitiva; blocco se `id_order_state == 4` |
+| **BE-2.4** PUT / DELETE | ✅ | DELETE = cancellazione definitiva; `is_modifiable` solo warning FE |
 | BE-3 Corrispettivi | ✅ BE-3.1–3.3 | breakdown audit + compatibilità resi |
 | BE-2.5 Export CSV/Excel | ✅ | singola + massiva |
 | BE-2.6 Email | ⏳ | invio PDF |
@@ -73,7 +73,7 @@ Authorization: Bearer <JWT>
 
 **Response 200:** `RicevutaListResponse`
 
-Ordinamento BE: `data_emissione` DESC, poi `numero` DESC.
+Ordinamento BE: `data_emissione` DESC (data + ora), poi `numero` DESC.
 
 ---
 
@@ -101,19 +101,18 @@ Authorization: Bearer <JWT>
 
 {
   "id_order": 45001,
-  "data_emissione": "2026-07-08"
+  "data_emissione": "2026-07-08T14:30:00"
 }
 ```
 
 | Campo | Obbligatorio | Note |
 |-------|--------------|------|
 | `id_order` | sì | PK ordine gestionale |
-| `data_emissione` | no | default: oggi (Europe/Rome) |
+| `data_emissione` | no | ISO 8601 data+ora (Europe/Rome); default: adesso. Accetta anche `"2026-07-08"` (solo data → ora corrente su quel giorno) |
 
 **Response 201:** `RicevutaDetail` completa con `pdf_path` popolato.
 
 **Errori business (400):**
-- ordine in Spedizione Confermata (`id_order_state=4`)
 - ordine già fatturato
 - ricevuta emessa già presente per l'ordine
 - ordine senza `payment_date` / non pagato
@@ -124,10 +123,11 @@ Authorization: Bearer <JWT>
 
 ```http
 PUT /api/v1/ricevute/{id_ricevuta}
-{ "data_emissione": "2026-07-10" }
+{ "data_emissione": "2026-07-10T09:15:00" }
 ```
 
-Rigenera il PDF. Bloccato se ordine spedito o ricevuta non emessa.
+Rigenera il PDF. Bloccato solo se ricevuta non emessa (`stato !== 'emessa'`).  
+Se `is_modifiable === false` (ordine in Spedizione Confermata), il BE **non** blocca: mostrare warning di conferma lato FE.
 
 ---
 
@@ -139,7 +139,7 @@ DELETE /api/v1/ricevute/{id_ricevuta}
 
 **204 No Content** — elimina record DB e file PDF su disco. Dopo la cancellazione l'ordine può ricevere una nuova ricevuta.
 
-Bloccato se `id_order_state == 4` (Spedizione Confermata), come PUT.
+Se `is_modifiable === false`, il BE **non** blocca: mostrare warning di conferma lato FE.
 
 > **Nota:** eventuali ricevute legacy con `stato=annullata` restano in DB finché non eliminate manualmente; il DELETE non imposta più `annullata`.
 
@@ -157,7 +157,7 @@ Response: `application/pdf`, `Content-Disposition: inline`.
 
 > **Importante:** il GET senza `regenerate` restituisce il file già salvato in `media/ricevute/`. Dopo un aggiornamento del template PDF, usare `?regenerate=1` o `POST .../pdf` (e riavviare l'API se il server non ha ricaricato il codice).
 
-**Layout PDF (2026-07-08):** stile elettronew B/N (come stampa ordine legacy), non layout fattura SDI. Sezioni: logo + anagrafica società, `RICEVUTA n° {numero}/{anno} la {data_emissione}`, En-tête / indirizzo consegna (label FR se `country.iso_code=FR`), riga `ORDINE n° …`, tabella righe, totali a destra, `NOTE:`. Implementazione: `src/services/pdf/ricevuta_pdf_layout.py`.
+**Layout PDF (2026-07-08):** stile elettronew B/N (come stampa ordine legacy), non layout fattura SDI. Sezioni: logo + anagrafica società, `RICEVUTA n° {numero}/{anno} la {data_emissione gg/mm/aaaa hh:mm}`, En-tête / indirizzo consegna (label FR se `country.iso_code=FR`), riga `ORDINE n° …`, tabella righe, totali a destra. Le note ordine (`general_note`) non compaiono nel PDF (solo uso interno). Implementazione: `src/services/pdf/ricevuta_pdf_layout.py`.
 
 ---
 
@@ -197,12 +197,12 @@ Permesso: `fiscal_documents:read`.
 
 Solo a livello root (`RicevutaDetail.is_modifiable`). Per link ordine usare `order.id_order`.
 
-| Valore | Significato |
-|--------|-------------|
-| `true` | Ordine **non** in Spedizione Confermata → in futuro abilitare Modifica / Annulla |
-| `false` | `id_order_state === 4` → disabilitare azioni di modifica/eliminazione |
+| Valore | Significato FE |
+|--------|----------------|
+| `true` | Ordine **non** in Spedizione Confermata |
+| `false` | Ordine in **Spedizione Confermata** (`id_order_state === 4`) → eventuale **warning** FE su POST/PUT/DELETE (BE non blocca) |
 
-**Nota step 1:** PUT/DELETE non esistono ancora; usare il flag solo per preparare i bottoni (disabled + tooltip).
+**Nota FE:** con `is_modifiable === false` mostrare dialog di conferma prima di PUT/DELETE; non disabilitare i bottoni solo per questo flag (salvo policy UX interna).
 
 ### Display numero documento
 
@@ -301,7 +301,7 @@ export interface RicevutaListItem {
   anno: number;
   id_order: number;
   data_incasso: string; // YYYY-MM-DD
-  data_emissione: string; // YYYY-MM-DD
+  data_emissione: string; // ISO 8601 datetime (es. 2026-06-05T10:30:00)
   stato: RicevutaStato;
   pdf_path: string | null;
   pdf_generated_at: string | null;
@@ -469,7 +469,7 @@ Helper `cleanUndefined`: rimuovere chiavi `undefined`/`null` prima di costruire 
 | 3 | Tabella lista con filtri stato + range date emissione | ✅ |
 | 4 | Pagina/modale dettaglio con header, cliente, `order_details`, totali ordine | ✅ |
 | 5 | Badge stato `emessa` / `annullata` | ✅ |
-| 6 | Bottoni Modifica/Annulla **disabled** + tooltip se `!is_modifiable` | ✅ flag pronto |
+| 6 | Warning Modifica/Elimina se `!is_modifiable` (azioni **non** bloccate dal BE) | ✅ flag pronto |
 | 7 | Link ordine → modale ordine esistente (`id_order`) | ✅ |
 | 8 | Bottone «Genera ricevuta» da ordine | ⏳ attendere BE-2.1 POST |
 | 9 | Anteprima/scarica PDF | ⏳ attendere BE-2.3 |
@@ -483,7 +483,7 @@ Helper `cleanUndefined`: rimuovere chiavi `undefined`/`null` prima di costruire 
 | 1 | In Preparazione |
 | 2 | Pronti Per La Spedizione |
 | 3 | Spediti |
-| **4** | **Spedizione Confermata** → blocca modifica ricevuta |
+| **4** | **Spedizione Confermata** → `is_modifiable: false` (warning FE opzionale su POST/PUT/DELETE) |
 | 5 | Annullati |
 | 6 | In Attesa |
 

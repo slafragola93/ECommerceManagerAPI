@@ -1,5 +1,5 @@
 """Test service ricevute."""
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -77,7 +77,7 @@ def fixtures(db_session, tax):
         id_order=order.id_order,
         id_customer=customer.id_customer,
         data_incasso=date(2026, 6, 1),
-        data_emissione=date(2026, 6, 5),
+        data_emissione=datetime(2026, 6, 5, 11, 0),
         stato=RicevutaStato.EMESSA,
     )
     db_session.add(ricevuta)
@@ -159,7 +159,7 @@ def test_get_ricevuta_includes_shipping_line_and_totals(service, db_session, tax
         id_order=order.id_order,
         id_customer=customer.id_customer,
         data_incasso=date(2026, 6, 2),
-        data_emissione=date(2026, 6, 3),
+        data_emissione=datetime(2026, 6, 3, 14, 0),
         stato=RicevutaStato.EMESSA,
     )
     db_session.add(ricevuta)

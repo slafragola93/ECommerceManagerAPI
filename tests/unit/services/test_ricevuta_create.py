@@ -1,5 +1,5 @@
 """Test creazione/eliminazione ricevute."""
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -14,6 +14,7 @@ from src.models.ricevuta import ORDER_STATE_SPEDIZIONE_CONFERMATA, RicevutaStato
 from src.models.tax import Tax
 from src.schemas.ricevuta_schema import RicevutaCreateSchema, RicevutaUpdateSchema
 from src.services.interfaces.ricevuta_service_interface import IRicevutaService
+from src.services.ricevute.date_utils import emission_to_rome
 
 
 @pytest.fixture
@@ -96,7 +97,7 @@ def test_create_ricevuta(service, order_setup):
     assert result.anno == 2026
     assert result.order.id_order == order.id_order
     assert result.data_incasso == date(2026, 7, 1)
-    assert result.data_emissione == date(2026, 7, 8)
+    assert emission_to_rome(result.data_emissione).date() == date(2026, 7, 8)
     assert result.stato.value == "emessa"
     assert result.pdf_path is not None
     assert result.pdf_generated_at is not None
@@ -111,16 +112,21 @@ def test_create_ricevuta_duplicate_blocked(service, order_setup):
         service.create_ricevuta(RicevutaCreateSchema(id_order=order.id_order))
 
 
-def test_create_ricevuta_blocked_when_shipped(service, db_session, order_setup):
+def test_create_ricevuta_allowed_when_shipped(service, db_session, order_setup):
     order = order_setup["order"]
     order.id_order_state = ORDER_STATE_SPEDIZIONE_CONFERMATA
     db_session.commit()
 
-    with pytest.raises(BusinessRuleException):
-        service.create_ricevuta(RicevutaCreateSchema(id_order=order.id_order))
+    result = service.create_ricevuta(
+        RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 10))
+    )
+
+    assert result.stato.value == "emessa"
+    assert result.is_modifiable is False
+    assert result.order.id_order == order.id_order
 
 
-def test_delete_ricevuta_blocked_when_shipped(service, db_session, order_setup):
+def test_delete_ricevuta_allowed_when_shipped(service, db_session, order_setup):
     order = order_setup["order"]
     created = service.create_ricevuta(
         RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 8))
@@ -128,8 +134,29 @@ def test_delete_ricevuta_blocked_when_shipped(service, db_session, order_setup):
     order.id_order_state = ORDER_STATE_SPEDIZIONE_CONFERMATA
     db_session.commit()
 
-    with pytest.raises(BusinessRuleException):
-        service.delete_ricevuta(created.id_ricevuta)
+    service.delete_ricevuta(created.id_ricevuta)
+
+    with pytest.raises(NotFoundException):
+        service.get_ricevuta(created.id_ricevuta)
+
+
+def test_update_ricevuta_allowed_when_shipped(service, db_session, order_setup):
+    order = order_setup["order"]
+    created = service.create_ricevuta(
+        RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 8))
+    )
+    order.id_order_state = ORDER_STATE_SPEDIZIONE_CONFERMATA
+    db_session.commit()
+
+    updated = service.update_ricevuta(
+        created.id_ricevuta,
+        RicevutaUpdateSchema(data_emissione=datetime(2026, 7, 15, 16, 45)),
+    )
+    local = emission_to_rome(updated.data_emissione)
+    assert local.date() == date(2026, 7, 15)
+    assert local.hour == 16
+    assert local.minute == 45
+    assert updated.is_modifiable is False
 
 
 def test_update_and_delete_ricevuta(service, order_setup):
@@ -141,14 +168,31 @@ def test_update_and_delete_ricevuta(service, order_setup):
 
     updated = service.update_ricevuta(
         created.id_ricevuta,
-        RicevutaUpdateSchema(data_emissione=date(2026, 7, 10)),
+        RicevutaUpdateSchema(data_emissione=datetime(2026, 7, 10, 9, 0)),
     )
-    assert updated.data_emissione == date(2026, 7, 10)
+    assert emission_to_rome(updated.data_emissione).date() == date(2026, 7, 10)
 
     service.delete_ricevuta(created.id_ricevuta, user_id=99)
 
     with pytest.raises(NotFoundException):
         service.get_ricevuta(created.id_ricevuta)
+
+    from src.models.ricevuta import Ricevuta, RicevutaStato
+
+    session = service._ricevuta_repository._session
+    assert (
+        session.query(Ricevuta).filter(Ricevuta.id_ricevuta == created.id_ricevuta).first()
+        is None
+    )
+    assert (
+        session.query(Ricevuta)
+        .filter(
+            Ricevuta.id_ricevuta == created.id_ricevuta,
+            Ricevuta.stato == RicevutaStato.ANNULLATA,
+        )
+        .count()
+        == 0
+    )
 
     if pdf_path:
         import os

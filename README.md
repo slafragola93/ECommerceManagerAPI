@@ -55,6 +55,8 @@ alembic upgrade head
 
 # Tabella ricevute (feature Ricevute estero — obbligatoria prima dei GET /api/v1/ricevute):
 python scripts/migrations/create_ricevute_table.py
+# Data/ora emissione (DATE → DATETIME, se tabella già esistente):
+python scripts/migrations/alter_ricevute_data_emissione_datetime.py
 ```
 
 > **Nota:** finché `ricevute` non esiste, le API ricevute rispondono **500**. Eseguire lo script su ogni ambiente (dev/staging/prod) dopo il deploy del codice BE.
@@ -139,8 +141,8 @@ Prefisso `/api/v1/ricevute`. Permesso RBAC: `fiscal_documents:read` (come corris
 |--------|------|-------------|
 | GET | `/api/v1/ricevute` | Lista paginata con filtri `id_order`, `id_customer`, `stato`, `data_emissione_from`, `data_emissione_to` |
 | GET | `/api/v1/ricevute/{id_ricevuta}` | Dettaglio con ordine, cliente, indirizzi e `order_details` live |
-| POST | `/api/v1/ricevute` | Crea ricevuta da ordine (`id_order`, `data_emissione` opzionale); genera PDF |
-| PUT | `/api/v1/ricevute/{id_ricevuta}` | Aggiorna `data_emissione`; rigenera PDF |
+| POST | `/api/v1/ricevute` | Crea ricevuta da ordine (`id_order`, `data_emissione` opzionale datetime); genera PDF |
+| PUT | `/api/v1/ricevute/{id_ricevuta}` | Aggiorna `data_emissione` (data + ora); rigenera PDF |
 | DELETE | `/api/v1/ricevute/{id_ricevuta}` | Cancellazione definitiva (**204 No Content**); rimuove record e PDF |
 | GET | `/api/v1/ricevute/{id_ricevuta}/pdf` | Download PDF (rigenera se assente); `?regenerate=1` forza nuovo template |
 | POST | `/api/v1/ricevute/{id_ricevuta}/pdf` | Rigenera PDF (sovrascrive) |
@@ -149,11 +151,11 @@ Prefisso `/api/v1/ricevute`. Permesso RBAC: `fiscal_documents:read` (come corris
 
 Permessi write: `fiscal_documents:create|update|delete`.
 
-**Migration:** modello `src/models/ricevuta.py`, script `scripts/migrations/create_ricevute_table.py`. Numerazione annuale `(numero, anno)` con `UNIQUE` e `get_next_numero()` (`SELECT FOR UPDATE`).
+**Migration:** modello `src/models/ricevuta.py`, script `scripts/migrations/create_ricevute_table.py` e `alter_ricevute_data_emissione_datetime.py`. Numerazione annuale `(numero, anno)` con `UNIQUE` e `get_next_numero()` (`SELECT FOR UPDATE`). Lista ordinata per `data_emissione` DESC (con ora), poi `numero` DESC.
 
-Test: `tests/unit/repository/test_ricevuta_repository.py`, `tests/unit/services/test_ricevuta_service.py`, `tests/unit/services/test_ricevuta_create.py`, `tests/unit/services/pdf/test_ricevuta_pdf_service.py`
+**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {gg/mm/aaaa hh:mm}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra (merce, spedizione, IVA, totale — senza voce spese incasso). Non include note ordine (solo uso interno app). Non riusa più il layout fattura SDI.
 
-**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {data}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra (merce, spedizione, IVA, totale — senza voce spese incasso), sezione NOTE. Non riusa più il layout fattura SDI.
+**PDF fattura/nota di credito:** `date_add` mostrato con data e ora (`gg/mm/aaaa hh:mm`, Europe/Rome). XML FatturaPA resta con sola data (requisito SDI).
 
 Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
@@ -164,6 +166,17 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 - `GET /api/v1/ricevute/{id}/export?fmt=csv|xlsx` — dettaglio + righe prodotto.
 - `GET /api/v1/ricevute/export?fmt=...` — export massivo filtrato (max 5000).
 - Service: `src/services/export/ricevuta_export_service.py`.
+
+## Ultime modifiche (2026-07-10) — Ricevute: nessun blocco BE su Spedizione Confermata
+
+- `POST`, `PUT` e `DELETE` consentiti anche con `id_order_state == 4` (ordine evaso).
+- `is_modifiable` resta indicatore FE per warning opzionali.
+
+## Ultime modifiche (2026-07-09) — Corrispettivi: regola ricevute per date ordine/emissione
+
+- Confronto **`Order.date_add` vs `data_emissione`** (non più `data_incasso`).
+- Stesso giorno ordine/emissione → importo resta in **vendite base** del giorno ordine.
+- Giorni diversi → decurtazione su **date ordine**, imputazione su **data emissione ricevuta**.
 
 ## Ultime modifiche (2026-07-09) — DELETE ricevuta: cancellazione definitiva
 
@@ -232,14 +245,14 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 - `POST /api/v1/ricevute` — creazione da ordine, numerazione annuale, `data_incasso` da `payment_date`.
 - PDF automatico alla creazione; `GET/POST .../pdf` download/rigenerazione; file in `media/ricevute/{anno}/`.
-- `PUT` (data emissione) e `DELETE` (cancellazione definitiva, 204); blocco se `id_order_state == 4` o ordine già fatturato.
+- `POST` / `PUT` / `DELETE` ricevute: nessun blocco BE su Spedizione Confermata; `is_modifiable` per warning FE.
 - Helper condiviso `resolve_order_payment_date` per allineamento corrispettivi (BE-3).
 
 ## Ultime modifiche (2026-07-08) — Ricevute BE-1 + BE-2.2
 
 - Tabella `ricevute` (modello SQLAlchemy, migration script).
 - Endpoint GET lista/dettaglio con join live ordine/cliente/righe.
-- Flag `is_modifiable` derivato da `id_order_state != 4` (Spedizione Confermata).
+- Flag `is_modifiable` derivato da `id_order_state != 4` — indicatore FE (non blocca POST/PUT/DELETE).
 - Registrazione DI (`IRicevutaRepository`, `IRicevutaService`) e router in `main.py`.
 
 ## Ultime modifiche (2026-07-03) — BE-1 bridge persist-if-complete
@@ -293,6 +306,29 @@ Test: `tests/unit/repository/test_corrispettivo_repository.py`
 - Test: `tests/unit/repository/test_fiscal_document_delete_return.py`.
 
 ---
+
+## Ultime modifiche (2026-07-10) — Data/ora emissione ricevute e fatture
+
+- `ricevute.data_emissione` è **DATETIME** (migration `alter_ricevute_data_emissione_datetime.py`); API e export espongono ISO 8601 con ora.
+- Default creazione: adesso (Europe/Rome). Accetta anche solo la data (ora corrente sul giorno indicato).
+- Ordinamento lista e PDF: `gg/mm/aaaa hh:mm` per allineare i progressivi emessi in momenti diversi dello stesso giorno.
+- PDF fattura/nota di credito: stesso formato ora su `date_add`.
+- Corrispettivi: aggregazione per **giorno** emissione invariata (`Europe/Rome`).
+
+Test: `tests/unit/services/ricevute/test_date_utils.py`, suite ricevute/corrispettivi esistente.
+
+## Ultime modifiche (2026-07-10) — PDF ricevuta: rimossa sezione NOTE
+
+- Il PDF non include più `order.general_note` (note solo interne all'applicazione).
+- Rigenerare con `GET /api/v1/ricevute/{id}/pdf?regenerate=1`.
+
+## Ultime modifiche (2026-07-10) — Export Excel corrispettivi: solo netti e resi
+
+I file `registro.xlsx` / `registro_{ISO}.xlsx` nel ZIP contengono **5 colonne**:
+
+**Data**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione** (importi **con IVA**).
+
+Rimosse dal file Excel le colonne audit ricevute (`Vendite base`, `Ricevute decurtazione/imputazione`, `Totale vendite`). Il breakdown resta su `GET /api/v1/corrispettivi` → `days[].sales_breakdown`.
 
 ## Ultime modifiche (2026-07-09) — Export Excel corrispettivi: colonne ricevute
 

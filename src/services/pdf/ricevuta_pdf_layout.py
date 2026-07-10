@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import os
 
+from src.services.ricevute.date_utils import format_emission_datetime
 from src.services.pdf.order_pdf_service import (
     CONTENT_W,
     CONTENT_X,
@@ -45,7 +46,6 @@ _LABELS_IT = {
     "shipping_line": "Spedizione",
     "total_vat": "Totale IVA",
     "grand_total": "Totale - ({qty} pz.)",
-    "note": "NOTE:",
 }
 
 _LABELS_FR = {
@@ -59,7 +59,6 @@ _LABELS_FR = {
     "shipping_line": "Livraison",
     "total_vat": "TVA totale",
     "grand_total": "Total - ({qty} pz.)",
-    "note": "NOTE:",
 }
 
 _LABELS_BY_ISO = {
@@ -113,12 +112,11 @@ class RicevutaPDFLayout:
         order_date: Union[datetime, str],
         details: List[Dict[str, Any]],
         totals: Dict[str, float],
-        note_text: str = "",
         locale_iso: Optional[str] = None,
     ) -> None:
         labels = _labels_for_country(locale_iso)
         doc_number = f"{ricevuta_numero}/{ricevuta_anno}"
-        emission_date = data_emissione.strftime("%d/%m/%Y")
+        emission_date = format_emission_datetime(data_emissione)
 
         cls._draw_header(
             pdf,
@@ -168,7 +166,7 @@ class RicevutaPDFLayout:
         )
         pdf.ln(6)
 
-        cls._draw_footer(pdf, note_text=note_text, note_label=labels["note"])
+        cls._draw_page_footer(pdf)
 
     @staticmethod
     def _draw_header(
@@ -467,13 +465,7 @@ class RicevutaPDFLayout:
         row(qty_label, _fmt_eur(totals["total_gross"]), bold=True)
 
     @staticmethod
-    def _draw_footer(pdf, note_text: str, note_label: str) -> None:
-        pdf.set_font("Arial", "B", 8)
-        pdf.set_x(CONTENT_X)
-        pdf.cell(12, 4, _safe(note_label), 0, 0, "L")
-        pdf.set_font("Arial", "", 8)
-        pdf.multi_cell(CONTENT_W - 12, 4, _safe(note_text), 0, "L")
-        pdf.ln(8)
+    def _draw_page_footer(pdf) -> None:
         pdf.set_font("Arial", "", 8)
         pdf.set_x(CONTENT_X)
         pdf.cell(CONTENT_W, 4, "Pagina 1 di 1", 0, 0, "L")

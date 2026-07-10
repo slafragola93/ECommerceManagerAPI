@@ -207,9 +207,7 @@ class RicevutaPDFService(BasePDFService):
             pdf,
             ricevuta_numero=ricevuta.numero,
             ricevuta_anno=ricevuta.anno,
-            data_emissione=datetime.combine(
-                ricevuta.data_emissione, datetime.min.time()
-            ),
+            data_emissione=ricevuta.data_emissione,
             company_config=company_config,
             logo_path=logo_path if logo_path and os.path.exists(logo_path) else None,
             invoice_address=invoice_address,
@@ -218,7 +216,6 @@ class RicevutaPDFService(BasePDFService):
             order_date=order.date_add or datetime.now(),
             details=details_with_products,
             totals=self._compute_totals(order, details_with_products, shipping),
-            note_text=(order.general_note or "").strip(),
             locale_iso=locale_iso,
         )
         return pdf.output()

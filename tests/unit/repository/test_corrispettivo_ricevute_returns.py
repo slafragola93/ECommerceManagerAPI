@@ -107,6 +107,8 @@ def _add_paid_order(
     if with_ricevuta:
         emission = ricevuta_emission or payment_date or order_date.date()
         incasso = ricevuta_incasso or payment_date or order_date.date()
+        if isinstance(emission, date) and not isinstance(emission, datetime):
+            emission = datetime.combine(emission, datetime.min.time())
         db_session.add(
             Ricevuta(
                 numero=1,

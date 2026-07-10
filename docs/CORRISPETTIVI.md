@@ -28,8 +28,8 @@ I corrispettivi sono un **report fiscale interno** (no SDI, no servizi esterni).
 | Perimetro vendite | Ordini **senza** `FiscalDocument` con `document_type = "invoice"` |
 | Stato pagamento (vendite) | Solo ordini con **`is_payed = true`** (Pagato) |
 | Data vendite | `Order.date_add` (giorno in timezone `Europe/Rome`) |
-| Ricevute emesse | Decurtazione su `ricevute.data_incasso`, imputazione su `ricevute.data_emissione` (importo live da ordine collegato) |
-| Ordini con ricevuta emessa | **Esclusi** dalle vendite su `date_add` (contati solo via imputazione) |
+| Ricevute emesse | Se **giorno** `data_emissione ≠ date_add` ordine (Europe/Rome): decurtazione su `date_add`, imputazione su giorno emissione. Se coincidono: ordine resta in vendite base del giorno ordine. L'ora di emissione non influisce sui totali giornalieri. |
+| Ordini con ricevuta differita | **Esclusi** dalle vendite base su `date_add` (contati via decurtazione/imputazione) |
 | Data resi | `FiscalDocument.date_add` del documento reso |
 | Perimetro resi | Ordine **pagato** e (**non fatturato** oppure con **nota di credito** collegata) |
 | Stato pagamento (resi) | Stesso flag `is_payed = true` sull'ordine collegato |
@@ -89,12 +89,14 @@ Test automatici: `tests/unit/repository/test_corrispettivo_repository.py`, `test
 
 Per ordini con **ricevuta emessa** (`ricevute.stato = 'emessa'`):
 
-1. L'ordine **non** entra più nel corrispettivo vendite alla `Order.date_add`.
-2. **Decurtazione** (importo negativo, imponibile per aliquota): giorno `ricevute.data_incasso` (= `payment_date` ordine).
-3. **Imputazione** (importo positivo): giorno `ricevute.data_emissione`.
-4. Ricevuta **eliminata** (o legacy **annullata**) → l'ordine torna nel flusso vendite standard su `date_add`.
+1. Se **`date_add` ordine = `data_emissione` ricevuta** → l'importo **resta** nel corrispettivo vendite del giorno ordine (vendite base), nessun aggiustamento.
+2. Se **`date_add` ordine ≠ `data_emissione` ricevuta**:
+   - l'ordine **non** entra nelle vendite base su `date_add`;
+   - **decurtazione** (negativo) sul giorno **`Order.date_add`**;
+   - **imputazione** (positivo) sul giorno **`ricevute.data_emissione`**.
+3. Ricevuta **eliminata** (o legacy **annullata**) → l'ordine torna nel flusso vendite standard su `date_add`.
 
-Importi sempre live da `order_details` / spedizione ordine (stesso perimetro vendite: pagato, non fatturato).
+Importi sempre live da `order_details` / spedizione ordine. `data_incasso` resta campo audit ricevuta, **non** guida il corrispettivo.
 
 ### BE-3.2 — Breakdown vendite (UNION ALL)
 
@@ -103,8 +105,8 @@ Importi sempre live da `order_details` / spedizione ordine (stesso perimetro ven
 | Componente | Origine |
 |---|---|
 | `base` | Vendite standard su `Order.date_add` (senza ricevuta emessa) |
-| `ricevute_decurtazione` | Lordo negativo su `ricevute.data_incasso` |
-| `ricevute_imputazione` | Lordo positivo su `ricevute.data_emissione` |
+| `ricevute_decurtazione` | Lordo negativo su `Order.date_add` (solo se `data_emissione ≠ date_add`) |
+| `ricevute_imputazione` | Lordo positivo su `ricevute.data_emissione` (solo se `data_emissione ≠ date_add`) |
 | `net` | Somma dei tre |
 
 Esposto in `GET /api/v1/corrispettivi` (e alias `/summary`) nel campo opzionale `days[].sales_breakdown` per audit UI.
@@ -423,14 +425,12 @@ Authorization: Bearer <token>
 | Colonna | Contenuto |
 |---|---|
 | `Data` | Giorno con movimento (`YYYY-MM-DD`) |
-| `Vendite base` | Vendite standard su `Order.date_add` (senza ricevuta emessa) |
-| `Ricevute decurtazione` | Aggiustamento negativo su `ricevute.data_incasso` |
-| `Ricevute imputazione` | Aggiustamento positivo su `ricevute.data_emissione` |
-| `Totale vendite` | Somma dei tre componenti sopra (= `days[].sales.total_with_tax`) |
 | `Tot resi` | Somma resi giornalieri |
 | `Totale netto` | Vendite − resi |
 | `Netto prodotti` | Netto imputato ai prodotti |
 | `Netto spedizione` | Netto imputato alla spedizione |
+
+Il breakdown vendite/ricevute (`sales_breakdown`) resta disponibile solo su `GET /api/v1/corrispettivi`, non nell'export Excel.
 
 - Una riga per ogni giorno con movimento
 - Ultima riga: totali mese (`Totale MM/YYYY`)

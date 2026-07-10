@@ -11,6 +11,7 @@ from src.core.base_repository import BaseRepository
 from src.core.exceptions import InfrastructureException
 from src.models.ricevuta import Ricevuta, RicevutaStato
 from src.repository.interfaces.ricevuta_repository_interface import IRicevutaRepository
+from src.services.ricevute.date_utils import utc_naive_end_of_day, utc_naive_start_of_day
 
 
 class RicevutaRepository(BaseRepository[Ricevuta, int], IRicevutaRepository):
@@ -38,9 +39,13 @@ class RicevutaRepository(BaseRepository[Ricevuta, int], IRicevutaRepository):
             if stato is not None:
                 query = query.filter(Ricevuta.stato == stato)
             if data_emissione_from is not None:
-                query = query.filter(Ricevuta.data_emissione >= data_emissione_from)
+                query = query.filter(
+                    Ricevuta.data_emissione >= utc_naive_start_of_day(data_emissione_from)
+                )
             if data_emissione_to is not None:
-                query = query.filter(Ricevuta.data_emissione <= data_emissione_to)
+                query = query.filter(
+                    Ricevuta.data_emissione <= utc_naive_end_of_day(data_emissione_to)
+                )
 
             total = query.count()
             offset = self.get_offset(limit, page)

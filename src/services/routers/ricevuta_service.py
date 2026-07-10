@@ -2,7 +2,6 @@
 
 from datetime import date, datetime
 from typing import List, Optional
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import joinedload
 
@@ -38,7 +37,11 @@ from src.schemas.ricevuta_schema import (
 from src.services.export.ricevuta_export_service import RicevutaExportService
 from src.services.interfaces.ricevuta_service_interface import IRicevutaService
 from src.services.pdf.ricevuta_pdf_service import RicevutaPDFService
-from src.services.ricevute.date_utils import resolve_order_payment_date
+from src.services.ricevute.date_utils import (
+    emission_to_rome,
+    normalize_emission_datetime,
+    resolve_order_payment_date,
+)
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
     load_order_shipping,
@@ -51,7 +54,6 @@ from src.services.ricevute.pdf_storage import (
 )
 from src.services.routers.order_document_service import OrderDocumentService
 
-ROME = ZoneInfo("Europe/Rome")
 EXPORT_MAX_LIMIT = 5000
 
 
@@ -90,7 +92,6 @@ class RicevutaService(IRicevutaService):
         self, data: RicevutaCreateSchema, user_id: Optional[int] = None
     ) -> RicevutaResponseSchema:
         order = self._get_order_or_raise(data.id_order)
-        self._ensure_order_modifiable(order)
         self._ensure_order_not_invoiced(order.id_order)
         self._ensure_no_active_ricevuta(order.id_order)
 
@@ -105,8 +106,8 @@ class RicevutaService(IRicevutaService):
         except ValueError as exc:
             raise ValidationException(str(exc), details={"id_order": order.id_order})
 
-        data_emissione = data.data_emissione or datetime.now(ROME).date()
-        anno = data_emissione.year
+        data_emissione = normalize_emission_datetime(data.data_emissione)
+        anno = emission_to_rome(data_emissione).year
         numero = self._ricevuta_repository.get_next_numero(anno)
 
         ricevuta = Ricevuta(
@@ -142,11 +143,10 @@ class RicevutaService(IRicevutaService):
         self._ensure_ricevuta_emessa(ricevuta)
 
         order = self._get_order_or_raise(ricevuta.id_order)
-        self._ensure_order_modifiable(order)
 
-        ricevuta.data_emissione = data.data_emissione
-        if data.data_emissione.year != ricevuta.anno:
-            ricevuta.anno = data.data_emissione.year
+        ricevuta.data_emissione = normalize_emission_datetime(data.data_emissione)
+        if emission_to_rome(ricevuta.data_emissione).year != ricevuta.anno:
+            ricevuta.anno = emission_to_rome(ricevuta.data_emissione).year
         self._ricevuta_repository.update(ricevuta)
         self._generate_and_persist_pdf(ricevuta, order)
         return self.get_ricevuta(id_ricevuta)
@@ -155,10 +155,6 @@ class RicevutaService(IRicevutaService):
         self, id_ricevuta: int, user_id: Optional[int] = None
     ) -> None:
         ricevuta = self._ricevuta_repository.get_by_id_or_raise(id_ricevuta)
-        if ricevuta.stato == RicevutaStato.EMESSA:
-            order = self._get_order_or_raise(ricevuta.id_order)
-            self._ensure_order_modifiable(order)
-
         delete_ricevuta_pdf_file(ricevuta)
         self._ricevuta_repository.delete(id_ricevuta)
 
@@ -446,15 +442,6 @@ class RicevutaService(IRicevutaService):
         if not order:
             raise NotFoundException("Order", id_order)
         return order
-
-    @staticmethod
-    def _ensure_order_modifiable(order: Order) -> None:
-        if not _order_is_modifiable(order):
-            raise BusinessRuleException(
-                "Operazione non consentita: ordine in Spedizione Confermata",
-                ErrorCode.ORDER_NOT_MODIFIABLE,
-                {"id_order": order.id_order, "id_order_state": order.id_order_state},
-            )
 
     @staticmethod
     def _ensure_ricevuta_emessa(ricevuta: Ricevuta) -> None:

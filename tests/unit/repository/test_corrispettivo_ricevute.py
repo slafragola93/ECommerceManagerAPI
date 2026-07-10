@@ -92,7 +92,7 @@ def _add_order_with_ricevuta(
             id_order=order.id_order,
             id_customer=customer.id_customer,
             data_incasso=incasso_date,
-            data_emissione=emission_date,
+            data_emissione=datetime.combine(emission_date, datetime.min.time()),
             stato=ricevuta_stato,
         )
     )
@@ -119,8 +119,8 @@ class TestCorrispettivoRicevute:
                 sales_by_day.setdefault(movement.movement_date, Decimal("0"))
                 sales_by_day[movement.movement_date] += movement.sales_net
 
-        assert date(2026, 7, 1) not in sales_by_day
-        assert sales_by_day.get(date(2026, 7, 3)) == Decimal("-100.00")
+        assert sales_by_day.get(date(2026, 7, 1)) == Decimal("-100.00")
+        assert sales_by_day.get(date(2026, 7, 3)) is None
         assert sales_by_day.get(date(2026, 7, 8)) == Decimal("100.00")
 
     def test_annullata_ricevuta_restores_order_date_sales(self, db_session, repo, tax):
@@ -186,8 +186,8 @@ class TestCorrispettivoRicevute:
 
         totals = repo.fetch_daily_gross_totals(2026, 7)
 
-        assert date(2026, 7, 1) not in totals
-        assert totals[date(2026, 7, 3)]["sales"]["total_with_tax"] == Decimal("-122.00")
+        assert date(2026, 7, 1) in totals
+        assert totals[date(2026, 7, 1)]["sales"]["total_with_tax"] == Decimal("-122.00")
         assert totals[date(2026, 7, 8)]["sales"]["total_with_tax"] == Decimal("122.00")
 
     def test_sales_gross_breakdown_union_all(self, db_session, repo, tax):
@@ -206,8 +206,8 @@ class TestCorrispettivoRicevute:
             date(2026, 7, 31),
         )
 
-        assert date(2026, 7, 1) not in breakdown
-        assert breakdown[date(2026, 7, 3)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
+        assert date(2026, 7, 1) in breakdown
+        assert breakdown[date(2026, 7, 1)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
             "-122.00"
         )
         assert breakdown[date(2026, 7, 8)]["ricevute_imputazione"]["total_with_tax"] == Decimal(
@@ -283,3 +283,105 @@ class TestCorrispettivoRicevute:
         returns_net = sum(m.returns_net for m in movements)
 
         assert returns_net == Decimal("30.00")
+
+    def test_same_day_order_and_emission_stays_in_base(self, db_session, repo, tax):
+        """Se date_add == data_emissione, l'ordine resta nelle vendite base del giorno ordine."""
+        _add_order_with_ricevuta(
+            db_session,
+            tax,
+            reference="RICE-SAME-DAY",
+            order_date=datetime(2026, 7, 9, 10, 0, 0),
+            payment_date=date(2026, 7, 9),
+            incasso_date=date(2026, 7, 9),
+            emission_date=date(2026, 7, 9),
+        )
+
+        breakdown = repo.fetch_sales_gross_breakdown_by_day(
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+        )
+        day = breakdown[date(2026, 7, 9)]
+
+        assert day["base"]["total_with_tax"] == Decimal("122.00")
+        assert day["ricevute_decurtazione"]["total_with_tax"] == Decimal("0")
+        assert day["ricevute_imputazione"]["total_with_tax"] == Decimal("0")
+        assert day["net"]["total_with_tax"] == Decimal("122.00")
+
+        totals = repo.fetch_daily_gross_totals(2026, 7)
+        assert totals[date(2026, 7, 9)]["sales"]["total_with_tax"] == Decimal("122.00")
+
+    def test_same_day_ricevuta_with_delayed_ricevuta_on_same_emission_day(
+        self, db_session, repo, tax
+    ):
+        """Due ricevute emesse lo stesso giorno: quella same-day non si annulla."""
+        _add_order_with_ricevuta(
+            db_session,
+            tax,
+            reference="RICE-LATE",
+            order_date=datetime(2026, 7, 1, 10, 0, 0),
+            payment_date=date(2026, 7, 3),
+            incasso_date=date(2026, 7, 3),
+            emission_date=date(2026, 7, 9),
+        )
+        customer = Customer(
+            id_lang=1,
+            firstname="Luigi",
+            lastname="Verdi",
+            email="same-em@example.com",
+        )
+        db_session.add(customer)
+        db_session.commit()
+        db_session.refresh(customer)
+        order2 = Order(
+            id_customer=customer.id_customer,
+            id_order_state=1,
+            reference="RICE-TODAY",
+            date_add=datetime(2026, 7, 9, 11, 0, 0),
+            payment_date=date(2026, 7, 9),
+            is_payed=True,
+            total_price_with_tax=Decimal("50.00"),
+            total_price_net=Decimal("40.00"),
+            products_total_price_with_tax=Decimal("50.00"),
+            products_total_price_net=Decimal("40.00"),
+        )
+        db_session.add(order2)
+        db_session.commit()
+        db_session.refresh(order2)
+        db_session.add(
+            OrderDetail(
+                id_order=order2.id_order,
+                id_tax=tax.id_tax,
+                product_name="Prodotto B",
+                product_qty=1,
+                unit_price_with_tax=Decimal("50.00"),
+                unit_price_net=Decimal("40.00"),
+                total_price_with_tax=Decimal("50.00"),
+                total_price_net=Decimal("40.00"),
+            )
+        )
+        db_session.add(
+            Ricevuta(
+                numero=2,
+                anno=2026,
+                id_order=order2.id_order,
+                id_customer=customer.id_customer,
+                data_incasso=date(2026, 7, 9),
+                data_emissione=datetime(2026, 7, 9, 12, 0),
+                stato=RicevutaStato.EMESSA,
+            )
+        )
+        db_session.commit()
+
+        breakdown = repo.fetch_sales_gross_breakdown_by_day(
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+        )
+        day = breakdown[date(2026, 7, 9)]
+
+        assert day["base"]["total_with_tax"] == Decimal("50.00")
+        assert day["ricevute_imputazione"]["total_with_tax"] == Decimal("122.00")
+        assert day["ricevute_decurtazione"]["total_with_tax"] == Decimal("0")
+        assert day["net"]["total_with_tax"] == Decimal("172.00")
+        assert breakdown[date(2026, 7, 1)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
+            "-122.00"
+        )

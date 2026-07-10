@@ -1,9 +1,8 @@
-"""Test export Excel corrispettivi — colonne breakdown ricevute."""
+"""Test export Excel corrispettivi — colonne netti e resi."""
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
 
-import pytest
 from openpyxl import load_workbook
 
 from src.schemas.corrispettivo_schema import (
@@ -35,26 +34,22 @@ def _split(
 
 
 class TestCorrispettiviExcelService:
-    def test_headers_include_ricevute_breakdown_columns(self):
+    def test_headers_net_and_returns_only(self):
         service = CorrispettiviExcelService()
         assert service.HEADERS == [
             "Data",
-            "Vendite base",
-            "Ricevute decurtazione",
-            "Ricevute imputazione",
-            "Totale vendite",
             "Tot resi",
             "Totale netto",
             "Netto prodotti",
             "Netto spedizione",
         ]
 
-    def test_workbook_row_with_sales_breakdown(self):
+    def test_workbook_row_uses_net_and_returns(self):
         day = CorrispettivoDaySummarySchema(
             date=date(2026, 7, 8),
             sales=_split("122.00"),
-            returns=_split("0"),
-            net=_split("122.00"),
+            returns=_split("10.00"),
+            net=_split("112.00", products_with_tax="100.00", shipping_with_tax="12.00"),
             sales_breakdown=CorrispettivoSalesBreakdownSchema(
                 base=_split("0"),
                 ricevute_decurtazione=_split("0"),
@@ -65,29 +60,28 @@ class TestCorrispettiviExcelService:
             year=2026,
             month=7,
             days=[day],
-            month_totals=_split("122.00"),
+            month_totals=_split(
+                "112.00", products_with_tax="100.00", shipping_with_tax="12.00"
+            ),
         )
 
         raw = CorrispettiviExcelService().build_workbook(summary)
         sheet = load_workbook(BytesIO(raw)).active
 
-        assert sheet.cell(1, 2).value == "Vendite base"
-        assert sheet.cell(1, 3).value == "Ricevute decurtazione"
-        assert sheet.cell(1, 4).value == "Ricevute imputazione"
         assert sheet.cell(2, 1).value == "2026-07-08"
-        assert sheet.cell(2, 2).value == 0.0
-        assert sheet.cell(2, 3).value == 0.0
-        assert sheet.cell(2, 4).value == 122.0
-        assert sheet.cell(2, 5).value == 122.0
-        assert sheet.cell(3, 4).value == 122.0
+        assert sheet.cell(2, 2).value == 10.0
+        assert sheet.cell(2, 3).value == 112.0
+        assert sheet.cell(2, 4).value == 100.0
+        assert sheet.cell(2, 5).value == 12.0
+        assert sheet.cell(3, 2).value == 10.0
+        assert sheet.cell(3, 3).value == 112.0
 
-    def test_workbook_without_sales_breakdown_puts_all_in_base(self):
+    def test_zip_contains_registro_files(self):
         day = CorrispettivoDaySummarySchema(
             date=date(2026, 7, 15),
             sales=_split("50.00"),
             returns=_split("0"),
             net=_split("50.00"),
-            sales_breakdown=None,
         )
         summary = CorrispettivoListResponseSchema(
             year=2026,
@@ -96,10 +90,14 @@ class TestCorrispettiviExcelService:
             month_totals=_split("50.00"),
         )
 
-        raw = CorrispettiviExcelService().build_workbook(summary)
-        sheet = load_workbook(BytesIO(raw)).active
+        raw = CorrispettiviExcelService().build_registri_zip(
+            consolidated=summary,
+            by_country={"IT": summary},
+        )
 
-        assert sheet.cell(2, 2).value == 50.0
-        assert sheet.cell(2, 3).value == 0.0
-        assert sheet.cell(2, 4).value == 0.0
-        assert sheet.cell(2, 5).value == 50.0
+        import zipfile
+
+        with zipfile.ZipFile(BytesIO(raw)) as archive:
+            names = set(archive.namelist())
+        assert "registro.xlsx" in names
+        assert "registro_IT.xlsx" in names

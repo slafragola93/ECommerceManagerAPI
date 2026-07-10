@@ -46,7 +46,7 @@ class Ricevuta(Base):
     id_customer = Column(Integer, ForeignKey("customers.id_customer"), nullable=False)
 
     data_incasso = Column(Date, nullable=False)
-    data_emissione = Column(Date, nullable=False)
+    data_emissione = Column(DateTime, nullable=False)
 
     stato = Column(
         Enum(
