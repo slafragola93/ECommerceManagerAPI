@@ -28,13 +28,8 @@ class CorrispettivoTaxColumnSchema(BaseModel):
     percentage: Optional[float] = None
 
 
-class CorrispettivoShippingDaySchema(BaseModel):
-    sales_net: Decimal = Decimal("0")
-    returns_net: Decimal = Decimal("0")
-
-    @field_serializer("sales_net", "returns_net")
-    def serialize_decimal(self, value: Decimal) -> float:
-        return round(float(value), 2)
+class CorrispettivoShippingDaySchema(CorrispettivoAmountSchema):
+    """Spedizione giornaliera — stesso contratto delle celle aliquota (sales/returns/net)."""
 
 
 class CorrispettivoRiepilogoRowSchema(BaseModel):

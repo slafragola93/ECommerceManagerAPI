@@ -60,7 +60,10 @@ def test_build_riepilogo_rows_and_month_totals():
         }
     }
     shipping_buckets = {
-        day: AggregateBucket(sales_net=Decimal("5.00"))
+        day: AggregateBucket(
+            sales_net=Decimal("5.00"),
+            returns_net=Decimal("2.00"),
+        )
     }
     taxes_by_id = {
         1: SimpleNamespace(code="22", electronic_code="", percentage=Decimal("22.00")),
@@ -69,6 +72,8 @@ def test_build_riepilogo_rows_and_month_totals():
     rows, tax_ids = build_riepilogo_rows(product_buckets, shipping_buckets, taxes_by_id)
     assert len(rows) == 1
     assert rows[0]["row_net"]["net"] == Decimal("90.00")
+    assert rows[0]["shipping"]["returns_net"] == Decimal("2.00")
+    assert rows[0]["shipping"]["net"] == Decimal("3.00")
     assert tax_ids == [1]
 
     columns = build_tax_columns(tax_ids, taxes_by_id)
@@ -110,7 +115,35 @@ def test_build_registri_zip_contains_expected_files():
     )
 
     zip_bytes = CorrispettiviExcelService().build_registri_zip(
-        consolidated=summary,
+        consolidated_riepilogo=CorrispettivoRiepilogoResponseSchema(
+            year=2026,
+            month=5,
+            columns=[CorrispettivoTaxColumnSchema(id_tax=1, label="22", percentage=22.0)],
+            rows=[
+                CorrispettivoRiepilogoRowSchema(
+                    day=15,
+                    date=date(2026, 5, 15),
+                    cells={
+                        "1": CorrispettivoAmountSchema(
+                            sales_net=Decimal("109.80"),
+                            returns_net=Decimal("12.20"),
+                            net=Decimal("97.60"),
+                        )
+                    },
+                    row_net=CorrispettivoAmountSchema(
+                        sales_net=Decimal("109.80"),
+                        returns_net=Decimal("12.20"),
+                        net=Decimal("97.60"),
+                    ),
+                    shipping=CorrispettivoShippingDaySchema(),
+                )
+            ],
+            month_totals=CorrispettivoAmountSchema(
+                sales_net=Decimal("109.80"),
+                returns_net=Decimal("12.20"),
+                net=Decimal("97.60"),
+            ),
+        ),
         by_country={"IT": summary, "DE": summary},
     )
 
@@ -160,11 +193,10 @@ def test_build_workbook_has_simplified_with_tax_columns():
 
     assert [cell.value for cell in sheet[1]] == CorrispettiviExcelService.HEADERS
     assert sheet[2][0].value == "2026-05-15"
-    assert sheet[2][1].value == 122.0
-    assert sheet[2][2].value == 24.4
-    assert sheet[2][3].value == 97.6
-    assert sheet[2][4].value == 80.0
-    assert sheet[2][5].value == 17.6
+    assert sheet[2][1].value == 24.4
+    assert sheet[2][2].value == 97.6
+    assert sheet[2][3].value == 80.0
+    assert sheet[2][4].value == 17.6
 
 
 def test_export_filters_without_country_strips_delivery_iso():

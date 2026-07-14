@@ -232,6 +232,7 @@ interface CorrispettivoRiepilogoRow {
   shipping: {
     sales_net: number;
     returns_net: number;
+    net: number;
   };
 }
 ```
@@ -257,7 +258,7 @@ interface CorrispettivoRiepilogoRow {
         "9": { "sales_net": 120.0, "returns_net": 0.0, "net": 120.0 }
       },
       "row_net": { "sales_net": 1021.64, "returns_net": 10.0, "net": 1011.64 },
-      "shipping": { "sales_net": 122.95, "returns_net": 0.0 }
+      "shipping": { "sales_net": 122.95, "returns_net": 4.40, "net": 118.55 }
     }
   ],
   "month_totals": { "sales_net": 1021.64, "returns_net": 10.0, "net": 1011.64 }
@@ -270,7 +271,7 @@ interface CorrispettivoRiepilogoRow {
 - Per ogni riga, usare `cells[String(column.id_tax)]`; se assente → `{ sales_net: 0, returns_net: 0, net: 0 }`.
 - **Vendite** → colore verde (legacy); **resi** → rosso; mostrare `sales_net` e `returns_net` **separati** (non stringhe comma-separated).
 - Colonna **Netto** a destra → `row_net.net` (o breakdown `row_net.sales_net` / `row_net.returns_net`).
-- Riga **Spedizione** opzionale sotto ogni giorno → `shipping`.
+- Riga **Spedizione** opzionale sotto ogni giorno → `shipping` (stesso contratto `sales_net` / `returns_net` / `net` delle celle aliquota; resi in rosso).
 - `month_totals` → riga totali in fondo tabella.
 
 ---
@@ -415,12 +416,27 @@ Authorization: Bearer <token>
 
 | File | Descrizione |
 |---|---|
-| `registro.xlsx` | Consolidato tutti i paesi |
-| `registro_IT.xlsx` | Solo consegne IT |
-| `registro_DE.xlsx` | Solo consegne DE |
+| `registro.xlsx` | Consolidato tutti i paesi — matrice giorni × aliquote (come `GET /riepilogo`) |
+| `registro_IT.xlsx` | Solo consegne IT — totali giornalieri compatti |
+| `registro_DE.xlsx` | Solo consegne DE — totali giornalieri compatti |
 | … | Un file per ogni ISO con movimenti nel mese |
 
-**Struttura Excel (ogni file)** — importi **con IVA inclusa**:
+**Struttura `registro.xlsx` (consolidato / riepilogo generico)** — imponibile per aliquota:
+
+| Colonna | Contenuto |
+|---|---|
+| `Data` | Giorno con movimento (`YYYY-MM-DD`) |
+| `{aliquota} - Vendite` | Vendite nette per aliquota |
+| `{aliquota} - Resi` | Resi netti per aliquota |
+| `{aliquota} - Netto` | Netto per aliquota |
+| `Totale - Vendite/Resi/Netto` | Somma righe prodotti |
+| `Spedizione - Vendite/Resi/Netto` | Spedizione giornaliera |
+
+- Una riga per ogni giorno con movimento
+- Ultima riga: totali mese (`Totale MM/YYYY`)
+- Colonne aliquota definite da `columns` (stesso ordine di `GET /riepilogo`)
+
+**Struttura `registro_{ISO}.xlsx` (per paese)** — importi giornalieri compatti:
 
 | Colonna | Contenuto |
 |---|---|
@@ -430,11 +446,11 @@ Authorization: Bearer <token>
 | `Netto prodotti` | Netto imputato ai prodotti |
 | `Netto spedizione` | Netto imputato alla spedizione |
 
-Il breakdown vendite/ricevute (`sales_breakdown`) resta disponibile solo su `GET /api/v1/corrispettivi`, non nell'export Excel.
-
 - Una riga per ogni giorno con movimento
 - Ultima riga: totali mese (`Totale MM/YYYY`)
-- Nessuna colonna per aliquota IVA (solo totali giornalieri)
+- Nessuna colonna per aliquota IVA (solo totali giornalieri per paese)
+
+Il breakdown vendite/ricevute (`sales_breakdown`) resta disponibile solo su `GET /api/v1/corrispettivi`, non nell'export Excel.
 
 **FE — download blob:**
 ```typescript
@@ -549,6 +565,7 @@ export interface CorrispettivoTaxColumn {
 export interface CorrispettivoShippingDay {
   sales_net: number;
   returns_net: number;
+  net: number;
 }
 
 export interface CorrispettivoRiepilogoRow {

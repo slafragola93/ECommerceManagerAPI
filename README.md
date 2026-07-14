@@ -161,6 +161,12 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 **Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
 
+## Ultime modifiche (2026-07-14) — Corrispettivi: resi spedizione in riepilogo
+
+- `GET /api/v1/corrispettivi/riepilogo` → `rows[].shipping` allineato alle celle aliquota: `sales_net`, `returns_net`, **`net`** (importo reso in rosso lato FE).
+- Resi con `includes_shipping=true` e totali netti assenti/zerati: fallback su `shipments.price_tax_excl` dell'ordine.
+- Test: `tests/unit/repository/test_corrispettivo_return_shipping.py`. Doc: `docs/CORRISPETTIVI.md`.
+
 ## Ultime modifiche (2026-07-08) — BE-2.5 Export CSV/Excel
 
 - `GET /api/v1/ricevute/{id}/export?fmt=csv|xlsx` — dettaglio + righe prodotto.
@@ -331,6 +337,14 @@ Test: `tests/unit/repository/test_corrispettivo_repository.py`
 - Corrispettivi: aggregazione per **giorno** emissione invariata (`Europe/Rome`).
 
 Test: `tests/unit/services/ricevute/test_date_utils.py`, suite ricevute/corrispettivi esistente.
+
+## Ultime modifiche (2026-07-14) — Export corrispettivi: riepilogo generico con aliquote
+
+Il file consolidato `registro.xlsx` nel ZIP `Registri.zip` include ora la **suddivisione per aliquota IVA** (vendite, resi, netto per ogni aliquota), allineata a `GET /api/v1/corrispettivi/riepilogo`. Restano anche i totali di riga e la colonna spedizione.
+
+I file per paese (`registro_{ISO}.xlsx`) mantengono il formato compatto a 5 colonne: **Data**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione**.
+
+Test: `tests/unit/services/export/test_corrispettivi_excel_service.py`.
 
 ## Ultime modifiche (2026-07-13) — Export corrispettivi: fix split per paese consegna
 

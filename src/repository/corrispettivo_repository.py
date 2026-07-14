@@ -502,6 +502,7 @@ class CorrispettivoRepository:
                 return_day.label("movement_date"),
                 Country.iso_code,
                 Shipping.id_tax,
+                Shipping.price_tax_excl,
             )
             .join(Order, FiscalDocument.id_order == Order.id_order)
             .outerjoin(Address, Order.id_address_delivery == Address.id_address)
@@ -517,10 +518,14 @@ class CorrispettivoRepository:
         )
         return_shipping_rows = self._apply_order_filters(return_shipping_rows, filters)
 
-        for doc, movement_date, country_iso, shipping_tax_id in return_shipping_rows.all():
+        for doc, movement_date, country_iso, shipping_tax_id, shipping_price_excl in (
+            return_shipping_rows.all()
+        ):
             products_net = decimal_or_zero(doc.products_total_price_net)
             total_net = decimal_or_zero(doc.total_price_net)
             shipping_net = total_net - products_net
+            if shipping_net <= 0:
+                shipping_net = decimal_or_zero(shipping_price_excl)
             if shipping_net <= 0:
                 continue
             movements.append(

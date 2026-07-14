@@ -188,7 +188,7 @@ class CorrispettivoService:
             request.year, request.month, filter_dict
         )
 
-        summary_all = self.get_daily_summary(
+        riepilogo_all = self.get_riepilogo(
             request.year, request.month, consolidated_filters
         )
         summary_by_country = {}
@@ -209,6 +209,6 @@ class CorrispettivoService:
 
         excel_service = CorrispettiviExcelService()
         return excel_service.build_registri_zip(
-            consolidated=summary_all,
+            consolidated_riepilogo=riepilogo_all,
             by_country=summary_by_country,
         )

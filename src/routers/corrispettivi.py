@@ -168,7 +168,7 @@ async def export_corrispettivi_registri(
     service: CorrispettivoService = Depends(get_corrispettivo_service),
 ):
     """
-    Genera ZIP `Registri.zip` con `registro.xlsx` consolidato e `registro_{ISO}.xlsx` per paese consegna.
+    Genera ZIP `Registri.zip` con `registro.xlsx` consolidato (matrice aliquote) e `registro_{ISO}.xlsx` per paese consegna.
     """
     zip_bytes = service.build_export_zip(request)
     return StreamingResponse(

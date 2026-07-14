@@ -158,6 +158,7 @@ def build_riepilogo_rows(
                 "shipping": {
                     "sales_net": shipping.sales_net,
                     "returns_net": shipping.returns_net,
+                    "net": shipping.net,
                 },
             }
         )
