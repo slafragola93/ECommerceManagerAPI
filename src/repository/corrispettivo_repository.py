@@ -101,6 +101,18 @@ class CorrispettivoRepository:
         converted = func.convert_tz(column, "+00:00", self.TIMEZONE)
         return func.coalesce(func.date(converted), func.date(column))
 
+    def _delivery_country_exists(self, iso_code: str):
+        """Filtra ordini per paese di consegna senza richiedere join espliciti."""
+        return exists(
+            select(1)
+            .select_from(Address)
+            .join(Country, Address.id_country == Country.id_country)
+            .where(
+                Address.id_address == Order.id_address_delivery,
+                func.upper(Country.iso_code) == iso_code.upper(),
+            )
+        ).correlate(Order)
+
     def _apply_order_filters(self, query, filters: Optional[dict]):
         if not filters:
             return query
@@ -110,7 +122,7 @@ class CorrispettivoRepository:
             query = query.filter(Order.id_store == filters["id_store"])
         if filters.get("delivery_country_iso"):
             query = query.filter(
-                func.upper(Country.iso_code) == filters["delivery_country_iso"].upper()
+                self._delivery_country_exists(filters["delivery_country_iso"])
             )
         return query
 

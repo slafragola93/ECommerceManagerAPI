@@ -19,6 +19,7 @@ from src.services.pdf.ricevuta_pdf_layout import (
     _labels_for_country,
     _resolve_iso_code,
 )
+from src.services.ricevute.date_utils import emission_for_pdf
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
     load_order_shipping,
@@ -207,7 +208,7 @@ class RicevutaPDFService(BasePDFService):
             pdf,
             ricevuta_numero=ricevuta.numero,
             ricevuta_anno=ricevuta.anno,
-            data_emissione=ricevuta.data_emissione,
+            data_emissione=emission_for_pdf(ricevuta.data_emissione),
             company_config=company_config,
             logo_path=logo_path if logo_path and os.path.exists(logo_path) else None,
             invoice_address=invoice_address,

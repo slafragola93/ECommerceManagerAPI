@@ -39,7 +39,7 @@ Il dettaglio ricevuta è **snellito**. Non usare più:
 | `detail.righe` | `detail.order_details` |
 | `detail.pdf_hash` | rimosso |
 | `order.is_modifiable` | solo `detail.is_modifiable` |
-| sempre `address_delivery` + `address_invoice` | **`address`** se consegna = fatturazione, altrimenti i due campi |
+| sempre `address_delivery` + `address_invoice` | sempre `address_delivery` + `address_invoice` (nullable; se uguali, stesso oggetto) |
 
 Lista: resta `id_order`; **rimosso** `id_customer` in root (usare `customer.id_customer`).
 
@@ -86,7 +86,7 @@ Base: `/api/v1/ricevute` — header `Authorization: Bearer <JWT>`
 - [ ] Modale ordine: `GET ?id_order=X&stato=emessa` — se `total > 0` mostrare link a ricevuta esistente, **non** bottone Genera.
 - [ ] POST creazione su ordine idoneo → 201 → redirect dettaglio o anteprima PDF.
 - [ ] Verificare payload risposta: `order`, `customer`, `order_details[]`, `is_modifiable`.
-- [ ] Indirizzo: se consegna = fatturazione → solo `address`; altrimenti `address_delivery` / `address_invoice`.
+- [ ] Indirizzo: sempre `address_delivery` e `address_invoice` (nullable; se consegna = fatturazione, stesso contenuto).
 
 ### D — Dettaglio
 
@@ -165,9 +165,8 @@ interface RicevutaDetail {
     total_price_with_tax: number;
     // ...
   } | null;
-  address?: RicevutaAddress | null;
-  address_delivery?: RicevutaAddress | null;
-  address_invoice?: RicevutaAddress | null;
+  address_delivery: RicevutaAddress | null;
+  address_invoice: RicevutaAddress | null;
   order_details: RicevutaOrderDetail[];
 }
 ```

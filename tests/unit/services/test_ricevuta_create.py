@@ -104,6 +104,31 @@ def test_create_ricevuta(service, order_setup):
     assert len(result.order_details) == 1
 
 
+def test_create_ricevuta_with_date_only_string(service, order_setup):
+    order = order_setup["order"]
+    payload = RicevutaCreateSchema.model_validate(
+        {"id_order": order.id_order, "data_emissione": "2026-07-08"}
+    )
+    result = service.create_ricevuta(payload)
+
+    assert result.pdf_path is not None
+    assert emission_to_rome(result.data_emissione).date() == date(2026, 7, 8)
+
+
+def test_create_ricevuta_with_iso_datetime_string(service, order_setup):
+    order = order_setup["order"]
+    payload = RicevutaCreateSchema.model_validate(
+        {"id_order": order.id_order, "data_emissione": "2026-07-08T14:30:00"}
+    )
+    result = service.create_ricevuta(payload)
+
+    assert result.pdf_path is not None
+    local = emission_to_rome(result.data_emissione)
+    assert local.date() == date(2026, 7, 8)
+    assert local.hour == 14
+    assert local.minute == 30
+
+
 def test_create_ricevuta_duplicate_blocked(service, order_setup):
     order = order_setup["order"]
     service.create_ricevuta(RicevutaCreateSchema(id_order=order.id_order))

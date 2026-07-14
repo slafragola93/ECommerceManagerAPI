@@ -65,11 +65,7 @@ class RicevutaExportService:
     def _primary_address(
         cls, ricevuta: RicevutaResponseSchema
     ) -> Optional[RicevutaAddressEmbedSchema]:
-        return (
-            ricevuta.address
-            or ricevuta.address_invoice
-            or ricevuta.address_delivery
-        )
+        return ricevuta.address_invoice or ricevuta.address_delivery
 
     @classmethod
     def _detail_rows(cls, ricevuta: RicevutaResponseSchema) -> List[list]:

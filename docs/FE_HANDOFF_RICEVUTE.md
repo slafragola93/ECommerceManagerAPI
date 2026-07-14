@@ -86,7 +86,7 @@ Authorization: Bearer <JWT>
 
 **Response 200:** `RicevutaDetail` (header + `customer` + `order` + indirizzo/i + `order_details[]` live)
 
-**Contratto v2 (snellito):** niente `id_order`/`id_customer`/`pdf_hash` in root; `is_modifiable` solo su root; indirizzo unico in `address` se consegna = fatturazione.
+**Contratto v2 (snellito):** niente `id_order`/`id_customer`/`pdf_hash` in root; `is_modifiable` solo su root; indirizzi sempre in `address_delivery` e `address_invoice` (nullable, anche se coincidono).
 
 **404:** ricevuta non trovata (standard FastAPI `{ "detail": "..." }`).
 
@@ -333,12 +333,8 @@ export interface RicevutaDetail {
   is_modifiable: boolean;
   customer: RicevutaCustomerSummary | null;
   order: RicevutaOrderSummary | null;
-  /** Presente se indirizzo consegna = fatturazione */
-  address?: RicevutaAddress | null;
-  /** Solo se consegna ≠ fatturazione */
-  address_delivery?: RicevutaAddress | null;
-  /** Solo se consegna ≠ fatturazione */
-  address_invoice?: RicevutaAddress | null;
+  address_delivery: RicevutaAddress | null;
+  address_invoice: RicevutaAddress | null;
   order_details: RicevutaOrderDetail[];
 }
 
@@ -413,7 +409,17 @@ export interface RicevutaListFilters {
     "payment_date": "2026-06-01",
     "total_price_with_tax": 244.0
   },
-  "address": {
+  "address_delivery": {
+    "id_address": 12001,
+    "company": "Acme GmbH",
+    "firstname": "Luigi",
+    "lastname": "Verdi",
+    "address1": "Hauptstr. 1",
+    "city": "Berlin",
+    "postcode": "10115",
+    "country": { "iso_code": "DE", "name": "Germania" }
+  },
+  "address_invoice": {
     "id_address": 12001,
     "company": "Acme GmbH",
     "firstname": "Luigi",

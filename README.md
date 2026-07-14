@@ -232,8 +232,7 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 ## Ultime modifiche (2026-07-08) — Contratto API ricevute snellito
 
-- Dettaglio: rimossi `id_order`/`id_customer`/`pdf_hash` duplicati in root; `customer`/`order`/`address*` embed leggeri.
-- Se consegna = fatturazione → un solo campo `address` (niente doppio oggetto identico).
+- Dettaglio: rimossi `id_order`/`id_customer`/`pdf_hash` duplicati in root; `customer`/`order`/`address_delivery`/`address_invoice` embed leggeri.
 - `is_modifiable` solo a livello ricevuta; indirizzi senza customer annidato.
 
 ## Ultime modifiche (2026-07-08) — Fix PDF ricevuta (Decimal MySQL)
@@ -307,6 +306,22 @@ Test: `tests/unit/repository/test_corrispettivo_repository.py`
 
 ---
 
+## Ultime modifiche (2026-07-13) — Fix `data_emissione` date-only in PDF ricevuta
+
+**Bugfix produzione:** `POST /api/v1/ricevute/` poteva fallire con `400` e messaggio `'datetime.date' object has no attribute 'tzinfo'` durante la generazione PDF quando `data_emissione` arrivava come sola data (`YYYY-MM-DD`) o come oggetto `date` legacy.
+
+**Fix:**
+- Parsing API robusto in `RicevutaCreateSchema` / `RicevutaUpdateSchema`: accetta `YYYY-MM-DD` (→ `date`, ora corrente Europe/Rome in persistenza) e ISO datetime con/senza offset (`YYYY-MM-DDTHH:mm:ss[Z|offset]`).
+- Utility `parse_emission_input`, `emission_to_rome`, `emission_for_pdf` in `src/services/ricevute/date_utils.py` — nessun accesso diretto a `.tzinfo` su `date`.
+- PDF: normalizzazione timezone-aware Europe/Rome prima del render (`ricevuta_pdf_service.py`).
+
+**Test:** `tests/unit/services/ricevute/test_date_utils.py`, `tests/unit/services/test_ricevuta_create.py`, `tests/unit/services/pdf/test_ricevuta_pdf_service.py`.
+
+## Ultime modifiche (2026-07-13) — API ricevuta: indirizzi sempre delivery/invoice
+
+- Dettaglio `GET /api/v1/ricevute/{id}`: rimosso campo `address`; sempre `address_delivery` e `address_invoice` (nullable).
+- Se consegna = fatturazione, entrambi i campi contengono lo stesso oggetto (contratto stabile per il FE).
+
 ## Ultime modifiche (2026-07-10) — Data/ora emissione ricevute e fatture
 
 - `ricevute.data_emissione` è **DATETIME** (migration `alter_ricevute_data_emissione_datetime.py`); API e export espongono ISO 8601 con ora.
@@ -316,6 +331,16 @@ Test: `tests/unit/repository/test_corrispettivo_repository.py`
 - Corrispettivi: aggregazione per **giorno** emissione invariata (`Europe/Rome`).
 
 Test: `tests/unit/services/ricevute/test_date_utils.py`, suite ricevute/corrispettivi esistente.
+
+## Ultime modifiche (2026-07-13) — Export corrispettivi: fix split per paese consegna
+
+**Bugfix:** i file `registro_IT.xlsx`, `registro_FR.xlsx`, ecc. nel ZIP `Registri.zip` contenevano gli stessi dati del consolidato `registro.xlsx` perché il filtro `delivery_country_iso` non era applicato correttamente alle query di export (mancava il legame con l'indirizzo di consegna).
+
+**Fix:** `_apply_order_filters` in `CorrispettivoRepository` usa ora una subquery `EXISTS` sull'indirizzo di consegna (`orders.id_address_delivery` → `countries.iso_code`). Ogni `registro_{ISO}.xlsx` include solo i movimenti con consegna in quel paese.
+
+**Nota:** `registro.xlsx` (consolidato) = somma dei registri per paese. Se un paese (es. IT) ha totale mensile **0** — tipico con sole righe ricevuta decurtazione/imputazione che si compensano — il consolidato coincide con gli altri paesi che hanno il netto reale (es. FR). L'export ignora sempre `delivery_country_iso` nel body per il file consolidato, anche se il FE invia un filtro paese attivo.
+
+Test: `tests/unit/repository/test_corrispettivo_repository.py` → `TestCorrispettivoDeliveryCountryFilter`.
 
 ## Ultime modifiche (2026-07-10) — PDF ricevuta: rimossa sezione NOTE
 

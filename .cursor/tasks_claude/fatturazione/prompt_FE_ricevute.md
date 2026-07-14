@@ -85,9 +85,9 @@ Errore **500** = quasi sempre tabella DB mancante lato BE (vedi prerequisito).
 GET /api/v1/ricevute/{id_ricevuta}
 ```
 
-Include: header ricevuta, `customer`, `order`, indirizzo/i (`address` **oppure** `address_delivery` + `address_invoice`), `order_details[]` (live da ordine), `is_modifiable`.
+Include: header ricevuta, `customer`, `order`, `address_delivery` + `address_invoice` (nullable), `order_details[]` (live da ordine), `is_modifiable`.
 
-**Contratto v2:** niente `id_order`/`id_customer`/`pdf_hash` in root; niente `customer` annidato negli indirizzi; se consegna = fatturazione → un solo `address`.
+**Contratto v2:** niente `id_order`/`id_customer`/`pdf_hash` in root; niente `customer` annidato negli indirizzi; sempre `address_delivery` e `address_invoice`.
 
 ---
 
@@ -309,9 +309,8 @@ export interface RicevutaDetail {
   is_modifiable: boolean;
   customer: RicevutaCustomerSummary | null;
   order: RicevutaOrderSummary | null;
-  address?: RicevutaAddress | null;
-  address_delivery?: RicevutaAddress | null;
-  address_invoice?: RicevutaAddress | null;
+  address_delivery: RicevutaAddress | null;
+  address_invoice: RicevutaAddress | null;
   order_details: RicevutaOrderDetail[];
 }
 

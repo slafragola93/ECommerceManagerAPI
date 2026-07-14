@@ -39,6 +39,19 @@ class CorrispettivoService:
         data = filters.model_dump(exclude_none=True)
         return data or None
 
+    @staticmethod
+    def _filters_without_country(
+        filters: Optional[CorrispettivoFiltersSchema],
+    ) -> Optional[CorrispettivoFiltersSchema]:
+        """Rimuove delivery_country_iso: il consolidato export deve includere tutti i paesi."""
+        if not filters:
+            return None
+        data = filters.model_dump(exclude_none=True)
+        data.pop("delivery_country_iso", None)
+        if not data:
+            return None
+        return CorrispettivoFiltersSchema(**data)
+
     def get_riepilogo(
         self,
         year: int,
@@ -169,14 +182,21 @@ class CorrispettivoService:
         )
 
     def build_export_zip(self, request: CorrispettivoExportRequestSchema) -> bytes:
-        filter_dict = self._filters_to_dict(request.filters)
+        consolidated_filters = self._filters_without_country(request.filters)
+        filter_dict = self._filters_to_dict(consolidated_filters)
         country_codes = self._repository.list_country_codes_with_movements(
             request.year, request.month, filter_dict
         )
 
-        summary_all = self.get_daily_summary(request.year, request.month, request.filters)
+        summary_all = self.get_daily_summary(
+            request.year, request.month, consolidated_filters
+        )
         summary_by_country = {}
-        base_filter_data = request.filters.model_dump(exclude_none=True) if request.filters else {}
+        base_filter_data = (
+            consolidated_filters.model_dump(exclude_none=True)
+            if consolidated_filters
+            else {}
+        )
         for iso in country_codes:
             country_filters = CorrispettivoFiltersSchema(
                 **{**base_filter_data, "delivery_country_iso": iso}

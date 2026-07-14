@@ -206,9 +206,8 @@ class RicevutaService(IRicevutaService):
             is_modifiable=is_modifiable,
             customer=self._map_customer(customer),
             order=self._map_order(order, shipping),
-            address=addresses.get("address"),
-            address_delivery=addresses.get("address_delivery"),
-            address_invoice=addresses.get("address_invoice"),
+            address_delivery=addresses["address_delivery"],
+            address_invoice=addresses["address_invoice"],
             order_details=order_details,
         )
 
@@ -390,8 +389,6 @@ class RicevutaService(IRicevutaService):
     def _map_addresses(self, order: Order) -> dict:
         delivery_id = order.id_address_delivery
         invoice_id = order.id_address_invoice
-        if delivery_id and delivery_id == invoice_id:
-            return {"address": self._map_address_embed(delivery_id)}
         return {
             "address_delivery": self._map_address_embed(delivery_id),
             "address_invoice": self._map_address_embed(invoice_id),

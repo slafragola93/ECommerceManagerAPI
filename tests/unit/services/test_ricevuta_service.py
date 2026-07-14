@@ -5,6 +5,8 @@ from decimal import Decimal
 import pytest
 
 from src.core.container_config import get_configured_container
+from src.models.address import Address
+from src.models.country import Country
 from src.models.customer import Customer
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
@@ -184,6 +186,98 @@ def test_get_ricevuta_not_modifiable_when_order_shipped(service, db_session, fix
 
     result = service.get_ricevuta(fixtures["ricevuta"].id_ricevuta)
     assert result.is_modifiable is False
+
+
+def test_get_ricevuta_same_address_populates_delivery_and_invoice(
+    service, db_session, fixtures
+):
+    country = Country(id_origin=1, name="Francia", iso_code="FR")
+    db_session.add(country)
+    db_session.commit()
+    db_session.refresh(country)
+
+    address = Address(
+        id_country=country.id_country,
+        company="L'Oreal",
+        firstname="Jean",
+        lastname="Dupont",
+        address1="12 Rue de la Paix",
+        city="Paris",
+        postcode="75002",
+        state="Paris",
+        phone="+33123456789",
+        vat="FR81775670417",
+        date_add=date.today(),
+    )
+    db_session.add(address)
+    db_session.commit()
+    db_session.refresh(address)
+
+    order = fixtures["order"]
+    order.id_address_delivery = address.id_address
+    order.id_address_invoice = address.id_address
+    db_session.commit()
+
+    result = service.get_ricevuta(fixtures["ricevuta"].id_ricevuta)
+    payload = result.model_dump(mode="json")
+
+    assert result.address_delivery is not None
+    assert result.address_invoice is not None
+    assert result.address_delivery.id_address == address.id_address
+    assert result.address_invoice.id_address == address.id_address
+    assert "address_delivery" in payload
+    assert "address_invoice" in payload
+    assert "address" not in payload
+
+
+def test_get_ricevuta_split_addresses_when_delivery_differs_from_invoice(
+    service, db_session, fixtures
+):
+    country = Country(id_origin=1, name="Francia", iso_code="FR")
+    db_session.add(country)
+    db_session.commit()
+    db_session.refresh(country)
+
+    delivery = Address(
+        id_country=country.id_country,
+        firstname="Jean",
+        lastname="Dupont",
+        address1="12 Rue de la Paix",
+        city="Paris",
+        postcode="75002",
+        date_add=date.today(),
+    )
+    invoice = Address(
+        id_country=country.id_country,
+        company="L'Oreal",
+        firstname="Jean",
+        lastname="Dupont",
+        address1="1 Avenue des Champs-Elysees",
+        city="Paris",
+        postcode="75008",
+        vat="FR81775670417",
+        date_add=date.today(),
+    )
+    db_session.add_all([delivery, invoice])
+    db_session.commit()
+    db_session.refresh(delivery)
+    db_session.refresh(invoice)
+
+    order = fixtures["order"]
+    order.id_address_delivery = delivery.id_address
+    order.id_address_invoice = invoice.id_address
+    db_session.commit()
+
+    result = service.get_ricevuta(fixtures["ricevuta"].id_ricevuta)
+    payload = result.model_dump(mode="json")
+
+    assert result.address_delivery is not None
+    assert result.address_invoice is not None
+    assert result.address_delivery.id_address == delivery.id_address
+    assert result.address_invoice.id_address == invoice.id_address
+    assert "address_delivery" in payload
+    assert "address_invoice" in payload
+    assert "address" not in payload
 
 
 def test_list_ricevute_filters(service, fixtures):

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.services.ricevute.date_utils import format_emission_datetime
+from src.services.ricevute.date_utils import emission_for_pdf, format_emission_datetime
 from src.services.pdf.ricevuta_pdf_layout import (
     RicevutaPDFLayout,
     _labels_for_country,
@@ -91,6 +91,14 @@ class TestRicevutaPDFLayout:
         assert isinstance(out, (bytes, bytearray))
         assert out[:4] == b"%PDF"
 
+    def test_render_accepts_date_only_emission(self):
+        pdf = RicevutaPDFLayout.create_pdf()
+        ctx = _minimal_context()
+        ctx["data_emissione"] = emission_for_pdf(date(2026, 7, 8))
+        RicevutaPDFLayout.render(pdf, **ctx)
+        out = pdf.output()
+        assert out[:4] == b"%PDF"
+
 
 class TestRicevutaPDFService:
     def test_compute_totals_from_order(self):
@@ -121,3 +129,8 @@ class TestRicevutaPDFService:
         assert totals["shipping_incl"] == pytest.approx(12.2)
         assert totals["shipping_net"] == pytest.approx(10.0)
         assert totals["total_gross"] == pytest.approx(134.2)
+
+    def test_emission_for_pdf_handles_legacy_date_value(self):
+        rome_dt = emission_for_pdf(date(2026, 7, 8))
+        assert rome_dt.tzinfo is not None
+        assert format_emission_datetime(rome_dt) == "08/07/2026 00:00"

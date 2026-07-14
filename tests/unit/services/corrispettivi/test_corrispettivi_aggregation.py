@@ -165,3 +165,15 @@ def test_build_workbook_has_simplified_with_tax_columns():
     assert sheet[2][3].value == 97.6
     assert sheet[2][4].value == 80.0
     assert sheet[2][5].value == 17.6
+
+
+def test_export_filters_without_country_strips_delivery_iso():
+    from src.schemas.corrispettivo_schema import CorrispettivoFiltersSchema
+    from src.services.routers.corrispettivo_service import CorrispettivoService
+
+    filters = CorrispettivoFiltersSchema(id_store=1, delivery_country_iso="FR")
+    result = CorrispettivoService._filters_without_country(filters)
+
+    assert result is not None
+    assert result.id_store == 1
+    assert result.delivery_country_iso is None

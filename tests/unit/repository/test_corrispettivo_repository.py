@@ -1,10 +1,12 @@
 """Verifica filtro ordini non fatturati in CorrispettivoRepository."""
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import func
 
+from src.models.address import Address
+from src.models.country import Country
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
@@ -126,6 +128,75 @@ def _add_order(
     return order
 
 
+def _add_order_with_delivery_country(
+    db_session,
+    tax,
+    *,
+    reference: str,
+    country_iso: str,
+    total_with_tax: str = "122.00",
+    total_net: str = "100.00",
+    movement_date: datetime = datetime(2026, 7, 15, 12, 0, 0),
+):
+    country = (
+        db_session.query(Country)
+        .filter(func.upper(Country.iso_code) == country_iso.upper())
+        .first()
+    )
+    if not country:
+        country = Country(
+            id_origin=hash(country_iso) % 100000,
+            name=country_iso,
+            iso_code=country_iso,
+        )
+        db_session.add(country)
+        db_session.commit()
+        db_session.refresh(country)
+
+    address = Address(
+        id_country=country.id_country,
+        firstname="Test",
+        lastname=country_iso,
+        address1="Via test 1",
+        city="City",
+        postcode="00000",
+        date_add=date.today(),
+    )
+    db_session.add(address)
+    db_session.commit()
+    db_session.refresh(address)
+
+    order = Order(
+        id_order_state=1,
+        reference=reference,
+        date_add=movement_date,
+        is_payed=True,
+        id_address_delivery=address.id_address,
+        total_price_with_tax=Decimal(total_with_tax),
+        total_price_net=Decimal(total_net),
+        products_total_price_with_tax=Decimal(total_with_tax),
+        products_total_price_net=Decimal(total_net),
+    )
+    db_session.add(order)
+    db_session.commit()
+    db_session.refresh(order)
+
+    db_session.add(
+        OrderDetail(
+            id_order=order.id_order,
+            id_tax=tax.id_tax,
+            product_name=f"Prodotto {reference}",
+            product_qty=1,
+            unit_price_with_tax=Decimal(total_with_tax),
+            unit_price_net=Decimal(total_net),
+            total_price_with_tax=Decimal(total_with_tax),
+            total_price_net=Decimal(total_net),
+        )
+    )
+    db_session.commit()
+    return order
+
+
 class TestCorrispettivoNoInvoiceFilter:
     def test_sales_exclude_invoiced_orders(self, db_session, repo, tax):
         _add_order(db_session, tax, reference="NO-INV")
@@ -211,3 +282,72 @@ class TestCorrispettivoNoInvoiceFilter:
         assert included.id_order in ids
         assert excluded_invoice.id_order not in ids
         assert excluded_unpaid.id_order not in ids
+
+
+class TestCorrispettivoDeliveryCountryFilter:
+    def test_fetch_daily_gross_totals_filters_by_delivery_country(
+        self, db_session, repo, tax
+    ):
+        _add_order_with_delivery_country(
+            db_session, tax, reference="IT-1", country_iso="IT"
+        )
+        _add_order_with_delivery_country(
+            db_session,
+            tax,
+            reference="FR-1",
+            country_iso="FR",
+            total_with_tax="200.00",
+            total_net="163.93",
+        )
+
+        all_totals = repo.fetch_daily_gross_totals(2026, 7)
+        it_totals = repo.fetch_daily_gross_totals(
+            2026, 7, {"delivery_country_iso": "IT"}
+        )
+        fr_totals = repo.fetch_daily_gross_totals(
+            2026, 7, {"delivery_country_iso": "FR"}
+        )
+
+        movement_date = datetime(2026, 7, 15).date()
+        all_sales = all_totals[movement_date]["sales"]["total_with_tax"]
+        it_sales = it_totals[movement_date]["sales"]["total_with_tax"]
+        fr_sales = fr_totals[movement_date]["sales"]["total_with_tax"]
+
+        assert all_sales == Decimal("322.00")
+        assert it_sales == Decimal("122.00")
+        assert fr_sales == Decimal("200.00")
+
+    def test_fetch_movements_filters_by_delivery_country(self, db_session, repo, tax):
+        _add_order_with_delivery_country(
+            db_session, tax, reference="IT-2", country_iso="IT"
+        )
+        _add_order_with_delivery_country(
+            db_session,
+            tax,
+            reference="FR-2",
+            country_iso="FR",
+            total_with_tax="50.00",
+            total_net="40.98",
+        )
+
+        it_movements = repo.fetch_movements(
+            2026, 7, {"delivery_country_iso": "IT"}
+        )
+        fr_movements = repo.fetch_movements(
+            2026, 7, {"delivery_country_iso": "FR"}
+        )
+
+        assert sum(m.sales_net for m in it_movements) == Decimal("100.00")
+        assert sum(m.sales_net for m in fr_movements) == Decimal("40.98")
+
+    def test_list_country_codes_with_movements(self, db_session, repo, tax):
+        _add_order_with_delivery_country(
+            db_session, tax, reference="IT-3", country_iso="IT"
+        )
+        _add_order_with_delivery_country(
+            db_session, tax, reference="FR-3", country_iso="FR"
+        )
+
+        codes = repo.list_country_codes_with_movements(2026, 7)
+
+        assert codes == ["FR", "IT"]

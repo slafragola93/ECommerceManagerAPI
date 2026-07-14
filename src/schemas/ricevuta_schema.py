@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
+
+from src.services.ricevute.date_utils import parse_emission_input
 
 
 class RicevutaStatoSchema(str, Enum):
@@ -19,7 +21,7 @@ class RicevutaExportFormatSchema(str, Enum):
 
 class RicevutaCreateSchema(BaseModel):
     id_order: int = Field(..., gt=0, description="Ordine collegato")
-    data_emissione: Optional[datetime] = Field(
+    data_emissione: Optional[Union[date, datetime]] = Field(
         None,
         description=(
             "Data e ora emissione (Europe/Rome, ISO 8601); "
@@ -27,11 +29,24 @@ class RicevutaCreateSchema(BaseModel):
         ),
     )
 
+    @field_validator("data_emissione", mode="before")
+    @classmethod
+    def _parse_data_emissione(cls, value):
+        return parse_emission_input(value)
+
 
 class RicevutaUpdateSchema(BaseModel):
-    data_emissione: datetime = Field(
+    data_emissione: Union[date, datetime] = Field(
         ..., description="Nuova data e ora emissione (Europe/Rome)"
     )
+
+    @field_validator("data_emissione", mode="before")
+    @classmethod
+    def _parse_data_emissione(cls, value):
+        parsed = parse_emission_input(value)
+        if parsed is None:
+            raise ValueError("data_emissione è obbligatoria")
+        return parsed
 
 
 class RicevutaOrderDetailEmbedSchema(BaseModel):
@@ -130,7 +145,7 @@ class RicevutaResponseSchema(BaseModel):
     Dettaglio ricevuta — contratto snello.
 
     - Nessun `id_order`/`id_customer` duplicati in root (solo in `order` / `customer`).
-    - Indirizzo unico in `address` se consegna = fatturazione; altrimenti delivery/invoice.
+    - Indirizzi sempre in `address_delivery` e `address_invoice` (nullable).
     - `pdf_hash` omesso (uso interno BE).
     """
 
@@ -154,17 +169,13 @@ class RicevutaResponseSchema(BaseModel):
     )
     customer: Optional[RicevutaCustomerEmbedSchema] = None
     order: Optional[RicevutaOrderEmbedSchema] = None
-    address: Optional[RicevutaAddressEmbedSchema] = Field(
-        None,
-        description="Presente se indirizzo consegna e fatturazione coincidono",
-    )
     address_delivery: Optional[RicevutaAddressEmbedSchema] = Field(
         None,
-        description="Solo se diverso da fatturazione",
+        description="Indirizzo consegna live da ordine",
     )
     address_invoice: Optional[RicevutaAddressEmbedSchema] = Field(
         None,
-        description="Solo se diverso da consegna",
+        description="Indirizzo fatturazione live da ordine",
     )
     order_details: List[RicevutaOrderDetailEmbedSchema] = Field(
         default_factory=list,
