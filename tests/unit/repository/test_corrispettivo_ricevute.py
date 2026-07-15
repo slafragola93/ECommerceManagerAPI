@@ -115,13 +115,13 @@ class TestCorrispettivoRicevute:
         movements = repo.fetch_movements(2026, 7)
         sales_by_day = {}
         for movement in movements:
-            if movement.sales_net:
+            if movement.sales_amount:
                 sales_by_day.setdefault(movement.movement_date, Decimal("0"))
-                sales_by_day[movement.movement_date] += movement.sales_net
+                sales_by_day[movement.movement_date] += movement.sales_amount
 
-        assert sales_by_day.get(date(2026, 7, 1)) == Decimal("-100.00")
+        assert sales_by_day.get(date(2026, 7, 1)) == Decimal("-122.00")
         assert sales_by_day.get(date(2026, 7, 3)) is None
-        assert sales_by_day.get(date(2026, 7, 8)) == Decimal("100.00")
+        assert sales_by_day.get(date(2026, 7, 8)) == Decimal("122.00")
 
     def test_annullata_ricevuta_restores_order_date_sales(self, db_session, repo, tax):
         _add_order_with_ricevuta(
@@ -136,9 +136,9 @@ class TestCorrispettivoRicevute:
         )
 
         movements = repo.fetch_movements(2026, 7)
-        sales_net = sum(m.sales_net for m in movements)
+        sales_amount = sum(m.sales_amount for m in movements)
 
-        assert sales_net == Decimal("100.00")
+        assert sales_amount == Decimal("122.00")
 
     def test_order_without_ricevuta_unchanged(self, db_session, repo, tax):
         order = Order(
@@ -169,9 +169,9 @@ class TestCorrispettivoRicevute:
         db_session.commit()
 
         movements = repo.fetch_movements(2026, 7)
-        sales_net = sum(m.sales_net for m in movements)
+        sales_amount = sum(m.sales_amount for m in movements)
 
-        assert sales_net == Decimal("100.00")
+        assert sales_amount == Decimal("122.00")
 
     def test_gross_totals_reflect_ricevuta_adjustments(self, db_session, repo, tax):
         _add_order_with_ricevuta(
@@ -280,9 +280,9 @@ class TestCorrispettivoRicevute:
         db_session.commit()
 
         movements = repo.fetch_movements(2026, 7)
-        returns_net = sum(m.returns_net for m in movements)
+        returns_amount = sum(m.returns_amount for m in movements)
 
-        assert returns_net == Decimal("30.00")
+        assert returns_amount == Decimal("36.60")
 
     def test_same_day_order_and_emission_stays_in_base(self, db_session, repo, tax):
         """Se date_add == data_emissione, l'ordine resta nelle vendite base del giorno ordine."""

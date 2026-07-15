@@ -119,7 +119,7 @@ I resi restano conteggiati alla **data del documento reso** (`FiscalDocument.dat
 
 | Scenario | Comportamento atteso |
 |---|---|
-| Ordine con ricevuta emessa + reso | Imputazione/decurtazione ricevuta invariata; reso in `returns_net` alla data reso |
+| Ordine con ricevuta emessa + reso | Imputazione/decurtazione ricevuta invariata; reso in `products_returns` / `shipping_returns` alla data reso |
 | Eliminazione reso (ordine con ricevuta) | Sparisce solo il movimento reso; aggiustamenti ricevuta invariati |
 | Eliminazione reso (ordine senza ricevuta) | Vendita su `date_add` invariata; reso rimosso |
 | Ricevuta annullata dopo delete reso | Ordine torna in vendite standard su `date_add` |
@@ -209,31 +209,31 @@ interface CorrispettivoRiepilogoResponse {
   delivery_country_iso: string | null;    // valorizzato se filtro paese attivo
   columns: CorrispettivoTaxColumn[];
   rows: CorrispettivoRiepilogoRow[];
-  month_totals: CorrispettivoAmount;
+  month_totals: CorrispettivoRiepilogoTotals;
 }
 
 interface CorrispettivoTaxColumn {
   id_tax: number;
-  label: string;           // es. "22", "0", "SPF", "17L"
+  label: string;           // es. "22", "0", "SPF", "17LU"
   percentage: number | null;
 }
 
-interface CorrispettivoAmount {
-  sales_net: number;       // imponibile vendite (2 decimali)
-  returns_net: number;     // imponibile resi
-  net: number;             // sales_net - returns_net
+interface CorrispettivoTaxCell {
+  products_sales: number;    // entrate prodotti, IVA inclusa
+  shipping_sales: number;    // entrata spedizione, IVA inclusa
+  products_returns: number;  // resi prodotti, IVA inclusa
+  shipping_returns: number;  // resi spedizione, IVA inclusa
+}
+
+interface CorrispettivoRiepilogoTotals extends CorrispettivoTaxCell {
+  row_total: number;         // vendite - resi (prodotti + spedizione)
 }
 
 interface CorrispettivoRiepilogoRow {
   day: number;             // 1-31
   date: string;            // ISO date "2026-05-15"
-  cells: Record<string, CorrispettivoAmount>;  // chiave = id_tax come stringa ("1", "9")
-  row_net: CorrispettivoAmount;               // totale riga (somma aliquote prodotti)
-  shipping: {
-    sales_net: number;
-    returns_net: number;
-    net: number;
-  };
+  cells: Record<string, CorrispettivoTaxCell>;  // chiave = id_tax come stringa
+  row_total: number;       // totale riga (vendite − resi)
 }
 ```
 
@@ -251,27 +251,41 @@ interface CorrispettivoRiepilogoRow {
   ],
   "rows": [
     {
+      "day": 1,
+      "date": "2026-05-01",
+      "cells": {
+        "1": { "products_sales": 0, "shipping_sales": 0, "products_returns": 0, "shipping_returns": 0 },
+        "9": { "products_sales": 0, "shipping_sales": 0, "products_returns": 0, "shipping_returns": 0 }
+      },
+      "row_total": 0
+    },
+    {
       "day": 15,
       "date": "2026-05-15",
       "cells": {
-        "1": { "sales_net": 901.64, "returns_net": 10.0, "net": 891.64 },
-        "9": { "sales_net": 120.0, "returns_net": 0.0, "net": 120.0 }
+        "1": { "products_sales": 1100.0, "shipping_sales": 144.59, "products_returns": 12.2, "shipping_returns": 4.4 },
+        "9": { "products_sales": 120.0, "shipping_sales": 0, "products_returns": 0, "shipping_returns": 0 }
       },
-      "row_net": { "sales_net": 1021.64, "returns_net": 10.0, "net": 1011.64 },
-      "shipping": { "sales_net": 122.95, "returns_net": 4.40, "net": 118.55 }
+      "row_total": 1347.99
     }
   ],
-  "month_totals": { "sales_net": 1021.64, "returns_net": 10.0, "net": 1011.64 }
+  "month_totals": {
+    "products_sales": 1220.0,
+    "shipping_sales": 144.59,
+    "products_returns": 12.2,
+    "shipping_returns": 4.4,
+    "row_total": 1347.99
+  }
 }
 ```
 
 **Note rendering UI:**
 
-- `columns` definisce l’ordine delle colonne aliquota.
-- Per ogni riga, usare `cells[String(column.id_tax)]`; se assente → `{ sales_net: 0, returns_net: 0, net: 0 }`.
-- **Vendite** → colore verde (legacy); **resi** → rosso; mostrare `sales_net` e `returns_net` **separati** (non stringhe comma-separated).
-- Colonna **Netto** a destra → `row_net.net` (o breakdown `row_net.sales_net` / `row_net.returns_net`).
-- Riga **Spedizione** opzionale sotto ogni giorno → `shipping` (stesso contratto `sales_net` / `returns_net` / `net` delle celle aliquota; resi in rosso).
+- `columns` definisce l’ordine delle colonne aliquota (4 metriche per aliquota + totale riga).
+- **Una riga per ogni giorno del mese** (01..ultimo), anche se tutti zeri.
+- Per ogni riga, usare `cells[String(column.id_tax)]`; se assente → quattro zeri.
+- **Entrate** (prodotti/spedizione) → verde; **resi** → rosso.
+- Colonna finale **`row_total`** in API/UI = vendite − resi; **non** esportata in Excel (solo totali di colonna in riga `Totale MM/YYYY`).
 - `month_totals` → riga totali in fondo tabella.
 
 ---
@@ -371,8 +385,9 @@ interface CorrispettivoDaySummary {
 
 | Aspetto | `/riepilogo` | `/` |
 |---|---|---|
-| Granularità | Per **aliquota IVA** | Per **giorno** (totali) |
-| Importi | Imponibile (`*_net`) per cella | Con IVA + netto + split prodotti/spedizione |
+| Granularità | Per **aliquota IVA** (4 voci + totale riga) | Per **giorno** (totali) |
+| Importi | **Con IVA** | Con IVA + netto + split prodotti/spedizione |
+| Giorni | Tutti i giorni del mese | Tutti i giorni del mese |
 | Uso UI | Tabella matriciale | Summary / KPI |
 
 ---
@@ -417,38 +432,35 @@ Authorization: Bearer <token>
 | File | Descrizione |
 |---|---|
 | `registro.xlsx` | Consolidato tutti i paesi — matrice giorni × aliquote (come `GET /riepilogo`) |
-| `registro_IT.xlsx` | Solo consegne IT — totali giornalieri compatti |
-| `registro_DE.xlsx` | Solo consegne DE — totali giornalieri compatti |
+| `registro_IT.xlsx` | Solo consegne IT — **stessa matrice aliquote** del consolidato |
+| `registro_DE.xlsx` | Solo consegne DE — **stessa matrice aliquote** del consolidato |
 | … | Un file per ogni ISO con movimenti nel mese |
 
-**Struttura `registro.xlsx` (consolidato / riepilogo generico)** — imponibile per aliquota:
+**Struttura `registro.xlsx` (consolidato / riepilogo generico)** — importi **con IVA**:
 
 | Colonna | Contenuto |
 |---|---|
-| `Data` | Giorno con movimento (`YYYY-MM-DD`) |
-| `{aliquota} - Vendite` | Vendite nette per aliquota |
-| `{aliquota} - Resi` | Resi netti per aliquota |
-| `{aliquota} - Netto` | Netto per aliquota |
-| `Totale - Vendite/Resi/Netto` | Somma righe prodotti |
-| `Spedizione - Vendite/Resi/Netto` | Spedizione giornaliera |
+| `Data` | Giorno (`DD/MM/YYYY`) — **tutti i giorni del mese** |
+| `{aliquota} - Totale entrate prodotti` | Vendite prodotti per aliquota |
+| `{aliquota} - Totale entrata spedizione` | Vendite spedizione per aliquota |
+| `{aliquota} - Totale resi prodotti` | Resi prodotti per aliquota |
+| `{aliquota} - Totale resi spedizione` | Resi spedizione per aliquota |
 
-- Una riga per ogni giorno con movimento
-- Ultima riga: totali mese (`Totale MM/YYYY`)
-- Colonne aliquota definite da `columns` (stesso ordine di `GET /riepilogo`)
+- Layout legacy: righe = giorni del mese, colonne = blocchi per aliquota, **nessuna colonna saldo riga**
+- Ultima riga: totali mese per colonna (`Totale MM/YYYY`)
 
-**Struttura `registro_{ISO}.xlsx` (per paese)** — importi giornalieri compatti:
+**Struttura `registro_{ISO}.xlsx` (per paese)** — identica al consolidato, filtrata per paese di consegna:
 
 | Colonna | Contenuto |
 |---|---|
-| `Data` | Giorno con movimento (`YYYY-MM-DD`) |
-| `Tot resi` | Somma resi giornalieri |
-| `Totale netto` | Vendite − resi |
-| `Netto prodotti` | Netto imputato ai prodotti |
-| `Netto spedizione` | Netto imputato alla spedizione |
+| `Data` | Giorno (`DD/MM/YYYY`) — **tutti i giorni del mese** |
+| `{aliquota} - Totale entrate prodotti` | Vendite prodotti per aliquota (solo ordini con consegna in `{ISO}`) |
+| `{aliquota} - Totale entrata spedizione` | Vendite spedizione per aliquota |
+| `{aliquota} - Totale resi prodotti` | Resi prodotti per aliquota |
+| `{aliquota} - Totale resi spedizione` | Resi spedizione per aliquota |
 
-- Una riga per ogni giorno con movimento
-- Ultima riga: totali mese (`Totale MM/YYYY`)
-- Nessuna colonna per aliquota IVA (solo totali giornalieri per paese)
+- Ultima riga: totali mese per colonna (`Totale MM/YYYY`)
+- Stesso layout orizzontale di `registro.xlsx`; differisce solo per filtro `delivery_country_iso`
 
 Il breakdown vendite/ricevute (`sales_breakdown`) resta disponibile solo su `GET /api/v1/corrispettivi`, non nell'export Excel.
 
@@ -550,10 +562,15 @@ export interface CorrispettivoQueryParams extends CorrispettivoFilters {
   month: number;
 }
 
-export interface CorrispettivoAmount {
-  sales_net: number;
-  returns_net: number;
-  net: number;
+export interface CorrispettivoTaxCell {
+  products_sales: number;
+  shipping_sales: number;
+  products_returns: number;
+  shipping_returns: number;
+}
+
+export interface CorrispettivoRiepilogoTotals extends CorrispettivoTaxCell {
+  row_total: number;
 }
 
 export interface CorrispettivoTaxColumn {
@@ -562,18 +579,11 @@ export interface CorrispettivoTaxColumn {
   percentage: number | null;
 }
 
-export interface CorrispettivoShippingDay {
-  sales_net: number;
-  returns_net: number;
-  net: number;
-}
-
 export interface CorrispettivoRiepilogoRow {
   day: number;
   date: string;
-  cells: Record<string, CorrispettivoAmount>;
-  row_net: CorrispettivoAmount;
-  shipping: CorrispettivoShippingDay;
+  cells: Record<string, CorrispettivoTaxCell>;
+  row_total: number;
 }
 
 export interface CorrispettivoRiepilogoResponse {
@@ -584,7 +594,7 @@ export interface CorrispettivoRiepilogoResponse {
   delivery_country_iso: string | null;
   columns: CorrispettivoTaxColumn[];
   rows: CorrispettivoRiepilogoRow[];
-  month_totals: CorrispettivoAmount;
+  month_totals: CorrispettivoRiepilogoTotals;
 }
 
 export interface CorrispettivoSplitTotals {
@@ -687,7 +697,60 @@ interface CorrispettiviState {
 
 ```bash
 pytest tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py -v
+pytest tests/unit/services/export/test_corrispettivi_excel_service.py -v
+pytest tests/unit/repository/test_corrispettivo_repository.py -v
 ```
+
+---
+
+## 11. QA — validazione export ZIP
+
+### Regola da **non** usare (falsi positivi)
+
+Non applicare per cella `(giorno, aliquota)`:
+
+- ❌ `entrate prodotti > 0` ⇒ `entrata spedizione > 0` **nella stessa colonna aliquota**
+
+Prodotti e spedizione usano aliquote **distinte** nel backend:
+
+- prodotti / resi prodotti → `OrderDetail.id_tax` / `FiscalDocumentDetail.id_tax`
+- spedizione / resi spedizione → `Shipping.id_tax`
+
+Lo stesso ordine (o lo stesso giorno) può quindi avere prodotti in colonna `N3.2` e spedizione in colonna `20` o `22`. Un check per colonna segnala casi **attesi**, non errori di export.
+
+Verificato su giugno 2026 (DB locale): **26 casi** del report “prodotti vs spedizione per aliquota” spiegati da split aliquota; **0 giorni** con prodotti totali > 0 e spedizione totale = 0.
+
+### Regole di validazione consigliate
+
+| Livello | Regola | Note |
+|---|---|---|
+| **Giorno** | Se `Σ entrate prodotti (tutte aliquote) > 0` e `Σ entrata spedizione > 0` atteso → verificare somma spedizione su **tutte** le colonne | Eccezione ammessa: spedizione gratuita (`price_tax_incl = 0`) |
+| **Ordine** | Se ordine con prodotti pagati e spedizione > 0 → confrontare `Shipping.id_tax` con le aliquote delle righe prodotto | Mismatch = normale, non bug |
+| **Export vs API** | Confrontare totali colonna footer `Totale MM/YYYY` con `GET /riepilogo` → `month_totals` | Stessi filtri (`year`, `month`, `delivery_country_iso` se ISO) |
+| **Master vs ISO** | `registro_{ISO}.xlsx` = stesso layout di `registro.xlsx`, filtrato per paese consegna | Non confrontare colonne solo per label testuale (es. più colonne `22`) |
+
+### Script verifica ipotesi (DB)
+
+```bash
+# Windows (venv attivo, dalla root del repo)
+$env:PYTHONPATH="."
+python scripts/verify_corrispettivi_shipping_hypothesis.py --year 2026 --month 6
+```
+
+Lo script:
+
+1. Ricostruisce la matrice export da `fetch_movements` + aggregazione.
+2. Classifica i casi check A/B del report (spiegato da aliquota diversa / non più flag / spedizione gratuita a livello giorno).
+3. Analizza ordini sulle date segnalate (mismatch aliquota prodotti vs spedizione).
+
+Esiti possibili per ogni caso report:
+
+| Esito | Significato |
+|---|---|
+| `SPIEGATO_ALIQUOTA_DIVERSA` | Stesso giorno: importo compensato in un’altra colonna aliquota |
+| `SPIEGATO_SPEDIZIONE_GRATUITA` | Giorno con prodotti ma spedizione totale zero |
+| `NON_PIU_FLAG` | Nel DB attuale la cella ha già entrambe le metriche > 0 (snapshot export diverso o label ambigua) |
+| `DATI_ASSENTI` | Periodo/dati non presenti nel DB in uso |
 
 ---
 
@@ -695,7 +758,8 @@ pytest tests/unit/services/corrispettivi/test_corrispettivi_aggregation.py -v
 
 | Data | Modifica |
 |---|---|
-| 2026-07-06 | Resi: regole distinte dalle vendite — eleggibili se ordine pagato e (non fatturato **oppure** con `credit_note`) |
+| 2026-07-15 | QA export ZIP: regole validazione per-giorno/per-ordine; script `scripts/verify_corrispettivi_shipping_hypothesis.py` |
+| 2026-07-15 | **Breaking:** riepilogo/export — 4 voci per aliquota con IVA, `row_total`, tutti i giorni del mese |
 | 2026-07-06 | Filtro corrispettivi: solo ordini **pagati** (`is_payed=true`) oltre a non fatturati |
 | 2026-07-06 | Export Excel semplificato: 6 colonne con importi IVA incl. (data, vendite, resi, netto tot/prodotti/spedizione) |
 | 2026-07-06 | Test repository filtro non fatturati + documentazione criterio `NOT EXISTS invoice` |

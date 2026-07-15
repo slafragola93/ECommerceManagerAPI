@@ -322,7 +322,7 @@ class CorrispettivoRepository:
                     movement_date_col.label("movement_date"),
                     Country.iso_code.label("country_iso"),
                     OrderDetail.id_tax.label("id_tax"),
-                    (func.sum(OrderDetail.total_price_net) * sign).label("amount"),
+                    (func.sum(OrderDetail.total_price_with_tax) * sign).label("amount"),
                     literal(0).label("is_shipping"),
                 )
                 .select_from(Ricevuta)
@@ -341,7 +341,7 @@ class CorrispettivoRepository:
                     movement_date_col.label("movement_date"),
                     Country.iso_code.label("country_iso"),
                     Shipping.id_tax.label("id_tax"),
-                    (func.sum(Shipping.price_tax_excl) * sign).label("amount"),
+                    (func.sum(Shipping.price_tax_incl) * sign).label("amount"),
                     literal(1).label("is_shipping"),
                 )
                 .select_from(Ricevuta)
@@ -351,8 +351,8 @@ class CorrispettivoRepository:
                 .outerjoin(Country, Address.id_country == Country.id_country)
                 .filter(
                     *ricevuta_filters,
-                    Shipping.price_tax_excl.isnot(None),
-                    Shipping.price_tax_excl > 0,
+                    Shipping.price_tax_incl.isnot(None),
+                    Shipping.price_tax_incl > 0,
                 )
                 .group_by(movement_date_col, Country.iso_code, Shipping.id_tax)
             )
@@ -375,7 +375,7 @@ class CorrispettivoRepository:
                     movement_date=self._as_date(row.movement_date),
                     country_iso=row.country_iso,
                     id_tax=row.id_tax,
-                    sales_net=amount,
+                    sales_amount=amount,
                     is_shipping=bool(row.is_shipping),
                 )
             )
@@ -400,7 +400,7 @@ class CorrispettivoRepository:
                 order_day.label("movement_date"),
                 Country.iso_code,
                 OrderDetail.id_tax,
-                func.sum(OrderDetail.total_price_net).label("amount"),
+                func.sum(OrderDetail.total_price_with_tax).label("amount"),
             )
             .join(Order, OrderDetail.id_order == Order.id_order)
             .outerjoin(Address, Order.id_address_delivery == Address.id_address)
@@ -423,7 +423,7 @@ class CorrispettivoRepository:
                     movement_date=self._as_date(row.movement_date),
                     country_iso=row.iso_code,
                     id_tax=row.id_tax,
-                    sales_net=amount,
+                    sales_amount=amount,
                 )
             )
 
@@ -432,7 +432,7 @@ class CorrispettivoRepository:
                 order_day.label("movement_date"),
                 Country.iso_code,
                 Shipping.id_tax,
-                func.sum(Shipping.price_tax_excl).label("amount"),
+                func.sum(Shipping.price_tax_incl).label("amount"),
             )
             .join(Order, Order.id_shipping == Shipping.id_shipping)
             .outerjoin(Address, Order.id_address_delivery == Address.id_address)
@@ -441,8 +441,8 @@ class CorrispettivoRepository:
                 *self._corrispettivi_sales_order_filters(),
                 order_day >= start_date,
                 order_day <= end_date,
-                Shipping.price_tax_excl.isnot(None),
-                Shipping.price_tax_excl > 0,
+                Shipping.price_tax_incl.isnot(None),
+                Shipping.price_tax_incl > 0,
             )
             .group_by(order_day, Country.iso_code, Shipping.id_tax)
         )
@@ -457,7 +457,7 @@ class CorrispettivoRepository:
                     movement_date=self._as_date(row.movement_date),
                     country_iso=row.iso_code,
                     id_tax=row.id_tax,
-                    sales_net=amount,
+                    sales_amount=amount,
                     is_shipping=True,
                 )
             )
@@ -467,7 +467,7 @@ class CorrispettivoRepository:
                 return_day.label("movement_date"),
                 Country.iso_code,
                 FiscalDocumentDetail.id_tax,
-                func.sum(FiscalDocumentDetail.total_price_net).label("amount"),
+                func.sum(FiscalDocumentDetail.total_price_with_tax).label("amount"),
             )
             .join(FiscalDocument, FiscalDocumentDetail.id_fiscal_document == FiscalDocument.id_fiscal_document)
             .join(Order, FiscalDocument.id_order == Order.id_order)
@@ -492,7 +492,7 @@ class CorrispettivoRepository:
                     movement_date=self._as_date(row.movement_date),
                     country_iso=row.iso_code,
                     id_tax=row.id_tax,
-                    returns_net=amount,
+                    returns_amount=amount,
                 )
             )
 
@@ -502,7 +502,7 @@ class CorrispettivoRepository:
                 return_day.label("movement_date"),
                 Country.iso_code,
                 Shipping.id_tax,
-                Shipping.price_tax_excl,
+                Shipping.price_tax_incl,
             )
             .join(Order, FiscalDocument.id_order == Order.id_order)
             .outerjoin(Address, Order.id_address_delivery == Address.id_address)
@@ -518,22 +518,22 @@ class CorrispettivoRepository:
         )
         return_shipping_rows = self._apply_order_filters(return_shipping_rows, filters)
 
-        for doc, movement_date, country_iso, shipping_tax_id, shipping_price_excl in (
+        for doc, movement_date, country_iso, shipping_tax_id, shipping_price_incl in (
             return_shipping_rows.all()
         ):
-            products_net = decimal_or_zero(doc.products_total_price_net)
-            total_net = decimal_or_zero(doc.total_price_net)
-            shipping_net = total_net - products_net
-            if shipping_net <= 0:
-                shipping_net = decimal_or_zero(shipping_price_excl)
-            if shipping_net <= 0:
+            products_with_tax = decimal_or_zero(doc.products_total_price_with_tax)
+            total_with_tax = decimal_or_zero(doc.total_price_with_tax)
+            shipping_with_tax = total_with_tax - products_with_tax
+            if shipping_with_tax <= 0:
+                shipping_with_tax = decimal_or_zero(shipping_price_incl)
+            if shipping_with_tax <= 0:
                 continue
             movements.append(
                 MovementRow(
                     movement_date=self._as_date(movement_date),
                     country_iso=country_iso,
                     id_tax=shipping_tax_id,
-                    returns_net=shipping_net,
+                    returns_amount=shipping_with_tax,
                     is_shipping=True,
                 )
             )

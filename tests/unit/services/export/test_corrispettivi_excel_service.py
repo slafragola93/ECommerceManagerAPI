@@ -1,200 +1,103 @@
-"""Test export Excel corrispettivi — colonne netti e resi."""
+"""Test export Excel corrispettivi — matrice aliquote con IVA."""
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
 
+import zipfile
 from openpyxl import load_workbook
 
 from src.schemas.corrispettivo_schema import (
-    CorrispettivoAmountSchema,
-    CorrispettivoDaySummarySchema,
-    CorrispettivoListResponseSchema,
     CorrispettivoRiepilogoResponseSchema,
     CorrispettivoRiepilogoRowSchema,
-    CorrispettivoSalesBreakdownSchema,
-    CorrispettivoShippingDaySchema,
-    CorrispettivoSplitTotalsSchema,
+    CorrispettivoRiepilogoTotalsSchema,
+    CorrispettivoTaxCellSchema,
     CorrispettivoTaxColumnSchema,
 )
 from src.services.export.corrispettivi_excel_service import CorrispettiviExcelService
 
 
-def _split(
-    total_with_tax: str,
-    *,
-    products_with_tax: str | None = None,
-    shipping_with_tax: str | None = None,
-) -> CorrispettivoSplitTotalsSchema:
-    tw = Decimal(total_with_tax)
-    pw = Decimal(products_with_tax if products_with_tax is not None else total_with_tax)
-    sw = Decimal(shipping_with_tax if shipping_with_tax is not None else "0")
-    return CorrispettivoSplitTotalsSchema(
-        total_with_tax=tw,
-        total_net=tw,
-        products_with_tax=pw,
-        products_net=pw,
-        shipping_with_tax=sw,
-        shipping_net=sw,
+def _sample_riepilogo(*, delivery_country_iso: str | None = None) -> CorrispettivoRiepilogoResponseSchema:
+    return CorrispettivoRiepilogoResponseSchema(
+        year=2026,
+        month=7,
+        delivery_country_iso=delivery_country_iso,
+        columns=[
+            CorrispettivoTaxColumnSchema(id_tax=1, label="22", percentage=22.0),
+            CorrispettivoTaxColumnSchema(id_tax=9, label="0", percentage=0.0),
+        ],
+        rows=[
+            CorrispettivoRiepilogoRowSchema(
+                day=8,
+                date=date(2026, 7, 8),
+                cells={
+                    "1": CorrispettivoTaxCellSchema(
+                        products_sales=Decimal("100.00"),
+                        shipping_sales=Decimal("12.00"),
+                        products_returns=Decimal("10.00"),
+                        shipping_returns=Decimal("2.00"),
+                    ),
+                    "9": CorrispettivoTaxCellSchema(products_sales=Decimal("20.00")),
+                },
+                row_total=Decimal("120.00"),
+            )
+        ],
+        month_totals=CorrispettivoRiepilogoTotalsSchema(
+            products_sales=Decimal("120.00"),
+            shipping_sales=Decimal("12.00"),
+            products_returns=Decimal("10.00"),
+            shipping_returns=Decimal("2.00"),
+            row_total=Decimal("120.00"),
+        ),
     )
 
 
 class TestCorrispettiviExcelService:
-    def test_headers_net_and_returns_only(self):
-        service = CorrispettiviExcelService()
-        assert service.HEADERS == [
-            "Data",
-            "Tot resi",
-            "Totale netto",
-            "Netto prodotti",
-            "Netto spedizione",
-        ]
-
-    def test_workbook_row_uses_net_and_returns(self):
-        day = CorrispettivoDaySummarySchema(
-            date=date(2026, 7, 8),
-            sales=_split("122.00"),
-            returns=_split("10.00"),
-            net=_split("112.00", products_with_tax="100.00", shipping_with_tax="12.00"),
-            sales_breakdown=CorrispettivoSalesBreakdownSchema(
-                base=_split("0"),
-                ricevute_decurtazione=_split("0"),
-                ricevute_imputazione=_split("122.00"),
-            ),
-        )
-        summary = CorrispettivoListResponseSchema(
-            year=2026,
-            month=7,
-            days=[day],
-            month_totals=_split(
-                "112.00", products_with_tax="100.00", shipping_with_tax="12.00"
-            ),
-        )
-
-        raw = CorrispettiviExcelService().build_workbook(summary)
-        sheet = load_workbook(BytesIO(raw)).active
-
-        assert sheet.cell(2, 1).value == "2026-07-08"
-        assert sheet.cell(2, 2).value == 10.0
-        assert sheet.cell(2, 3).value == 112.0
-        assert sheet.cell(2, 4).value == 100.0
-        assert sheet.cell(2, 5).value == 12.0
-        assert sheet.cell(3, 2).value == 10.0
-        assert sheet.cell(3, 3).value == 112.0
-
-    def test_zip_contains_registro_files(self):
-        day = CorrispettivoDaySummarySchema(
-            date=date(2026, 7, 15),
-            sales=_split("50.00"),
-            returns=_split("0"),
-            net=_split("50.00"),
-        )
-        summary = CorrispettivoListResponseSchema(
-            year=2026,
-            month=7,
-            days=[day],
-            month_totals=_split("50.00"),
-        )
-        riepilogo = CorrispettivoRiepilogoResponseSchema(
-            year=2026,
-            month=7,
-            columns=[CorrispettivoTaxColumnSchema(id_tax=1, label="22", percentage=22.0)],
-            rows=[
-                CorrispettivoRiepilogoRowSchema(
-                    day=15,
-                    date=date(2026, 7, 15),
-                    cells={
-                        "1": CorrispettivoAmountSchema(
-                            sales_net=Decimal("50.00"),
-                            returns_net=Decimal("0"),
-                            net=Decimal("50.00"),
-                        )
-                    },
-                    row_net=CorrispettivoAmountSchema(
-                        sales_net=Decimal("50.00"),
-                        returns_net=Decimal("0"),
-                        net=Decimal("50.00"),
-                    ),
-                    shipping=CorrispettivoShippingDaySchema(),
-                )
-            ],
-            month_totals=CorrispettivoAmountSchema(
-                sales_net=Decimal("50.00"),
-                returns_net=Decimal("0"),
-                net=Decimal("50.00"),
-            ),
-        )
-
-        raw = CorrispettiviExcelService().build_registri_zip(
-            consolidated_riepilogo=riepilogo,
-            by_country={"IT": summary},
-        )
-
-        import zipfile
-
-        with zipfile.ZipFile(BytesIO(raw)) as archive:
-            names = set(archive.namelist())
-        assert "registro.xlsx" in names
-        assert "registro_IT.xlsx" in names
-
     def test_riepilogo_workbook_includes_tax_columns(self):
-        riepilogo = CorrispettivoRiepilogoResponseSchema(
-            year=2026,
-            month=7,
-            columns=[
-                CorrispettivoTaxColumnSchema(id_tax=1, label="22", percentage=22.0),
-                CorrispettivoTaxColumnSchema(id_tax=9, label="0", percentage=0.0),
-            ],
-            rows=[
-                CorrispettivoRiepilogoRowSchema(
-                    day=8,
-                    date=date(2026, 7, 8),
-                    cells={
-                        "1": CorrispettivoAmountSchema(
-                            sales_net=Decimal("100.00"),
-                            returns_net=Decimal("10.00"),
-                            net=Decimal("90.00"),
-                        ),
-                        "9": CorrispettivoAmountSchema(
-                            sales_net=Decimal("20.00"),
-                            returns_net=Decimal("0"),
-                            net=Decimal("20.00"),
-                        ),
-                    },
-                    row_net=CorrispettivoAmountSchema(
-                        sales_net=Decimal("120.00"),
-                        returns_net=Decimal("10.00"),
-                        net=Decimal("110.00"),
-                    ),
-                    shipping=CorrispettivoShippingDaySchema(
-                        sales_net=Decimal("12.00"),
-                        returns_net=Decimal("2.00"),
-                        net=Decimal("10.00"),
-                    ),
-                )
-            ],
-            month_totals=CorrispettivoAmountSchema(
-                sales_net=Decimal("120.00"),
-                returns_net=Decimal("10.00"),
-                net=Decimal("110.00"),
-            ),
-        )
-
-        raw = CorrispettiviExcelService().build_riepilogo_workbook(riepilogo)
+        raw = CorrispettiviExcelService().build_riepilogo_workbook(_sample_riepilogo())
         sheet = load_workbook(BytesIO(raw)).active
 
         assert sheet.title == "Riepilogo"
         assert sheet.cell(1, 1).value == "Data"
-        assert sheet.cell(1, 2).value == "22 - Vendite"
-        assert sheet.cell(1, 5).value == "0 - Vendite"
-        assert sheet.cell(1, 8).value == "Totale - Vendite"
-        assert sheet.cell(1, 11).value == "Spedizione - Vendite"
-        assert sheet.cell(2, 1).value == "2026-07-08"
+        assert sheet.cell(1, 2).value == "22 - Totale entrate prodotti"
+        assert sheet.cell(1, 6).value == "0 - Totale entrate prodotti"
+        assert sheet.cell(1, 9).value == "0 - Totale resi spedizione"
+        assert sheet.cell(2, 1).value == "08/07/2026"
         assert sheet.cell(2, 2).value == 100.0
-        assert sheet.cell(2, 3).value == 10.0
-        assert sheet.cell(2, 4).value == 90.0
-        assert sheet.cell(2, 5).value == 20.0
-        assert sheet.cell(2, 8).value == 120.0
-        assert sheet.cell(2, 11).value == 12.0
         assert sheet.cell(3, 1).value == "Totale 07/2026"
-        assert sheet.cell(3, 4).value == 90.0
-        assert sheet.cell(3, 13).value == 10.0
+        assert sheet.cell(3, 5).value == 2.0
+
+    def test_zip_contains_registro_files(self):
+        consolidated = _sample_riepilogo()
+        it_riepilogo = _sample_riepilogo(delivery_country_iso="IT")
+
+        raw = CorrispettiviExcelService().build_registri_zip(
+            consolidated_riepilogo=consolidated,
+            by_country={"IT": it_riepilogo},
+        )
+
+        with zipfile.ZipFile(BytesIO(raw)) as archive:
+            names = set(archive.namelist())
+            it_sheet = load_workbook(
+                BytesIO(archive.read("registro_IT.xlsx"))
+            ).active
+
+        assert "registro.xlsx" in names
+        assert "registro_IT.xlsx" in names
+        assert it_sheet.cell(1, 2).value == "22 - Totale entrate prodotti"
+        assert it_sheet.cell(1, 6).value == "0 - Totale entrate prodotti"
+
+    def test_country_workbook_same_structure_as_consolidated(self):
+        consolidated = _sample_riepilogo()
+        fr_riepilogo = _sample_riepilogo(delivery_country_iso="FR")
+
+        service = CorrispettiviExcelService()
+        consolidated_sheet = load_workbook(
+            BytesIO(service.build_riepilogo_workbook(consolidated))
+        ).active
+        country_sheet = load_workbook(
+            BytesIO(service.build_riepilogo_workbook(fr_riepilogo))
+        ).active
+
+        consolidated_headers = [cell.value for cell in consolidated_sheet[1]]
+        country_headers = [cell.value for cell in country_sheet[1]]
+        assert consolidated_headers == country_headers

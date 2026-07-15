@@ -6,16 +6,16 @@ from sqlalchemy.orm import Session
 
 from src.repository.corrispettivo_repository import CorrispettivoRepository
 from src.schemas.corrispettivo_schema import (
-    CorrispettivoAmountSchema,
     CorrispettivoDaySummarySchema,
     CorrispettivoExportRequestSchema,
     CorrispettivoFiltersSchema,
     CorrispettivoListResponseSchema,
     CorrispettivoRiepilogoResponseSchema,
     CorrispettivoRiepilogoRowSchema,
+    CorrispettivoRiepilogoTotalsSchema,
     CorrispettivoSalesBreakdownSchema,
-    CorrispettivoShippingDaySchema,
     CorrispettivoSplitTotalsSchema,
+    CorrispettivoTaxCellSchema,
     CorrispettivoTaxColumnSchema,
 )
 from src.services.corrispettivi.aggregation import (
@@ -23,7 +23,7 @@ from src.services.corrispettivi.aggregation import (
     build_month_totals,
     build_riepilogo_rows,
     build_tax_columns,
-    tax_column_label,
+    iter_month_dates,
 )
 from src.services.export.corrispettivi_excel_service import CorrispettiviExcelService
 
@@ -60,16 +60,16 @@ class CorrispettivoService:
     ) -> CorrispettivoRiepilogoResponseSchema:
         filter_dict = self._filters_to_dict(filters)
         country_iso = filter_dict.get("delivery_country_iso") if filter_dict else None
+        day_filter = filter_dict.get("day") if filter_dict else None
         movements = self._repository.fetch_movements(year, month, filter_dict)
-        product_buckets, shipping_buckets = aggregate_matrix(movements, country_iso=country_iso)
-        taxes_by_id = self._repository.get_taxes_by_ids(
-            {
-                tax_id
-                for day_buckets in product_buckets.values()
-                for tax_id in day_buckets.keys()
-            }
+        matrix = aggregate_matrix(movements, country_iso=country_iso)
+        tax_ids_set = {
+            tax_id for day_buckets in matrix.values() for tax_id in day_buckets.keys()
+        }
+        taxes_by_id = self._repository.get_taxes_by_ids(tax_ids_set)
+        rows_data, tax_ids = build_riepilogo_rows(
+            matrix, year, month, taxes_by_id, day=day_filter
         )
-        rows_data, tax_ids = build_riepilogo_rows(product_buckets, shipping_buckets, taxes_by_id)
         columns = build_tax_columns(tax_ids, taxes_by_id)
 
         rows = [
@@ -77,11 +77,10 @@ class CorrispettivoService:
                 day=row["day"],
                 date=row["date"],
                 cells={
-                    key: CorrispettivoAmountSchema(**values)
+                    key: CorrispettivoTaxCellSchema(**values)
                     for key, values in row["cells"].items()
                 },
-                row_net=CorrispettivoAmountSchema(**row["row_net"]),
-                shipping=CorrispettivoShippingDaySchema(**row["shipping"]),
+                row_total=row["row_total"],
             )
             for row in rows_data
         ]
@@ -92,7 +91,9 @@ class CorrispettivoService:
             delivery_country_iso=country_iso,
             columns=[CorrispettivoTaxColumnSchema(**column) for column in columns],
             rows=rows,
-            month_totals=CorrispettivoAmountSchema(**build_month_totals(rows_data)),
+            month_totals=CorrispettivoRiepilogoTotalsSchema(
+                **build_month_totals(rows_data)
+            ),
         )
 
     @staticmethod
@@ -108,6 +109,17 @@ class CorrispettivoService:
             return_count=return_count,
         )
 
+    @staticmethod
+    def _empty_gross_bucket() -> dict:
+        return {
+            "total_with_tax": 0,
+            "total_net": 0,
+            "products_with_tax": 0,
+            "products_net": 0,
+            "shipping_with_tax": 0,
+            "shipping_net": 0,
+        }
+
     def get_daily_summary(
         self,
         year: int,
@@ -115,16 +127,17 @@ class CorrispettivoService:
         filters: Optional[CorrispettivoFiltersSchema] = None,
     ) -> CorrispettivoListResponseSchema:
         filter_dict = self._filters_to_dict(filters)
+        day_filter = filter_dict.get("day") if filter_dict else None
         daily_counts = self._repository.fetch_daily_counts(year, month, filter_dict)
         gross_totals = self._repository.fetch_daily_gross_totals(year, month, filter_dict)
 
         days: list[CorrispettivoDaySummarySchema] = []
         month_net = CorrispettivoSplitTotalsSchema()
 
-        for movement_date in sorted(gross_totals.keys()):
-            bucket = gross_totals[movement_date]
-            sales_data = bucket.get("sales", {})
-            returns_data = bucket.get("returns", {})
+        for movement_date in iter_month_dates(year, month, day_filter):
+            bucket = gross_totals.get(movement_date, {})
+            sales_data = bucket.get("sales") or self._empty_gross_bucket()
+            returns_data = bucket.get("returns") or self._empty_gross_bucket()
             order_count, return_count = daily_counts.get(movement_date, (0, 0))
 
             sales = self._split_totals_from_bucket(
@@ -191,7 +204,7 @@ class CorrispettivoService:
         riepilogo_all = self.get_riepilogo(
             request.year, request.month, consolidated_filters
         )
-        summary_by_country = {}
+        riepilogo_by_country = {}
         base_filter_data = (
             consolidated_filters.model_dump(exclude_none=True)
             if consolidated_filters
@@ -201,7 +214,7 @@ class CorrispettivoService:
             country_filters = CorrispettivoFiltersSchema(
                 **{**base_filter_data, "delivery_country_iso": iso}
             )
-            summary_by_country[iso] = self.get_daily_summary(
+            riepilogo_by_country[iso] = self.get_riepilogo(
                 request.year,
                 request.month,
                 country_filters,
@@ -210,5 +223,5 @@ class CorrispettivoService:
         excel_service = CorrispettiviExcelService()
         return excel_service.build_registri_zip(
             consolidated_riepilogo=riepilogo_all,
-            by_country=summary_by_country,
+            by_country=riepilogo_by_country,
         )

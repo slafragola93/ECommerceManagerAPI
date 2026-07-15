@@ -12,13 +12,29 @@ class CorrispettivoFiltersSchema(BaseModel):
     day: Optional[int] = Field(None, ge=1, le=31)
 
 
-class CorrispettivoAmountSchema(BaseModel):
-    sales_net: Decimal = Decimal("0")
-    returns_net: Decimal = Decimal("0")
-    net: Decimal = Decimal("0")
+class CorrispettivoTaxCellSchema(BaseModel):
+    """Importi per aliquota — sempre con IVA inclusa."""
 
-    @field_serializer("sales_net", "returns_net", "net")
+    products_sales: Decimal = Decimal("0")
+    shipping_sales: Decimal = Decimal("0")
+    products_returns: Decimal = Decimal("0")
+    shipping_returns: Decimal = Decimal("0")
+
+    @field_serializer(
+        "products_sales",
+        "shipping_sales",
+        "products_returns",
+        "shipping_returns",
+    )
     def serialize_decimal(self, value: Decimal) -> float:
+        return round(float(value), 2)
+
+
+class CorrispettivoRiepilogoTotalsSchema(CorrispettivoTaxCellSchema):
+    row_total: Decimal = Decimal("0")
+
+    @field_serializer("row_total")
+    def serialize_row_total(self, value: Decimal) -> float:
         return round(float(value), 2)
 
 
@@ -28,16 +44,15 @@ class CorrispettivoTaxColumnSchema(BaseModel):
     percentage: Optional[float] = None
 
 
-class CorrispettivoShippingDaySchema(CorrispettivoAmountSchema):
-    """Spedizione giornaliera — stesso contratto delle celle aliquota (sales/returns/net)."""
-
-
 class CorrispettivoRiepilogoRowSchema(BaseModel):
     day: int
     date: date
-    cells: Dict[str, CorrispettivoAmountSchema]
-    row_net: CorrispettivoAmountSchema
-    shipping: CorrispettivoShippingDaySchema
+    cells: Dict[str, CorrispettivoTaxCellSchema]
+    row_total: Decimal = Decimal("0")
+
+    @field_serializer("row_total")
+    def serialize_row_total(self, value: Decimal) -> float:
+        return round(float(value), 2)
 
 
 class CorrispettivoSplitTotalsSchema(BaseModel):
@@ -86,7 +101,7 @@ class CorrispettivoRiepilogoResponseSchema(BaseModel):
     delivery_country_iso: Optional[str] = None
     columns: List[CorrispettivoTaxColumnSchema]
     rows: List[CorrispettivoRiepilogoRowSchema]
-    month_totals: CorrispettivoAmountSchema
+    month_totals: CorrispettivoRiepilogoTotalsSchema
 
 
 class CorrispettivoListResponseSchema(BaseModel):

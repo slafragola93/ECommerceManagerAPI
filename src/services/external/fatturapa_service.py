@@ -1,7 +1,7 @@
 import httpx
 import json
 import xml.etree.ElementTree as ET
-from datetime import datetime, date
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
@@ -18,6 +18,27 @@ from src.services.external.fatturapa_validator import FatturaPAValidator
 from src.services.external.fatturapa_natura import normalize_natura_code
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_payment_due_date(order_data: Dict[str, Any]) -> date:
+    """
+    Data scadenza pagamento FatturaPA: payment_due_date ordine se impostata,
+    altrimenti data ordine + 30 giorni.
+    """
+    payment_due = order_data.get("payment_due_date")
+    if payment_due:
+        if isinstance(payment_due, str):
+            return datetime.strptime(payment_due[:10], "%Y-%m-%d").date()
+        if isinstance(payment_due, datetime):
+            return payment_due.date()
+        return payment_due
+
+    order_date = order_data.get("date_add", datetime.now())
+    if isinstance(order_date, str):
+        order_date = datetime.strptime(order_date[:19], "%Y-%m-%d %H:%M:%S")
+    if isinstance(order_date, datetime):
+        return (order_date + timedelta(days=30)).date()
+    return order_date + timedelta(days=30)
 
 
 class FatturaPAService:
@@ -606,12 +627,7 @@ class FatturaPAService:
         
         # DataScadenzaPagamento (opzionale, solo se TP02)
         if condizioni_pagamento == 'TP02':
-            # Aggiungi 30 giorni alla data ordine come scadenza
-            from datetime import timedelta
-            order_date = order_data.get('date_add', datetime.now())
-            if isinstance(order_date, str):
-                order_date = datetime.strptime(order_date, '%Y-%m-%d %H:%M:%S')
-            scadenza = order_date + timedelta(days=30)
+            scadenza = resolve_payment_due_date(order_data)
             self._create_element(dettaglio_pagamento, "DataScadenzaPagamento", scadenza.strftime('%Y-%m-%d'))
             print(f"Data scadenza: {scadenza.strftime('%Y-%m-%d')}")
         
@@ -953,7 +969,9 @@ class FatturaPAService:
             'id_tax': customer.get('id_tax'),
             'tax_electronic_code': tax_electronic_code,
             'tax_note': tax_note,
-            'tax_percentage_customer': customer.get('tax_percentage_customer')  # Percentuale IVA del paese di delivery
+            'tax_percentage_customer': customer.get('tax_percentage_customer'),  # Percentuale IVA del paese di delivery
+            'date_add': order.date_add,
+            'payment_due_date': order.payment_due_date,
         }
     
     def _get_order_details_for_fiscal_document(self, fiscal_doc: FiscalDocument) -> list:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, Union, List, Dict, Any
 
 from pydantic import BaseModel, ConfigDict, Field, validator
@@ -43,6 +43,7 @@ class OrderSchema(BaseModel):
     vies_status: Optional[ViesStatus] = None
     is_payed: Optional[int] = 0
     payment_date: Optional[datetime] = None
+    payment_due_date: Optional[date] = None
     total_weight: Optional[float] = None
     total_price_with_tax: float  # Required (ex total_with_tax, ex total_paid)
     total_price_net: Optional[float] = None  # ex total_without_tax
@@ -74,6 +75,7 @@ class OrderUpdateSchema(BaseModel):
     vies_status: Optional[ViesStatus] = None
     is_payed: Optional[int] = None
     payment_date: Optional[datetime] = None
+    payment_due_date: Optional[date] = None
     total_weight: Optional[float] = None
     total_price_with_tax: Optional[float] = None  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float] = None  # ex total_without_tax
@@ -137,6 +139,7 @@ class OrderSimpleResponseSchema(BaseModel):
     vies_status: Optional[ViesStatus] = None
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
+    payment_due_date: Optional[date] = None
     total_weight: Optional[float]
     total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float]  # ex total_without_tax
@@ -182,6 +185,7 @@ class OrderResponseSchema(BaseModel):
     vies_status: Optional[ViesStatus] = None
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
+    payment_due_date: Optional[date] = None
     total_weight: Optional[float]
     total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float]  # ex total_without_tax
@@ -229,6 +233,7 @@ class OrderIdSchema(BaseModel):
     vies_status: Optional[ViesStatus] = None
     is_payed: Optional[bool]
     payment_date: Optional[datetime]
+    payment_due_date: Optional[date] = None
     total_weight: Optional[float]
     total_price_with_tax: Optional[float]  # ex total_with_tax, ex total_paid
     total_price_net: Optional[float]  # ex total_without_tax

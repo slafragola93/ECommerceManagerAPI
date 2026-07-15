@@ -203,9 +203,9 @@ class TestCorrispettivoNoInvoiceFilter:
         _add_order(db_session, tax, reference="WITH-INV", with_invoice=True)
 
         movements = repo.fetch_movements(2026, 7)
-        sales_net = sum(m.sales_net for m in movements)
+        sales_amount = sum(m.sales_amount for m in movements)
 
-        assert sales_net == Decimal("100.00")
+        assert sales_amount == Decimal("122.00")
 
         counts = repo.fetch_daily_counts(2026, 7)
         assert sum(order_count for order_count, _ in counts.values()) == 1
@@ -214,9 +214,9 @@ class TestCorrispettivoNoInvoiceFilter:
         _add_order(db_session, tax, reference="CN-ONLY", with_credit_note=True)
 
         movements = repo.fetch_movements(2026, 7)
-        sales_net = sum(m.sales_net for m in movements)
+        sales_amount = sum(m.sales_amount for m in movements)
 
-        assert sales_net == Decimal("100.00")
+        assert sales_amount == Decimal("122.00")
 
     def test_returns_excluded_on_invoiced_order_without_credit_note(
         self, db_session, repo, tax
@@ -231,9 +231,9 @@ class TestCorrispettivoNoInvoiceFilter:
         )
 
         movements = repo.fetch_movements(2026, 7)
-        returns_net = sum(m.returns_net for m in movements)
+        returns_amount = sum(m.returns_amount for m in movements)
 
-        assert returns_net == Decimal("30.00")
+        assert returns_amount == Decimal("36.60")
 
     def test_returns_included_on_invoiced_order_with_credit_note(
         self, db_session, repo, tax
@@ -248,18 +248,18 @@ class TestCorrispettivoNoInvoiceFilter:
         )
 
         movements = repo.fetch_movements(2026, 7)
-        returns_net = sum(m.returns_net for m in movements)
+        returns_amount = sum(m.returns_amount for m in movements)
 
-        assert returns_net == Decimal("30.00")
+        assert returns_amount == Decimal("36.60")
 
     def test_sales_exclude_unpaid_orders(self, db_session, repo, tax):
         _add_order(db_session, tax, reference="PAID", is_payed=True)
         _add_order(db_session, tax, reference="UNPAID", is_payed=False)
 
         movements = repo.fetch_movements(2026, 7)
-        sales_net = sum(m.sales_net for m in movements)
+        sales_amount = sum(m.sales_amount for m in movements)
 
-        assert sales_net == Decimal("100.00")
+        assert sales_amount == Decimal("122.00")
 
     def test_no_invoice_filter_matches_order_repository_semantics(self, db_session, repo, tax):
         """Stesso criterio di OrderRepository.has_invoice=false + is_payed=true."""
@@ -337,8 +337,8 @@ class TestCorrispettivoDeliveryCountryFilter:
             2026, 7, {"delivery_country_iso": "FR"}
         )
 
-        assert sum(m.sales_net for m in it_movements) == Decimal("100.00")
-        assert sum(m.sales_net for m in fr_movements) == Decimal("40.98")
+        assert sum(m.sales_amount for m in it_movements) == Decimal("122.00")
+        assert sum(m.sales_amount for m in fr_movements) == Decimal("50.00")
 
     def test_list_country_codes_with_movements(self, db_session, repo, tax):
         _add_order_with_delivery_country(

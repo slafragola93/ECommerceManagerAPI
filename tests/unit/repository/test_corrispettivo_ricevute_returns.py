@@ -45,12 +45,12 @@ def fiscal_repo(db_session):
     return FiscalDocumentRepository(db_session)
 
 
-def _sum_sales_net(movements) -> Decimal:
-    return sum(m.sales_net for m in movements)
+def _sum_sales_amount(movements) -> Decimal:
+    return sum(m.sales_amount for m in movements)
 
 
-def _sum_returns_net(movements) -> Decimal:
-    return sum(m.returns_net for m in movements)
+def _sum_returns_amount(movements) -> Decimal:
+    return sum(m.returns_amount for m in movements)
 
 
 def _add_paid_order(
@@ -185,8 +185,8 @@ class TestCorrispettivoRicevuteReturnsBE33:
 
         movements = repo.fetch_movements(2026, 7)
 
-        assert _sum_sales_net(movements) == Decimal("0.00")
-        assert _sum_returns_net(movements) == Decimal("30.00")
+        assert _sum_sales_amount(movements) == Decimal("0.00")
+        assert _sum_returns_amount(movements) == Decimal("36.60")
 
     def test_delete_return_on_ricevuta_order_removes_only_return(
         self, db_session, repo, fiscal_repo, tax
@@ -210,13 +210,13 @@ class TestCorrispettivoRicevuteReturnsBE33:
         )
 
         before = repo.fetch_movements(2026, 7)
-        assert _sum_returns_net(before) == Decimal("30.00")
+        assert _sum_returns_amount(before) == Decimal("36.60")
 
         fiscal_repo.delete_fiscal_document(return_doc.id_fiscal_document)
 
         after = repo.fetch_movements(2026, 7)
-        assert _sum_returns_net(after) == Decimal("0.00")
-        assert _sum_sales_net(after) == _sum_sales_net(before)
+        assert _sum_returns_amount(after) == Decimal("0.00")
+        assert _sum_sales_amount(after) == _sum_sales_amount(before)
 
     def test_delete_return_on_plain_order_keeps_order_date_sales(
         self, db_session, repo, fiscal_repo, tax
@@ -236,21 +236,21 @@ class TestCorrispettivoRicevuteReturnsBE33:
         )
 
         with_return = repo.fetch_movements(2026, 7)
-        assert _sum_sales_net(with_return) == Decimal("100.00")
-        assert _sum_returns_net(with_return) == Decimal("30.00")
+        assert _sum_sales_amount(with_return) == Decimal("122.00")
+        assert _sum_returns_amount(with_return) == Decimal("36.60")
 
         fiscal_repo.delete_fiscal_document(return_doc.id_fiscal_document)
 
         after_delete = repo.fetch_movements(2026, 7)
-        assert _sum_sales_net(after_delete) == Decimal("100.00")
-        assert _sum_returns_net(after_delete) == Decimal("0.00")
+        assert _sum_sales_amount(after_delete) == Decimal("122.00")
+        assert _sum_returns_amount(after_delete) == Decimal("0.00")
 
         sales_by_day = {
-            m.movement_date: m.sales_net
+            m.movement_date: m.sales_amount
             for m in after_delete
-            if m.sales_net and not m.is_shipping
+            if m.sales_amount and not m.is_shipping
         }
-        assert sales_by_day.get(date(2026, 7, 10)) == Decimal("100.00")
+        assert sales_by_day.get(date(2026, 7, 10)) == Decimal("122.00")
 
     def test_delete_return_detail_partial_with_ricevuta(
         self, db_session, repo, fiscal_repo, tax
@@ -283,8 +283,8 @@ class TestCorrispettivoRicevuteReturnsBE33:
         fiscal_repo.delete_fiscal_document_detail(fd_detail.id_fiscal_document_detail)
 
         movements = repo.fetch_movements(2026, 7)
-        assert _sum_returns_net(movements) == Decimal("0.00")
-        assert _sum_sales_net(movements) == Decimal("0.00")
+        assert _sum_returns_amount(movements) == Decimal("0.00")
+        assert _sum_sales_amount(movements) == Decimal("0.00")
 
     def test_annullata_ricevuta_after_return_delete_restores_date_add_sales(
         self, db_session, repo, fiscal_repo, tax
@@ -316,8 +316,8 @@ class TestCorrispettivoRicevuteReturnsBE33:
         db_session.commit()
 
         movements = repo.fetch_movements(2026, 7)
-        assert _sum_sales_net(movements) == Decimal("100.00")
-        assert _sum_returns_net(movements) == Decimal("0.00")
+        assert _sum_sales_amount(movements) == Decimal("122.00")
+        assert _sum_returns_amount(movements) == Decimal("0.00")
 
     def test_daily_summary_net_after_return_delete_with_ricevuta(
         self, db_session, fiscal_repo, tax
@@ -341,12 +341,41 @@ class TestCorrispettivoRicevuteReturnsBE33:
 
         service = CorrispettivoService(db_session)
         with_return = service.get_daily_summary(2026, 7)
-        month_net_with_return = with_return.month_totals.total_net
+        month_net_with_return = with_return.month_totals.total_with_tax
 
         fiscal_repo.delete_fiscal_document(return_doc.id_fiscal_document)
 
         after_delete = service.get_daily_summary(2026, 7)
-        month_net_after = after_delete.month_totals.total_net
+        month_net_after = after_delete.month_totals.total_with_tax
 
-        assert month_net_with_return == Decimal("-30.00")
+        assert month_net_with_return == Decimal("-36.60")
         assert month_net_after == Decimal("0.00")
+
+    def test_decurtazione_uses_order_date_not_incasso(self, db_session, repo, tax):
+        """Decurtazione su date_add ordine anche se data_incasso ricevuta è diversa (campo audit)."""
+        order, _ = _add_paid_order(
+            db_session,
+            tax,
+            reference="INCASSO-VS-ORDER",
+            order_date=datetime(2026, 7, 2, 10, 0, 0),
+            payment_date=date(2026, 7, 2),
+            with_ricevuta=True,
+            ricevuta_incasso=date(2026, 7, 5),
+            ricevuta_emission=date(2026, 7, 10),
+        )
+
+        breakdown = repo.fetch_sales_gross_breakdown_by_day(
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+        )
+
+        assert breakdown[date(2026, 7, 2)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
+            "-122.00"
+        )
+        assert date(2026, 7, 5) not in breakdown or breakdown.get(
+            date(2026, 7, 5), {}
+        ).get("ricevute_decurtazione", {}).get("total_with_tax", Decimal("0")) == Decimal("0")
+        assert breakdown[date(2026, 7, 10)]["ricevute_imputazione"]["total_with_tax"] == Decimal(
+            "122.00"
+        )
+        assert order.date_add.date() == date(2026, 7, 2)

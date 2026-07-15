@@ -2,6 +2,7 @@
 
 Guida per il gestionale Angular (repo FE separato).  
 **Prompt implementazione FE:** [.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md](../.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md)  
+**Prompt corrispettivi + ricevute + resi (2026-07-15):** [.cursor/tasks_claude/fatturazione/prompt_FE_corrispettivi_ricevute_resi.md](../.cursor/tasks_claude/fatturazione/prompt_FE_corrispettivi_ricevute_resi.md)  
 **Prompt test integrazione (incolla in chat FE):** [.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md](../.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
 
 Riferimento BE task list: [.cursor/tasks_claude/fatturazione/TASKS_BE_ricevute.md](../.cursor/tasks_claude/fatturazione/TASKS_BE_ricevute.md)

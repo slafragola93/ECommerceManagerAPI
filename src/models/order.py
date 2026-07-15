@@ -51,6 +51,7 @@ class Order(Base):
     )
     is_payed = Column(Boolean, default=False)
     payment_date = Column(Date, nullable=True)
+    payment_due_date = Column(Date, nullable=True)
     total_weight = Column(Numeric(10, 5), default=0)
     total_price_with_tax = Column(Numeric(10, 5), nullable=False, default=0)  # ex total_with_tax, ex total_paid
     total_price_net = Column(Numeric(10, 5), default=0.0, nullable=True)  # ex total_without_tax

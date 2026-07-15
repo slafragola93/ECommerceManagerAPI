@@ -326,6 +326,23 @@ def setup_orders_vies_status_column(db):
     print("  ✅ Colonna vies_status aggiunta.")
 
 
+def setup_orders_payment_due_date_column(db):
+    """Aggiunge colonna payment_due_date su orders se assente (idempotente)."""
+    print("\n📦 Colonna orders.payment_due_date...")
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if "orders" not in inspector.get_table_names():
+        print("  ⚠️  Tabella orders non trovata — skip (eseguire migrazione schema prima).")
+        return
+    columns = {c["name"] for c in inspector.get_columns("orders")}
+    if "payment_due_date" in columns:
+        print("  ℹ️  Colonna payment_due_date già presente.")
+        return
+    db.execute(text("ALTER TABLE orders ADD COLUMN payment_due_date DATE NULL"))
+    db.commit()
+    print("  ✅ Colonna payment_due_date aggiunta.")
+
+
 def setup_taxes_percentage_decimal_column(db):
     """Migra taxes.percentage a DECIMAL(5,2) se ancora INTEGER (idempotente)."""
     print("\n💶 Colonna taxes.percentage → DECIMAL(5,2)...")
@@ -427,6 +444,7 @@ def main():
         setup_admin_user(db)
         setup_company_fiscal_info(db)
         setup_orders_vies_status_column(db)
+        setup_orders_payment_due_date_column(db)
         setup_taxes_percentage_decimal_column(db)
         setup_taxes_electronic_code_length(db)
 
@@ -445,6 +463,7 @@ def main():
         print("  - Role ADMIN (CRUD), Utente admin (admin / admin)")
         print("  - CompanyFiscalInfo Elettronew")
         print("  - orders.vies_status (se assente)")
+        print("  - orders.payment_due_date (se assente)")
         print("  - taxes.electronic_code VARCHAR(255) (se ancora VARCHAR(10))")
         print(
             "  - Tax UE: solo se SEED_EU_VAT_TAXES=1 "

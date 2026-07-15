@@ -5,6 +5,7 @@ Tutte le funzioni helper e la logica business sono nel service.
 import json
 import logging
 import pprint
+from datetime import date
 from io import BytesIO
 from typing import Literal, Optional
 from src.models.address import Address
@@ -627,33 +628,47 @@ async def update_order_vies_status(
 @router.patch("/{order_id}/payment", status_code=status.HTTP_200_OK, response_description="Stato pagamento aggiornato correttamente")
 @check_authentication
 async def update_order_payment(order_id: int = Path(gt=0),
-                              is_payed: bool = Query(),
+                              is_payed: Optional[bool] = Query(None),
+                              payment_due_date: Optional[date] = Query(None),
                               user: dict = Depends(get_current_user),
                               or_repo: OrderRepository = Depends(get_repository),
                               _: None = Depends(require_permission("orders", "update"))):
     """
-    Aggiorna lo stato di pagamento di un ordine.
+    Aggiorna lo stato di pagamento e/o la scadenza pagamento di un ordine.
 
-    Parametri:
-    - `user`: Dipendenza dell'utente autenticato.
-    - `order_id`: ID dell'ordine da aggiornare.
+    Parametri (almeno uno obbligatorio):
     - `is_payed`: Nuovo stato di pagamento (true/false).
+    - `payment_due_date`: Data prevista di scadenza pagamento (YYYY-MM-DD).
     """
+    if is_payed is None and payment_due_date is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Specificare almeno uno tra is_payed e payment_due_date",
+        )
+
     order = or_repo.get_by_id(_id=order_id)
 
     if order is None:
         raise HTTPException(status_code=404, detail="Ordine non trovato")
 
-    # Aggiorna lo stato di pagamento
-    order.is_payed = is_payed
-    if is_payed:
-        from datetime import datetime
-        order.payment_date = datetime.now()
+    if is_payed is not None:
+        order.is_payed = is_payed
+        if is_payed:
+            from datetime import datetime
+            order.payment_date = datetime.now()
+
+    if payment_due_date is not None:
+        order.payment_due_date = payment_due_date
     
     or_repo.session.add(order)
     or_repo.session.commit()
 
-    return {"message": "Stato pagamento aggiornato con successo", "order_id": order_id, "is_payed": is_payed}
+    return {
+        "message": "Stato pagamento aggiornato con successo",
+        "order_id": order_id,
+        "is_payed": order.is_payed,
+        "payment_due_date": order.payment_due_date,
+    }
 
 
 # ==================== ENDPOINT PER I RESI ====================

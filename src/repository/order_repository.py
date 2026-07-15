@@ -731,7 +731,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         # Estrai order_packages se presente (non è un campo dell'Order, va gestito separatamente)
         order_packages = entity_updated.pop('order_packages', None)
 
-        nullable_fields = {"vies_status"}
+        nullable_fields = {"vies_status", "payment_due_date"}
 
         for key, value in entity_updated.items():
             if not hasattr(edited_order, key):
@@ -1603,6 +1603,7 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
             "vies_status": order.vies_status.value if order.vies_status else None,
             "is_payed": order.is_payed,
             "payment_date": order.payment_date,
+            "payment_due_date": order.payment_due_date,
             "total_weight": order.total_weight,
             "total_price_with_tax": order.total_price_with_tax,
             "total_price_net": order.total_price_net,

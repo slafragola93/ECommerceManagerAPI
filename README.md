@@ -65,13 +65,19 @@ python scripts/migrations/alter_ricevute_data_emissione_datetime.py
 
 ## Esecuzione script
 
-**Setup iniziale** (Order State, Shipping State, App Configuration, Platform, Store, Role, utente admin, CompanyFiscalInfo, colonna `orders.vies_status`, seed IVA UE):
+**Setup iniziale** (Order State, Shipping State, App Configuration, Platform, Store, Role, utente admin, CompanyFiscalInfo, colonne `orders.vies_status` e `orders.payment_due_date`, seed IVA UE):
 
 ```bash
 python scripts/setup_initial.py
 ```
 
-Lo script è **idempotente**: aggiunge `vies_status` su `orders` se assente e crea/aggiorna i `Tax` default per i 27 paesi UE (`Tax.id_country` + `is_default=1`). Richiede che la tabella `countries` contenga i codici ISO corrispondenti (es. da sync PrestaShop).
+Lo script è **idempotente**: aggiunge `vies_status` e `payment_due_date` su `orders` se assenti e crea/aggiorna i `Tax` default per i 27 paesi UE (`Tax.id_country` + `is_default=1`). Richiede che la tabella `countries` contenga i codici ISO corrispondenti (es. da sync PrestaShop).
+
+**Migration scadenza pagamento** (solo colonna `payment_due_date`):
+
+```bash
+python scripts/migrations/add_orders_payment_due_date.py
+```
 
 Altri script utili:
 
@@ -131,6 +137,31 @@ Eventi: `ORDER_VIES_STATUS_CHANGED` (PATCH vies-status), `ORDER_VIES_EXEMPTION_A
 
 ---
 
+## API — Scadenza pagamento ordine (`payment_due_date`)
+
+Campo top-level su `orders`, distinto da `payment_date`:
+
+| Campo | Significato |
+|-------|-------------|
+| `payment_date` | Data **effettiva** di incasso (usata da ricevute/corrispettivi) |
+| `payment_due_date` | Data **prevista** di scadenza pagamento (es. bonifico 30/60/90 gg) |
+
+Non va nell'oggetto annidato `payment` (catalogo metodi). Esposto in create/update ordine, `GET /api/v1/orders/{id}` e `formatted_output`.
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| POST | `/api/v1/orders/` | Body opzionale `payment_due_date` (`YYYY-MM-DD`) |
+| PUT | `/api/v1/orders/{id}` | Aggiorna o azzera (`null`) `payment_due_date` |
+| PATCH | `/api/v1/orders/{id}/payment` | Query opzionali `is_payed` e/o `payment_due_date` (almeno uno obbligatorio) |
+
+**FatturaPA:** `DataScadenzaPagamento` usa `payment_due_date` se presente, altrimenti `date_add + 30 giorni` (compatibilità ordini esistenti).
+
+Helper: `resolve_payment_due_date` in `src/services/external/fatturapa_service.py`.
+
+Test: `tests/unit/schemas/test_order_payment_due_date.py`, `tests/unit/services/external/test_fatturapa_payment_due_date.py`.
+
+---
+
 ## API — Ricevute estero (BE-1 + BE-2.2)
 
 Documenti fiscali interni (no SDI) per clienti esteri privati senza P.IVA. Dati ordine/cliente/righe sempre **live** (nessuna tabella righe o snapshot).
@@ -161,11 +192,97 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 **Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
 
+## Ultime modifiche (2026-07-15) — Test e review corrispettivi / ricevute / resi
+
+**Scope:** piano QA BE su corrispettivi, ricevute estero e resi — **91 test** (unit + integration API), review architetturale documentata (nessun refactoring).
+
+### Test aggiunti
+
+| Area | File |
+|------|------|
+| CorrispettivoService (riepilogo, summary, export, filtri, chiusura mese) | `tests/unit/services/test_corrispettivo_service.py` |
+| Creazione resi + impatto corrispettivi | `tests/unit/services/test_fiscal_document_create_return.py` |
+| Ricevuta → corrispettivi (create/update/delete) | `tests/unit/services/test_ricevuta_corrispettivi_integration.py` |
+| BE-3.3 decurtazione su `date_add` vs `data_incasso` | `tests/unit/repository/test_corrispettivo_ricevute_returns.py` |
+| Integration API corrispettivi | `tests/integration/api/v1/test_corrispettivi.py` |
+| Integration API ricevute | `tests/integration/api/v1/test_ricevute.py` |
+| Integration API resi + corrispettivi post-delete | `tests/integration/api/v1/test_order_returns.py` |
+| Helper condivisi seed/fixture | `tests/helpers/fiscal_test_helpers.py`, `tests/integration/api/v1/conftest.py` |
+
+**Comando verifica:**
+
+```powershell
+pytest tests/unit/repository/test_corrispettivo_repository.py tests/unit/repository/test_corrispettivo_ricevute.py tests/unit/repository/test_corrispettivo_ricevute_returns.py tests/unit/services/test_corrispettivo_service.py tests/unit/services/test_fiscal_document_create_return.py tests/unit/services/test_ricevuta_corrispettivi_integration.py tests/integration/api/v1/test_corrispettivi.py tests/integration/api/v1/test_ricevute.py tests/integration/api/v1/test_order_returns.py -v
+```
+
+### Review architetturale (monitoraggio futuro)
+
+**Punti di forza:** separazione report live (corrispettivi) vs documento persistito (ricevute); regole resi/ricevute ortogonali (BE-3.3); ricevute seguono stack Router → Service → Repository → DI; documentazione in [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md) e [`docs/FE_HANDOFF_RICEVUTE.md`](docs/FE_HANDOFF_RICEVUTE.md).
+
+**Debito tecnico da monitorare (non in scope refactor):**
+
+| Area | Rischio |
+|------|---------|
+| `CorrispettivoService` istanziato nel router, no DI/interfaccia | Inconsistenza con ricevute, testabilità |
+| `corrispettivo_repository.py` ~730 righe, SQL UNION ALL | Manutenibilità |
+| `/riepilogo` = netto imponibile; `/` summary = lordo | Confusione FE/commercialista se non documentato in UI |
+| Test SQLite monkeypatch `_local_day_expr`; prod MySQL `convert_tz` | Edge case mezzanotte UTC/Rome |
+| Export ZIP: `get_riepilogo` per ogni paese | Performance mesi multi-paese |
+| `RicevutaStato.ANNULLATA` in modello vs hard delete API | Codice legacy/ambiguità |
+| `validate_return_items` bypassa qty se nessun reso precedente | Reso eccessivo al primo insert (documentato in test) |
+
+### Flusso amministrativo (reference)
+
+1. **Corrispettivi** = incassi ordini pagati **non fatturati** (live query, nessuno snapshot).
+2. **Ricevuta estero** = documento interno; sposta incasso solo se `data_emissione ≠ date_add` ordine (decurtazione/imputazione).
+3. **Reso** = movimento negativo alla **data documento reso**, indipendente dalla ricevuta.
+4. Ordine **fatturato** esce dalle vendite; reso ammesso solo con **nota di credito**.
+5. Delete reso/ricevuta → corrispettivi si ricalcolano al prossimo GET.
+
+### Checklist QA (esito)
+
+| Voce | Esito |
+|------|-------|
+| GET corrispettivi / riepilogo / export ZIP | ✅ integration `test_corrispettivi.py` |
+| Ricevuta create/duplicate/delete/PDF | ✅ integration `test_ricevute.py` |
+| Reso create/list/delete → corrispettivi | ✅ integration `test_order_returns.py` |
+| Ricevuta differita + same-day + resi combinati | ✅ unit repository + service |
+| Filtri paese/piattaforma/negozio/giorno | ✅ unit `test_corrispettivo_service.py` |
+| Chiusura mese mix movimenti | ✅ `TestChiusuraMeseAmministrativa` |
+| Fattura retroattiva esclude ordine | ✅ unit service |
+| UI manuale su DB produzione | ⏳ da ripetere in staging con dati reali |
+
+**Prompt FE (corrispettivi + ricevute + resi):** [`.cursor/tasks_claude/fatturazione/prompt_FE_corrispettivi_ricevute_resi.md`](.cursor/tasks_claude/fatturazione/prompt_FE_corrispettivi_ricevute_resi.md) — incollare in chat repo Angular.
+
+## Ultime modifiche (2026-07-15) — QA export corrispettivi: validazione ZIP
+
+- Documentata in [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md) §11 la regola QA corretta: controlli **per giorno** (somma su tutte le aliquote) o **per ordine**, non per cella `(giorno, aliquota)`.
+- Script: `scripts/verify_corrispettivi_shipping_hypothesis.py` (es. `--year 2026 --month 6`).
+
+## Ultime modifiche (2026-07-15) — Export corrispettivi: registri ISO con matrice aliquote
+
+I file `registro_{ISO}.xlsx` usano ora la **stessa struttura** di `registro.xlsx` (4 voci per aliquota, tutti i giorni del mese), filtrati per paese di consegna.
+
+## Ultime modifiche (2026-07-15) — Export corrispettivi: layout legacy senza saldo riga
+
+- Excel: rimossa colonna `Totale (vendite − resi)`; restano le 4 voci + riga `Totale MM/YYYY` con somme per colonna.
+- API `GET /riepilogo` mantiene `row_total` per la UI.
+
+## Ultime modifiche (2026-07-15) — Corrispettivi: registro 4 voci + IVA
+
+**Breaking change** su `GET /api/v1/corrispettivi/riepilogo` e export ZIP:
+
+- Importi **sempre con IVA** (movimenti da `total_price_with_tax` / `price_tax_incl`).
+- Per ogni aliquota: `products_sales`, `shipping_sales`, `products_returns`, `shipping_returns`.
+- `row_total` = vendite − resi (sostituisce `row_net` / `shipping` / colonna "netto").
+- Righe per **tutti i giorni del mese** (zeri se assenti movimenti).
+- Export `registro.xlsx` e `registro_{ISO}.xlsx`: layout legacy (giorni × colonne, riga `Totale MM/YYYY`), **4 voci per colonna**, senza colonna saldo riga in Excel.
+- Test: `tests/unit/services/corrispettivi/`, `tests/unit/services/export/test_corrispettivi_excel_service.py`, suite repository corrispettivi.
+- Doc: [`docs/CORRISPETTIVI.md`](docs/CORRISPETTIVI.md).
+
 ## Ultime modifiche (2026-07-14) — Corrispettivi: resi spedizione in riepilogo
 
-- `GET /api/v1/corrispettivi/riepilogo` → `rows[].shipping` allineato alle celle aliquota: `sales_net`, `returns_net`, **`net`** (importo reso in rosso lato FE).
-- Resi con `includes_shipping=true` e totali netti assenti/zerati: fallback su `shipments.price_tax_excl` dell'ordine.
-- Test: `tests/unit/repository/test_corrispettivo_return_shipping.py`. Doc: `docs/CORRISPETTIVI.md`.
+- *(sostituito dal refactor 2026-07-15 — spedizione ora per aliquota in `cells[id_tax].shipping_*`)*
 
 ## Ultime modifiche (2026-07-08) — BE-2.5 Export CSV/Excel
 
@@ -342,7 +459,7 @@ Test: `tests/unit/services/ricevute/test_date_utils.py`, suite ricevute/corrispe
 
 Il file consolidato `registro.xlsx` nel ZIP `Registri.zip` include ora la **suddivisione per aliquota IVA** (vendite, resi, netto per ogni aliquota), allineata a `GET /api/v1/corrispettivi/riepilogo`. Restano anche i totali di riga e la colonna spedizione.
 
-I file per paese (`registro_{ISO}.xlsx`) mantengono il formato compatto a 5 colonne: **Data**, **Tot resi**, **Totale netto**, **Netto prodotti**, **Netto spedizione**.
+*(Obsoleto — vedi entry 2026-07-15: anche `registro_{ISO}.xlsx` usa matrice per aliquota come il consolidato.)*
 
 Test: `tests/unit/services/export/test_corrispettivi_excel_service.py`.
 
@@ -642,6 +759,15 @@ Creato backlog operativo dei task ancora da sviluppare per FatturaPA (gap analys
 
 - [`.cursor/tasks_claude/fatturapa_backlog_implementazione.md`](.cursor/tasks_claude/fatturapa_backlog_implementazione.md) — task P0–P3, ordine di implementazione, checklist go-live
 - Piano tecnico di riferimento: [`.cursor/tasks_claude/fatturapa_riassunto_piano.md`](.cursor/tasks_claude/fatturapa_riassunto_piano.md)
+
+---
+
+## Ultime modifiche (2026-07-15) — Scadenza pagamento ordine
+
+- Nuovo campo `payment_due_date` (DATE, nullable) su `orders`: data prevista di scadenza pagamento, separata da `payment_date` (incasso effettivo).
+- Esposto in schemi ordine, `formatted_output`, create/update e `PATCH /api/v1/orders/{id}/payment?payment_due_date=YYYY-MM-DD`.
+- FatturaPA: `DataScadenzaPagamento` da `payment_due_date` con fallback `date_add + 30 giorni`.
+- Migration: `scripts/migrations/add_orders_payment_due_date.py`; setup idempotente in `scripts/setup_initial.py`.
 
 ---
 

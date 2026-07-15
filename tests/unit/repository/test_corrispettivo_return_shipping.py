@@ -136,39 +136,41 @@ class TestCorrispettivoReturnShipping:
 
         movements = repo.fetch_movements(2026, 7)
         shipping_returns = [
-            m for m in movements if m.is_shipping and m.returns_net
+            m for m in movements if m.is_shipping and m.returns_amount
         ]
         product_returns = [
-            m for m in movements if not m.is_shipping and m.returns_net
+            m for m in movements if not m.is_shipping and m.returns_amount
         ]
 
-        assert sum(m.returns_net for m in product_returns) == Decimal("30.00")
-        assert sum(m.returns_net for m in shipping_returns) == Decimal("10.00")
+        assert sum(m.returns_amount for m in product_returns) == Decimal("36.60")
+        assert sum(m.returns_amount for m in shipping_returns) == Decimal("12.20")
 
-    def test_riepilogo_shipping_row_exposes_returns_net(self, db_session, repo, tax):
+    def test_riepilogo_exposes_shipping_returns_per_tax(self, db_session, repo, tax):
         _add_order_with_shipping_return(db_session, tax)
 
         service = CorrispettivoService(db_session)
         response = service.get_riepilogo(2026, 7)
 
-        assert len(response.rows) == 1
-        shipping = response.rows[0].shipping
-        assert shipping.returns_net == Decimal("10.00")
-        assert shipping.sales_net == Decimal("10.00")
-        assert shipping.net == Decimal("0.00")
+        assert len(response.rows) == 31
+        day_row = next(row for row in response.rows if row.day == 15)
+        cell = day_row.cells[str(tax.id_tax)]
+        assert cell.shipping_returns == Decimal("12.20")
+        assert cell.shipping_sales == Decimal("12.20")
+        assert cell.products_returns == Decimal("36.60")
 
-    def test_aggregate_matrix_shipping_returns(self, db_session, repo, tax):
+    def test_aggregate_matrix_shipping_returns_per_tax(self, db_session, repo, tax):
         _add_order_with_shipping_return(db_session, tax)
 
         movements = repo.fetch_movements(2026, 7)
-        product_buckets, shipping_buckets = aggregate_matrix(movements)
+        matrix = aggregate_matrix(movements)
         day = datetime(2026, 7, 15).date()
 
-        assert shipping_buckets[day].returns_net == Decimal("10.00")
-        assert shipping_buckets[day].sales_net == Decimal("10.00")
+        assert matrix[day][tax.id_tax].shipping_returns == Decimal("12.20")
+        assert matrix[day][tax.id_tax].shipping_sales == Decimal("12.20")
 
-        rows, _ = build_riepilogo_rows(product_buckets, shipping_buckets, {})
-        assert rows[0]["shipping"]["returns_net"] == Decimal("10.00")
+        rows, _ = build_riepilogo_rows(matrix, 2026, 7, {})
+        day_row = next(row for row in rows if row["date"] == day)
+        assert day_row["cells"][str(tax.id_tax)]["shipping_returns"] == Decimal("12.20")
 
     def test_return_shipping_fallback_when_document_totals_missing(
         self, db_session, repo, tax
@@ -262,7 +264,7 @@ class TestCorrispettivoReturnShipping:
 
         movements = repo.fetch_movements(2026, 7)
         shipping_returns = sum(
-            m.returns_net for m in movements if m.is_shipping and m.returns_net
+            m.returns_amount for m in movements if m.is_shipping and m.returns_amount
         )
 
-        assert shipping_returns == Decimal("10.00")
+        assert shipping_returns == Decimal("12.20")
