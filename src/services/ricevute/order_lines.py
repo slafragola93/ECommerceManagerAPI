@@ -1,11 +1,12 @@
 """Righe ordine e spedizione condivise tra API ricevute e PDF."""
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Iterable, Mapping, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
 from src.models.order import Order
+from src.models.product import Product
 from src.models.shipping import Shipping
 
 
@@ -49,6 +50,84 @@ def resolve_shipping_amounts(
         shipping_net = shipping_incl
 
     return round(shipping_net, 2), round(shipping_incl, 2)
+
+
+def load_product_weights(session: Session, product_ids: Iterable[int]) -> dict[int, float]:
+    """Pesi catalogo per id_product (kg)."""
+    ids = {int(pid) for pid in product_ids if pid}
+    if not ids:
+        return {}
+    rows = (
+        session.query(Product.id_product, Product.weight)
+        .filter(Product.id_product.in_(ids))
+        .all()
+    )
+    weights: dict[int, float] = {}
+    for row in rows:
+        if row.weight is None:
+            continue
+        weight = float(row.weight)
+        if weight > 0:
+            weights[row.id_product] = weight
+    return weights
+
+
+def resolve_line_product_weight(
+    detail: object,
+    product_weights: Optional[Mapping[int, float]] = None,
+) -> Optional[float]:
+    """Peso unitario riga: order_detail.product_weight, altrimenti products.weight."""
+    line_weight = getattr(detail, "product_weight", None)
+    if line_weight is not None:
+        weight = float(line_weight)
+        if weight > 0:
+            return weight
+    id_product = getattr(detail, "id_product", None)
+    if id_product and product_weights:
+        catalog_weight = product_weights.get(int(id_product))
+        if catalog_weight and catalog_weight > 0:
+            return catalog_weight
+    return None
+
+
+def resolve_order_total_weight(
+    order: Order,
+    order_details: Sequence[object],
+    shipping: Optional[Shipping] = None,
+    product_weights: Optional[Mapping[int, float]] = None,
+) -> Optional[float]:
+    """
+    Peso totale ordine (kg) per ricevuta/PDF.
+
+    1. `orders.total_weight` se valorizzato (> 0)
+    2. Somma live peso riga × qty (order_detail.product_weight o products.weight)
+    3. Fallback `shipping.weight`
+    """
+    stored = _as_float(getattr(order, "total_weight", None), default=0.0)
+    if stored > 0:
+        return round(stored, 2)
+
+    total = 0.0
+    has_line_weight = False
+    for detail in order_details:
+        if getattr(detail, "id_order_document", None):
+            continue
+        product_weight = resolve_line_product_weight(detail, product_weights)
+        if product_weight is None:
+            continue
+        has_line_weight = True
+        qty = getattr(detail, "product_qty", None) or 0
+        total += product_weight * qty
+
+    if has_line_weight and total > 0:
+        return round(total, 2)
+
+    if shipping and shipping.weight:
+        shipping_weight = float(shipping.weight)
+        if shipping_weight > 0:
+            return round(shipping_weight, 2)
+
+    return None
 
 
 def build_shipping_line_dict(

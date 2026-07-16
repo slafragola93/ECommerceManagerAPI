@@ -95,7 +95,7 @@ def test_create_ricevuta(service, order_setup):
 
     assert result.numero == 1
     assert result.anno == 2026
-    assert result.order.id_order == order.id_order
+    assert result.id_order == order.id_order
     assert result.data_incasso == date(2026, 7, 1)
     assert emission_to_rome(result.data_emissione).date() == date(2026, 7, 8)
     assert result.stato.value == "emessa"
@@ -148,7 +148,7 @@ def test_create_ricevuta_allowed_when_shipped(service, db_session, order_setup):
 
     assert result.stato.value == "emessa"
     assert result.is_modifiable is False
-    assert result.order.id_order == order.id_order
+    assert result.id_order == order.id_order
 
 
 def test_delete_ricevuta_allowed_when_shipped(service, db_session, order_setup):
@@ -228,4 +228,4 @@ def test_update_and_delete_ricevuta(service, order_setup):
         RicevutaCreateSchema(id_order=order.id_order, data_emissione=date(2026, 7, 11))
     )
     assert recreated.stato.value == "emessa"
-    assert recreated.order.id_order == order.id_order
+    assert recreated.id_order == order.id_order

@@ -28,20 +28,32 @@ Se `GET /api/v1/ricevute` risponde **500** → quasi sempre tabella `ricevute` m
 
 ---
 
-## ⚠️ Contratto API v2 (breaking change — allineare modelli TS)
+## ⚠️ Contratto API v3 (breaking change — allineare modelli TS)
 
-Il dettaglio ricevuta è **snellito**. Non usare più:
+**Fonte di verità:** `docs/FE_HANDOFF_RICEVUTE.md` (repo API).
 
-| ❌ Vecchio | ✅ Nuovo |
-|-----------|---------|
-| `detail.id_order` | `detail.order.id_order` |
-| `detail.id_customer` | `detail.customer.id_customer` |
+Il dettaglio ricevuta (`GET /api/v1/ricevute/{id}`) espone i campi ordine in **root** — **non** esiste più l'oggetto `order`.
+
+| ❌ Vecchio (pre-v3) | ✅ Nuovo (v3) |
+|---------------------|---------------|
+| `detail.order.id_order` | `detail.id_order` |
+| `detail.order.reference` | `detail.order_reference` |
+| `detail.order.total_price_with_tax` | `detail.total_price_with_tax` |
+| `detail.order.is_payed` | `detail.is_payed` |
+| `detail.order.payment_date` | `detail.data_incasso` |
+| *(assente)* | `detail.vies_status`, `detail.payment_due_date` |
+| *(assente)* | `detail.payment` → `{ id_payment, name }` |
+| *(assente)* | `detail.shipping` → subset GET order (no `tracking` / `shipping_state`) |
 | `detail.righe` | `detail.order_details` |
 | `detail.pdf_hash` | rimosso |
 | `order.is_modifiable` | solo `detail.is_modifiable` |
-| sempre `address_delivery` + `address_invoice` | sempre `address_delivery` + `address_invoice` (nullable; se uguali, stesso oggetto) |
 
-Lista: resta `id_order`; **rimosso** `id_customer` in root (usare `customer.id_customer`).
+**Lista** (`GET /api/v1/ricevute`): solo hint (`id_order`, `order_reference`, `order_total_with_tax`, `customer`).  
+**Payment/shipping/totali completi** → solo su **dettaglio** (`GET /{id}`) o risposta POST/PUT.
+
+**Senza duplicazioni:** `id_customer` solo in `customer`; importi spedizione in `shipping_total_price_*` (non in `shipping.price_tax_*`).
+
+Verifica rapida in DevTools → Network → response JSON deve contenere `id_order`, `payment`, `shipping` in root e **non** la chiave `order`.
 
 ---
 
@@ -52,7 +64,7 @@ Base: `/api/v1/ricevute` — header `Authorization: Bearer <JWT>`
 | # | Metodo | Path | Cosa verificare |
 |---|--------|------|-----------------|
 | 1 | GET | `/ricevute?page=1&limit=10` | Lista paginata; `total`, filtri |
-| 2 | GET | `/ricevute/{id}` | Dettaglio contratto v2 |
+| 2 | GET | `/ricevute/{id}` | Dettaglio contratto **v3** (campi ordine in root) |
 | 3 | POST | `/ricevute` `{ id_order, data_emissione? }` | 201 + PDF già generato |
 | 4 | GET | `/ricevute/{id}/pdf` | Blob PDF in nuova tab |
 | 5 | PUT | `/ricevute/{id}` `{ data_emissione }` | Data aggiornata + PDF rigenerato |
@@ -70,9 +82,10 @@ Base: `/api/v1/ricevute` — header `Authorization: Bearer <JWT>`
 
 ### A — Modelli e service
 
-- [ ] Aggiornare `ricevuta.model.ts` al contratto v2 (`order_details`, embed snelli).
+- [ ] Aggiornare `ricevuta.model.ts` al contratto **v3** (`order_details`, campi ordine in root, `payment`/`shipping` slim).
 - [ ] `RicevuteService`: tutti i metodi chiamano gli URL corretti con `responseType: 'blob'` per PDF/export.
-- [ ] Nessun riferimento residuo a `righe`, `pdf_hash`, `id_order`/`id_customer` in root del dettaglio.
+- [ ] Nessun riferimento residuo a `detail.order.*`, `righe`, `pdf_hash`.
+- [ ] Dettaglio compilato da `GET /ricevute/{id}` (non dalla riga lista).
 
 ### B — Lista ricevute
 

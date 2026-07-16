@@ -171,7 +171,7 @@ Prefisso `/api/v1/ricevute`. Permesso RBAC: `fiscal_documents:read` (come corris
 | Metodo | Path | Descrizione |
 |--------|------|-------------|
 | GET | `/api/v1/ricevute` | Lista paginata con filtri `id_order`, `id_customer`, `stato`, `data_emissione_from`, `data_emissione_to` |
-| GET | `/api/v1/ricevute/{id_ricevuta}` | Dettaglio con ordine, cliente, indirizzi e `order_details` live |
+| GET | `/api/v1/ricevute/{id_ricevuta}` | Dettaglio v3: ordine in root, payment/shipping, customer, indirizzi, `order_details` |
 | POST | `/api/v1/ricevute` | Crea ricevuta da ordine (`id_order`, `data_emissione` opzionale datetime); genera PDF |
 | PUT | `/api/v1/ricevute/{id_ricevuta}` | Aggiorna `data_emissione` (data + ora); rigenera PDF |
 | DELETE | `/api/v1/ricevute/{id_ricevuta}` | Cancellazione definitiva (**204 No Content**); rimuove record e PDF |
@@ -190,7 +190,47 @@ Permessi write: `fiscal_documents:create|update|delete`.
 
 Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
-**Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
+**Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **allineamento v3 modelli/interpolazioni:** [prompt_FE_ricevute_V3_ALIGN.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_V3_ALIGN.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
+
+## Ultime modifiche (2026-07-16) — Ricevuta API v3
+
+**Scope:** contratto dettaglio ricevuta allineato a compile/export fiscal — campi ordine in root, oggetto `order` annidato rimosso.
+
+### Response `RicevutaResponseSchema` v3
+
+- **Root:** `id_order`, `order_reference`, `id_order_state`, `total_weight` (header ordine o Σ righe con fallback `products.weight`), totali (`total_price_*`, …)
+- **Righe:** `order_details[].product_weight` risolto da riga ordine o catalogo prodotto
+- **Cliente:** `id_customer` solo in `customer` (non duplicato in root)
+- **Pagamento/VIES:** `vies_status`, `is_payed`, `payment_due_date`, `payment` (`id_payment`, `name`)
+- **Data incasso:** solo `data_incasso` (all'emissione copiata da ordine; non esporre `payment_date` live)
+- **Spedizione:** `shipping` = contesto logistico (corriere, tax, peso) — **importi** in `shipping_total_price_*` root
+- **Invariati:** `customer`, `address_delivery`, `address_invoice`, `order_details[]`, header ricevuta, `is_modifiable`
+
+### File toccati
+
+| Area | Path |
+|------|------|
+| Schema | `src/schemas/ricevuta_schema.py` |
+| Mapper payment/shipping | `src/services/ricevute/order_embed_formatters.py` |
+| Service | `src/services/routers/ricevuta_service.py` |
+| Export CSV/XLSX | `src/services/export/ricevuta_export_service.py` |
+| Test | `tests/unit/services/ricevute/test_order_embed_formatters.py`, test ricevuta esistenti |
+| Handoff FE | `docs/FE_HANDOFF_RICEVUTE.md` |
+
+**Regola operativa:** se l'ordine cambia (es. reso con sostituzione) → DELETE + riemissione ricevuta; il documento non si aggiorna in automatico.
+
+**Troubleshooting FE — "non vedo i campi":**
+- I campi v3 (`payment`, `shipping`, totali, `vies_status`, …) sono solo in **`GET /api/v1/ricevute/{id}`** (e POST/PUT dettaglio), **non** in lista.
+- Non usare più `detail.order.*` — l'oggetto `order` è stato **rimosso**; usare i campi in root (`detail.order_reference`, `detail.total_price_with_tax`, …).
+- Verifica in DevTools → Network che la chiamata sia il dettaglio e che il JSON contenga le chiavi attese.
+
+**Fix BE (2026-07-16) — update indirizzo da modale ricevute:** se il FE invia `id_country: 0` (placeholder legacy), il BE normalizza a `NULL` e **non** sovrascrive il paese esistente su `PUT /api/v1/addresses/{id}`.
+
+**Comando verifica:**
+
+```powershell
+pytest tests/unit/services/ricevute/test_order_embed_formatters.py tests/unit/services/test_ricevuta_service.py tests/unit/services/test_ricevuta_export.py tests/integration/api/v1/test_ricevute.py -v
+```
 
 ## Ultime modifiche (2026-07-15) — Test e review corrispettivi / ricevute / resi
 

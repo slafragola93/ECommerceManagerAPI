@@ -15,7 +15,6 @@ from src.schemas.ricevuta_schema import (
     RicevutaFiltersSchema,
     RicevutaListItemSchema,
     RicevutaOrderDetailEmbedSchema,
-    RicevutaOrderEmbedSchema,
     RicevutaResponseSchema,
     RicevutaStatoSchema,
 )
@@ -40,20 +39,17 @@ def sample_detail():
         created_at=datetime(2026, 6, 5, 10, 0, 0),
         updated_at=datetime(2026, 6, 5, 10, 0, 0),
         is_modifiable=True,
+        id_order=45001,
+        order_reference="ORD-1",
+        id_order_state=1,
+        is_payed=True,
+        total_price_with_tax=244.0,
+        total_price_net=200.0,
         customer=RicevutaCustomerEmbedSchema(
             id_customer=1,
             firstname="Luigi",
             lastname="Verdi",
             email="luigi@example.com",
-        ),
-        order=RicevutaOrderEmbedSchema(
-            id_order=45001,
-            reference="ORD-1",
-            id_order_state=1,
-            is_payed=True,
-            payment_date=date(2026, 6, 1),
-            total_price_with_tax=244.0,
-            total_price_net=200.0,
         ),
         order_details=[
             RicevutaOrderDetailEmbedSchema(

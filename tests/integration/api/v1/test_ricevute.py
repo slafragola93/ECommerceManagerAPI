@@ -64,8 +64,29 @@ class TestRicevuteAPI:
         )
         assert detail_resp.status_code == status.HTTP_200_OK
         detail = detail_resp.json()
-        assert detail["order"]["reference"] == "API-RICE-1"
+        assert detail["order_reference"] == "API-RICE-1"
+        assert detail["id_order"] == order.id_order
+        assert "id_customer" not in detail
+        assert detail["customer"]["id_customer"] == order.id_customer
+        assert "order" not in detail
         assert len(detail["order_details"]) >= 1
+        # Contratto v3 — campi ordine in root (non in lista)
+        for field in (
+            "vies_status",
+            "is_payed",
+            "payment_due_date",
+            "payment",
+            "shipping",
+            "total_price_with_tax",
+            "total_price_net",
+            "products_total_price_with_tax",
+            "shipping_total_price_with_tax",
+            "total_weight",
+        ):
+            assert field in detail, f"missing v3 field: {field}"
+        assert "price_tax_incl" not in (detail.get("shipping") or {})
+        assert "price_tax_excl" not in (detail.get("shipping") or {})
+        assert "payment_date" not in detail
 
     def test_duplicate_ricevuta_blocked(
         self, fiscal_admin_client, db_session, tax, company_info

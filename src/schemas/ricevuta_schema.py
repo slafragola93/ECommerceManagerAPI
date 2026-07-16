@@ -6,6 +6,7 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.models.order import ViesStatus
 from src.services.ricevute.date_utils import parse_emission_input
 
 
@@ -57,6 +58,10 @@ class RicevutaOrderDetailEmbedSchema(BaseModel):
     product_name: Optional[str] = None
     product_reference: Optional[str] = None
     product_qty: int = Field(..., ge=0)
+    product_weight: Optional[float] = Field(
+        None,
+        description="Peso unitario kg (order_detail o fallback products.weight)",
+    )
     id_tax: Optional[int] = None
     unit_price_net: Optional[float] = None
     unit_price_with_tax: Optional[float] = None
@@ -101,28 +106,33 @@ class RicevutaAddressEmbedSchema(BaseModel):
     country: Optional[RicevutaCountryEmbedSchema] = None
 
 
-class RicevutaOrderEmbedSchema(BaseModel):
-    """Ordine live — PK e totali; `is_modifiable` solo a livello ricevuta."""
+class RicevutaPaymentEmbedSchema(BaseModel):
+    """Metodo pagamento ordine (subset GET order)."""
 
-    id_order: int
-    reference: Optional[str] = None
-    id_order_state: int
-    is_payed: bool
-    payment_date: Optional[date] = None
-    total_price_with_tax: float
-    total_price_net: Optional[float] = None
-    products_total_price_with_tax: Optional[float] = None
-    products_total_price_net: Optional[float] = None
-    shipping_total_price_with_tax: Optional[float] = Field(
-        None,
-        description="Spedizione lorda (da record shipments o delta ordine/prodotti)",
-    )
-    shipping_total_price_net: Optional[float] = Field(
-        None,
-        description="Spedizione imponibile",
-    )
-    total_discounts: Optional[float] = None
-    general_note: Optional[str] = None
+    id_payment: int
+    name: str
+
+
+class RicevutaCarrierApiEmbedSchema(BaseModel):
+    id_carrier_api: int
+    name: Optional[str] = None
+
+
+class RicevutaTaxEmbedSchema(BaseModel):
+    id_tax: int
+    code: Optional[str] = None
+    percentage: Optional[float] = None
+    name: Optional[str] = None
+
+
+class RicevutaShippingEmbedSchema(BaseModel):
+    """Contesto logistico spedizione — importi in `shipping_total_price_*` root."""
+
+    id_shipping: int
+    carrier_api: Optional[RicevutaCarrierApiEmbedSchema] = None
+    tax: Optional[RicevutaTaxEmbedSchema] = None
+    weight: Optional[float] = None
+    shipping_message: Optional[str] = None
 
 
 class RicevutaListItemSchema(BaseModel):
@@ -142,10 +152,14 @@ class RicevutaListItemSchema(BaseModel):
 
 class RicevutaResponseSchema(BaseModel):
     """
-    Dettaglio ricevuta — contratto snello.
+    Dettaglio ricevuta — contratto v3.
 
-    - Nessun `id_order`/`id_customer` duplicati in root (solo in `order` / `customer`).
-    - Indirizzi sempre in `address_delivery` e `address_invoice` (nullable).
+    - `id_order` / totali / pagamento / spedizione in root (no oggetto `order` annidato).
+    - `id_customer` solo in `customer` (non duplicato in root).
+    - Importi spedizione solo in `shipping_total_price_*` (non in `shipping`).
+    - Data incasso: solo `data_incasso` (non duplicare con `payment_date` ordine).
+    - Indirizzi in `address_delivery` e `address_invoice` (nullable).
+    - Se l'ordine cambia: riemissione documento (DELETE + POST), non aggiornamento automatico.
     - `pdf_hash` omesso (uso interno BE).
     """
 
@@ -167,19 +181,45 @@ class RicevutaResponseSchema(BaseModel):
             "Indicatore FE per eventuali warning: POST/PUT/DELETE non sono bloccati dal BE."
         )
     )
+
+    id_order: int
+    order_reference: Optional[str] = None
+    id_order_state: Optional[int] = None
+    total_weight: Optional[float] = Field(
+        None,
+        description=(
+            "Peso totale ordine (kg): `orders.total_weight` se > 0, "
+            "altrimenti somma live `product_weight * product_qty` delle righe ordine"
+        ),
+    )
+
+    vies_status: Optional[ViesStatus] = None
+    is_payed: bool = False
+    payment_due_date: Optional[date] = None
+
+    payment: Optional[RicevutaPaymentEmbedSchema] = None
+    shipping: Optional[RicevutaShippingEmbedSchema] = None
+
+    total_price_with_tax: float = 0.0
+    total_price_net: Optional[float] = None
+    products_total_price_with_tax: Optional[float] = None
+    products_total_price_net: Optional[float] = None
+    shipping_total_price_with_tax: Optional[float] = None
+    shipping_total_price_net: Optional[float] = None
+    total_discounts: Optional[float] = None
+
     customer: Optional[RicevutaCustomerEmbedSchema] = None
-    order: Optional[RicevutaOrderEmbedSchema] = None
     address_delivery: Optional[RicevutaAddressEmbedSchema] = Field(
         None,
-        description="Indirizzo consegna live da ordine",
+        description="Indirizzo consegna da ordine collegato",
     )
     address_invoice: Optional[RicevutaAddressEmbedSchema] = Field(
         None,
-        description="Indirizzo fatturazione live da ordine",
+        description="Indirizzo fatturazione da ordine collegato",
     )
     order_details: List[RicevutaOrderDetailEmbedSchema] = Field(
         default_factory=list,
-        description="Righe prodotto live + eventuale riga spedizione (`is_shipping=true`)",
+        description="Righe prodotto + eventuale riga spedizione (`is_shipping=true`)",
     )
 
 

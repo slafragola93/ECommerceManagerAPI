@@ -86,9 +86,13 @@ class AddressService(IAddressService):
         
         # Aggiorna il address
         try:
-            # Aggiorna i campi
+            fk_fields = {"id_country", "id_customer", "id_store"}
             for field_name, value in address_data.model_dump(exclude_unset=True).items():
-                if hasattr(address, field_name) and value is not None:
+                if not hasattr(address, field_name):
+                    continue
+                if field_name in fk_fields and (value is None or value <= 0):
+                    continue
+                if value is not None:
                     setattr(address, field_name, value)
             
             updated_address = self._address_repository.update(address)

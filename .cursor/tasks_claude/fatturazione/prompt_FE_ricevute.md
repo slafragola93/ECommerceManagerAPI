@@ -178,7 +178,7 @@ GET /api/v1/ricevute/export?fmt=csv|xlsx&data_emissione_from=&data_emissione_to=
 
 ## Regole UI — `is_modifiable`
 
-Solo su root (`RicevutaDetail.is_modifiable`). Per navigazione ordine: `order.id_order`.
+Solo su root (`RicevutaDetail.is_modifiable`). Per navigazione ordine: `detail.id_order`.
 
 | Valore | Significato |
 |--------|-------------|
@@ -242,6 +242,31 @@ export interface RicevutaAddress {
   country: RicevutaCountry | null;
 }
 
+export interface RicevutaPayment {
+  id_payment: number;
+  name: string;
+}
+
+export interface RicevutaCarrierApi {
+  id_carrier_api: number;
+  name: string | null;
+}
+
+export interface RicevutaTax {
+  id_tax: number;
+  code: string | null;
+  percentage: number | null;
+  name: string | null;
+}
+
+export interface RicevutaShipping {
+  id_shipping: number;
+  carrier_api: RicevutaCarrierApi | null;
+  tax: RicevutaTax | null;
+  weight: number | null;
+  shipping_message: string | null;
+}
+
 export interface RicevutaOrderDetail {
   id_order_detail: number;
   id_product: number | null;
@@ -255,20 +280,7 @@ export interface RicevutaOrderDetail {
   total_price_with_tax: number | null;
   reduction_percent: number | null;
   reduction_amount: number | null;
-}
-
-export interface RicevutaOrderSummary {
-  id_order: number;
-  reference: string | null;
-  id_order_state: number;
-  is_payed: boolean;
-  payment_date: string | null;
-  total_price_with_tax: number;
-  total_price_net: number | null;
-  products_total_price_with_tax: number | null;
-  products_total_price_net: number | null;
-  total_discounts: number | null;
-  general_note: string | null;
+  is_shipping: boolean;
 }
 
 export interface RicevutaListItem {
@@ -307,8 +319,23 @@ export interface RicevutaDetail {
   annullata_at: string | null;
   annullata_da_user_id: number | null;
   is_modifiable: boolean;
+  id_order: number;
+  order_reference: string | null;
+  id_order_state: number | null;
+  total_weight: number | null;
+  vies_status: 'eligible' | 'not_eligible' | null;
+  is_payed: boolean;
+  payment_due_date: string | null;
+  payment: RicevutaPayment | null;
+  shipping: RicevutaShipping | null;
+  total_price_with_tax: number;
+  total_price_net: number | null;
+  products_total_price_with_tax: number | null;
+  products_total_price_net: number | null;
+  shipping_total_price_with_tax: number | null;
+  shipping_total_price_net: number | null;
+  total_discounts: number | null;
   customer: RicevutaCustomerSummary | null;
-  order: RicevutaOrderSummary | null;
   address_delivery: RicevutaAddress | null;
   address_invoice: RicevutaAddress | null;
   order_details: RicevutaOrderDetail[];

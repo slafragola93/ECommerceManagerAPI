@@ -28,11 +28,14 @@ from src.schemas.ricevuta_schema import (
     RicevutaFiltersSchema,
     RicevutaListItemSchema,
     RicevutaListResponseSchema,
-    RicevutaOrderEmbedSchema,
     RicevutaResponseSchema,
     RicevutaOrderDetailEmbedSchema,
     RicevutaStatoSchema,
     RicevutaUpdateSchema,
+)
+from src.services.ricevute.order_embed_formatters import (
+    map_ricevuta_payment_embed,
+    map_ricevuta_shipping_embed,
 )
 from src.services.export.ricevuta_export_service import RicevutaExportService
 from src.services.interfaces.ricevuta_service_interface import IRicevutaService
@@ -45,6 +48,9 @@ from src.services.ricevute.date_utils import (
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
     load_order_shipping,
+    load_product_weights,
+    resolve_line_product_weight,
+    resolve_order_total_weight,
     resolve_shipping_amounts,
 )
 from src.services.ricevute.pdf_storage import (
@@ -186,9 +192,22 @@ class RicevutaService(IRicevutaService):
 
         customer = self._customer_repository.get_by_id(ricevuta.id_customer)
         shipping = load_order_shipping(self._session, order)
-        order_details = self._build_order_details(order, shipping)
+        raw_details = self._order_detail_repository.get_by_order_id(order.id_order)
+        product_weights = load_product_weights(
+            self._session,
+            [
+                detail.id_product
+                for detail in raw_details
+                if detail.id_product and not detail.id_order_document
+            ],
+        )
+        order_details = self._build_order_details(
+            order, shipping, raw_details, product_weights
+        )
         is_modifiable = _order_is_modifiable(order)
         addresses = self._map_addresses(order)
+
+        shipping_net, shipping_incl = resolve_shipping_amounts(order, shipping)
 
         return RicevutaResponseSchema(
             id_ricevuta=ricevuta.id_ricevuta,
@@ -204,8 +223,27 @@ class RicevutaService(IRicevutaService):
             annullata_at=ricevuta.annullata_at,
             annullata_da_user_id=ricevuta.annullata_da_user_id,
             is_modifiable=is_modifiable,
+            id_order=order.id_order,
+            order_reference=order.reference,
+            id_order_state=order.id_order_state,
+            total_weight=resolve_order_total_weight(
+                order, raw_details, shipping, product_weights
+            ),
+            vies_status=order.vies_status,
+            is_payed=bool(order.is_payed),
+            payment_due_date=order.payment_due_date,
+            payment=map_ricevuta_payment_embed(self._session, order.id_payment),
+            shipping=map_ricevuta_shipping_embed(self._session, shipping),
+            total_price_with_tax=_to_float(order.total_price_with_tax) or 0.0,
+            total_price_net=_to_float(order.total_price_net),
+            products_total_price_with_tax=_to_float(
+                order.products_total_price_with_tax
+            ),
+            products_total_price_net=_to_float(order.products_total_price_net),
+            shipping_total_price_with_tax=shipping_incl if shipping_incl else None,
+            shipping_total_price_net=shipping_net if shipping_net else None,
+            total_discounts=_to_float(order.total_discounts),
             customer=self._map_customer(customer),
-            order=self._map_order(order, shipping),
             address_delivery=addresses["address_delivery"],
             address_invoice=addresses["address_invoice"],
             order_details=order_details,
@@ -320,14 +358,24 @@ class RicevutaService(IRicevutaService):
             ) from exc
 
     def _build_order_details(
-        self, order: Order, shipping=None
+        self,
+        order: Order,
+        shipping=None,
+        raw_details: Optional[List[OrderDetail]] = None,
+        product_weights: Optional[dict[int, float]] = None,
     ) -> List[RicevutaOrderDetailEmbedSchema]:
-        details = self._order_detail_repository.get_by_order_id(order.id_order)
+        details = (
+            raw_details
+            if raw_details is not None
+            else self._order_detail_repository.get_by_order_id(order.id_order)
+        )
         order_details: List[RicevutaOrderDetailEmbedSchema] = []
         for detail in details:
             if detail.id_order_document:
                 continue
-            order_details.append(self._map_order_detail(detail))
+            order_details.append(
+                self._map_order_detail(detail, product_weights)
+            )
 
         if shipping is None:
             shipping = load_order_shipping(self._session, order)
@@ -339,13 +387,18 @@ class RicevutaService(IRicevutaService):
         return order_details
 
     @staticmethod
-    def _map_order_detail(detail: OrderDetail) -> RicevutaOrderDetailEmbedSchema:
+    def _map_order_detail(
+        detail: OrderDetail,
+        product_weights: Optional[dict[int, float]] = None,
+    ) -> RicevutaOrderDetailEmbedSchema:
+        line_weight = resolve_line_product_weight(detail, product_weights)
         return RicevutaOrderDetailEmbedSchema(
             id_order_detail=detail.id_order_detail,
             id_product=detail.id_product,
             product_name=detail.product_name,
             product_reference=detail.product_reference,
             product_qty=detail.product_qty or 0,
+            product_weight=_to_float(line_weight) if line_weight is not None else None,
             id_tax=detail.id_tax,
             unit_price_net=_to_float(detail.unit_price_net),
             unit_price_with_tax=_to_float(detail.unit_price_with_tax),
@@ -354,25 +407,6 @@ class RicevutaService(IRicevutaService):
             reduction_percent=_to_float(detail.reduction_percent),
             reduction_amount=_to_float(detail.reduction_amount),
             is_shipping=False,
-        )
-
-    @staticmethod
-    def _map_order(order: Order, shipping=None) -> RicevutaOrderEmbedSchema:
-        shipping_net, shipping_incl = resolve_shipping_amounts(order, shipping)
-        return RicevutaOrderEmbedSchema(
-            id_order=order.id_order,
-            reference=order.reference,
-            id_order_state=order.id_order_state,
-            is_payed=bool(order.is_payed),
-            payment_date=order.payment_date,
-            total_price_with_tax=_to_float(order.total_price_with_tax) or 0.0,
-            total_price_net=_to_float(order.total_price_net),
-            products_total_price_with_tax=_to_float(order.products_total_price_with_tax),
-            products_total_price_net=_to_float(order.products_total_price_net),
-            shipping_total_price_with_tax=shipping_incl if shipping_incl else None,
-            shipping_total_price_net=shipping_net if shipping_net else None,
-            total_discounts=_to_float(order.total_discounts),
-            general_note=order.general_note,
         )
 
     @staticmethod

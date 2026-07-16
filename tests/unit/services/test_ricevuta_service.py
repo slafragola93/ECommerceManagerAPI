@@ -10,6 +10,7 @@ from src.models.country import Country
 from src.models.customer import Customer
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
+from src.models.product import Product
 from src.models.ricevuta import ORDER_STATE_SPEDIZIONE_CONFERMATA, Ricevuta, RicevutaStato
 from src.models.shipping import Shipping
 from src.models.tax import Tax
@@ -99,11 +100,13 @@ def test_get_ricevuta_detail_with_live_data(service, fixtures):
     assert result.numero == 7
     assert result.anno == 2026
     assert result.customer.id_customer == customer.id_customer
-    assert result.order.id_order == order.id_order
+    assert result.id_order == order.id_order
     assert result.is_modifiable is True
     assert len(result.order_details) == 1
     assert result.order_details[0].product_name == "Articolo test"
     assert result.order_details[0].is_shipping is False
+    assert result.is_payed is True
+    assert result.data_incasso == order.payment_date
 
 
 def test_get_ricevuta_includes_shipping_line_and_totals(service, db_session, tax):
@@ -137,6 +140,7 @@ def test_get_ricevuta_includes_shipping_line_and_totals(service, db_session, tax
         total_price_net=Decimal("110.00"),
         products_total_price_with_tax=Decimal("122.00"),
         products_total_price_net=Decimal("100.00"),
+        total_weight=Decimal("0"),
     )
     db_session.add(order)
     db_session.commit()
@@ -148,7 +152,8 @@ def test_get_ricevuta_includes_shipping_line_and_totals(service, db_session, tax
             id_tax=tax.id_tax,
             product_name="Prodotto",
             product_reference="P-1",
-            product_qty=1,
+            product_qty=2,
+            product_weight=Decimal("2.75000"),
             unit_price_with_tax=Decimal("122.00"),
             unit_price_net=Decimal("100.00"),
             total_price_with_tax=Decimal("122.00"),
@@ -173,10 +178,76 @@ def test_get_ricevuta_includes_shipping_line_and_totals(service, db_session, tax
     assert len(result.order_details) == 2
     assert result.order_details[-1].is_shipping is True
     assert result.order_details[-1].product_name == "Spedizione"
-    assert result.order.shipping_total_price_with_tax == 12.2
-    assert result.order.total_price_with_tax == 134.2
+    assert result.shipping_total_price_with_tax == 12.2
+    assert result.total_weight == 5.5
+    assert result.total_price_with_tax == 134.2
     lines_gross = sum(line.total_price_with_tax or 0 for line in result.order_details)
-    assert lines_gross == pytest.approx(result.order.total_price_with_tax)
+    assert lines_gross == pytest.approx(result.total_price_with_tax)
+
+
+def test_get_ricevuta_resolves_weight_from_product_catalog(
+    service, db_session, tax
+):
+    customer = Customer(
+        id_lang=1,
+        firstname="Paolo",
+        lastname="Neri",
+        email="paolo@example.com",
+    )
+    product = Product(name="Articolo catalogo", weight=Decimal("3.25000"))
+    db_session.add_all([customer, product])
+    db_session.commit()
+    db_session.refresh(customer)
+    db_session.refresh(product)
+
+    order = Order(
+        id_customer=customer.id_customer,
+        id_order_state=1,
+        reference="ORD-CAT-W",
+        is_payed=True,
+        payment_date=date(2026, 6, 3),
+        total_price_with_tax=Decimal("50.00"),
+        total_price_net=Decimal("40.00"),
+        products_total_price_with_tax=Decimal("50.00"),
+        products_total_price_net=Decimal("40.00"),
+        total_weight=Decimal("0"),
+    )
+    db_session.add(order)
+    db_session.commit()
+    db_session.refresh(order)
+
+    db_session.add(
+        OrderDetail(
+            id_order=order.id_order,
+            id_product=product.id_product,
+            id_tax=tax.id_tax,
+            product_name="Articolo catalogo",
+            product_reference="CAT-1",
+            product_qty=2,
+            product_weight=None,
+            unit_price_with_tax=Decimal("50.00"),
+            unit_price_net=Decimal("40.00"),
+            total_price_with_tax=Decimal("50.00"),
+            total_price_net=Decimal("40.00"),
+        )
+    )
+    ricevuta = Ricevuta(
+        numero=9,
+        anno=2026,
+        id_order=order.id_order,
+        id_customer=customer.id_customer,
+        data_incasso=date(2026, 6, 3),
+        data_emissione=datetime(2026, 6, 3, 10, 0, 0),
+        stato=RicevutaStato.EMESSA,
+    )
+    db_session.add(ricevuta)
+    db_session.commit()
+    db_session.refresh(ricevuta)
+
+    result = service.get_ricevuta(ricevuta.id_ricevuta)
+
+    assert result.order_details[0].product_weight == 3.25
+    assert result.total_weight == 6.5
 
 
 def test_get_ricevuta_not_modifiable_when_order_shipped(service, db_session, fixtures):

@@ -69,7 +69,6 @@ class RicevutaExportService:
 
     @classmethod
     def _detail_rows(cls, ricevuta: RicevutaResponseSchema) -> List[list]:
-        order = ricevuta.order
         customer = ricevuta.customer
         address = cls._primary_address(ricevuta)
         customer_name = cls._customer_name(
@@ -86,15 +85,15 @@ class RicevutaExportService:
             ricevuta.data_incasso.isoformat(),
             ricevuta.stato.value,
             ricevuta.id_ricevuta,
-            order.id_order if order else None,
-            order.reference if order else None,
+            ricevuta.id_order,
+            ricevuta.order_reference,
             customer_name or None,
             customer.email if customer else None,
             country,
             city,
         ]
-        order_total_net = order.total_price_net if order else None
-        order_total_with_tax = order.total_price_with_tax if order else None
+        order_total_net = ricevuta.total_price_net
+        order_total_with_tax = ricevuta.total_price_with_tax
 
         if not ricevuta.order_details:
             return [
@@ -168,11 +167,8 @@ class RicevutaExportService:
             ("Data emissione", ricevuta.data_emissione.isoformat()),
             ("Data incasso", ricevuta.data_incasso.isoformat()),
             ("Stato", ricevuta.stato.value),
-            ("ID ordine", ricevuta.order.id_order if ricevuta.order else None),
-            (
-                "Totale ordine lordo",
-                ricevuta.order.total_price_with_tax if ricevuta.order else None,
-            ),
+            ("ID ordine", ricevuta.id_order),
+            ("Totale ordine lordo", ricevuta.total_price_with_tax),
         ]
         for label, value in meta_rows:
             header_sheet.append([label, value])

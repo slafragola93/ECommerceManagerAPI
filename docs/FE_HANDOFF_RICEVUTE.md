@@ -30,10 +30,11 @@ Il FE può integrare **lista, dettaglio, creazione, PDF, eliminazione**.
 
 Le **ricevute** sono documenti fiscali **interni** (no SDI) per clienti esteri privati senza P.IVA.
 
-- Nessuna tabella righe persistita → prodotti/prezzi sempre **live** da `orders` / `order_details`
-- Nessuno snapshot cliente → anagrafica live da `customers`
+- Nessuna tabella righe persistita → prodotti/prezzi da `orders` / `order_details` al momento della lettura/emissione
+- Nessuno snapshot cliente → anagrafica da ordine collegato
 - Numerazione `{numero}/{anno}` (progressiva annuale)
 - Modificabilità: derivata dallo **stato ordine**, non da un flag sulla ricevuta
+- **Riemissione:** se l'ordine cambia (es. reso con sostituzione) → DELETE ricevuta + POST nuova; il documento **non** si aggiorna automaticamente
 
 ---
 
@@ -85,9 +86,9 @@ GET /api/v1/ricevute/{id_ricevuta}
 Authorization: Bearer <JWT>
 ```
 
-**Response 200:** `RicevutaDetail` (header + `customer` + `order` + indirizzo/i + `order_details[]` live)
+**Response 200:** `RicevutaDetail` (header + ordine in root + pagamento/spedizione + customer + indirizzi + `order_details[]`)
 
-**Contratto v2 (snellito):** niente `id_order`/`id_customer`/`pdf_hash` in root; `is_modifiable` solo su root; indirizzi sempre in `address_delivery` e `address_invoice` (nullable, anche se coincidono).
+**Contratto v3:** `id_order` / totali / pagamento / spedizione in **root** (niente oggetto `order` annidato); `id_customer` solo in `customer`; importi spedizione in `shipping_total_price_*` (non in `shipping`); data incasso solo in `data_incasso` (no `payment_date`); `is_modifiable` su root; indirizzi in `address_delivery` e `address_invoice`; `pdf_hash` omesso.
 
 **404:** ricevuta non trovata (standard FastAPI `{ "detail": "..." }`).
 
@@ -196,7 +197,7 @@ Permesso: `fiscal_documents:read`.
 
 ### `is_modifiable`
 
-Solo a livello root (`RicevutaDetail.is_modifiable`). Per link ordine usare `order.id_order`.
+Solo a livello root (`RicevutaDetail.is_modifiable`). Per link ordine usare `id_order`.
 
 | Valore | Significato FE |
 |--------|----------------|
@@ -211,7 +212,20 @@ Mostrare come **`{numero}/{anno}`** (es. `7/2026`).
 
 ### Righe prodotto
 
-In dettaglio, `order_details[]` proviene da `order_details` dell’ordine (escluse righe con `id_order_document`) **+ eventuale riga spedizione** sintetica (`is_shipping: true`, `id_order_detail: 0`, `product_name: "Spedizione"`). Totali ordine in `order.total_price_with_tax` includono già spedizione; campi dedicati: `order.shipping_total_price_with_tax` / `shipping_total_price_net`.
+In dettaglio, `order_details[]` proviene da `order_details` dell’ordine (escluse righe con `id_order_document`) **+ eventuale riga spedizione** sintetica (`is_shipping: true`, `id_order_detail: 0`, `product_name: "Spedizione"`). Totali in root: `total_price_with_tax` include spedizione; `shipping_total_price_with_tax` / `shipping_total_price_net` dedicati.
+
+### Pagamento e spedizione ordine (v3)
+
+Campi root (allineati a GET order):
+
+| Campo | Note |
+|-------|------|
+| `vies_status` | `eligible` \| `not_eligible` \| `null` |
+| `is_payed` | bool |
+| `payment_due_date` | `YYYY-MM-DD` (scadenza pagamento ordine) |
+| `payment` | `{ id_payment, name }` |
+| `shipping` | `id_shipping`, `carrier_api`, `tax`, `weight` (peso spedizione), `shipping_message` — **senza** prezzi (`shipping_total_price_*` in root), `shipping_state`, `tracking` |
+| `total_weight` | Peso totale ordine (kg): header ordine, oppure Σ(`product_weight × qty`) con fallback `products.weight` per riga |
 
 ### PDF (step 2 — non ancora disponibile)
 
@@ -263,12 +277,38 @@ export interface RicevutaAddress {
   country: RicevutaCountry | null;
 }
 
+export interface RicevutaPayment {
+  id_payment: number;
+  name: string;
+}
+
+export interface RicevutaCarrierApi {
+  id_carrier_api: number;
+  name: string | null;
+}
+
+export interface RicevutaTax {
+  id_tax: number;
+  code: string | null;
+  percentage: number | null;
+  name: string | null;
+}
+
+export interface RicevutaShipping {
+  id_shipping: number;
+  carrier_api: RicevutaCarrierApi | null;
+  tax: RicevutaTax | null;
+  weight: number | null;
+  shipping_message: string | null;
+}
+
 export interface RicevutaOrderDetail {
   id_order_detail: number;
   id_product: number | null;
   product_name: string | null;
   product_reference: string | null;
   product_qty: number;
+  product_weight: number | null;
   id_tax: number | null;
   unit_price_net: number | null;
   unit_price_with_tax: number | null;
@@ -276,46 +316,8 @@ export interface RicevutaOrderDetail {
   total_price_with_tax: number | null;
   reduction_percent: number | null;
   reduction_amount: number | null;
-  /** Riga spedizione sintetica (`id_order_detail=0`) — non sommare due volte con order.shipping_* */
+  /** Riga spedizione sintetica (`id_order_detail=0`) — non sommare due volte con shipping_total_* */
   is_shipping: boolean;
-}
-
-export interface RicevutaOrderSummary {
-  id_order: number;
-  reference: string | null;
-  id_order_state: number;
-  is_payed: boolean;
-  payment_date: string | null; // YYYY-MM-DD
-  total_price_with_tax: number;
-  total_price_net: number | null;
-  products_total_price_with_tax: number | null;
-  products_total_price_net: number | null;
-  shipping_total_price_with_tax: number | null;
-  shipping_total_price_net: number | null;
-  total_discounts: number | null;
-  general_note: string | null;
-}
-
-export interface RicevutaListItem {
-  id_ricevuta: number;
-  numero: number;
-  anno: number;
-  id_order: number;
-  data_incasso: string; // YYYY-MM-DD
-  data_emissione: string; // ISO 8601 datetime (es. 2026-06-05T10:30:00)
-  stato: RicevutaStato;
-  pdf_path: string | null;
-  pdf_generated_at: string | null;
-  customer: RicevutaCustomerSummary | null;
-  order_reference: string | null;
-  order_total_with_tax: number | null;
-}
-
-export interface RicevutaListResponse {
-  ricevute: RicevutaListItem[];
-  total: number;
-  page: number;
-  limit: number;
 }
 
 export interface RicevutaDetail {
@@ -332,11 +334,48 @@ export interface RicevutaDetail {
   annullata_at: string | null;
   annullata_da_user_id: number | null;
   is_modifiable: boolean;
+  id_order: number;
+  order_reference: string | null;
+  id_order_state: number | null;
+  total_weight: number | null;
+  vies_status: 'eligible' | 'not_eligible' | null;
+  is_payed: boolean;
+  payment_due_date: string | null;
+  payment: RicevutaPayment | null;
+  shipping: RicevutaShipping | null;
+  total_price_with_tax: number;
+  total_price_net: number | null;
+  products_total_price_with_tax: number | null;
+  products_total_price_net: number | null;
+  shipping_total_price_with_tax: number | null;
+  shipping_total_price_net: number | null;
+  total_discounts: number | null;
   customer: RicevutaCustomerSummary | null;
-  order: RicevutaOrderSummary | null;
   address_delivery: RicevutaAddress | null;
   address_invoice: RicevutaAddress | null;
   order_details: RicevutaOrderDetail[];
+}
+
+export interface RicevutaListItem {
+  id_ricevuta: number;
+  numero: number;
+  anno: number;
+  id_order: number;
+  data_incasso: string;
+  data_emissione: string;
+  stato: RicevutaStato;
+  pdf_path: string | null;
+  pdf_generated_at: string | null;
+  customer: RicevutaCustomerSummary | null;
+  order_reference: string | null;
+  order_total_with_tax: number | null;
+}
+
+export interface RicevutaListResponse {
+  ricevute: RicevutaListItem[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface RicevutaListFilters {
@@ -396,19 +435,30 @@ export interface RicevutaListFilters {
   "data_incasso": "2026-06-01",
   "data_emissione": "2026-06-05",
   "is_modifiable": true,
+  "id_order": 45001,
+  "order_reference": "ORD-SVC-001",
+  "id_order_state": 1,
+  "total_weight": 26.45,
+  "vies_status": null,
+  "is_payed": true,
+  "payment_due_date": "2026-06-17",
+  "payment": { "id_payment": 2, "name": "Bonifico bancario" },
+  "shipping": {
+    "id_shipping": 79088,
+    "carrier_api": { "id_carrier_api": 6, "name": "BRT" },
+    "tax": { "id_tax": 217, "code": "22", "percentage": 22.0, "name": "Aliquota Italia" },
+    "weight": 26.45,
+    "shipping_message": null
+  },
+  "shipping_total_price_with_tax": 20.0,
+  "shipping_total_price_net": 16.39,
+  "total_price_with_tax": 244.0,
+  "total_price_net": 200.0,
   "customer": {
     "id_customer": 880,
     "firstname": "Luigi",
     "lastname": "Verdi",
     "email": "luigi@example.com"
-  },
-  "order": {
-    "id_order": 45001,
-    "reference": "ORD-SVC-001",
-    "id_order_state": 1,
-    "is_payed": true,
-    "payment_date": "2026-06-01",
-    "total_price_with_tax": 244.0
   },
   "address_delivery": {
     "id_address": 12001,

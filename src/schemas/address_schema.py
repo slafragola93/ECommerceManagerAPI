@@ -1,6 +1,6 @@
 from typing import Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, validator
 from datetime import datetime, date
 from .customer_schema import CustomerResponseSchema, CustomerSchema, CustomerResponseWithoutAddressSchema
 
@@ -25,6 +25,14 @@ class AddressSchema(BaseModel):
     pec: Optional[str] = Field(None, max_length=128)
     sdi: Optional[str] = Field(None, max_length=128)
     ipa: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("id_country", "id_customer", mode="before")
+    @classmethod
+    def normalize_optional_fk(cls, value):
+        """0 / '' dal FE (legacy PrestaShop) → NULL; evita FK constraint su update."""
+        if value in (0, "0", ""):
+            return None
+        return value
 
 
 class CountryResponseSchema(BaseModel):
