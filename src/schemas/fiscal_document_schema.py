@@ -1,6 +1,15 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field, validator
-from datetime import datetime
+from datetime import date, datetime
+
+from src.models.order import ViesStatus
+from src.schemas.ricevuta_schema import (
+    RicevutaAddressEmbedSchema,
+    RicevutaCustomerEmbedSchema,
+    RicevutaOrderDetailEmbedSchema,
+    RicevutaPaymentEmbedSchema,
+    RicevutaShippingEmbedSchema,
+)
 
 
 # ==================== SCHEMAS PER DETTAGLI ====================
@@ -93,16 +102,19 @@ class InvoiceCreateSchema(BaseModel):
 
 
 class InvoiceResponseSchema(BaseModel):
-    """Schema risposta fattura"""
+    """Schema risposta fattura (dettaglio GET/POST): campi documento + contesto ordine come ricevuta v3."""
+
     id_fiscal_document: int
     document_type: str
-    tipo_documento_fe: Optional[str]
+    tipo_documento_fe: Optional[str] = None
     id_order: int
-    document_number: Optional[str]
-    internal_number: Optional[str]
-    filename: Optional[str]
+    document_number: Optional[str] = None
+    internal_number: Optional[str] = None
+    filename: Optional[str] = None
+    xml_content: Optional[str] = None
     status: str
     is_electronic: bool
+    upload_result: Optional[str] = None
     includes_shipping: bool
     total_price_with_tax: Optional[float] = None
     total_price_net: Optional[float] = None
@@ -111,14 +123,52 @@ class InvoiceResponseSchema(BaseModel):
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
 
-    @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
+    order_reference: Optional[str] = None
+    id_order_state: Optional[int] = None
+    total_weight: Optional[float] = Field(
+        None,
+        description="Peso totale ordine (kg), stessa risoluzione della ricevuta v3",
+    )
+    vies_status: Optional[ViesStatus] = None
+    is_payed: bool = False
+    payment_due_date: Optional[date] = None
+
+    payment: Optional[RicevutaPaymentEmbedSchema] = None
+    shipping: Optional[RicevutaShippingEmbedSchema] = None
+    shipping_total_price_with_tax: Optional[float] = None
+    shipping_total_price_net: Optional[float] = None
+    total_discounts: Optional[float] = None
+
+    customer: Optional[RicevutaCustomerEmbedSchema] = None
+    address_delivery: Optional[RicevutaAddressEmbedSchema] = Field(
+        None,
+        description="Indirizzo consegna da ordine collegato",
+    )
+    address_invoice: Optional[RicevutaAddressEmbedSchema] = Field(
+        None,
+        description="Indirizzo fatturazione da ordine collegato",
+    )
+    order_details: List[RicevutaOrderDetailEmbedSchema] = Field(
+        default_factory=list,
+        description="Righe snapshot documento fiscale + eventuale riga spedizione",
+    )
+
+    @validator(
+        "total_price_with_tax",
+        "total_price_net",
+        "products_total_price_net",
+        "products_total_price_with_tax",
+        "total_weight",
+        "shipping_total_price_with_tax",
+        "shipping_total_price_net",
+        "total_discounts",
+        pre=True,
+        allow_reuse=True,
+    )
     def round_decimal(cls, v):
         if v is None:
             return None
         return round(float(v), 2)
-    
-    class Config:
-        from_attributes = True
 
 
 # ==================== SCHEMAS PER NOTE DI CREDITO ====================

@@ -10,7 +10,10 @@ from src.models.payment import Payment
 from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.schemas.ricevuta_schema import (
+    RicevutaAddressEmbedSchema,
     RicevutaCarrierApiEmbedSchema,
+    RicevutaCountryEmbedSchema,
+    RicevutaCustomerEmbedSchema,
     RicevutaPaymentEmbedSchema,
     RicevutaShippingEmbedSchema,
     RicevutaTaxEmbedSchema,
@@ -21,6 +24,56 @@ def _to_float(value) -> Optional[float]:
     if value is None:
         return None
     return round(float(value), 2)
+
+
+def map_ricevuta_customer_embed(
+    customer,
+) -> Optional[RicevutaCustomerEmbedSchema]:
+    if not customer:
+        return None
+    return RicevutaCustomerEmbedSchema(
+        id_customer=customer.id_customer,
+        firstname=customer.firstname,
+        lastname=customer.lastname,
+        email=customer.email,
+    )
+
+
+def map_ricevuta_address_embed(address) -> Optional[RicevutaAddressEmbedSchema]:
+    if not address:
+        return None
+    country = None
+    country_row = getattr(address, "country", None)
+    if country_row:
+        country = RicevutaCountryEmbedSchema(
+            iso_code=country_row.iso_code,
+            name=country_row.name,
+        )
+    return RicevutaAddressEmbedSchema(
+        id_address=address.id_address,
+        company=address.company,
+        firstname=address.firstname,
+        lastname=address.lastname,
+        address1=address.address1,
+        address2=address.address2,
+        city=address.city,
+        postcode=address.postcode,
+        state=address.state,
+        phone=address.phone,
+        vat=address.vat,
+        country=country,
+    )
+
+
+def map_ricevuta_payment_from_model(
+    payment,
+) -> Optional[RicevutaPaymentEmbedSchema]:
+    if not payment:
+        return None
+    return RicevutaPaymentEmbedSchema(
+        id_payment=payment.id_payment,
+        name=payment.name,
+    )
 
 
 def map_ricevuta_payment_embed(

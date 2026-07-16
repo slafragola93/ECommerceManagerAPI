@@ -192,6 +192,44 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 **Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **allineamento v3 modelli/interpolazioni:** [prompt_FE_ricevute_V3_ALIGN.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_V3_ALIGN.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
 
+## Ultime modifiche (2026-07-16) — Fattura GET allineata a ricevuta v3
+
+**Scope:** response fattura arricchita su GET/POST — campi documento fiscale invariati, contesto ordine come ricevuta v3.
+
+### Endpoint
+
+| Metodo | Path | Response |
+|--------|------|----------|
+| GET | `/api/v1/fiscal_documents/invoices/order/{id_order}` | `InvoiceResponseSchema[]` arricchito |
+| GET | `/api/v1/fiscal_documents/{id}` | `InvoiceResponseSchema` se `document_type=invoice`, altrimenti schema generico |
+| POST | `/api/v1/fiscal_documents/invoices` | `InvoiceResponseSchema` arricchito dopo creazione |
+
+### Response `InvoiceResponseSchema`
+
+- **Documento (invariati/aggiunti):** `id_fiscal_document`, `document_type`, `tipo_documento_fe`, numeri, `filename`, `xml_content`, `status`, `is_electronic`, `upload_result`, `includes_shipping`, totali **documento** (`total_price_*`, `products_total_*`), `date_add`, `date_upd`
+- **Contesto ordine (come ricevuta v3):** `order_reference`, `id_order_state`, `total_weight`, `vies_status`, `is_payed`, `payment_due_date`, `payment`, `shipping`, `shipping_total_price_*`, `total_discounts`, `customer`, `address_delivery`, `address_invoice`
+- **Righe:** `order_details[]` — snapshot `fiscal_document_details` arricchito con dati prodotto + riga spedizione se `includes_shipping=true` (`is_shipping=true`)
+
+**Nota:** i totali in root restano quelli del **documento fiscale** (non live ordine). `shipping_total_*` derivati da differenza documento prodotti/totale o da ordine.
+
+### File toccati
+
+| Area | Path |
+|------|------|
+| Schema | `src/schemas/fiscal_document_schema.py` |
+| Mapper | `src/services/routers/fiscal_document_service.py` |
+| Embed condivisi | `src/services/ricevute/order_embed_formatters.py` |
+| Router | `src/routers/fiscal_documents.py` |
+| Test | `tests/unit/services/test_fiscal_document_invoice_response.py` |
+
+**Comando verifica:**
+
+```powershell
+pytest tests/unit/services/test_fiscal_document_invoice_response.py -v
+```
+
+**Prompt FE (incolla in chat Angular):** [`.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md`](.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md)
+
 ## Ultime modifiche (2026-07-16) — Ricevuta API v3
 
 **Scope:** contratto dettaglio ricevuta allineato a compile/export fiscal — campi ordine in root, oggetto `order` annidato rimosso.

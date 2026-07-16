@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -9,6 +9,8 @@ from src.services.routers.auth_service import get_current_user, require_permissi
 from src.repository.fiscal_document_repository import FiscalDocumentRepository
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.services.external.fatturapa_service import FatturaPAService
+from src.routers.dependencies import get_fiscal_document_service
+from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.schemas.fiscal_document_schema import (
     InvoiceCreateSchema,
     InvoiceResponseSchema,
@@ -61,7 +63,7 @@ async def create_invoice(
         }
     ),
     user: dict = user_dependency,
-    db: Session = db_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
@@ -74,12 +76,12 @@ async def create_invoice(
     - Il tipo documento FatturaPA sarà TD01
     """
     try:
-        repo = get_fiscal_repository(db)
-        invoice = repo.create_invoice(
+        invoice = await fiscal_service.create_invoice(
             id_order=invoice_data.id_order,
-            is_electronic=invoice_data.is_electronic
+            is_electronic=invoice_data.is_electronic,
+            user=user,
         )
-        return invoice
+        return await fiscal_service.get_invoice_response_by_id(invoice.id_fiscal_document)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -90,7 +92,7 @@ async def create_invoice(
 async def get_invoices_by_order(
     id_order: int = Path(..., gt=0, description="ID dell'ordine"),
     user: dict = user_dependency,
-    db: Session = db_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
@@ -98,12 +100,11 @@ async def get_invoices_by_order(
     
     Un ordine può avere multiple fatture (es. fattura iniziale + integrazioni)
     """
-    repo = get_fiscal_repository(db)
-    invoices = repo.get_invoices_by_order(id_order)
-    
+    invoices = await fiscal_service.get_invoices_by_order_response(id_order)
+
     if not invoices:
         raise HTTPException(status_code=404, detail=f"Nessuna fattura trovata per ordine {id_order}")
-    
+
     return invoices
 
 
@@ -369,20 +370,27 @@ async def get_credit_notes_by_invoice(
 
 # ==================== OPERAZIONI GENERICHE ====================
 
-@router.get("/{id_fiscal_document}", response_model=FiscalDocumentResponseSchema)
+@router.get(
+    "/{id_fiscal_document}",
+    response_model=Union[InvoiceResponseSchema, FiscalDocumentResponseSchema],
+)
 async def get_fiscal_document(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
     user: dict = user_dependency,
     db: Session = db_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
-    """Recupera documento fiscale per ID (fattura o nota di credito)"""
+    """Recupera documento fiscale per ID (fattura arricchita o nota di credito generica)"""
     repo = get_fiscal_repository(db)
     doc = repo.get_fiscal_document_by_id(id_fiscal_document)
-    
+
     if not doc:
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-    
+
+    if doc.document_type == "invoice":
+        return await fiscal_service.get_invoice_response_by_id(id_fiscal_document)
+
     return doc
 
 

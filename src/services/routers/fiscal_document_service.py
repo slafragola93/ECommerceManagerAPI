@@ -10,6 +10,8 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
+from src.schemas.fiscal_document_schema import InvoiceResponseSchema
+from src.schemas.ricevuta_schema import RicevutaOrderDetailEmbedSchema
 from src.schemas.customer_schema import CustomerResponseWithoutAddressSchema
 from src.schemas.address_schema import AddressResponseSchema
 from src.schemas.payment_schema import PaymentResponseSchema
@@ -22,6 +24,19 @@ from src.events.extractors import (
     extract_credit_note_created_data
 )
 from src.services.core.tool import resolve_return_unit_prices
+from src.services.ricevute.order_embed_formatters import (
+    map_ricevuta_address_embed,
+    map_ricevuta_customer_embed,
+    map_ricevuta_payment_from_model,
+    map_ricevuta_shipping_embed,
+)
+from src.services.ricevute.order_lines import (
+    build_shipping_line_dict,
+    load_product_weights,
+    resolve_line_product_weight,
+    resolve_order_total_weight,
+    resolve_shipping_amounts,
+)
 
 
 class FiscalDocumentService(IFiscalDocumentService):
@@ -36,6 +51,10 @@ class FiscalDocumentService(IFiscalDocumentService):
         self._fiscal_document_repository = fiscal_document_repository
         self._order_repository = order_repository
         self._order_detail_repository = order_detail_repository
+
+    @property
+    def _session(self):
+        return self._fiscal_document_repository._session
     
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_CREATED,
@@ -321,6 +340,155 @@ class FiscalDocumentService(IFiscalDocumentService):
             shipping=shipping_schema,
             details=details_schemas,
         )
+
+    @staticmethod
+    def _to_float(v):
+        return round(float(v), 2) if v is not None else None
+
+    def _resolve_invoice_shipping_totals(self, doc, order, shipping):
+        if not doc.includes_shipping:
+            return None, None
+        prod_net = float(doc.products_total_price_net or 0)
+        prod_incl = float(doc.products_total_price_with_tax or 0)
+        total_net = float(doc.total_price_net or 0)
+        total_incl = float(doc.total_price_with_tax or 0)
+        ship_net = round(total_net - prod_net, 2) if total_net > prod_net else None
+        ship_incl = round(total_incl - prod_incl, 2) if total_incl > prod_incl else None
+        if (ship_net is None or ship_net <= 0) and order and shipping:
+            ship_net, ship_incl = resolve_shipping_amounts(order, shipping)
+            ship_net = ship_net if ship_net > 0 else None
+            ship_incl = ship_incl if ship_incl > 0 else None
+        return ship_net, ship_incl
+
+    def _build_invoice_order_details(self, doc, order, shipping, order_detail_map, product_weights):
+        order_details: list[RicevutaOrderDetailEmbedSchema] = []
+        for detail in doc.details or []:
+            od_data = order_detail_map.get(detail.id_order_detail, {})
+            od = od_data.get("order_detail")
+            line_weight = resolve_line_product_weight(od, product_weights) if od else None
+            order_details.append(
+                RicevutaOrderDetailEmbedSchema(
+                    id_order_detail=detail.id_order_detail,
+                    id_product=od.id_product if od else None,
+                    product_name=od.product_name if od else None,
+                    product_reference=od.product_reference if od else None,
+                    product_qty=int(detail.product_qty or 0),
+                    product_weight=self._to_float(line_weight),
+                    id_tax=detail.id_tax or (od.id_tax if od else None),
+                    unit_price_net=self._to_float(detail.unit_price_net),
+                    unit_price_with_tax=self._to_float(detail.unit_price_with_tax),
+                    total_price_net=self._to_float(detail.total_price_net),
+                    total_price_with_tax=self._to_float(detail.total_price_with_tax),
+                    reduction_percent=self._to_float(getattr(od, "reduction_percent", None))
+                    if od
+                    else None,
+                    reduction_amount=self._to_float(getattr(od, "reduction_amount", None))
+                    if od
+                    else None,
+                    is_shipping=False,
+                )
+            )
+
+        if doc.includes_shipping and order:
+            shipping_line = build_shipping_line_dict(order, shipping)
+            if shipping_line:
+                order_details.append(RicevutaOrderDetailEmbedSchema(**shipping_line))
+        return order_details
+
+    def _row_to_invoice_response_schema(self, row) -> Optional[InvoiceResponseSchema]:
+        """Converte (doc, addr_del, addr_inv, customer, payment, shipping) in InvoiceResponseSchema."""
+        if not row:
+            return None
+        doc, address_delivery, address_invoice, customer, payment, shipping = row
+        if doc.document_type != "invoice":
+            return None
+
+        order = self._order_repository.get_by_id(doc.id_order)
+        details_list = doc.details or []
+        order_detail_map = (
+            self._fiscal_document_repository.get_order_details_with_images(
+                [d.id_order_detail for d in details_list]
+            )
+            if details_list
+            else {}
+        )
+        product_ids = [
+            data.get("order_detail").id_product
+            for data in order_detail_map.values()
+            if data.get("order_detail") and data["order_detail"].id_product
+        ]
+        product_weights = load_product_weights(self._session, product_ids)
+        raw_order_details = (
+            self._order_detail_repository.get_by_order_id(doc.id_order)
+            if order
+            else []
+        )
+        ship_net, ship_incl = self._resolve_invoice_shipping_totals(doc, order, shipping)
+
+        return InvoiceResponseSchema(
+            id_fiscal_document=doc.id_fiscal_document,
+            document_type=doc.document_type,
+            tipo_documento_fe=doc.tipo_documento_fe,
+            id_order=doc.id_order,
+            document_number=doc.document_number,
+            internal_number=doc.internal_number,
+            filename=doc.filename,
+            xml_content=doc.xml_content,
+            status=doc.status,
+            is_electronic=bool(doc.is_electronic),
+            upload_result=doc.upload_result,
+            includes_shipping=bool(doc.includes_shipping),
+            total_price_with_tax=self._to_float(doc.total_price_with_tax),
+            total_price_net=self._to_float(doc.total_price_net),
+            products_total_price_net=self._to_float(doc.products_total_price_net),
+            products_total_price_with_tax=self._to_float(doc.products_total_price_with_tax),
+            date_add=doc.date_add,
+            date_upd=doc.date_upd,
+            order_reference=order.reference if order else None,
+            id_order_state=order.id_order_state if order else None,
+            total_weight=resolve_order_total_weight(
+                order, raw_order_details, shipping, product_weights
+            )
+            if order
+            else None,
+            vies_status=order.vies_status if order else None,
+            is_payed=bool(order.is_payed) if order else False,
+            payment_due_date=order.payment_due_date if order else None,
+            payment=map_ricevuta_payment_from_model(payment),
+            shipping=map_ricevuta_shipping_embed(self._session, shipping),
+            shipping_total_price_with_tax=ship_incl,
+            shipping_total_price_net=ship_net,
+            total_discounts=self._to_float(order.total_discounts) if order else None,
+            customer=map_ricevuta_customer_embed(customer),
+            address_delivery=map_ricevuta_address_embed(address_delivery),
+            address_invoice=map_ricevuta_address_embed(address_invoice),
+            order_details=self._build_invoice_order_details(
+                doc, order, shipping, order_detail_map, product_weights
+            ),
+        )
+
+    async def get_invoices_by_order_response(self, id_order: int) -> List[InvoiceResponseSchema]:
+        """Fatture ordine arricchite (contratto allineato a ricevuta v3)."""
+        try:
+            rows = self._fiscal_document_repository.get_by_order_id(
+                id_order, page=1, limit=100, document_type="invoice"
+            )
+            schemas = [self._row_to_invoice_response_schema(r) for r in rows]
+            return [s for s in schemas if s is not None]
+        except Exception as e:
+            raise ValidationException(f"Errore nel recupero delle fatture: {str(e)}")
+
+    async def get_invoice_response_by_id(self, id_fiscal_document: int) -> InvoiceResponseSchema:
+        """Dettaglio fattura per ID con relazioni ordine."""
+        row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(
+            id_fiscal_document
+        )
+        if not row:
+            raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
+        schema = self._row_to_invoice_response_schema(row)
+        if not schema:
+            raise NotFoundException(f"Fattura {id_fiscal_document} non trovata")
+        return schema
 
     async def get_fiscal_documents_by_order(self, id_order: int, page: int = 1, limit: int = 10, document_type: Optional[str] = None) -> List[ReturnResponseSchema]:
         """Ottiene i documenti fiscali per un ordine, formattati come ReturnResponseSchema."""
