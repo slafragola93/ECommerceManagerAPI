@@ -186,11 +186,33 @@ Permessi write: `fiscal_documents:create|update|delete`.
 
 **PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {gg/mm/aaaa hh:mm}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra (merce, spedizione, IVA, totale — senza voce spese incasso). Non include note ordine (solo uso interno app). Non riusa più il layout fattura SDI.
 
-**PDF fattura/nota di credito:** `date_add` mostrato con data e ora (`gg/mm/aaaa hh:mm`, Europe/Rome). XML FatturaPA resta con sola data (requisito SDI).
+**PDF fattura/nota di credito:** layout elettronew (`src/services/pdf/fiscal_document_pdf_layout.py`) allineato ai campioni cartacei — logo + anagrafica (IBAN/BIC), titolo `FATTURA`/`FACTURE`/…, Intestazione/consegna, tabella Impon./IVA, riepilogo aliquote, totali, pagamento, firme, NOTE precompilate. Lingue etichette: **IT, FR, DE, ES, EN** (da paese indirizzo fattura). Dicitura NOTE da `app_configurations` categoria `invoice_pdf` (non usa `order.general_note`). Data documento `gg/mm/aaaa`; XML FatturaPA resta con sola data (requisito SDI).
 
 Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 **Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **allineamento v3 modelli/interpolazioni:** [prompt_FE_ricevute_V3_ALIGN.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_V3_ALIGN.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
+
+## Ultime modifiche (2026-07-17) — Template PDF fattura elettronew + i18n
+
+**Scope:** sostituzione layout SDI del PDF fattura con template elettronew multipagina e catalogo traduzioni. Sezioni inferiori (qty/peso, riepilogo IVA, totali, pagamento, firme, NOTE) disegnate come **tabelle bordate** affiancate.
+
+| Elemento | Dettaglio |
+|----------|-----------|
+| Layout | `src/services/pdf/fiscal_document_pdf_layout.py` — stile come ordine/ricevuta |
+| Orchestrazione | `src/services/pdf/fiscal_document_pdf_service.py` |
+| Label i18n | `src/services/pdf/i18n/invoice_pdf_labels.py` (IT/FR/DE/ES/EN) |
+| Locale | `src/services/pdf/i18n/locale_resolver.py` — ISO paese → locale |
+| Config NOTE | `invoice_pdf.pre_invoice_disclaimer`, `invoice_pdf.append_tax_normative` |
+| Endpoint | `GET /api/v1/fiscal_documents/{id}/pdf` |
+| Test | `tests/unit/services/pdf/test_fiscal_document_pdf_layout.py` |
+
+```bash
+pytest tests/unit/services/pdf/test_fiscal_document_pdf_layout.py -v
+```
+
+Dopo deploy: eseguire `python scripts/setup_initial.py` (o inserire manualmente le chiavi `invoice_pdf`) per popolare la dicitura legale di default.
+
+**Fix IVA PDF (2026-07-17):** il PDF legge aliquota/importi dallo **snapshot** `fiscal_document_details` (`id_tax`, `total_price_net`), non da `order_details` live (che possono essere cambiati dopo l'emissione, es. VIES 0% su ordine IT). Regressione: fattura `000016` / ordine `69057`.
 
 ## Ultime modifiche (2026-07-17) — Aliquota spedizione per paese di consegna
 

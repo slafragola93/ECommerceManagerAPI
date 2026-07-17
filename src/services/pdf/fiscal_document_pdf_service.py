@@ -1,681 +1,372 @@
 """
-Servizio PDF per generazione documenti fiscali (fatture e note di credito)
-Estende BasePDFService e implementa metodi helper specifici per documenti fiscali
+Servizio PDF per generazione documenti fiscali (fatture e note di credito).
+
+Orchestrazione dati → FiscalDocumentPDFLayout (stile elettronew + i18n).
 """
-from typing import Optional, Dict, Any, Union, List
+from __future__ import annotations
+
 from datetime import datetime
-from io import BytesIO
-import os
+from typing import Any, Dict, List, Optional
 
 from src.services.pdf.base_pdf_service import BasePDFService
+from src.services.pdf.fiscal_document_pdf_layout import FiscalDocumentPDFLayout
+from src.services.pdf.i18n.invoice_pdf_labels import (
+    DEFAULT_PRE_INVOICE_DISCLAIMER,
+    get_invoice_labels,
+)
+from src.services.pdf.i18n.locale_resolver import (
+    resolve_country_iso,
+    resolve_invoice_locale,
+)
 from src.services.media.media_utils import get_store_logo_path
 from src.services.ricevute.date_utils import format_emission_datetime
 
 
 class FiscalDocumentPDFService(BasePDFService):
-    """Servizio per generazione PDF di documenti fiscali"""
+    """Servizio per generazione PDF di documenti fiscali (fattura / NC)."""
 
     @staticmethod
     def _as_float(value, default: float = 0.0) -> float:
         if value is None:
             return default
-        return float(value)
-    
-    def generate_pdf(self, fiscal_document, order=None, invoice_address=None,
-                     delivery_address=None, details_with_products: List[Dict[str, Any]] = None,
-                     payment_name: Optional[str] = None, company_config: Dict[str, Any] = None,
-                     referenced_invoice=None, db=None, doc_title: Optional[str] = None) -> bytes:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def generate_pdf(
+        self,
+        fiscal_document,
+        order=None,
+        invoice_address=None,
+        delivery_address=None,
+        details_with_products: Optional[List[Dict[str, Any]]] = None,
+        payment_name: Optional[str] = None,
+        company_config: Optional[Dict[str, Any]] = None,
+        referenced_invoice=None,
+        db=None,
+        doc_title: Optional[str] = None,
+        invoice_pdf_config: Optional[Dict[str, Any]] = None,
+    ) -> bytes:
         """
-        Genera il PDF del documento fiscale
-        
+        Genera il PDF del documento fiscale in stile elettronew.
+
         Args:
             fiscal_document: FiscalDocument (fattura o nota di credito)
             order: Order collegato (opzionale)
-            invoice_address: Address di fatturazione (opzionale)
-            delivery_address: Address di consegna (opzionale)
-            details_with_products: Lista di dettagli con info prodotto (richiesto)
-            payment_name: Nome metodo di pagamento (opzionale)
-            company_config: Configurazioni aziendali (richiesto)
-            referenced_invoice: FiscalDocument di riferimento per note di credito (opzionale)
-            db: Sessione database per recuperare dati aggiuntivi (opzionale)
-            
+            invoice_address / delivery_address: Address
+            details_with_products: Lista dettagli con info prodotto
+            payment_name: Nome metodo di pagamento
+            company_config: Configurazioni aziendali (company_info)
+            referenced_invoice: FiscalDocument di riferimento per NC
+            db: Sessione DB (logo store)
+            invoice_pdf_config: Config categoria invoice_pdf (dicitura NOTE)
+
         Returns:
-            bytes: Contenuto del PDF
-            
-        Raises:
-            ValueError: Se i dati richiesti non sono disponibili
-            Exception: Per altri errori durante la generazione
+            bytes: Contenuto PDF
         """
+        if not fiscal_document:
+            raise ValueError("fiscal_document è richiesto")
+        if not details_with_products:
+            raise ValueError("details_with_products è richiesto")
+        if not company_config:
+            raise ValueError("company_config è richiesto")
+
         try:
-            if not fiscal_document:
-                raise ValueError("fiscal_document è richiesto")
-            
-            if not details_with_products:
-                raise ValueError("details_with_products è richiesto")
-            
-            if not company_config:
-                raise ValueError("company_config è richiesto")
-            
-            # Determina tipo documento
-            is_credit_note = fiscal_document.document_type == 'credit_note'
-            doc_title = doc_title or ("NOTA DI CREDITO" if is_credit_note else "FATTURA")
-            doc_number = fiscal_document.document_number or fiscal_document.internal_number or "N/A"
-            doc_date = (
-                format_emission_datetime(fiscal_document.date_add)
-                if fiscal_document.date_add
-                else ""
-            )
-            
-            # Recupera logo: prima prova logo store, poi fallback a logo aziendale
-            logo_path = company_config.get('company_logo', 'media/logos/logo.png')
-            if fiscal_document.id_store and db:
-                from src.models.store import Store
-                store = db.query(Store).filter(Store.id_store == fiscal_document.id_store).first()
-                if store:
-                    logo_path = get_store_logo_path(store, fallback_path=logo_path)
-            
-            # Inizializza PDF
-            pdf = self.create_pdf(margin=15)
-            
-            # Header documento
-            self.create_document_header(
-                pdf=pdf,
-                title=doc_title,
-                document_number=doc_number,
-                date=doc_date,
-                logo_path=logo_path if logo_path and os.path.exists(logo_path) else None
-            )
-            
-            # Riferimento fattura per note di credito
-            if is_credit_note and referenced_invoice:
-                ref_number = referenced_invoice.document_number or referenced_invoice.internal_number or "N/A"
-                ref_date = (
-                    format_emission_datetime(referenced_invoice.date_add)
-                    if referenced_invoice.date_add
-                    else ""
-                )
-                self.add_credit_note_reference(pdf, ref_number, ref_date)
-            
-            # Box Venditore e Cliente (diverso da MITTENTE/DESTINATARIO)
-            self.create_seller_customer_boxes(
-                pdf=pdf,
+            context = self._build_context(
+                fiscal_document=fiscal_document,
+                order=order,
+                invoice_address=invoice_address,
+                delivery_address=delivery_address,
+                details_with_products=details_with_products,
+                payment_name=payment_name,
                 company_config=company_config,
-                invoice_address=invoice_address
+                referenced_invoice=referenced_invoice,
+                db=db,
+                invoice_pdf_config=invoice_pdf_config or {},
             )
-            
-            # Box Consegna (se presente, specifico per documenti fiscali)
-            if delivery_address:
-                self.add_delivery_address_box(pdf, delivery_address)
-            
-            # Riferimento ordine
-            if order and order.reference:
-                self.add_order_reference(pdf, order.reference)
-            
-            # Tabella articoli - Header (con colonna Sc.%)
-            self.create_items_table_header_with_discount(pdf)
-            
-            # Tabella articoli - Righe
-            subtotal = 0.0
-            total_with_vat_sum = 0.0
-            total_quantity = 0
-            
-            for detail in details_with_products:
-                code = detail.get('product_reference', '')[:15]
-                description = detail.get('product_name', '')[:30]
-                quantity = detail.get('product_qty') or 0
-                unit_price = self._as_float(detail.get('unit_price', 0.0))
-                total_price_with_tax = self._as_float(detail.get('total_price_with_tax'))
-                reduction_percent = self._as_float(detail.get('reduction_percent', 0.0))
-                vat_rate = self._as_float(detail.get('vat_rate', 0))
-                
-                vat_multiplier = 1 + (vat_rate / 100.0) if vat_rate else 1.0
-                total_with_vat = total_price_with_tax * vat_multiplier
-                
-                self.add_items_table_row_with_discount(
-                    pdf=pdf,
-                    code=code,
-                    description=description,
-                    quantity=quantity,
-                    unit_price=unit_price,
-                    reduction_percent=reduction_percent,
-                    vat_rate=vat_rate,
-                    total_with_vat=total_with_vat
-                )
-                
-                subtotal += total_price_with_tax
-                total_with_vat_sum += total_with_vat
-                total_quantity += quantity
-            
-            # Sezione Info Spedizione e Riepilogo
-            total_weight = self._as_float(order.total_weight if order and order.total_weight else 0.0)
-            self.create_shipping_info_section(pdf, total_quantity, total_weight)
-            
-            # Calcola spese trasporto
-            shipping_cost = 0.0
-            shipping_cost_with_vat = 0.0
-            shipping_vat_percentage = 0
-            
-            if order and hasattr(order, 'shipments') and order.shipments:
-                shipping_cost = self._as_float(order.shipments.price_tax_excl)
-                
-                if order.shipments.id_tax and db:
-                    from src.repository.tax_repository import TaxRepository
-                    tax_repo = TaxRepository(db)
-                    shipping_vat_percentage = self._as_float(
-                        tax_repo.get_percentage_by_id(order.shipments.id_tax)
-                    )
-                    
-                    if shipping_vat_percentage:
-                        shipping_cost_with_vat = shipping_cost * (1 + shipping_vat_percentage / 100.0)
-                    else:
-                        shipping_cost_with_vat = self._as_float(order.shipments.price_tax_incl)
-                else:
-                    shipping_cost_with_vat = self._as_float(order.shipments.price_tax_incl)
-            
-            # Calcola totali
-            total_doc = self._as_float(fiscal_document.total_price_with_tax)
-            if details_with_products and details_with_products[0].get('vat_rate'):
-                vat_rate_first = self._as_float(details_with_products[0].get('vat_rate'))
-                total_imponibile = total_doc / (1 + (vat_rate_first / 100.0))
-                total_vat = total_doc - total_imponibile
-            else:
-                total_imponibile = subtotal + shipping_cost
-                total_vat = total_doc - total_imponibile
-            
-            # Tabella Riepilogo IVA e Totali
-            self.create_vat_summary_section(
-                pdf=pdf,
-                subtotal=subtotal,
-                shipping_cost=shipping_cost,
-                total_vat=total_vat,
-                shipping_vat_percentage=shipping_vat_percentage,
-                shipping_cost_with_vat=shipping_cost_with_vat
-            )
-            
-            # Blocco totali finali
-            self.create_fiscal_totals_section(
-                pdf=pdf,
-                subtotal=subtotal,
-                total_imponibile=total_imponibile,
-                total_with_vat_sum=total_with_vat_sum,
-                total_vat=total_vat,
-                total_doc=total_doc
-            )
-            
-            # Sezione Pagamento e Scadenze
-            self.create_payment_section(
-                pdf=pdf,
-                payment_text=payment_name if payment_name else '-',
-                deadlines_text=''
-            )
-            
-            # Firma trasporto
-            self.create_transport_signature_section(pdf=pdf)
-            
-            # Note (specifiche per documenti fiscali)
-            self.add_fiscal_notes(
-                pdf=pdf,
-                is_credit_note=is_credit_note,
-                credit_note_reason=fiscal_document.credit_note_reason if hasattr(fiscal_document, 'credit_note_reason') else None,
-                order_note=order.general_note if order and order.general_note else None
-            )
-            
-            # Footer
-            self.add_footer(pdf=pdf)
-            
-            # Ritorna contenuto PDF
-            return pdf.output()
-            
+            return FiscalDocumentPDFLayout.render_document(context)
         except ImportError:
-            raise Exception("Libreria fpdf2 non installata. Installare con: pip install fpdf2")
+            raise Exception(
+                "Libreria fpdf2 non installata. Installare con: pip install fpdf2"
+            )
         except Exception as e:
             raise Exception(f"Errore durante la generazione del PDF: {str(e)}")
-    
-    # Metodi helper specifici per documenti fiscali
-    
-    @staticmethod
-    def create_pdf(margin: int = 15) -> Any:
-        """Crea e inizializza un'istanza FPDF"""
-        from fpdf import FPDF
-        
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_auto_page_break(auto=True, margin=margin)
-        
-        return pdf
-    
-    @staticmethod
-    def insert_logo(pdf, logo_path: Optional[str], x: float = 10, y: float = 8, width: float = 40) -> bool:
-        """Inserisce il logo aziendale nel PDF"""
-        if not logo_path:
-            return False
-            
-        if not os.path.exists(logo_path):
-            return False
-            
-        try:
-            pdf.image(logo_path, x=x, y=y, w=width)
-            return True
-        except Exception:
-            return False
-    
-    @staticmethod
-    def create_document_header(
-        pdf,
-        title: str,
-        document_number: str,
-        date: Union[str, datetime],
-        logo_path: Optional[str] = None
-    ) -> Dict[str, float]:
-        """Crea l'header del documento con logo, titolo e data"""
-        FiscalDocumentPDFService.insert_logo(pdf, logo_path, x=10, y=8, width=40)
-        
-        pdf.set_xy(120, 10)
-        pdf.set_font('Arial', 'B', 18)
-        pdf.cell(0, 10, f"{title} n. {document_number}", 0, 1, 'R')
-        
-        pdf.set_xy(120, 17)
-        pdf.set_font('Arial', '', 12)
-        
-        if isinstance(date, datetime):
-            date_str = format_emission_datetime(date)
-        else:
-            date_str = str(date)
-        
-        pdf.cell(0, 7, f"Data: {date_str}", 0, 1, 'R')
-        pdf.ln(5)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def add_credit_note_reference(pdf, ref_number: str, ref_date: str) -> Dict[str, float]:
-        """Aggiunge riferimento fattura per note di credito"""
-        pdf.set_font('Arial', 'I', 10)
-        pdf.cell(0, 5, f"A storno di FATTURA n. {ref_number} del {ref_date}", 0, 1, 'C')
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_seller_customer_boxes(
-        pdf,
-        company_config: Dict[str, Any],
-        invoice_address: Any = None,
-        col_width: float = 95
-    ) -> Dict[str, float]:
-        """Crea i box VENDITORE e CLIENTE (specifico per documenti fiscali)"""
-        y_start = pdf.get_y()
-        
-        # VENDITORE (colonna sinistra)
-        pdf.set_xy(10, y_start)
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(col_width, 6, 'VENDITORE', 1, 0)
-        pdf.ln()
-        pdf.set_font('Arial', '', 8)
-        
-        company_name = company_config.get('company_name', '')
-        company_address = company_config.get('address', '')
-        company_postal_code = company_config.get('postal_code', '')
-        company_city = company_config.get('city', '')
-        company_province = company_config.get('province', '')
-        company_city_full = f"{company_postal_code} - {company_city} ({company_province})"
-        
-        seller_info = f"{company_name}\n{company_address}\n{company_city_full}\n"
-        
-        # P.IVA e C.F.
-        vat_cf_line = []
-        if company_config.get('vat_number'):
-            vat_cf_line.append(f"P.I. {company_config['vat_number']}")
-        if company_config.get('fiscal_code'):
-            vat_cf_line.append(f"C.F. {company_config['fiscal_code']}")
-        if vat_cf_line:
-            seller_info += " - ".join(vat_cf_line) + "\n"
-        
-        # IBAN, BIC, PEC, SDI
-        if company_config.get('iban'):
-            seller_info += f"IBAN {company_config['iban']}\n"
-        if company_config.get('bic_swift'):
-            seller_info += f"BIC/SWIFT {company_config['bic_swift']}\n"
-        if company_config.get('pec'):
-            seller_info += f"PEC: {company_config['pec']}\n"
-        if company_config.get('sdi_code'):
-            seller_info += f"SDI: {company_config['sdi_code']}"
-        
-        pdf.multi_cell(col_width, 4, seller_info, 1)
-        
-        # CLIENTE (colonna destra)
-        y_end_seller = pdf.get_y()
-        pdf.set_xy(10 + col_width, y_start)
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(col_width, 6, 'CLIENTE', 1, 0)
-        pdf.ln()
-        pdf.set_xy(10 + col_width, y_start + 6)
-        
-        if invoice_address:
-            customer_name = invoice_address.company if invoice_address.company else f"{invoice_address.firstname or ''} {invoice_address.lastname or ''}".strip()
-            customer_info = f"{customer_name}\n" if customer_name else ""
-            
-            if invoice_address.address1:
-                customer_info += f"{invoice_address.address1 or ''} {invoice_address.address2 or ''}".strip() + "\n"
-            
-            city_line = f"{invoice_address.postcode or ''} {invoice_address.city or ''}".strip()
-            if invoice_address.state:
-                city_line += f" ({invoice_address.state})"
-            if city_line.strip():
-                customer_info += city_line.strip() + "\n"
-            
-            if invoice_address.vat:
-                customer_info += f"P.IVA/CF: {invoice_address.vat}\n"
-            elif invoice_address.dni:
-                customer_info += f"Cod. Fiscale: {invoice_address.dni}\n"
-            
-            if invoice_address.pec:
-                customer_info += f"PEC: {invoice_address.pec}\n"
-            
-            if invoice_address.sdi:
-                customer_info += f"SDI: {invoice_address.sdi}"
-            elif invoice_address.ipa:
-                customer_info += f"IPA: {invoice_address.ipa}"
-            
-            if not customer_info.strip():
-                customer_info = "N/A"
-        else:
-            customer_info = "N/A"
-        
-        pdf.set_font('Arial', '', 9)
-        pdf.multi_cell(col_width, 5, customer_info, 1)
-        y_end_customer = pdf.get_y()
-        
-        pdf.set_y(max(y_end_seller, y_end_customer))
-        pdf.ln(3)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def add_delivery_address_box(pdf, delivery_address: Any) -> Dict[str, float]:
-        """Aggiunge box destinazione merce (specifico per documenti fiscali)"""
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(0, 6, 'DESTINAZIONE MERCE', 1, 1)
-        pdf.set_font('Arial', '', 9)
-        
-        delivery_name = delivery_address.company if delivery_address.company else f"{delivery_address.firstname or ''} {delivery_address.lastname or ''}".strip()
-        delivery_info = f"{delivery_name}\n"
-        delivery_info += f"{delivery_address.address1 or ''} {delivery_address.address2 or ''}".strip() + "\n"
-        delivery_info += f"{delivery_address.postcode or ''} {delivery_address.city or ''} ({delivery_address.state or ''})".strip()
-        
-        pdf.multi_cell(0, 5, delivery_info, 1)
-        pdf.ln(3)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def add_order_reference(pdf, order_reference: str) -> Dict[str, float]:
-        """Aggiunge riferimento ordine"""
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(0, 5, f"Riferimento ordine: {order_reference}", 0, 1)
-        pdf.ln(2)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_items_table_header_with_discount(pdf) -> Dict[str, float]:
-        """Crea l'header della tabella articoli con colonna Sc.% (specifico per documenti fiscali)"""
-        pdf.set_font('Arial', 'B', 9)
-        pdf.set_fill_color(224, 224, 224)
-        pdf.cell(30, 6, 'Codice', 1, 0, 'L', True)
-        pdf.cell(60, 6, 'Descrizione', 1, 0, 'L', True)
-        pdf.cell(15, 6, 'Qta', 1, 0, 'R', True)
-        pdf.cell(25, 6, 'Prezzo No IVA', 1, 0, 'R', True)
-        pdf.cell(15, 6, 'Sc.%', 1, 0, 'C', True)
-        pdf.cell(20, 6, 'IVA', 1, 0, 'C', True)
-        pdf.cell(25, 6, 'Totale', 1, 1, 'R', True)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def add_items_table_row_with_discount(
-        pdf,
-        code: str,
-        description: str,
-        quantity: float,
-        unit_price: float,
-        reduction_percent: float,
-        vat_rate: float,
-        total_with_vat: float
-    ) -> Dict[str, float]:
-        """Aggiunge una riga alla tabella articoli con colonna Sc.%"""
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(30, 5, str(code)[:15], 1, 0, 'L')
-        pdf.cell(60, 5, str(description)[:30], 1, 0, 'L')
-        pdf.cell(15, 5, f"{quantity:.0f}", 1, 0, 'R')
-        pdf.cell(25, 5, f"{unit_price:.2f} EUR", 1, 0, 'R')
-        pdf.cell(15, 5, f"{reduction_percent:.0f}%" if reduction_percent > 0 else "-", 1, 0, 'C')
-        pdf.cell(20, 5, f"{vat_rate}%" if vat_rate else "-", 1, 0, 'C')
-        pdf.cell(25, 5, f"{total_with_vat:.2f} EUR", 1, 1, 'R')
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_shipping_info_section(pdf, total_quantity: int, total_weight: float) -> Dict[str, float]:
-        """Crea sezione informazioni spedizione"""
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(0, 5, 'INFORMAZIONI SPEDIZIONE E RIEPILOGO', 0, 1, 'L')
-        pdf.ln(2)
-        
-        y_shipping = pdf.get_y()
-        col_w = 63
-        
-        pdf.set_xy(10, y_shipping)
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(col_w, 4, 'Tot. Quant.', 1, 0, 'L')
-        pdf.cell(col_w, 4, 'Peso (Kg)', 1, 0, 'L')
-        pdf.cell(col_w, 4, 'Colli', 1, 1, 'L')
-        
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(col_w, 4, str(int(total_quantity)), 1, 0, 'C')
-        pdf.cell(col_w, 4, f"{total_weight:.3f}", 1, 0, 'C')
-        pdf.cell(col_w, 4, '1', 1, 1, 'C')
-        
-        pdf.ln(2)
-        
-        # Porto, Causale, Inizio trasporto
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(col_w, 4, 'Porto', 1, 0, 'L')
-        pdf.cell(col_w, 4, 'Causale trasporto', 1, 0, 'L')
-        pdf.cell(col_w, 4, 'Inizio trasporto', 1, 1, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(col_w, 4, '-', 1, 0, 'C')
-        pdf.cell(col_w, 4, '-', 1, 0, 'C')
-        pdf.cell(col_w, 4, '-', 1, 1, 'C')
-        
-        pdf.ln(3)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_vat_summary_section(
-        pdf,
-        subtotal: float,
-        shipping_cost: float,
-        total_vat: float,
-        shipping_vat_percentage: float,
-        shipping_cost_with_vat: float
-    ) -> Dict[str, float]:
-        """Crea sezione riepilogo IVA"""
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(0, 5, 'RIEPILOGO IVA E TOTALI', 0, 1, 'L')
-        pdf.ln(1)
-        
-        pdf.set_font('Arial', 'B', 8)
-        pdf.set_fill_color(224, 224, 224)
-        pdf.cell(25, 5, 'Aliquota', 1, 0, 'C', True)
-        pdf.cell(35, 5, 'Imp. Merce', 1, 0, 'R', True)
-        pdf.cell(35, 5, 'Imp. Spese', 1, 0, 'R', True)
-        pdf.cell(35, 5, 'Tot. IVA', 1, 0, 'R', True)
-        pdf.cell(60, 5, '', 0, 1)
-        
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, '22%', 1, 0, 'C')
-        pdf.cell(35, 5, f"{subtotal:.2f}", 1, 0, 'R')
-        pdf.cell(35, 5, f"{shipping_cost:.2f}", 1, 0, 'R')
-        pdf.cell(35, 5, f"{total_vat:.2f}", 1, 0, 'R')
-        
-        shipping_label = 'Spese trasporto'
-        if shipping_vat_percentage:
-            shipping_label += f' (+{shipping_vat_percentage}% IVA)'
-        
-        pdf.set_xy(140, pdf.get_y())
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(35, 5, shipping_label, 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, f"{shipping_cost_with_vat:.2f}", 0, 1, 'R')
-        
-        pdf.ln(5)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_fiscal_totals_section(
-        pdf,
-        subtotal: float,
-        total_imponibile: float,
-        total_with_vat_sum: float,
-        total_vat: float,
-        total_doc: float
-    ) -> Dict[str, float]:
-        """Crea sezione totali finali per documenti fiscali"""
-        y_totals = pdf.get_y()
-        
-        # Colonna sinistra
-        pdf.set_xy(10, y_totals)
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(45, 5, 'Merce netta', 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, f"{subtotal:.2f}", 0, 1, 'R')
-        
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(45, 5, 'Totale imponibile', 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, f"{total_imponibile:.2f}", 0, 1, 'R')
-        
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(45, 5, 'Spese incasso', 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, '0,00', 0, 1, 'R')
-        
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(45, 5, 'Merce lorda', 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, f"{total_with_vat_sum:.2f}", 0, 1, 'R')
-        
-        # Colonna destra
-        pdf.set_xy(130, y_totals)
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(45, 5, 'Totale IVA', 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, f"{total_vat:.2f}", 0, 1, 'R')
-        
-        pdf.set_xy(130, pdf.get_y())
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(45, 5, 'Spese varie', 0, 0, 'L')
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(25, 5, '0,00', 0, 1, 'R')
-        
-        # Totale documento
-        pdf.ln(2)
-        pdf.set_xy(130, pdf.get_y())
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(45, 8, 'Totale documento', 0, 0, 'L')
-        pdf.cell(25, 8, f"{total_doc:.2f} EUR", 0, 1, 'R')
-        
-        pdf.ln(3)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_payment_section(
-        pdf,
-        payment_text: str = '-',
-        deadlines_text: str = '',
-        col_width: float = 95
-    ) -> Dict[str, float]:
-        """Crea la sezione pagamento e scadenze"""
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(col_width, 5, 'Pagamento', 1, 0, 'L')
-        pdf.cell(col_width, 5, 'Scadenze', 1, 1, 'L')
-        
-        pdf.set_font('Arial', '', 9)
-        pdf.cell(col_width, 5, payment_text, 1, 0, 'L')
-        pdf.cell(col_width, 5, deadlines_text, 1, 1, 'L')
-        
-        pdf.ln(2)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def create_transport_signature_section(
-        pdf,
-        transporter_label: str = 'Incaricato del trasporto',
-        appearance_label: str = 'Aspetto esteriore dei beni',
-        recipient_label: str = 'Firma destinatario',
-        driver_label: str = 'Firma conducente',
-        col_width_1: float = 63,
-        col_width_2: float = 95
-    ) -> Dict[str, float]:
-        """Crea la sezione firma trasporto"""
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(col_width_1, 5, transporter_label, 1, 0, 'L')
-        pdf.cell(col_width_1, 5, appearance_label, 1, 0, 'L')
-        pdf.cell(64, 5, '', 0, 1)
-        
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(col_width_1, 8, '', 1, 0, 'L')
-        pdf.cell(col_width_1, 8, '', 1, 1, 'L')
-        
-        pdf.ln(1)
-        pdf.set_font('Arial', 'B', 8)
-        pdf.cell(col_width_2, 5, recipient_label, 1, 0, 'L')
-        pdf.cell(col_width_2, 5, driver_label, 1, 1, 'L')
-        
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(col_width_2, 8, '', 1, 0, 'L')
-        pdf.cell(col_width_2, 8, '', 1, 1, 'L')
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def add_fiscal_notes(
-        pdf,
-        is_credit_note: bool = False,
-        credit_note_reason: Optional[str] = None,
-        order_note: Optional[str] = None
-    ) -> Dict[str, float]:
-        """Aggiunge note specifiche per documenti fiscali"""
-        if is_credit_note and credit_note_reason:
-            pdf.set_font('Arial', 'B', 9)
-            pdf.cell(0, 5, 'Motivo nota di credito:', 0, 1)
-            pdf.set_font('Arial', '', 9)
-            pdf.multi_cell(0, 5, credit_note_reason)
-            pdf.ln(2)
-        
-        if order_note:
-            pdf.set_font('Arial', 'B', 9)
-            pdf.cell(0, 5, 'Note:', 0, 1)
-            pdf.set_font('Arial', '', 9)
-            pdf.multi_cell(0, 5, order_note)
-        
-        return {'y_end': pdf.get_y()}
-    
-    @staticmethod
-    def add_footer(pdf, text: str = None, spacing_before: float = 10.0) -> Dict[str, float]:
-        """Aggiunge un footer al PDF"""
-        pdf.ln(spacing_before)
-        
-        if text is None:
-            text = f"Documento generato automaticamente - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        
-        pdf.set_font('Arial', 'I', 8)
-        pdf.set_text_color(128, 128, 128)
-        pdf.cell(0, 5, text, 0, 1, 'C')
-        
-        return {'y_end': pdf.get_y()}
 
+    def _build_context(
+        self,
+        *,
+        fiscal_document,
+        order,
+        invoice_address,
+        delivery_address,
+        details_with_products: List[Dict[str, Any]],
+        payment_name: Optional[str],
+        company_config: Dict[str, Any],
+        referenced_invoice,
+        db,
+        invoice_pdf_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        is_credit_note = fiscal_document.document_type == "credit_note"
+        doc_number = (
+            fiscal_document.document_number
+            or fiscal_document.internal_number
+            or "N/A"
+        )
+        doc_date = (
+            format_emission_datetime(fiscal_document.date_add)
+            if fiscal_document.date_add
+            else ""
+        )
+        # Solo data (gg/mm/aaaa) per allineamento campioni
+        if fiscal_document.date_add and hasattr(fiscal_document.date_add, "strftime"):
+            doc_date = fiscal_document.date_add.strftime("%d/%m/%Y")
+
+        country_iso = resolve_country_iso(invoice_address, delivery_address)
+        locale = resolve_invoice_locale(country_iso)
+        labels = get_invoice_labels(locale)
+
+        logo_path = company_config.get("company_logo", "media/logos/logo.png")
+        if getattr(fiscal_document, "id_store", None) and db:
+            from src.models.store import Store
+            import os
+
+            store = (
+                db.query(Store)
+                .filter(Store.id_store == fiscal_document.id_store)
+                .first()
+            )
+            if store:
+                logo_path = get_store_logo_path(store, fallback_path=logo_path)
+            if logo_path and not os.path.exists(logo_path):
+                logo_path = None
+        else:
+            import os
+
+            if logo_path and not os.path.exists(logo_path):
+                logo_path = None
+
+        # Dettagli normalizzati
+        details: List[Dict[str, Any]] = []
+        for d in details_with_products:
+            qty = self._as_float(d.get("product_qty"), 0)
+            unit_net = self._as_float(
+                d.get("unit_price_net", d.get("unit_price")), 0
+            )
+            line_net = self._as_float(
+                d.get("total_price_net", d.get("total_price_with_tax")), 0
+            )
+            # total_price_with_tax su FiscalDocumentDetail è spesso netto riga
+            # (naming legacy); preferisci total_price_net se presente
+            if d.get("total_price_net") is not None:
+                line_net = self._as_float(d.get("total_price_net"), 0)
+            vat_rate = self._as_float(d.get("vat_rate"), 0)
+            details.append(
+                {
+                    "product_reference": d.get("product_reference") or "",
+                    "product_name": d.get("product_name") or "",
+                    "product_qty": qty,
+                    "unit_price_net": unit_net,
+                    "total_price_net": line_net,
+                    "reduction_percent": self._as_float(
+                        d.get("reduction_percent"), 0
+                    ),
+                    "vat_rate": vat_rate,
+                    "vat_display": d.get("vat_display"),
+                    "tax_note": (d.get("tax_note") or "").strip() or None,
+                }
+            )
+
+        totals, vat_summary = self._compute_totals(
+            fiscal_document=fiscal_document,
+            order=order,
+            details=details,
+            db=db,
+        )
+
+        order_reference = "-"
+        order_date: Optional[datetime] = None
+        if order:
+            order_reference = order.reference or str(order.id_order)
+            order_date = order.date_add
+
+        deadlines_text = ""
+        if order and getattr(order, "payment_due_date", None):
+            due = order.payment_due_date
+            if hasattr(due, "strftime"):
+                deadlines_text = due.strftime("%d/%m/%Y")
+            else:
+                deadlines_text = str(due)
+
+        credit_note_ref_number = None
+        credit_note_ref_date = None
+        if is_credit_note and referenced_invoice:
+            credit_note_ref_number = (
+                referenced_invoice.document_number
+                or referenced_invoice.internal_number
+            )
+            if referenced_invoice.date_add and hasattr(
+                referenced_invoice.date_add, "strftime"
+            ):
+                credit_note_ref_date = referenced_invoice.date_add.strftime(
+                    "%d/%m/%Y"
+                )
+
+        notes_text = self._build_notes_text(
+            invoice_pdf_config=invoice_pdf_config,
+            details=details,
+        )
+
+        return {
+            "company_config": company_config,
+            "logo_path": logo_path,
+            "labels": labels,
+            "locale": locale,
+            "doc_number": doc_number,
+            "doc_date": doc_date,
+            "is_credit_note": is_credit_note,
+            "credit_note_ref_number": credit_note_ref_number,
+            "credit_note_ref_date": credit_note_ref_date,
+            "credit_note_reason": getattr(
+                fiscal_document, "credit_note_reason", None
+            ),
+            "invoice_address": invoice_address,
+            "delivery_address": delivery_address,
+            "order_reference": order_reference,
+            "order_date": order_date,
+            "details": details,
+            "totals": totals,
+            "vat_summary": vat_summary,
+            "payment_name": payment_name or "-",
+            "deadlines_text": deadlines_text,
+            "notes_text": notes_text,
+            "packages": 1,
+        }
+
+    def _compute_totals(
+        self,
+        *,
+        fiscal_document,
+        order,
+        details: List[Dict[str, Any]],
+        db,
+    ) -> tuple:
+        merchandise_net = sum(
+            self._as_float(d.get("total_price_net"), 0) for d in details
+        )
+        if order and getattr(order, "products_total_price_net", None):
+            merchandise_net = self._as_float(order.products_total_price_net)
+
+        shipping_excl = 0.0
+        shipping_incl = 0.0
+        shipping_vat_rate = 0.0
+
+        shipping = None
+        if order and getattr(order, "shipments", None):
+            shipping = order.shipments
+        if shipping:
+            shipping_excl = self._as_float(shipping.price_tax_excl)
+            shipping_incl = self._as_float(shipping.price_tax_incl)
+            if getattr(shipping, "id_tax", None) and db:
+                from src.repository.tax_repository import TaxRepository
+
+                tax_repo = TaxRepository(db)
+                shipping_vat_rate = self._as_float(
+                    tax_repo.get_percentage_by_id(shipping.id_tax)
+                )
+                if shipping_vat_rate and not shipping_incl and shipping_excl:
+                    shipping_incl = shipping_excl * (
+                        1 + shipping_vat_rate / 100.0
+                    )
+
+        # Raggruppa IVA per aliquota (merce)
+        buckets: Dict[float, Dict[str, float]] = {}
+        for d in details:
+            rate = self._as_float(d.get("vat_rate"), 0)
+            net = self._as_float(d.get("total_price_net"), 0)
+            if rate not in buckets:
+                buckets[rate] = {
+                    "rate": rate,
+                    "merchandise": 0.0,
+                    "shipping": 0.0,
+                    "vat": 0.0,
+                }
+            buckets[rate]["merchandise"] += net
+            buckets[rate]["vat"] += net * (rate / 100.0)
+
+        # Assegna spese trasporto all'aliquota spedizione (o prima aliquota)
+        if shipping_excl:
+            ship_rate = shipping_vat_rate
+            if ship_rate not in buckets:
+                buckets[ship_rate] = {
+                    "rate": ship_rate,
+                    "merchandise": 0.0,
+                    "shipping": 0.0,
+                    "vat": 0.0,
+                }
+            buckets[ship_rate]["shipping"] += shipping_excl
+            buckets[ship_rate]["vat"] += shipping_excl * (ship_rate / 100.0)
+
+        vat_summary = sorted(buckets.values(), key=lambda r: r["rate"])
+        total_vat = sum(r["vat"] for r in vat_summary)
+
+        taxable_total = merchandise_net + shipping_excl
+        doc_total = self._as_float(
+            getattr(fiscal_document, "total_price_with_tax", None)
+        )
+        if not doc_total and order:
+            doc_total = self._as_float(order.total_price_with_tax)
+        if not doc_total:
+            doc_total = taxable_total + total_vat
+
+        merchandise_gross = merchandise_net + sum(
+            self._as_float(d.get("total_price_net"), 0)
+            * (self._as_float(d.get("vat_rate"), 0) / 100.0)
+            for d in details
+        )
+
+        total_weight = 0.0
+        if order and getattr(order, "total_weight", None):
+            total_weight = self._as_float(order.total_weight)
+
+        totals = {
+            "merchandise_net": merchandise_net,
+            "shipping_incl": shipping_incl,
+            "shipping_excl": shipping_excl,
+            "taxable_total": taxable_total,
+            "collection_fee": 0.0,
+            "merchandise_gross": merchandise_gross,
+            "total_vat": total_vat,
+            "misc_fee": 0.0,
+            "doc_total": doc_total,
+            "total_weight": total_weight,
+        }
+        return totals, vat_summary
+
+    @staticmethod
+    def _build_notes_text(
+        *,
+        invoice_pdf_config: Dict[str, Any],
+        details: List[Dict[str, Any]],
+    ) -> str:
+        disclaimer = (
+            invoice_pdf_config.get("pre_invoice_disclaimer") or ""
+        ).strip()
+        if not disclaimer:
+            disclaimer = DEFAULT_PRE_INVOICE_DISCLAIMER
+
+        append_flag = str(
+            invoice_pdf_config.get("append_tax_normative", "true")
+        ).strip().lower()
+        append = append_flag in ("1", "true", "yes", "si", "sì")
+
+        parts = [disclaimer]
+        if append:
+            seen = set()
+            for d in details:
+                note = (d.get("tax_note") or "").strip()
+                if note and note not in seen:
+                    seen.add(note)
+                    parts.append(note)
+
+        return " ".join(parts)

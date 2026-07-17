@@ -63,6 +63,7 @@ Tabella `app_configurations`:
 | `company_info` | `vat_number`, `company_name`, `address`, `civic_number`, `postal_code`, `city`, `province`, `phone`, `email`, `iban`, `bank_name` |
 | `electronic_invoicing` | `tax_regime` (es. `RF01`) |
 | `fatturapa` | `api_key`, `base_url` (default `https://api.fatturapa.com/ws/V10.svc/rest`) |
+| `invoice_pdf` | `pre_invoice_disclaimer` (dicitura NOTE PDF), `append_tax_normative` (`true`/`false`) |
 
 Variabili env di fallback (se non in DB): `FATTURAPA_API_KEY`, `FATTURAPA_BASE_URL`, `COMPANY_VAT_NUMBER`, ecc.
 
@@ -123,11 +124,10 @@ Crea uno snapshot fiscale dell'ordine. **Non genera XML** né invia allo SDI.
 #### Regole business
 
 - L'ordine deve esistere.
+- È consentito creare **più fatture** sullo stesso ordine (re-emissione / integrazioni).
 - Se `is_electronic=true`: `address_invoice` deve essere **IT**.
 - Auto-impostati: `document_type=invoice`, `tipo_documento_fe=TD01`, `includes_shipping=true`, numerazione sequenziale elettronica, `status=pending` (elettronica) o `issued` (non elettronica).
 - Righe: copia da tutti gli `order_details` in `fiscal_document_details` con ricalcolo totali.
-
-> **Nota:** la doc OpenAPI menziona che l'ordine non debba avere già una fattura, ma **non c'è un controllo duplicati** nel repository — tecnicamente sono possibili più fatture per ordine (integrazioni).
 
 #### Response
 
@@ -198,8 +198,22 @@ Risposta intermediario salvata in `upload_result` (JSON string).
 
 ### GET `/{id_fiscal_document}/pdf`
 
-**Permesso:** `fiscal_documents:read`  
-Genera/scarica PDF fattura o nota di credito. Data documento con ora (Europe/Rome); XML resta con sola data (requisito SDI).
+**Permesso:** `fiscal_documents:read`
+
+Genera/scarica il **PDF pre-fattura** (o nota di credito) in layout elettronew B/N.
+
+| Aspetto | Comportamento |
+|---------|---------------|
+| Motore | fpdf2 (`FiscalDocumentPDFService` → `FiscalDocumentPDFLayout`) |
+| Lingue etichette | IT, FR, DE, ES, EN — da `country.iso_code` dell'indirizzo di fatturazione |
+| NOTE | Testo fisso da `invoice_pdf.pre_invoice_disclaimer` (+ eventuali `tax.note` se `append_tax_normative=true`). **Non** include `order.general_note` |
+| Multipagina | Header ripetuto (logo, anagrafica, titoli, intestazione tabella); footer `Pagina X di Y` |
+| Data PDF | `gg/mm/aaaa` dal `date_add` del documento |
+| XML SDI | Resta con sola data (requisito SDI); il PDF è un documento di cortesia / pre-invio |
+
+Il PDF **non** sostituisce l'originale elettronico trasmesso allo SDI (dicitura art. 21 DPR 633/72).
+
+File: `src/services/pdf/fiscal_document_pdf_service.py`, `src/services/pdf/fiscal_document_pdf_layout.py`, `src/services/pdf/i18n/`.
 
 ### PATCH `/{id_fiscal_document}/status`
 
@@ -349,7 +363,7 @@ Gap P0-05. Verificare che il tax VIES abbia `electronic_code=N3.2` e che l'esenz
 | Normalizzazione Natura | `src/services/external/fatturapa_natura.py` |
 | Tax per riga + VIES N3.2 | `src/services/external/fatturapa_tax_line.py` |
 | Scadenza pagamento XML | `resolve_payment_due_date()` in `fatturapa_service.py` |
-| PDF | `src/services/pdf/fiscal_document_pdf_service.py` |
+| PDF | `src/services/pdf/fiscal_document_pdf_service.py`, `fiscal_document_pdf_layout.py`, `i18n/` |
 | Schemi Pydantic | `src/schemas/fiscal_document_schema.py` |
 | Modello ORM | `src/models/fiscal_document.py` |
 | VIES ordini | `src/services/vies/`, `src/vies/tax_resolution.py` |

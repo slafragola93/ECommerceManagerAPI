@@ -96,6 +96,19 @@ APP_CONFIGURATIONS_DATA = [
     ("electronic_invoicing", "withholding_type", "Tipo ritenuta", False),
     ("electronic_invoicing", "vat_deductibility", "Esigibilità IVA", False),
     ("electronic_invoicing", "payment_type", "Tipo pagamento", False),
+    # invoice_pdf (dicitura NOTE pre-fattura)
+    (
+        "invoice_pdf",
+        "pre_invoice_disclaimer",
+        "Dicitura legale NOTE sul PDF pre-fattura",
+        False,
+    ),
+    (
+        "invoice_pdf",
+        "append_tax_normative",
+        "Concatena tax.note (riferimento normativo) alle NOTE PDF (true/false)",
+        False,
+    ),
     # fatturapa
     ("fatturapa", "api_key", "Chiave API Fatturapa", True),
     # email_settings
@@ -150,8 +163,15 @@ def setup_shipping_states(db):
 
 def setup_app_configurations(db):
     """Inserisce App Configuration (stesse chiavi in tabella, value vuoto)."""
+    from src.services.pdf.i18n.invoice_pdf_labels import DEFAULT_PRE_INVOICE_DISCLAIMER
+
     print("\n🔧 App Configurations...")
     created = 0
+    # Default value per chiavi invoice_pdf (dicitura precompilata)
+    default_values = {
+        ("invoice_pdf", "pre_invoice_disclaimer"): DEFAULT_PRE_INVOICE_DISCLAIMER,
+        ("invoice_pdf", "append_tax_normative"): "true",
+    }
     for category, name, description, is_encrypted in APP_CONFIGURATIONS_DATA:
         existing = db.query(AppConfiguration).filter(
             AppConfiguration.category == category,
@@ -163,7 +183,7 @@ def setup_app_configurations(db):
                 id_store=None,
                 category=category,
                 name=name,
-                value="",
+                value=default_values.get((category, name), ""),
                 description=description,
                 is_encrypted=is_encrypted,
             ))

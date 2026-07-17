@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 import os
 
 from src.services.ricevute.date_utils import format_emission_datetime
+from src.services.pdf.i18n.locale_resolver import resolve_country_iso
 from src.services.pdf.order_pdf_service import (
     CONTENT_W,
     CONTENT_X,
@@ -73,13 +74,8 @@ def _labels_for_country(iso_code: Optional[str]) -> Dict[str, Any]:
 
 
 def _resolve_iso_code(invoice_address, delivery_address) -> Optional[str]:
-    for addr in (invoice_address, delivery_address):
-        if not addr:
-            continue
-        country = getattr(addr, "country", None)
-        if country and getattr(country, "iso_code", None):
-            return str(country.iso_code).upper()
-    return None
+    """Compatibilità: delega a locale_resolver condiviso."""
+    return resolve_country_iso(invoice_address, delivery_address)
 
 
 def _vat_display(vat_rate: float, tax_code: Optional[str], iso_code: Optional[str]) -> str:

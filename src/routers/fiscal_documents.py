@@ -70,8 +70,8 @@ async def create_invoice(
     Crea una nuova fattura per un ordine
     
     ## Regole:
-    - L'ordine non deve avere già una fattura
-    - Se `is_electronic=True`, l'indirizzo deve essere italiano (id_country=1)
+    - È consentito creare più fatture sullo stesso ordine (re-emissione / integrazioni)
+    - Se `is_electronic=True`, l'indirizzo deve essere italiano
     - Viene generato automaticamente un numero sequenziale per fatture elettroniche
     - Il tipo documento FatturaPA sarà TD01
     """
@@ -98,7 +98,7 @@ async def get_invoices_by_order(
     """
     Recupera tutte le fatture di un ordine
     
-    Un ordine può avere multiple fatture (es. fattura iniziale + integrazioni)
+    Un ordine può avere multiple fatture (es. re-emissione, integrazioni).
     """
     invoices = await fiscal_service.get_invoices_by_order_response(id_order)
 
@@ -655,16 +655,22 @@ async def send_to_sdi(
 
 # ==================== GENERAZIONE PDF ====================
 
-def _generate_pdf_with_fpdf(fiscal_document, order, invoice_address, delivery_address, 
-                            details_with_products, payment_name, company_config, 
-                            db, referenced_invoice=None) -> BytesIO:
-    """
-    DEPRECATED: Usa FiscalDocumentPDFService.generate_pdf()
-    Questa funzione è mantenuta per compatibilità ma viene sostituita da FiscalDocumentPDFService
-    """
+def _generate_pdf_with_fpdf(
+    fiscal_document,
+    order,
+    invoice_address,
+    delivery_address,
+    details_with_products,
+    payment_name,
+    company_config,
+    db,
+    referenced_invoice=None,
+    invoice_pdf_config=None,
+) -> BytesIO:
+    """Genera PDF via FiscalDocumentPDFService (layout elettronew + i18n)."""
     from src.services.pdf.fiscal_document_pdf_service import FiscalDocumentPDFService
     from io import BytesIO
-    
+
     pdf_service = FiscalDocumentPDFService()
     pdf_bytes = pdf_service.generate_pdf(
         fiscal_document=fiscal_document,
@@ -675,10 +681,10 @@ def _generate_pdf_with_fpdf(fiscal_document, order, invoice_address, delivery_ad
         payment_name=payment_name,
         company_config=company_config,
         referenced_invoice=referenced_invoice,
-        db=db
+        db=db,
+        invoice_pdf_config=invoice_pdf_config or {},
     )
-    
-    # Converte bytes in BytesIO per compatibilità
+
     pdf_buffer = BytesIO()
     pdf_buffer.write(pdf_bytes)
     pdf_buffer.seek(0)
@@ -693,19 +699,18 @@ async def generate_fiscal_document_pdf(
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
-    Genera PDF per documento fiscale (fattura o nota di credito)
-    
+    Genera PDF pre-fattura / nota di credito (layout elettronew + i18n).
+
     ## Processo:
     1. Recupera documento fiscale con ordine e indirizzi
-    2. Recupera dettagli articoli
-    3. Recupera configurazioni aziendali
-    4. Genera HTML del documento
-    5. Converte in PDF con WeasyPrint
-    
+    2. Recupera dettagli articoli e aliquote IVA
+    3. Recupera `company_info` e `invoice_pdf` (dicitura NOTE)
+    4. Genera PDF con fpdf2 (etichette IT/FR/DE/ES/EN in base al paese cliente)
+
     ## Output:
     - Content-Type: application/pdf
     - Content-Disposition: attachment con nome file
-    
+
     ## Validazioni:
     - Se nota di credito senza riferimento fattura → 400
     - Se non ci sono dettagli → 404
@@ -752,49 +757,63 @@ async def generate_fiscal_document_pdf(
             detail=f"Nessun articolo trovato nel documento {id_fiscal_document}. Impossibile generare PDF."
         )
     
-    # Arricchisci dettagli con info prodotto e IVA
+    # Arricchisci dettagli: preferisci snapshot FiscalDocumentDetail (id_tax/importi),
+    # non i valori live di OrderDetail (possono essere cambiati dopo l'emissione).
     details_with_products = []
     for detail in details:
         order_detail = db.query(OrderDetail).filter(
             OrderDetail.id_order_detail == detail.id_order_detail
         ).first()
-        
-        # Recupera IVA
+
+        # Aliquota: snapshot fattura → fallback ordine
         vat_rate = 0
-        if order_detail and order_detail.id_tax:
-            tax = db.query(Tax).filter(Tax.id_tax == order_detail.id_tax).first()
+        tax_note = None
+        tax_id = detail.id_tax or (order_detail.id_tax if order_detail else None)
+        if tax_id:
+            tax = db.query(Tax).filter(Tax.id_tax == tax_id).first()
             if tax:
                 vat_rate = tax.percentage
-        
+                tax_note = (tax.note or "").strip() or None
+
+        unit_price_net = detail.unit_price_net
+        if unit_price_net is None and order_detail:
+            unit_price_net = getattr(order_detail, "unit_price_net", None) or getattr(
+                order_detail, "product_price", None
+            )
+        total_price_net = detail.total_price_net
+        if total_price_net is None and order_detail:
+            total_price_net = getattr(order_detail, "total_price_net", None)
+
         details_with_products.append({
             'id_fiscal_document_detail': detail.id_fiscal_document_detail,
             'id_order_detail': detail.id_order_detail,
             'product_qty': detail.product_qty,
-            'unit_price': detail.unit_price,
+            'unit_price': detail.unit_price_net if detail.unit_price_net is not None else detail.unit_price,
+            'unit_price_net': unit_price_net if unit_price_net is not None else detail.unit_price,
             'total_price_with_tax': detail.total_price_with_tax,
+            'total_price_net': total_price_net if total_price_net is not None else detail.total_price_with_tax,
             'product_name': order_detail.product_name if order_detail else 'N/A',
             'product_reference': order_detail.product_reference if order_detail else 'N/A',
             'reduction_percent': order_detail.reduction_percent if order_detail else 0.0,
-            'vat_rate': vat_rate
+            'vat_rate': vat_rate,
+            'tax_note': tax_note,
+            'id_tax': tax_id,
         })
-    
+
     # Recupera metodo pagamento
     payment_name = None
     if order.id_payment:
         payment = db.query(Payment).filter(Payment.id_payment == order.id_payment).first()
         if payment:
             payment_name = payment.name
-    
-    # Recupera configurazioni azienda
+
+    # Recupera configurazioni azienda + dicitura PDF
     app_config_repo = AppConfigurationRepository(db)
     company_config = {}
-    
-    # Prova a recuperare configurazioni dalla categoria 'company_info'
     company_configs = app_config_repo.get_by_category('company_info')
     for config in company_configs:
         company_config[config.name] = config.value or ''
-    
-    # Fallback se non ci sono configurazioni
+
     if not company_config:
         company_config = {
             'company_name': 'Azienda',
@@ -804,12 +823,16 @@ async def generate_fiscal_document_pdf(
             'company_pec': 'PEC',
             'company_sdi': 'SDI'
         }
-    
+
+    invoice_pdf_config = {}
+    for config in app_config_repo.get_by_category('invoice_pdf'):
+        invoice_pdf_config[config.name] = config.value or ''
+
     # Recupera fattura di riferimento per note di credito
     referenced_invoice = None
     if fiscal_document.document_type == 'credit_note' and fiscal_document.id_fiscal_document_ref:
         referenced_invoice = fiscal_repo.get_fiscal_document_by_id(fiscal_document.id_fiscal_document_ref)
-    
+
     # Genera PDF
     pdf_buffer = _generate_pdf_with_fpdf(
         fiscal_document=fiscal_document,
@@ -820,7 +843,8 @@ async def generate_fiscal_document_pdf(
         payment_name=payment_name,
         company_config=company_config,
         db=db,
-        referenced_invoice=referenced_invoice
+        referenced_invoice=referenced_invoice,
+        invoice_pdf_config=invoice_pdf_config,
     )
     
     # Determina nome file
