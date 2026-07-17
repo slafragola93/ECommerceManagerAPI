@@ -85,23 +85,31 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
             if 'id_shipping_state' not in shipping_data or shipping_data.get('id_shipping_state') is None:
                 shipping_data['id_shipping_state'] = 1
             
-            # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
-            if (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
-                from src.services.core.tool import get_tax_percentage_by_address_delivery_id, calculate_price_without_tax
-                
-                tax_percentage = None
-                # Se shipping è collegato a un ordine, recupera id_country da address_delivery dell'ordine
+            incl = float(shipping_data.get("price_tax_incl") or 0)
+            excl_raw = shipping_data.get("price_tax_excl")
+            has_excl = excl_raw is not None and float(excl_raw or 0) > 0
+            if incl > 0 and (not has_excl or id_order):
+                from src.models.order import Order
+                from src.services.core.shipping_tax import apply_delivery_tax_to_shipping_data
+
+                vies_status = None
+                id_address_delivery = None
                 if id_order:
-                    from src.models.order import Order
-                    id_address_delivery = self._session.query(Order.id_address_delivery).filter(Order.id_order == id_order).scalar()
-                    if id_address_delivery:
-                        tax_percentage = get_tax_percentage_by_address_delivery_id(self._session, id_address_delivery, default=None)
-                
-                # Se non trovato, usa percentuale default da app_configuration
-                if tax_percentage is None:
-                    tax_percentage = self._tax_repository.get_default_tax_percentage_from_app_config(default=22.0)
-                
-                shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
+                    order_row = (
+                        self._session.query(Order.id_address_delivery, Order.vies_status)
+                        .filter(Order.id_order == id_order)
+                        .first()
+                    )
+                    if order_row:
+                        id_address_delivery = order_row.id_address_delivery
+                        vies_status = order_row.vies_status
+
+                apply_delivery_tax_to_shipping_data(
+                    self._session,
+                    shipping_data,
+                    id_address_delivery=id_address_delivery,
+                    vies_status=vies_status,
+                )
             
             
             # Crea l'istanza del modello

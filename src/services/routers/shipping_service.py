@@ -169,6 +169,31 @@ class ShippingService(IShippingService):
                         ErrorCode.VALIDATION_ERROR,
                         details={"invalid_field": field_name}
                     )
+
+            tax_fields = {"price_tax_incl", "price_tax_excl", "id_tax"}
+            explicit_both_prices = (
+                "price_tax_incl" in update_data and "price_tax_excl" in update_data
+            )
+            if (
+                not explicit_both_prices
+                and tax_fields & update_data.keys()
+                and float(shipping.price_tax_incl or 0) > 0
+            ):
+                session = getattr(self._shipping_repository, "_session", None)
+                if session is not None:
+                    order = (
+                        session.query(Order)
+                        .filter(Order.id_shipping == shipping_id)
+                        .first()
+                    )
+                    if order is not None:
+                        from src.services.core.shipping_tax import (
+                            apply_delivery_tax_to_shipping,
+                        )
+
+                        apply_delivery_tax_to_shipping(
+                            session, shipping, order=order
+                        )
             
             updated_shipping = self._shipping_repository.update(shipping)
             

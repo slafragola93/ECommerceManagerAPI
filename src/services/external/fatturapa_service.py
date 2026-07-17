@@ -3,19 +3,24 @@ import json
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import logging
 
 from src.models.tax import Tax
-from src.services.core.tool import calculate_amount_with_percentage
 from src.models import Order, Address, FiscalDocument, FiscalDocumentDetail, OrderDetail, Country
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.tax_repository import TaxRepository
 from src.services.external.province_service import province_service
 from src.services.external.fatturapa_validator import FatturaPAValidator
-from src.services.external.fatturapa_natura import normalize_natura_code
+from src.services.external.fatturapa_tax_line import (
+    FatturaPALineTax,
+    build_riepilogo_groups,
+    enrich_line_item_tax_fields,
+    resolve_line_tax,
+    vies_eligible_from_order_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +175,77 @@ class FatturaPAService:
         results = self.db.execute(query, {"order_id": order_id}).fetchall()
         return [dict(row._mapping) for row in results]
     
+    def _load_tax(self, id_tax: Optional[int]) -> Optional[Tax]:
+        if not id_tax:
+            return None
+        return self.db.query(Tax).filter(Tax.id_tax == id_tax).first()
+
+    def _enrich_line_items_with_tax(
+        self, line_items: list, order_data: Dict[str, Any]
+    ) -> list:
+        """Arricchisce righe con tax_percentage, tax_nature, tax_note (per riga id_tax + VIES)."""
+        vies_eligible = vies_eligible_from_order_data(order_data)
+        enriched = []
+        for line in line_items:
+            tax = self._load_tax(line.get("id_tax"))
+            line_tax = resolve_line_tax(
+                tax, vies_eligible=vies_eligible, is_product_line=True
+            )
+            enriched.append(enrich_line_item_tax_fields(line, line_tax))
+        return enriched
+
+    def _resolve_shipping_line_tax(self, order_data: Dict[str, Any]) -> FatturaPALineTax:
+        """Aliquota/natura spedizione — non forza VIES N3.2 (può restare 22%)."""
+        tax = self._load_tax(order_data.get("shipping_id_tax"))
+        if tax:
+            return resolve_line_tax(
+                tax,
+                vies_eligible=vies_eligible_from_order_data(order_data),
+                is_product_line=False,
+            )
+        pct = order_data.get("shipping_tax_percentage", 22.0)
+        return FatturaPALineTax(
+            aliquota=Decimal(str(pct)),
+            natura=None,
+            riferimento_normativo=None,
+        )
+
+    def _append_dettaglio_linea_tax_tags(
+        self, dettaglio_linea: ET.Element, line_tax: FatturaPALineTax
+    ) -> None:
+        self._create_element(
+            dettaglio_linea, "AliquotaIVA", f"{float(line_tax.aliquota):.2f}"
+        )
+        if line_tax.natura:
+            self._create_element(dettaglio_linea, "Natura", line_tax.natura)
+
+    def _line_tax_for_riepilogo(
+        self, line_tax: FatturaPALineTax, net_total: Decimal
+    ) -> Dict[str, Any]:
+        return {
+            "line_net_total": float(net_total),
+            "tax_percentage": float(line_tax.aliquota),
+            "tax_nature": line_tax.natura,
+            "tax_note": line_tax.riferimento_normativo,
+        }
+
+    def _fattura_pa_line_tax_from_enriched(self, line: Dict[str, Any]) -> FatturaPALineTax:
+        return FatturaPALineTax(
+            aliquota=Decimal(str(line.get("tax_percentage", 22))),
+            natura=line.get("tax_nature"),
+            riferimento_normativo=line.get("tax_note"),
+        )
+
     def _create_element(self, parent, tag: str, text: str = None, use_prefix: bool = False, **attrs) -> ET.Element:
+        """Helper per creare elementi XML"""
+        element_tag = f"p:{tag}" if use_prefix else tag
+        element = ET.SubElement(parent, element_tag)
+        if text:
+            element.text = text
+        for key, value in attrs.items():
+            element.set(key, value)
+        return element
+
         """Helper per creare elementi XML"""
         # Usa prefisso p: solo se esplicitamente richiesto (per FatturaElettronica root)
         element_tag = f"p:{tag}" if use_prefix else tag
@@ -227,66 +302,17 @@ class FatturaPAService:
         print(f"PEC: '{customer_pec}'")
         print(f"VAT: '{customer_vat}' (originale: '{customer_vat_raw}')")
         
-        # Calcola totali corretti
-        # Recupera la percentuale IVA dal paese di delivery
-        delivery_tax_percentage = order_data.get('tax_percentage_customer')  # t_del.percentage
-        if delivery_tax_percentage is not None:
-            tax_rate = float(delivery_tax_percentage)
-        else:
-            # Recupera la percentuale IVA di default dal database
-            default_tax = self.tax_repo.get_default_tax_rate()
-            if default_tax and default_tax[0]:
-                tax_rate = float(default_tax[0])
-                print(f"[WARNING] Tax percentage not found for delivery country, using default {tax_rate}%")
-            else:
-                tax_rate = 22.0  # Fallback hardcoded se non c'è nemmeno il default nel DB
-                print(f"[WARNING] No default tax found in DB, using hardcoded fallback {tax_rate}%")
-            
-        
-        # Ricalcola imponibile e imposta dalle linee di dettaglio
-        totale_imponibile = 0
-        totale_imposta = 0
-        
-        print(f"=== DETTAGLI ARTICOLI ===")
-        for i, detail in enumerate(line_items):
-            # PROBABILI ERRORI QUI
-            product_qty = float(detail.get('product_qty', 1))
-            product_price_no_tax = float(detail.get('product_price', 0))  # Prezzo unitario senza IVA
-            
-            # Calcolo corretto imponibile e imposta
-            prezzo_totale_netto = product_price_no_tax * product_qty  # Imponibile (base imponibile)
-            imposta_linea = calculate_amount_with_percentage(prezzo_totale_netto, tax_rate)  # IVA = imponibile * aliquota 
-            
-            print(f"  Prezzo unitario senza IVA: {product_price_no_tax:.4f}")
-            print(f"  Quantità: {product_qty:.2f}")
-            print(f"  Imponibile linea: {prezzo_totale_netto:.4f}")
-            print(f"  Imposta linea ({tax_rate}%): {imposta_linea:.4f}")
-            
-            totale_imponibile += prezzo_totale_netto
-            totale_imposta += imposta_linea
-        
-        # Calcola il totale con IVA usando total_price dell'ordine * percentuale tassa
         total_amount = float(order_data.get('total_price', 0))
-        totale_imponibile = total_amount / (1 + tax_rate / 100)
-        totale_imposta = total_amount - totale_imponibile
-        
-        print(f"=== TOTALI CALCOLATI ===")
-        print(f"Totale imponibile: {totale_imponibile:.2f}")
-        print(f"Totale imposta: {totale_imposta:.2f}")
-        print(f"Totale con IVA: {total_amount:.2f}")
-        
 
-        # Se non ci sono dettagli, usa il totale dell'ordine
-        if totale_imponibile == 0:
-            logger.warning("Nessun dettaglio ordine trovato, uso totale ordine")
-            total_amount = float(order_data.get('total_price', 0))
-            if total_amount > 0:
-                totale_imponibile = total_amount / (1 + tax_rate / 100)
-                totale_imposta = total_amount - totale_imponibile
-                print(f"Totale ordine: {total_amount:.2f}")
-                print(f"Imponibile calcolato: {totale_imponibile:.2f}")
-                print(f"Imposta calcolata: {totale_imposta:.2f}")
-        
+        if line_items and "tax_percentage" not in line_items[0]:
+            line_items = self._enrich_line_items_with_tax(line_items, order_data)
+
+        riepilogo_lines: List[Dict[str, Any]] = []
+
+        print(f"=== TOTALI DOCUMENTO ===")
+        print(f"Totale con IVA: {total_amount:.2f}")
+        print(f"VIES eligible: {vies_eligible_from_order_data(order_data)}")
+
         print(f"=== CREAZIONE XML ===")
         # Crea root element con prefisso p:
         root = ET.Element("p:FatturaElettronica")
@@ -478,123 +504,127 @@ class FatturaPAService:
         numero_sequenziale = int(document_number)
         self._create_element(dati_generali_documento, "Numero", str(numero_sequenziale))
         self._create_element(dati_generali_documento, "ImportoTotaleDocumento", f"{total_amount:.2f}")
-        
-        # Natura (codice breve) + RiferimentoNormativo (tax.note)
-        tax_electronic_code = normalize_natura_code(order_data.get("tax_electronic_code"))
-        tax_note = (order_data.get("tax_note") or "").strip() or None
-        
+
         # DatiBeniServizi
         dati_beni_servizi = self._create_element(body, "DatiBeniServizi")
-        
-        
-        # DettaglioLinee
-        for i, detail in enumerate(line_items, 1):
+
+        # DettaglioLinee — aliquota/natura per riga (id_tax + VIES N3.2 su prodotti)
+        line_num = 0
+        for detail in line_items:
+            line_num += 1
+            line_tax = self._fattura_pa_line_tax_from_enriched(detail)
             dettaglio_linea = self._create_element(dati_beni_servizi, "DettaglioLinee")
-            self._create_element(dettaglio_linea, "NumeroLinea", str(i))
+            self._create_element(dettaglio_linea, "NumeroLinea", str(line_num))
             self._create_element(dettaglio_linea, "Descrizione", detail.get('product_name', 'Prodotto'))
-            
-            # Quantità
+
             product_qty_raw = detail.get('product_qty')
             quantita = float(product_qty_raw) if product_qty_raw is not None else 1.0
             self._create_element(dettaglio_linea, "Quantita", f"{quantita:.2f}")
-            
-            # Prezzo unitario (product_price è il prezzo con IVA)
+
             product_price_raw = detail.get('product_price', 0)
             prezzo_unitario_netto = float(product_price_raw)
             self._create_element(dettaglio_linea, "PrezzoUnitario", f"{prezzo_unitario_netto:.2f}")
-            print(f"PrezzoUnitario: {prezzo_unitario_netto:.2f}")
 
-                      
-            # Controlla se ci sono sconti o maggiorazioni
             reduction_percent_raw = detail.get('reduction_percent', 0)
             reduction_amount_raw = detail.get('reduction_amount', 0)
-            
-            # Gestisci valori None convertendoli a 0
             reduction_percent = float(reduction_percent_raw) if reduction_percent_raw is not None else 0.0
             reduction_amount = float(reduction_amount_raw) if reduction_amount_raw is not None else 0.0
-            
-            # Calcola PrezzoTotale PRIMA dello sconto (prezzo base * quantità)
+
             prezzo_totale_base = float(prezzo_unitario_netto) * quantita
-            
-            # Applica sconti per ottenere PrezzoTotale finale (IVA esclusa)
             prezzo_totale_netto = prezzo_totale_base
-            
+
             if reduction_percent != 0:
-                # Applica sconto percentuale
                 sconto = prezzo_totale_base * (reduction_percent / 100)
                 prezzo_totale_netto = prezzo_totale_base - sconto
             elif reduction_amount != 0:
-                # Applica sconto importo (già IVA esclusa)
                 prezzo_totale_netto = prezzo_totale_base - reduction_amount
-            
-            # Arrotonda usando ROUND_HALF_UP
-            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            
-            # Tag ScontoMaggiorazione
+
+            prezzo_totale_netto = Decimal(str(prezzo_totale_netto)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+
             if reduction_percent != 0 or reduction_amount != 0:
                 sconto_maggiorazione = self._create_element(dettaglio_linea, "ScontoMaggiorazione")
                 self._create_element(sconto_maggiorazione, "Tipo", "SC")
-                
                 if reduction_percent != 0:
                     self._create_element(sconto_maggiorazione, "Percentuale", f"{reduction_percent:.2f}")
                 elif reduction_amount != 0:
-                    # reduction_amount è già IVA esclusa
                     self._create_element(sconto_maggiorazione, "Importo", f"{reduction_amount:.2f}")
-            
-            # PrezzoTotale = prezzo base * quantità - sconti (IVA ESCLUSA)
+
             self._create_element(dettaglio_linea, "PrezzoTotale", f"{prezzo_totale_netto:.2f}")
-            
-            self._create_element(dettaglio_linea, "AliquotaIVA", f"{tax_rate:.2f}")
-            if tax_electronic_code:
-                self._create_element(dettaglio_linea, "Natura", tax_electronic_code)
-        
-        # Aggiungi linea per sconti se total_discounts > 0
+            self._append_dettaglio_linea_tax_tags(dettaglio_linea, line_tax)
+            riepilogo_lines.append(
+                self._line_tax_for_riepilogo(line_tax, prezzo_totale_netto)
+            )
+
+        # Buoni sconto (stessa aliquota della prima riga prodotto)
         total_discounts = float(order_data.get('total_discounts', 0))
         if total_discounts > 0:
-            total_discounts_no_iva = total_discounts / (1 + tax_rate / 100)
-            i += 1  # Incrementa numero linea
+            discount_tax = (
+                self._fattura_pa_line_tax_from_enriched(line_items[0])
+                if line_items
+                else FatturaPALineTax(Decimal("22"), None, None)
+            )
+            discount_rate = float(discount_tax.aliquota)
+            if discount_rate == 0:
+                total_discounts_no_iva = total_discounts
+            else:
+                total_discounts_no_iva = total_discounts / (1 + discount_rate / 100)
+            total_discounts_no_iva = Decimal(str(total_discounts_no_iva)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+
+            line_num += 1
             dettaglio_sconto = self._create_element(dati_beni_servizi, "DettaglioLinee")
-            self._create_element(dettaglio_sconto, "NumeroLinea", str(i))
+            self._create_element(dettaglio_sconto, "NumeroLinea", str(line_num))
             self._create_element(dettaglio_sconto, "TipoCessionePrestazione", "SC")
             self._create_element(dettaglio_sconto, "Descrizione", "Buoni Sconto")
             self._create_element(dettaglio_sconto, "Quantita", "1.00")
-            self._create_element(dettaglio_sconto, "PrezzoUnitario", f"{-total_discounts_no_iva:.2f}")
-            self._create_element(dettaglio_sconto, "PrezzoTotale", f"{-total_discounts_no_iva:.2f}")
-            self._create_element(dettaglio_sconto, "AliquotaIVA", f"{tax_rate:.2f}")
-        
-        # Aggiungi linea per spese di spedizione (SOLO per fatture, NON per note di credito)
-        tipo_documento = order_data.get('tipo_documento_fe')
+            self._create_element(dettaglio_sconto, "PrezzoUnitario", f"{-float(total_discounts_no_iva):.2f}")
+            self._create_element(dettaglio_sconto, "PrezzoTotale", f"{-float(total_discounts_no_iva):.2f}")
+            self._append_dettaglio_linea_tax_tags(dettaglio_sconto, discount_tax)
+            riepilogo_lines.append(
+                self._line_tax_for_riepilogo(discount_tax, -total_discounts_no_iva)
+            )
+
+        # Spese di spedizione (aliquota spedizione — può differire da prodotti VIES)
         shipping_price = float(order_data.get('shipping_price_tax_excl', 0))
         if include_shipping and shipping_price > 0:
-            i += 1  # Incrementa numero linea
+            shipping_tax = self._resolve_shipping_line_tax(order_data)
+            shipping_net = Decimal(str(shipping_price)).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+
+            line_num += 1
             dettaglio_spedizione = self._create_element(dati_beni_servizi, "DettaglioLinee")
-            self._create_element(dettaglio_spedizione, "NumeroLinea", str(i))
+            self._create_element(dettaglio_spedizione, "NumeroLinea", str(line_num))
             self._create_element(dettaglio_spedizione, "TipoCessionePrestazione", "AC")
             self._create_element(dettaglio_spedizione, "Descrizione", "SPESE")
-            self._create_element(dettaglio_spedizione, "PrezzoUnitario", f"{shipping_price:.2f}")
-            self._create_element(dettaglio_spedizione, "PrezzoTotale", f"{shipping_price:.2f}")
-            
-            # Usa l'aliquota IVA delle spese di spedizione se disponibile, altrimenti quella generale
-            shipping_tax_rate = float(order_data.get('shipping_tax_percentage', tax_rate))
-            self._create_element(dettaglio_spedizione, "AliquotaIVA", f"{shipping_tax_rate:.2f}")
-            print(f"Spese di spedizione aggiunte: EUR {shipping_price:.2f}")
-        else:
-            print(f"[INFO] Spese di spedizione NON aggiunte (include_shipping={include_shipping})")
-        
-        # DatiRiepilogo
-        dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
-        self._create_element(dati_riepilogo, "AliquotaIVA", f"{tax_rate:.2f}")
+            self._create_element(dettaglio_spedizione, "PrezzoUnitario", f"{shipping_net:.2f}")
+            self._create_element(dettaglio_spedizione, "PrezzoTotale", f"{shipping_net:.2f}")
+            self._append_dettaglio_linea_tax_tags(dettaglio_spedizione, shipping_tax)
+            riepilogo_lines.append(
+                self._line_tax_for_riepilogo(shipping_tax, shipping_net)
+            )
 
-        if tax_electronic_code:
-            self._create_element(dati_riepilogo, "Natura", tax_electronic_code)
-            if tax_note:
-                self._create_element(dati_riepilogo, "RiferimentoNormativo", tax_note)
+        # DatiRiepilogo — un blocco per (AliquotaIVA, Natura)
+        for group in build_riepilogo_groups(riepilogo_lines):
+            dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
+            self._create_element(
+                dati_riepilogo, "AliquotaIVA", f"{group['AliquotaIVA']:.2f}"
+            )
+            if group.get("Natura"):
+                self._create_element(dati_riepilogo, "Natura", group["Natura"])
+            if group.get("RiferimentoNormativo"):
+                self._create_element(
+                    dati_riepilogo, "RiferimentoNormativo", group["RiferimentoNormativo"]
+                )
+            self._create_element(
+                dati_riepilogo, "ImponibileImporto", f"{group['ImponibileImporto']:.2f}"
+            )
+            self._create_element(dati_riepilogo, "Imposta", f"{group['Imposta']:.2f}")
+            self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
 
-        # Arrotonda i totali usando ROUND_HALF_UP
-        self._create_element(dati_riepilogo, "ImponibileImporto", f"{totale_imponibile:.2f}")
-        self._create_element(dati_riepilogo, "Imposta", f"{totale_imposta:.2f}")
-        self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
-        
         # DatiPagamento
         print(f"=== AGGIUNTA DATI PAGAMENTO ===")
         dati_pagamento = self._create_element(body, "DatiPagamento")
@@ -811,8 +841,8 @@ class FatturaPAService:
             order_data = self._prepare_order_data_from_fiscal_document(fiscal_doc, order, address)
             
             # Recupera line items da fiscal_document_details (non da order_details)
-            # Per note di credito parziali, contiene SOLO gli articoli da stornare
             line_items = self._get_order_details_for_fiscal_document(fiscal_doc)
+            line_items = self._enrich_line_items_with_tax(line_items, order_data)
             
             # Determina se includere spese di spedizione dal campo includes_shipping del documento
             # Usa il valore salvato nel FiscalDocument (gestito al momento della creazione)
@@ -965,11 +995,15 @@ class FatturaPAService:
             'total_price': fiscal_doc.total_price_with_tax or 0.0,
             'total_discounts': order.total_discounts or 0.0,
             'shipping_price_tax_excl': customer.get('shipping_price_tax_excl', 0.0),
+            'shipping_id_tax': customer.get('shipping_id_tax'),
             'shipping_tax_percentage': customer.get('shipping_tax_percentage', 22.0),
             'id_tax': customer.get('id_tax'),
             'tax_electronic_code': tax_electronic_code,
             'tax_note': tax_note,
-            'tax_percentage_customer': customer.get('tax_percentage_customer'),  # Percentuale IVA del paese di delivery
+            'tax_percentage_customer': customer.get('tax_percentage_customer'),
+            'vies_status': (
+                order.vies_status.value if order.vies_status is not None else None
+            ),
             'date_add': order.date_add,
             'payment_due_date': order.payment_due_date,
         }

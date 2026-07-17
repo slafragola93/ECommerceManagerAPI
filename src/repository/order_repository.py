@@ -504,36 +504,15 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         # IMPORTANTE: Verifica esplicita per evitare creazioni multiple
         
         if isinstance(data.shipping, ShippingSchema):
-            # Se price_tax_excl non fornito ma price_tax_incl sì, calcolalo
             shipping_data = data.shipping.model_dump()
-            from src.vies.tax_resolution import (
-                is_vies_eligible_status,
-                resolve_vies_exemption_tax_id_with_fallback,
-            )
-            from src.vies.exemption_calculation import (
-                apply_vies_prices_to_shipping_dict,
-                resolve_source_tax_percentage,
-            )
+            from src.services.core.shipping_tax import apply_delivery_tax_to_shipping_data
 
-            vies_eligible = is_vies_eligible_status(data.vies_status)
-            if vies_eligible and shipping_data.get("price_tax_incl"):
-                vies_tax_id = resolve_vies_exemption_tax_id_with_fallback(self.session)
-                source_pct = resolve_source_tax_percentage(
-                    self.session,
-                    shipping_data.get("id_tax"),
-                    order.id_address_delivery,
-                )
-                apply_vies_prices_to_shipping_dict(
-                    shipping_data, source_pct, vies_tax_id
-                )
-            elif (shipping_data.get('price_tax_excl') is None or shipping_data.get('price_tax_excl') == 0) and shipping_data.get('price_tax_incl'):
-                if order.id_address_delivery:
-                    tax_percentage = get_tax_percentage_by_address_delivery_id(self.session, order.id_address_delivery, default=22.0)
-                    shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
-                else:
-                    # Se non c'è address_delivery ancora, usa default
-                    tax_percentage = self.tax_repository.get_default_tax_percentage_from_app_config(default=22.0)
-                    shipping_data['price_tax_excl'] = calculate_price_without_tax(shipping_data['price_tax_incl'], tax_percentage)
+            apply_delivery_tax_to_shipping_data(
+                self.session,
+                shipping_data,
+                id_address_delivery=order.id_address_delivery,
+                vies_status=data.vies_status,
+            )
             order.id_shipping = self.shipping_repository.create_and_get_id(data=shipping_data)
             logger.warning(f"[DEBUG] create order - shipping creato con ID: {order.id_shipping}")
         elif isinstance(data.shipping, int) and data.shipping > 0:

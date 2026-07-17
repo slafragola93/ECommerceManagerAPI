@@ -192,6 +192,17 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 
 **Handoff FE:** [docs/FE_HANDOFF_RICEVUTE.md](docs/FE_HANDOFF_RICEVUTE.md) — prompt implementazione: [prompt_FE_ricevute.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute.md) — **allineamento v3 modelli/interpolazioni:** [prompt_FE_ricevute_V3_ALIGN.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_V3_ALIGN.md) — **prompt test FE:** [prompt_FE_ricevute_TEST.md](.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_TEST.md)
 
+## Ultime modifiche (2026-07-17) — Aliquota spedizione per paese di consegna
+
+**Scope:** allineamento IVA spedizione alle righe prodotto — `id_tax` dal default paese consegna + ricalcolo `price_tax_excl` da lordo.
+
+- Helper centralizzato: `src/services/core/shipping_tax.py` (`resolve_shipping_tax_info`, `apply_delivery_tax_to_shipping_data`).
+- **Sync PrestaShop:** `Shipping.id_tax` = stesso `id_tax` paese usato sulle righe (prima: default globale).
+- **POST ordine** con `shipping`: imposta aliquota da indirizzo consegna / VIES eligible.
+- **PUT shipping:** se aggiornato solo `price_tax_incl` (o `id_tax`), ricalcolo automatico imponibile salvo payload con entrambi i prezzi espliciti.
+- **`TaxRepository.define_tax`:** ora usa `get_tax_info_by_country` (prima ignorava il paese).
+- **Test:** `tests/unit/services/core/test_shipping_tax.py`.
+
 ## Ultime modifiche (2026-07-16) — Fattura GET allineata a ricevuta v3
 
 **Scope:** response fattura arricchita su GET/POST — campi documento fiscale invariati, contesto ordine come ricevuta v3.
@@ -831,12 +842,36 @@ Handoff FE: [docs/FE_HANDOFF_DDT_PRINT_PDF.md](docs/FE_HANDOFF_DDT_PRINT_PDF.md)
 
 ---
 
-## Ultime modifiche (2026-06-18) — Backlog FatturaPA implementazione
+## Ultime modifiche (2026-07-17) — BE-PA-P0-05 VIES → Natura N3.2 in XML
 
-Creato backlog operativo dei task ancora da sviluppare per FatturaPA (gap analysis rispetto al codice esistente):
+**Scope:** generazione XML FatturaPA con aliquota/natura per riga e riepilogo multi-aliquota.
 
-- [`.cursor/tasks_claude/fatturapa_backlog_implementazione.md`](.cursor/tasks_claude/fatturapa_backlog_implementazione.md) — task P0–P3, ordine di implementazione, checklist go-live
-- Piano tecnico di riferimento: [`.cursor/tasks_claude/fatturapa_riassunto_piano.md`](.cursor/tasks_claude/fatturapa_riassunto_piano.md)
+- Nuovo modulo [`src/services/external/fatturapa_tax_line.py`](src/services/external/fatturapa_tax_line.py): `resolve_line_tax`, `build_riepilogo_groups`, override VIES `N3.2` su righe prodotto.
+- [`fatturapa_service.py`](src/services/external/fatturapa_service.py): `_enrich_line_items_with_tax`, `DatiRiepilogo` multi-blocco, `vies_status` in `order_data`.
+- Test: [`tests/unit/services/external/test_fatturapa_tax_line.py`](tests/unit/services/external/test_fatturapa_tax_line.py).
+- Doc: [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §7 aggiornato.
+
+```powershell
+pytest tests/unit/services/external/test_fatturapa_tax_line.py -v
+```
+
+---
+
+## Ultime modifiche (2026-07-17) — Guida operativa FatturaPA
+
+Creata guida unificata end-to-end per ciclo attivo fatturazione elettronica:
+
+- [`docs/FATTURAPA.md`](docs/FATTURAPA.md) — workflow API, POST body, configurazione, VIES/Natura, troubleshooting, gap noti
+- Backlog task aggiornato: [`.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md`](.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
+
+---
+
+## Ultime modifiche (2026-07-17) — Backlog FatturaPA riconciliato
+
+Aggiornato backlog operativo rispetto al codice attuale (VIES ordini completato; XML VIES N3.2 ancora P0; Tax Natura step 1, `payment_due_date`, fattura GET v3 completati):
+
+- [`.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md`](.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md) — task P0–P3, changelog, checklist go-live
+- Piano tecnico di riferimento: [`.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md`](.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md)
 
 ---
 
@@ -898,8 +933,8 @@ Backlog unificato allineato allo stato del codice: [`.cursor/tasks_claude/BACKLO
 
 - [DOCUMENTAZIONE.md](DOCUMENTAZIONE.md) – panoramica e architettura  
 - [QUICK_START.md](QUICK_START.md) – avvio rapido e comandi  
-- [docs/](docs/) – guide specifiche (eventi, plugin, sync, ecc.)
+- [docs/](docs/) – guide specifiche (eventi, plugin, sync, FatturaPA, ecc.)
 - [.cursor/tasks_claude/BACKLOG_UNIFICATO.md](.cursor/tasks_claude/BACKLOG_UNIFICATO.md) – backlog unificato FE+BE (fonte di verità task; riconciliato 2026-06-18)
-- [.cursor/tasks_claude/fatturapa_backlog_implementazione.md](.cursor/tasks_claude/fatturapa_backlog_implementazione.md) – task FatturaPA da implementare (P0–P3, go-live)
-- [.cursor/tasks_claude/fatturapa_riassunto_piano.md](.cursor/tasks_claude/fatturapa_riassunto_piano.md) – riassunto normativa FatturaPA e piano fasi
+- [docs/FATTURAPA.md](docs/FATTURAPA.md) – guida operativa fatturazione elettronica (ciclo attivo, API, VIES, troubleshooting)
+- [.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md](.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md) – riassunto normativa FatturaPA e piano fasi
 - [docs/BE_FASTLDV_INTEGRATION.md](docs/BE_FASTLDV_INTEGRATION.md) – integrazione app magazzino FastLDV

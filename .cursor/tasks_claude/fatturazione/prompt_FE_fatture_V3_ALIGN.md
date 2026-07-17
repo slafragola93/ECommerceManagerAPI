@@ -431,6 +431,7 @@ File tipici:
 
 ## Riferimenti BE (repo API)
 
+- **Guida operativa:** [`docs/FATTURAPA.md`](../../docs/FATTURAPA.md) — workflow, POST body, VIES, troubleshooting
 - Schema: `src/schemas/fiscal_document_schema.py` → `InvoiceResponseSchema`
 - Mapper: `src/services/routers/fiscal_document_service.py`
 - Prompt ricevuta analogo: `.cursor/tasks_claude/fatturazione/prompt_FE_ricevute_V3_ALIGN.md`

@@ -3933,10 +3933,10 @@ class PrestaShopService(BaseEcommerceService):
                     order_data['shipping'] = shipping_repo.create_and_get_id(ShippingSchema(
                         id_carrier_api=assigned_carrier_api_id,
                         id_shipping_state=1,
-                        id_tax=default_tax_id,
+                        id_tax=id_tax,
                         tracking=None,
                         weight=order_total_weight,
-                        price_tax_incl=total_shipping_tax_incl, 
+                        price_tax_incl=total_shipping_tax_incl,
                         price_tax_excl=total_shipping_tax_excl
                     ))
                     valid_order_data.append(order_data)

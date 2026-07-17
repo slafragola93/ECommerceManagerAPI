@@ -211,11 +211,13 @@ In generazione XML fattura elettronica:
 - `<RiferimentoNormativo>` ← `Tax.note` (se presente);
 - fix crash `.2f` su stringa eliminato.
 
-**Non ancora implementato** (step BE successivi — non bloccare FE):
+**Implementato (2026-07-17, BE-PA-P0-05):**
 
-- Natura per singola riga ordine (multi-aliquota);
-- override automatico VIES → `N3.2` su ordini `vies_status=eligible`;
-- più blocchi `DatiRiepilogo` per aliquote miste.
+- Natura/aliquota **per riga** da `id_tax` ordine.
+- Override automatico VIES → `N3.2` su ordini `vies_status=eligible` (righe prodotto).
+- `DatiRiepilogo` multi-aliquota (es. prodotti 0% + spedizione 22%).
+
+Vedi [`docs/FATTURAPA.md`](../FATTURAPA.md) §7 e `src/services/external/fatturapa_tax_line.py`.
 
 ---
 

@@ -1,6 +1,8 @@
 # FatturaPA – Riassunto Tecnico e Piano di Implementazione
 **Progetto:** Elettronew | **Aggiornato:** Giugno 2026
 
+**Guida operativa API:** [`docs/FATTURAPA.md`](../../docs/FATTURAPA.md)
+
 ---
 
 ## 1. Punti Chiave della Documentazione Ufficiale
