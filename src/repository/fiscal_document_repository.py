@@ -34,6 +34,21 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         self._tax_repository = TaxRepository(session)
     
     # ==================== FATTURE ====================
+
+    def _get_required_invoice_address(self, order: Order) -> Address:
+        """Indirizzo fatturazione obbligatorio per documenti elettronici (IT o UE estero/VIES)."""
+        if not order.id_address_invoice:
+            raise ValueError(
+                "Indirizzo di fatturazione mancante per documento elettronico"
+            )
+        address = (
+            self._session.query(Address)
+            .filter(Address.id_address == order.id_address_invoice)
+            .first()
+        )
+        if not address:
+            raise ValueError("Indirizzo di fatturazione non trovato")
+        return address
     
     def create_invoice(self, id_order: int, is_electronic: bool = True) -> FiscalDocument:
         """
@@ -41,7 +56,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         Args:
             id_order: ID dell'ordine
-            is_electronic: Se True, genera fattura elettronica (solo per IT)
+            is_electronic: Se True, genera fattura elettronica FatturaPA
         
         Returns:
             FiscalDocument creato
@@ -51,16 +66,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if not order:
             raise ValueError(f"Ordine {id_order} non trovato")
         
-        # Se is_electronic=True, verifica che l'indirizzo sia italiano
         if is_electronic:
-            # Recupera ID Italia da iso_code
-            italy = self._session.query(Country).filter(Country.iso_code == 'IT').first()
-            if not italy:
-                raise ValueError("Paese Italia (IT) non trovato nel database")
-            
-            address = self._session.query(Address).filter(Address.id_address == order.id_address_invoice).first()
-            if not address or address.id_country != italy.id_country:
-                raise ValueError("La fattura elettronica può essere emessa solo per indirizzi italiani")
+            self._get_required_invoice_address(order)
         
         # Genera numero documento se elettronico
         document_number = None
@@ -309,17 +316,11 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if is_electronic and not invoice.is_electronic:
             raise ValueError("Non è possibile emettere nota di credito elettronica per fattura non elettronica")
         
-        # Se is_electronic, verifica indirizzo italiano
         if is_electronic:
-            # Recupera ID Italia da iso_code
-            italy = self._session.query(Country).filter(Country.iso_code == 'IT').first()
-            if not italy:
-                raise ValueError("Paese Italia (IT) non trovato nel database")
-            
             order = self._session.query(Order).filter(Order.id_order == invoice.id_order).first()
-            address = self._session.query(Address).filter(Address.id_address == order.id_address_invoice).first()
-            if not address or address.id_country != italy.id_country:
-                raise ValueError("La nota di credito elettronica può essere emessa solo per indirizzi italiani")
+            if not order:
+                raise ValueError(f"Ordine {invoice.id_order} non trovato")
+            self._get_required_invoice_address(order)
         
         # Recupera articoli della fattura (serve per i controlli)
         invoice_details = self._session.query(FiscalDocumentDetail).filter(
@@ -666,6 +667,119 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             query = query.filter(FiscalDocument.status == status)
         
         return query.order_by(desc(FiscalDocument.date_add)).offset(skip).limit(limit).all()
+
+    def _build_invoice_export_query(
+        self,
+        is_electronic: Optional[bool] = None,
+        status: Optional[str] = None,
+        id_order: Optional[int] = None,
+        id_customer: Optional[int] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[datetime] = None,
+        date_add_to: Optional[datetime] = None,
+        require_generated_xml: bool = False,
+    ):
+        AddressDelivery = aliased(Address)
+        CountryDelivery = aliased(Country)
+
+        query = (
+            self._session.query(
+                FiscalDocument,
+                Order,
+                Customer,
+                AddressDelivery,
+                CountryDelivery,
+            )
+            .filter(FiscalDocument.document_type == "invoice")
+            .outerjoin(Order, Order.id_order == FiscalDocument.id_order)
+            .outerjoin(Customer, Customer.id_customer == Order.id_customer)
+            .outerjoin(
+                AddressDelivery,
+                AddressDelivery.id_address == Order.id_address_delivery,
+            )
+            .outerjoin(
+                CountryDelivery,
+                CountryDelivery.id_country == AddressDelivery.id_country,
+            )
+        )
+
+        if is_electronic is not None:
+            query = query.filter(FiscalDocument.is_electronic == is_electronic)
+        if status:
+            query = query.filter(FiscalDocument.status == status)
+        if id_order:
+            query = query.filter(FiscalDocument.id_order == id_order)
+        if id_customer:
+            query = query.filter(Order.id_customer == id_customer)
+        if delivery_country_iso:
+            query = query.filter(
+                func.upper(CountryDelivery.iso_code) == delivery_country_iso.upper()
+            )
+        if date_add_from:
+            query = query.filter(FiscalDocument.date_add >= date_add_from)
+        if date_add_to:
+            query = query.filter(FiscalDocument.date_add <= date_add_to)
+        if require_generated_xml:
+            query = query.filter(
+                FiscalDocument.xml_content.isnot(None),
+                FiscalDocument.xml_content != "",
+            )
+
+        return query
+
+    def count_invoices_for_export(
+        self,
+        is_electronic: Optional[bool] = None,
+        status: Optional[str] = None,
+        id_order: Optional[int] = None,
+        id_customer: Optional[int] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[datetime] = None,
+        date_add_to: Optional[datetime] = None,
+        require_generated_xml: bool = False,
+    ) -> int:
+        """Conta fatture che matchano i filtri export."""
+        return self._build_invoice_export_query(
+            is_electronic=is_electronic,
+            status=status,
+            id_order=id_order,
+            id_customer=id_customer,
+            delivery_country_iso=delivery_country_iso,
+            date_add_from=date_add_from,
+            date_add_to=date_add_to,
+            require_generated_xml=require_generated_xml,
+        ).count()
+
+    def list_invoices_for_export(
+        self,
+        skip: int = 0,
+        limit: int = 5000,
+        is_electronic: Optional[bool] = None,
+        status: Optional[str] = None,
+        id_order: Optional[int] = None,
+        id_customer: Optional[int] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[datetime] = None,
+        date_add_to: Optional[datetime] = None,
+        require_generated_xml: bool = False,
+    ):
+        """Lista fatture con ordine, cliente e paese consegna per export."""
+        return (
+            self._build_invoice_export_query(
+                is_electronic=is_electronic,
+                status=status,
+                id_order=id_order,
+                id_customer=id_customer,
+                delivery_country_iso=delivery_country_iso,
+                date_add_from=date_add_from,
+                date_add_to=date_add_to,
+                require_generated_xml=require_generated_xml,
+            )
+            .order_by(desc(FiscalDocument.date_add))
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
     
     def update_fiscal_document_status(
         self, 

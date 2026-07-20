@@ -16,7 +16,21 @@ Documenti correlati:
 | [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md) | Handoff FE — contratto `InvoiceDetail` v3 |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-07-17
+**Aggiornato:** 2026-07-20
+
+---
+
+## Quick start
+
+```text
+1. Configurare company_info + electronic_invoicing + fatturapa in app_configurations (o .env)
+2. POST /api/v1/fiscal_documents/invoices          { "id_order": 123, "is_electronic": true }
+3. POST /api/v1/fiscal_documents/{id}/generate-xml
+4. POST /api/v1/fiscal_documents/{id}/send-to-sdi   { "send_to_sdi": false }  ← upload sandbox
+5. GET  /api/v1/fiscal_documents/{id}/pdf          ← PDF di cortesia
+```
+
+Per ordini intra-UE B2B con esenzione VIES, applicare **prima** `PATCH /api/v1/orders/{id}/apply-vies-exemption`.
 
 ---
 
@@ -65,7 +79,15 @@ Tabella `app_configurations`:
 | `fatturapa` | `api_key`, `base_url` (default `https://api.fatturapa.com/ws/V10.svc/rest`) |
 | `invoice_pdf` | `pre_invoice_disclaimer` (dicitura NOTE PDF), `append_tax_normative` (`true`/`false`) |
 
-Variabili env di fallback (se non in DB): `FATTURAPA_API_KEY`, `FATTURAPA_BASE_URL`, `COMPANY_VAT_NUMBER`, ecc.
+Variabili env di fallback (se non in DB) — vedi anche `env.example`:
+
+| Variabile | Descrizione | Default |
+|-----------|-------------|---------|
+| `FATTURAPA_API_KEY` | API key intermediario FatturaPA.com | — |
+| `FATTURAPA_BASE_URL` | Base URL REST intermediario | `https://api.fatturapa.com/ws/V10.svc/rest` |
+| `COMPANY_VAT_NUMBER` | P.IVA cedente (se assente in DB) | — |
+
+Le chiavi in `app_configurations` hanno priorità sulle variabili env.
 
 ### 2.2 Dati ordine obbligatori (derivati, non nel POST)
 
@@ -73,13 +95,14 @@ Per fattura elettronica (`is_electronic=true`):
 
 | Requisito | Fonte |
 |-----------|-------|
-| Indirizzo fatturazione **IT** | `orders.id_address_invoice` → `addresses.id_country` = IT |
-| Cliente: P.IVA **oppure** CF | `addresses.vat` o `addresses.dni` |
+| Indirizzo fatturazione presente | `orders.id_address_invoice` → `addresses` (IT **o** UE estero per VIES) |
+| Cliente IT: P.IVA **oppure** CF | `addresses.vat` o `addresses.dni` |
+| Cliente UE B2B (VIES): P.IVA estera | `addresses.vat` con prefisso paese; `CodiceDestinatario=XXXXXXX` |
 | Denominazione **oppure** Nome+Cognome | `addresses.company` o `firstname`/`lastname` |
-| Sede completa | `address1`, `city`, `postcode`, `state` (provincia 2 char) |
-| Codice destinatario o PEC | `addresses.sdi` (7 char, es. `0000000` B2C) o `addresses.pec` |
+| Sede completa | `address1`, `city`, `postcode`; `state` obbligatoria 2 char solo per IT |
+| Codice destinatario (solo IT) | `addresses.sdi` (7 char) o `0000000` B2C; estero → `XXXXXXX` automatico |
 | Righe ordine con prezzi/IVA | `order_details` → snapshot in `fiscal_document_details` |
-| Aliquota / natura IVA | `taxes` collegata al paese delivery (vedi [§7 VIES e Natura IVA](#7-vies-e-natura-iva)) |
+| Aliquota / natura IVA | `taxes` per riga (`order_detail.id_tax`) + spedizione; VIES → N3.2 (vedi [§7](#7-vies-e-natura-iva)) |
 
 ### 2.3 Account intermediario
 
@@ -173,7 +196,7 @@ Campi XML principali generati:
 | CessionarioCommittente | `address_invoice` ordine |
 | TipoDocumento | `TD01` (fattura) o `TD04` (NC) |
 | DettaglioLinee | `fiscal_document_details` (+ riga spedizione se `includes_shipping`) |
-| DatiRiepilogo | Aggregato singolo blocco (limitazione: vedi P1-05 backlog) |
+| DatiRiepilogo | Un blocco per coppia `(AliquotaIVA, Natura)` — es. prodotti VIES 0% + spedizione 22% |
 | DatiPagamento | Metodo pagamento ordine; `DataScadenzaPagamento` da `payment_due_date` o `date_add + 30 gg` |
 
 ### POST `/{id_fiscal_document}/send-to-sdi`
@@ -318,9 +341,13 @@ Stato al **2026-07-17**. Dettaglio completo: [fatturapa_backlog_implementazione.
 
 ## 11. Troubleshooting
 
+### HTTP 400 — "Indirizzo di fatturazione mancante/non trovato"
+
+Documento elettronico senza `id_address_invoice` valido. Verificare l'ordine collegato.
+
 ### HTTP 400 — "La fattura elettronica può essere emessa solo per indirizzi italiani"
 
-`is_electronic=true` ma `address_invoice.id_country` ≠ IT. Usare `is_electronic=false` per fatture estere manuali, oppure correggere l'indirizzo.
+**Rimosso (2026-07-20):** le fatture elettroniche supportano clienti UE esteri (VIES). Se compare ancora, aggiornare il backend.
 
 ### HTTP 422 — Validazione XML FatturaPA fallita
 
@@ -347,11 +374,38 @@ Comportamento **atteso**: la fattura è snapshot al momento dell'emissione. Non 
 
 ### VIES: ordine eligible ma XML senza N3.2
 
-Gap P0-05. Verificare che il tax VIES abbia `electronic_code=N3.2` e che l'esenzione sia stata applicata prima della fattura.
+1. Verificare `order.vies_status=eligible` **prima** della creazione fattura (`PATCH .../apply-vies-exemption`).
+2. Controllare che il tax di esenzione abbia `electronic_code=N3.2` e `note` con riferimento normativo (art. 41).
+3. Rigenerare XML con `POST /{id}/generate-xml` dopo correzione ordine/tax.
+4. Test di riferimento: `tests/unit/services/external/test_fatturapa_tax_line.py`.
 
 ---
 
-## 12. Componenti codice
+## 12. Ciclo passivo (fatture di acquisto)
+
+Il backend include un servizio per scaricare fatture passive dal **POOL** FatturaPA.com (fatture ricevute da fornitori via SDI).
+
+| Componente | Path | Stato |
+|------------|------|-------|
+| Sync POOL | `src/services/sync/fatturapa_pool_sync_service.py` | Implementato |
+| Repository | `src/repository/purchase_invoice_sync_repository.py` | Implementato |
+| API REST esposta | — | **Non ancora** (backlog P2-01) |
+
+**Flusso interno del servizio:**
+
+1. Legge `fatturapa.api_key` da `app_configurations`
+2. Chiama feed POOL REST dell'intermediario (formato ATOM/XML)
+3. Filtra documenti di tipo ricezione / acquisto
+4. Scarica XML (o P7M) in `fatture_download/` (default)
+5. Persiste in tabella sync con idempotenza
+
+**Scheduler:** intervallo cache configurabile in `settings.py` → `fatturapa_pool` (60 s). Job periodico automatico **non ancora collegato** a un router pubblico.
+
+Per attivazione manuale oggi: istanziare `FatturaPAPoolSyncService(db)` da script o test interni. Endpoint previsti: `POST /api/v1/fatturapa/sync-pool`, `GET /api/v1/purchase-invoices` (P2-01).
+
+---
+
+## 13. Componenti codice
 
 | Componente | Path |
 |------------|------|
@@ -371,7 +425,7 @@ Gap P0-05. Verificare che il tax VIES abbia `electronic_code=N3.2` e che l'esenz
 
 ---
 
-## 13. Test
+## 14. Test
 
 ```powershell
 # Response fattura v3
@@ -388,7 +442,7 @@ Suite generazione XML end-to-end: **da implementare** (P0-07).
 
 ---
 
-## 14. Riferimenti ufficiali
+## 15. Riferimenti ufficiali
 
 - [Formato FatturaPA / XSD](https://www.fatturapa.gov.it/it/norme-e-regole/documentazione-fattura-elettronica/formato-fatturapa/)
 - [Documentazione SDI v1.9.1](https://www.fatturapa.gov.it/it/norme-e-regole/DocumentazioneSDI/)

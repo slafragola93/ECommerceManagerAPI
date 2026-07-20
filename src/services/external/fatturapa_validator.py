@@ -6,6 +6,10 @@ from typing import Dict, Any, List, Optional, Tuple
 import logging
 
 from src.services.core.tool import valida_piva
+from src.services.external.fatturapa_customer_address import (
+    normalize_customer_vat,
+    resolve_codice_destinatario,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1521,7 +1525,8 @@ class FatturaPAValidator:
         customer_company = order_data.get('invoice_company', '') or None  # Converti stringa vuota in None
         customer_cf = order_data.get('customer_fiscal_code', '')
         customer_vat_raw = order_data.get('invoice_vat', '')
-        customer_vat = ''.join(filter(str.isdigit, customer_vat_raw)) if customer_vat_raw else ''
+        country_iso = (order_data.get('country_iso') or 'IT').upper()
+        customer_vat = normalize_customer_vat(customer_vat_raw, country_iso)
         customer_pec = order_data.get('invoice_pec', '')
         customer_sdi = order_data.get('invoice_sdi', '')
         
@@ -1534,7 +1539,7 @@ class FatturaPAValidator:
             },
             'ProgressivoInvio': order_data.get('document_number', ''),
             'FormatoTrasmissione': 'FPR12',  # Default, potrebbe essere FPA12
-            'CodiceDestinatario': customer_sdi or '0000000',
+            'CodiceDestinatario': resolve_codice_destinatario(country_iso, customer_sdi),
             'PECDestinatario': customer_pec,
             'ContattiTrasmittente': {
                 'Telefono': company_data.get('phone', ''),
@@ -1576,7 +1581,7 @@ class FatturaPAValidator:
             'CessionarioCommittente': {
                 'DatiAnagrafici': {
                     'IdFiscaleIVA': {
-                        'IdPaese': order_data.get('country_iso', 'IT'),
+                        'IdPaese': country_iso,
                         'IdCodice': customer_vat
                     } if customer_vat else None,
                     'CodiceFiscale': customer_cf,
@@ -1592,7 +1597,7 @@ class FatturaPAValidator:
                     'CAP': order_data.get('invoice_postcode', ''),
                     'Comune': order_data.get('invoice_city', ''),
                     'Provincia': order_data.get('invoice_state', ''),
-                    'Nazione': order_data.get('country_iso', 'IT')
+                    'Nazione': country_iso
                 }
             },
             

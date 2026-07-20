@@ -4,6 +4,72 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-07-20) — FatturaPA clienti UE / VIES
+
+**Scope:** rimosso il vincolo legacy «solo indirizzo fatturazione IT» per fatture elettroniche. Ora sono supportati clienti **UE esteri** (operazioni intra-UE / VIES): P.IVA estera, `CodiceDestinatario=XXXXXXX`, CAP/provincia con regole internazionali.
+
+| Area | Path |
+|------|------|
+| Helper indirizzo cliente | `src/services/external/fatturapa_customer_address.py` |
+| Service XML | `src/services/external/fatturapa_service.py` |
+| Validator | `src/services/external/fatturapa_validator.py` |
+| Repository | `src/repository/fiscal_document_repository.py` |
+| Test | `tests/unit/services/external/test_fatturapa_customer_address.py` |
+
+**Prerequisito VIES:** `PATCH /api/v1/orders/{id}/apply-vies-exemption` prima di creare la fattura.
+
+**Documento riassunto per Contabilità (PDF-ready):** [`docs/FLUSSO_FATTURAPA_CONTABILITA.md`](docs/FLUSSO_FATTURAPA_CONTABILITA.md)
+
+**Comando verifica:**
+
+```powershell
+pytest tests/unit/services/external/test_fatturapa_customer_address.py -v
+```
+
+---
+
+## Ultime modifiche (2026-07-20) — Export massivo lista fatture
+
+**Scope:** export bulk della lista fatture in Excel e XML FatturaPA (ZIP), con filtro per **paese di consegna** (stessa logica IVA ordine/corrispettivi). Il PDF resta **solo singolo** (`GET /{id}/pdf`).
+
+### Endpoint
+
+| Metodo | Path | Output |
+|--------|------|--------|
+| GET | `/api/v1/fiscal_documents/invoices/export?fmt=xlsx` | Excel riepilogativo (max **5000** fatture) |
+| GET | `/api/v1/fiscal_documents/invoices/export?fmt=xml` | ZIP con XML FatturaPA già generati (max **5000** documenti) |
+| GET | `/api/v1/fiscal_documents/{id}/pdf` | PDF singola fattura (non bulk) |
+
+**Query params export XML (solo questi, gli altri vengono ignorati):** `delivery_country_iso`, `date_add_from`, `date_add_to`.
+
+**Query params export Excel:** anche `is_electronic`, `status`, `id_order`, `id_customer`.
+
+**Note export XML:** nessun vincolo di status — solo fatture **elettroniche** nel set; filtri UI: date + paese consegna. Se tutte falliscono la generazione XML (es. P.IVA test invalida) → **400** con `details.failure_summary`.
+
+**Nome file XML (formato SDI):** `[IdPaese][IdCodice]_[ProgressivoInvio].xml` — es. `IT08632861210_101164.xml`, derivato da `DatiTrasmissione` nell'XML. Il bulk ZIP contiene gli XML in flat alla root dello zip (un file per fattura). Helper: `src/services/external/fatturapa_filename.py`.
+
+### File toccati
+
+| Area | Path |
+|------|------|
+| Router | `src/routers/fiscal_documents.py` |
+| Service | `src/services/routers/fiscal_document_service.py` |
+| Export Excel/ZIP | `src/services/export/fiscal_document_export_service.py` |
+| PDF builder riusabile | `src/services/pdf/fiscal_document_pdf_builder.py` |
+| Repository | `src/repository/fiscal_document_repository.py` |
+| Schema | `src/schemas/fiscal_document_schema.py` |
+| Test | `tests/unit/services/export/test_fiscal_document_export_service.py` |
+
+**Comando verifica:**
+
+```powershell
+pytest tests/unit/services/export/test_fiscal_document_export_service.py -v
+```
+
+**Prompt FE (incolla in chat Angular):** [`.cursor/tasks_claude/fatturazione/prompt_FE_fatture_export_bulk.md`](.cursor/tasks_claude/fatturazione/prompt_FE_fatture_export_bulk.md)
+
+---
+
 ## Requisiti
 
 - **Python 3.10+**
@@ -861,6 +927,20 @@ Prefisso `/api/v1/ddt`. Permesso RBAC: `ddt.read`.
 Identificatore: PK gestionale `id_order_document` (non `id_order`).
 
 Handoff FE: [docs/FE_HANDOFF_DDT_PRINT_PDF.md](docs/FE_HANDOFF_DDT_PRINT_PDF.md) — prompt chat: [.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md](.cursor/tasks_claude/prompt_FE_ddt_print_pdf.md).
+
+---
+
+## Ultime modifiche (2026-07-20) — Guida FatturaPA consolidata
+
+Documentazione operativa unificata in [`docs/FATTURAPA.md`](docs/FATTURAPA.md):
+
+- Quick start end-to-end (creazione → XML → upload → PDF)
+- Configurazione `app_configurations` e variabili env (`FATTURAPA_*`)
+- API ciclo attivo, VIES/N3.2, note di credito TD04, macchina a stati
+- Sezione ciclo passivo (POOL fatture acquisto)
+- Gap noti P0–P3 e troubleshooting
+
+Piano normativo e backlog task: [`.cursor/tasks_claude/fatturaPa/`](.cursor/tasks_claude/fatturaPa/).
 
 ---
 

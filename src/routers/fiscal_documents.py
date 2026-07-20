@@ -1,4 +1,5 @@
 from typing import List, Optional, Union
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -7,7 +8,6 @@ from io import BytesIO
 from src.database import get_db
 from src.services.routers.auth_service import get_current_user, require_permission
 from src.repository.fiscal_document_repository import FiscalDocumentRepository
-from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.services.external.fatturapa_service import FatturaPAService
 from src.routers.dependencies import get_fiscal_document_service
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
@@ -21,8 +21,11 @@ from src.schemas.fiscal_document_schema import (
     FiscalDocumentUpdateStatusSchema,
     FiscalDocumentUpdateXMLSchema,
     FiscalDocumentDetailResponseSchema,
-    FiscalDocumentDetailWithProductSchema
+    FiscalDocumentDetailWithProductSchema,
+    InvoiceExportFormatSchema,
+    InvoiceExportFiltersSchema,
 )
+from src.services.pdf.fiscal_document_pdf_builder import build_fiscal_document_pdf_buffer
 
 router = APIRouter(prefix="/api/v1/fiscal_documents", tags=["Fiscal Documents"])
 
@@ -46,7 +49,7 @@ async def create_invoice(
         examples={
             "fattura_elettronica": {
                 "summary": "Fattura elettronica (indirizzo IT)",
-                "description": "Crea una fattura elettronica. L'indirizzo deve essere italiano (id_country=1).",
+                "description": "Crea una fattura elettronica FatturaPA (cliente IT o UE/VIES).",
                 "value": {
                     "id_order": 12345,
                     "is_electronic": True
@@ -71,7 +74,7 @@ async def create_invoice(
     
     ## Regole:
     - È consentito creare più fatture sullo stesso ordine (re-emissione / integrazioni)
-    - Se `is_electronic=True`, l'indirizzo deve essere italiano
+    - Se `is_electronic=True`, l'indirizzo di fatturazione deve esistere (IT o UE estero/VIES)
     - Viene generato automaticamente un numero sequenziale per fatture elettroniche
     - Il tipo documento FatturaPA sarà TD01
     """
@@ -106,6 +109,63 @@ async def get_invoices_by_order(
         raise HTTPException(status_code=404, detail=f"Nessuna fattura trovata per ordine {id_order}")
 
     return invoices
+
+
+@router.get(
+    "/invoices/export",
+    status_code=status.HTTP_200_OK,
+    summary="Export massivo lista fatture (Excel / ZIP XML)",
+)
+async def export_invoices(
+    fmt: InvoiceExportFormatSchema = Query(
+        InvoiceExportFormatSchema.XLSX,
+        description="xlsx o xml (ZIP FatturaPA)",
+    ),
+    is_electronic: Optional[bool] = Query(None, description="Filtra per elettroniche/non elettroniche"),
+    status_filter: Optional[str] = Query(None, alias="status", description="Filtra per status"),
+    id_order: Optional[int] = Query(None, gt=0, description="Filtra per ordine"),
+    id_customer: Optional[int] = Query(None, gt=0, description="Filtra per cliente"),
+    delivery_country_iso: Optional[str] = Query(
+        None,
+        min_length=2,
+        max_length=5,
+        description="ISO paese consegna (stessa logica IVA ordine/corrispettivi)",
+    ),
+    date_add_from: Optional[date] = Query(None, description="Data emissione da (YYYY-MM-DD)"),
+    date_add_to: Optional[date] = Query(None, description="Data emissione a (YYYY-MM-DD)"),
+    user: dict = user_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
+):
+    """
+    Export massivo fatture.
+
+    - **xlsx**: tabella riepilogativa (max 5000 righe). Filtri opzionali: status,
+      is_electronic, id_order, id_customer, delivery_country_iso, date_add_from/to.
+    - **xml**: ZIP FatturaPA (max 5000). **Solo filtri** `date_add_from`, `date_add_to`,
+      `delivery_country_iso` (paese consegna). Status ed altri filtri query sono **ignorati**.
+      Se l'XML non esiste viene generato automaticamente (senza vincoli di status).
+
+    PDF singola fattura: `GET /{id_fiscal_document}/pdf`.
+    """
+    filters = InvoiceExportFiltersSchema(
+        is_electronic=is_electronic if fmt != InvoiceExportFormatSchema.XML else None,
+        status=status_filter if fmt != InvoiceExportFormatSchema.XML else None,
+        id_order=id_order if fmt != InvoiceExportFormatSchema.XML else None,
+        id_customer=id_customer if fmt != InvoiceExportFormatSchema.XML else None,
+        delivery_country_iso=delivery_country_iso,
+        date_add_from=date_add_from,
+        date_add_to=date_add_to,
+    )
+    content, media_type, filename = await fiscal_service.export_invoices(
+        filters, fmt.value
+    )
+
+    return StreamingResponse(
+        BytesIO(content),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 
@@ -229,7 +289,7 @@ async def create_credit_note(
     ### 1. Validazione fattura:
     - La fattura deve esistere e essere di tipo `invoice`
     - Se `is_electronic=true`: la fattura deve essere elettronica
-    - Se `is_electronic=true`: l'indirizzo deve essere italiano (IT)
+    - Se `is_electronic=true`: indirizzo di fatturazione presente (IT o UE/VIES)
     
     ### 2. Validazione note di credito esistenti:
     - **Blocco nota totale duplicata**: Se esiste già una NC totale → Errore
@@ -281,7 +341,7 @@ async def create_credit_note(
     ### Errori fattura:
     - **400**: "Fattura non trovata" → `id_invoice` errato
     - **400**: "La fattura deve essere elettronica" → Fattura non elettronica con `is_electronic=true`
-    - **400**: "Nota di credito elettronica solo per indirizzi italiani" → Indirizzo estero
+    - **400**: "Indirizzo di fatturazione mancante/non trovato" → Ordine senza indirizzo fattura valido
     
     ### Errori note duplicate:
     - **400**: "Esiste già una nota di credito TOTALE" → Non puoi creare altre note dopo una totale
@@ -473,7 +533,7 @@ async def generate_xml(
     
     ## Processo:
     1. Verifica che il documento sia elettronico (is_electronic=True)
-    2. Verifica che l'indirizzo sia italiano
+    2. Verifica che l'indirizzo di fatturazione esista (IT o UE estero/VIES)
     3. Genera XML secondo specifiche FatturaPA
     4. Salva XML nel database
     5. Aggiorna status a 'generated'
@@ -655,42 +715,6 @@ async def send_to_sdi(
 
 # ==================== GENERAZIONE PDF ====================
 
-def _generate_pdf_with_fpdf(
-    fiscal_document,
-    order,
-    invoice_address,
-    delivery_address,
-    details_with_products,
-    payment_name,
-    company_config,
-    db,
-    referenced_invoice=None,
-    invoice_pdf_config=None,
-) -> BytesIO:
-    """Genera PDF via FiscalDocumentPDFService (layout elettronew + i18n)."""
-    from src.services.pdf.fiscal_document_pdf_service import FiscalDocumentPDFService
-    from io import BytesIO
-
-    pdf_service = FiscalDocumentPDFService()
-    pdf_bytes = pdf_service.generate_pdf(
-        fiscal_document=fiscal_document,
-        order=order,
-        invoice_address=invoice_address,
-        delivery_address=delivery_address,
-        details_with_products=details_with_products,
-        payment_name=payment_name,
-        company_config=company_config,
-        referenced_invoice=referenced_invoice,
-        db=db,
-        invoice_pdf_config=invoice_pdf_config or {},
-    )
-
-    pdf_buffer = BytesIO()
-    pdf_buffer.write(pdf_bytes)
-    pdf_buffer.seek(0)
-    return pdf_buffer
-
-
 @router.get("/{id_fiscal_document}/pdf")
 async def generate_fiscal_document_pdf(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
@@ -715,151 +739,15 @@ async def generate_fiscal_document_pdf(
     - Se nota di credito senza riferimento fattura → 400
     - Se non ci sono dettagli → 404
     """
-    from src.models.fiscal_document import FiscalDocument
-    from src.models.fiscal_document_detail import FiscalDocumentDetail
-    from src.models.order import Order
-    from src.models.order_detail import OrderDetail
-    from src.models.address import Address
-    from src.models.payment import Payment
-    from src.models.tax import Tax
-    
-    # Recupera documento fiscale
-    fiscal_repo = get_fiscal_repository(db)
-    fiscal_document = fiscal_repo.get_fiscal_document_by_id(id_fiscal_document)
-    
-    if not fiscal_document:
-        raise HTTPException(status_code=404, detail=f"Documento fiscale {id_fiscal_document} non trovato")
-    
-    # Validazione: nota di credito deve avere riferimento
-    if fiscal_document.document_type == 'credit_note' and not fiscal_document.id_fiscal_document_ref:
-        raise HTTPException(
-            status_code=400, 
-            detail="Nota di credito senza riferimento a fattura. Impossibile generare PDF."
-        )
-    
-    # Recupera ordine
-    order = db.query(Order).filter(Order.id_order == fiscal_document.id_order).first()
-    if not order:
-        raise HTTPException(status_code=404, detail=f"Ordine {fiscal_document.id_order} non trovato")
-    
-    # Recupera indirizzi
-    invoice_address = db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
-    delivery_address = db.query(Address).filter(Address.id_address == order.id_address_delivery).first()
-    
-    # Recupera dettagli documento
-    details = db.query(FiscalDocumentDetail).filter(
-        FiscalDocumentDetail.id_fiscal_document == id_fiscal_document
-    ).all()
-    
-    if not details:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Nessun articolo trovato nel documento {id_fiscal_document}. Impossibile generare PDF."
-        )
-    
-    # Arricchisci dettagli: preferisci snapshot FiscalDocumentDetail (id_tax/importi),
-    # non i valori live di OrderDetail (possono essere cambiati dopo l'emissione).
-    details_with_products = []
-    for detail in details:
-        order_detail = db.query(OrderDetail).filter(
-            OrderDetail.id_order_detail == detail.id_order_detail
-        ).first()
+    pdf_buffer, filename = build_fiscal_document_pdf_buffer(db, id_fiscal_document)
 
-        # Aliquota: snapshot fattura → fallback ordine
-        vat_rate = 0
-        tax_note = None
-        tax_id = detail.id_tax or (order_detail.id_tax if order_detail else None)
-        if tax_id:
-            tax = db.query(Tax).filter(Tax.id_tax == tax_id).first()
-            if tax:
-                vat_rate = tax.percentage
-                tax_note = (tax.note or "").strip() or None
-
-        unit_price_net = detail.unit_price_net
-        if unit_price_net is None and order_detail:
-            unit_price_net = getattr(order_detail, "unit_price_net", None) or getattr(
-                order_detail, "product_price", None
-            )
-        total_price_net = detail.total_price_net
-        if total_price_net is None and order_detail:
-            total_price_net = getattr(order_detail, "total_price_net", None)
-
-        details_with_products.append({
-            'id_fiscal_document_detail': detail.id_fiscal_document_detail,
-            'id_order_detail': detail.id_order_detail,
-            'product_qty': detail.product_qty,
-            'unit_price': detail.unit_price_net if detail.unit_price_net is not None else detail.unit_price,
-            'unit_price_net': unit_price_net if unit_price_net is not None else detail.unit_price,
-            'total_price_with_tax': detail.total_price_with_tax,
-            'total_price_net': total_price_net if total_price_net is not None else detail.total_price_with_tax,
-            'product_name': order_detail.product_name if order_detail else 'N/A',
-            'product_reference': order_detail.product_reference if order_detail else 'N/A',
-            'reduction_percent': order_detail.reduction_percent if order_detail else 0.0,
-            'vat_rate': vat_rate,
-            'tax_note': tax_note,
-            'id_tax': tax_id,
-        })
-
-    # Recupera metodo pagamento
-    payment_name = None
-    if order.id_payment:
-        payment = db.query(Payment).filter(Payment.id_payment == order.id_payment).first()
-        if payment:
-            payment_name = payment.name
-
-    # Recupera configurazioni azienda + dicitura PDF
-    app_config_repo = AppConfigurationRepository(db)
-    company_config = {}
-    company_configs = app_config_repo.get_by_category('company_info')
-    for config in company_configs:
-        company_config[config.name] = config.value or ''
-
-    if not company_config:
-        company_config = {
-            'company_name': 'Azienda',
-            'company_vat': 'P.IVA',
-            'company_address': 'Indirizzo',
-            'company_city': 'Città',
-            'company_pec': 'PEC',
-            'company_sdi': 'SDI'
-        }
-
-    invoice_pdf_config = {}
-    for config in app_config_repo.get_by_category('invoice_pdf'):
-        invoice_pdf_config[config.name] = config.value or ''
-
-    # Recupera fattura di riferimento per note di credito
-    referenced_invoice = None
-    if fiscal_document.document_type == 'credit_note' and fiscal_document.id_fiscal_document_ref:
-        referenced_invoice = fiscal_repo.get_fiscal_document_by_id(fiscal_document.id_fiscal_document_ref)
-
-    # Genera PDF
-    pdf_buffer = _generate_pdf_with_fpdf(
-        fiscal_document=fiscal_document,
-        order=order,
-        invoice_address=invoice_address,
-        delivery_address=delivery_address,
-        details_with_products=details_with_products,
-        payment_name=payment_name,
-        company_config=company_config,
-        db=db,
-        referenced_invoice=referenced_invoice,
-        invoice_pdf_config=invoice_pdf_config,
-    )
-    
-    # Determina nome file
-    doc_type = "nota-credito" if fiscal_document.document_type == 'credit_note' else "fattura"
-    doc_number = fiscal_document.document_number or fiscal_document.internal_number or str(id_fiscal_document)
-    filename = f"{doc_type}-{doc_number}.pdf"
-    
-    # Ritorna PDF con headers per forzare download
     return StreamingResponse(
         pdf_buffer,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-cache",
-            "Content-Type": "application/pdf"
-        }
+            "Content-Type": "application/pdf",
+        },
     )
         

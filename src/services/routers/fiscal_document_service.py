@@ -1,7 +1,8 @@
 """
 Servizio centralizzato per la gestione dei documenti fiscali
 """
-from typing import List, Optional
+from datetime import date, datetime, time
+from typing import Any, Dict, List, Optional, Tuple
 from src.repository.interfaces.order_repository_interface import IOrderRepository
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
@@ -10,7 +11,17 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
-from src.schemas.fiscal_document_schema import InvoiceResponseSchema
+from src.schemas.fiscal_document_schema import (
+    InvoiceExportFiltersSchema,
+    InvoiceExportFormatSchema,
+    InvoiceListExportItemSchema,
+    InvoiceResponseSchema,
+)
+from src.services.export.fiscal_document_export_service import FiscalDocumentExportService
+from src.services.external.fatturapa_filename import (
+    normalize_xml_bytes,
+    resolve_fatturapa_filename_from_xml,
+)
 from src.schemas.ricevuta_schema import RicevutaOrderDetailEmbedSchema
 from src.schemas.customer_schema import CustomerResponseWithoutAddressSchema
 from src.schemas.address_schema import AddressResponseSchema
@@ -38,6 +49,9 @@ from src.services.ricevute.order_lines import (
     resolve_shipping_amounts,
 )
 
+EXPORT_XLSX_MAX_LIMIT = 5000
+EXPORT_XML_MAX_LIMIT = 5000
+
 
 class FiscalDocumentService(IFiscalDocumentService):
     """Servizio centralizzato per la gestione dei documenti fiscali"""
@@ -51,6 +65,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         self._fiscal_document_repository = fiscal_document_repository
         self._order_repository = order_repository
         self._order_detail_repository = order_detail_repository
+        self._export_service = FiscalDocumentExportService()
 
     @property
     def _session(self):
@@ -626,4 +641,253 @@ class FiscalDocumentService(IFiscalDocumentService):
             if total_quantity > total_quantity_bought:
                 return False
         return True
+
+    @staticmethod
+    def _export_date_bounds(
+        date_add_from: Optional[date],
+        date_add_to: Optional[date],
+    ) -> tuple[Optional[datetime], Optional[datetime]]:
+        start = datetime.combine(date_add_from, time.min) if date_add_from else None
+        end = datetime.combine(date_add_to, time.max) if date_add_to else None
+        return start, end
+
+    def _map_invoice_export_row(self, row) -> InvoiceListExportItemSchema:
+        fiscal_document, order, customer, address_delivery, country_delivery = row
+        return InvoiceListExportItemSchema(
+            id_fiscal_document=fiscal_document.id_fiscal_document,
+            document_number=fiscal_document.document_number,
+            internal_number=fiscal_document.internal_number,
+            tipo_documento_fe=fiscal_document.tipo_documento_fe,
+            status=fiscal_document.status,
+            is_electronic=fiscal_document.is_electronic,
+            id_order=fiscal_document.id_order,
+            order_reference=order.reference if order else None,
+            customer_firstname=customer.firstname if customer else None,
+            customer_lastname=customer.lastname if customer else None,
+            customer_email=customer.email if customer else None,
+            delivery_country_iso=country_delivery.iso_code if country_delivery else None,
+            delivery_city=address_delivery.city if address_delivery else None,
+            date_add=fiscal_document.date_add,
+            total_price_net=fiscal_document.total_price_net,
+            total_price_with_tax=fiscal_document.total_price_with_tax,
+            products_total_price_net=fiscal_document.products_total_price_net,
+            products_total_price_with_tax=fiscal_document.products_total_price_with_tax,
+        )
+
+    def _list_invoices_for_export(
+        self,
+        filters: InvoiceExportFiltersSchema,
+    ) -> tuple[List[InvoiceListExportItemSchema], int]:
+        date_from, date_to = self._export_date_bounds(
+            filters.date_add_from, filters.date_add_to
+        )
+        total = self._fiscal_document_repository.count_invoices_for_export(
+            is_electronic=filters.is_electronic,
+            status=filters.status,
+            id_order=filters.id_order,
+            id_customer=filters.id_customer,
+            delivery_country_iso=filters.delivery_country_iso,
+            date_add_from=date_from,
+            date_add_to=date_to,
+        )
+        skip = (filters.page - 1) * filters.limit
+        rows = self._fiscal_document_repository.list_invoices_for_export(
+            skip=skip,
+            limit=filters.limit,
+            is_electronic=filters.is_electronic,
+            status=filters.status,
+            id_order=filters.id_order,
+            id_customer=filters.id_customer,
+            delivery_country_iso=filters.delivery_country_iso,
+            date_add_from=date_from,
+            date_add_to=date_to,
+        )
+        return [self._map_invoice_export_row(row) for row in rows], total
+
+    @staticmethod
+    def _parse_export_format(fmt: str) -> InvoiceExportFormatSchema:
+        normalized = (fmt or "").strip().lower()
+        try:
+            return InvoiceExportFormatSchema(normalized)
+        except ValueError as exc:
+            raise ValidationException(
+                "Formato export non valido: usare xlsx o xml (il PDF è solo singolo: GET /{id}/pdf)",
+                details={"fmt": fmt, "allowed": ["xlsx", "xml"]},
+            ) from exc
+
+    @staticmethod
+    def _export_filename_suffix(filters: InvoiceExportFiltersSchema) -> str:
+        suffix = ""
+        if filters.delivery_country_iso:
+            suffix += f"-{filters.delivery_country_iso}"
+        if filters.date_add_from and filters.date_add_to:
+            suffix += (
+                f"-{filters.date_add_from.isoformat()}"
+                f"-{filters.date_add_to.isoformat()}"
+            )
+        elif filters.date_add_from:
+            suffix += f"-from-{filters.date_add_from.isoformat()}"
+        elif filters.date_add_to:
+            suffix += f"-to-{filters.date_add_to.isoformat()}"
+        return suffix
+
+    def _export_max_limit(self, export_fmt: InvoiceExportFormatSchema) -> int:
+        if export_fmt == InvoiceExportFormatSchema.XML:
+            return EXPORT_XML_MAX_LIMIT
+        return EXPORT_XLSX_MAX_LIMIT
+
+    def _ensure_invoice_xml(self, invoice_id: int) -> None:
+        """Genera e persiste XML FatturaPA se mancante (indipendente dallo status documento)."""
+        from src.services.external.fatturapa_service import FatturaPAService
+
+        doc = self._fiscal_document_repository.get_fiscal_document_by_id(invoice_id)
+        if not doc:
+            raise NotFoundException("FiscalDocument", invoice_id)
+        if doc.xml_content:
+            return
+
+        result = FatturaPAService(self._session).generate_xml_from_fiscal_document(
+            invoice_id
+        )
+        if result.get("status") == "validation_error":
+            raise ValidationException(
+                f"Validazione XML FatturaPA fallita per fattura {invoice_id}",
+                details={
+                    "id_fiscal_document": invoice_id,
+                    "errors": result.get("errors", []),
+                },
+            )
+        if result.get("status") != "success":
+            raise ValidationException(
+                result.get("message", f"Generazione XML fallita per fattura {invoice_id}"),
+                details={"id_fiscal_document": invoice_id, "result": result},
+            )
+
+        self._fiscal_document_repository.update_fiscal_document_xml(
+            invoice_id,
+            result["filename"],
+            result["xml_content"],
+        )
+
+    def _prepare_invoice_ids_for_xml_export(
+        self, invoice_ids: List[int]
+    ) -> tuple[List[int], List[Dict[str, Any]]]:
+        ready: List[int] = []
+        failures: List[Dict[str, Any]] = []
+        for invoice_id in invoice_ids:
+            try:
+                self._ensure_invoice_xml(invoice_id)
+                ready.append(invoice_id)
+            except (ValidationException, NotFoundException) as exc:
+                failures.append(
+                    {
+                        "id_fiscal_document": invoice_id,
+                        "message": exc.message,
+                        "details": exc.details,
+                    }
+                )
+        return ready, failures
+
+    @staticmethod
+    def _summarize_xml_export_failures(
+        failures: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Raggruppa errori export XML per messaggio (es. P.IVA invalida)."""
+        buckets: Dict[str, Dict[str, Any]] = {}
+        for item in failures:
+            message = item.get("message") or "Errore sconosciuto"
+            key = message
+            if key not in buckets:
+                buckets[key] = {
+                    "message": message,
+                    "count": 0,
+                    "id_fiscal_documents": [],
+                }
+            buckets[key]["count"] += 1
+            buckets[key]["id_fiscal_documents"].append(item.get("id_fiscal_document"))
+        return list(buckets.values())
+
+    def _load_invoice_xml(self, invoice_id: int) -> tuple[bytes, str]:
+        doc = self._fiscal_document_repository.get_fiscal_document_by_id(invoice_id)
+        if not doc:
+            raise NotFoundException(f"Fattura {invoice_id} non trovata")
+        if not doc.xml_content:
+            raise ValidationException(
+                f"Fattura {invoice_id} senza XML generato",
+                details={"id_fiscal_document": invoice_id},
+            )
+        filename = resolve_fatturapa_filename_from_xml(
+            doc.xml_content,
+            fallback_filename=doc.filename or f"fattura-{invoice_id}.xml",
+        )
+        return normalize_xml_bytes(doc.xml_content), filename
+
+    async def export_invoices(
+        self, filters: InvoiceExportFiltersSchema, fmt: str
+    ) -> Tuple[bytes, str, str]:
+        """Export massivo lista fatture in Excel o ZIP XML."""
+        export_fmt = self._parse_export_format(fmt)
+        max_limit = self._export_max_limit(export_fmt)
+
+        if export_fmt == InvoiceExportFormatSchema.XML:
+            export_filters = filters.for_xml_export(max_limit=max_limit)
+        else:
+            export_filters = filters.model_copy(update={"page": 1, "limit": max_limit})
+
+        items, total = self._list_invoices_for_export(export_filters)
+
+        if total == 0:
+            raise NotFoundException(
+                "InvoiceExport",
+                None,
+                details={
+                    "message": "Nessuna fattura trovata con i filtri indicati",
+                    "fmt": export_fmt.value,
+                    "filters": export_filters.model_dump(mode="json"),
+                },
+            )
+
+        if total > max_limit:
+            raise ValidationException(
+                f"Troppi record per export ({total}); restringere i filtri "
+                f"(max {max_limit})",
+                details={"total": total, "max": max_limit},
+            )
+
+        suffix = self._export_filename_suffix(
+            export_filters if export_fmt == InvoiceExportFormatSchema.XML else filters
+        )
+
+        if export_fmt == InvoiceExportFormatSchema.XLSX:
+            content = self._export_service.build_list_xlsx(items)
+            media_type = (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            filename = f"fatture-export{suffix}.xlsx"
+            return content, media_type, filename
+
+        invoice_ids = [item.id_fiscal_document for item in items]
+        ready_ids, xml_failures = self._prepare_invoice_ids_for_xml_export(invoice_ids)
+        if not ready_ids:
+            summary = self._summarize_xml_export_failures(xml_failures)
+            raise ValidationException(
+                "Nessuna fattura esportabile in XML FatturaPA",
+                details={
+                    "fmt": "xml",
+                    "failed": xml_failures,
+                    "failure_summary": summary,
+                    "total_candidates": len(invoice_ids),
+                    "hint": (
+                        "Verificare P.IVA/CF e indirizzi fatturazione; "
+                        "restringere con date_add_from/to e delivery_country_iso"
+                    ),
+                },
+            )
+
+        content = self._export_service.build_xml_zip(
+            ready_ids, self._load_invoice_xml
+        )
+        media_type = "application/zip"
+        filename = f"fatture-xml-export{suffix}.zip"
+        return content, media_type, filename
     

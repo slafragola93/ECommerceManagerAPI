@@ -1,5 +1,6 @@
+from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, validator
 from datetime import date, datetime
 
 from src.models.order import ViesStatus
@@ -90,7 +91,7 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
 class InvoiceCreateSchema(BaseModel):
     """Schema per creazione fattura"""
     id_order: int = Field(..., gt=0, description="ID dell'ordine")
-    is_electronic: bool = Field(True, description="Se True, genera fattura elettronica (solo per indirizzi IT)")
+    is_electronic: bool = Field(True, description="Se True, genera fattura elettronica FatturaPA (cliente IT o UE/VIES)")
     
     class Config:
         json_schema_extra = {
@@ -302,6 +303,97 @@ class FiscalDocumentListResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
+
+# ==================== EXPORT LISTA FATTURE ====================
+
+
+class InvoiceExportFormatSchema(str, Enum):
+    XLSX = "xlsx"
+    XML = "xml"
+
+
+class InvoiceExportFiltersSchema(BaseModel):
+    """Filtri export massivo fatture."""
+
+    is_electronic: Optional[bool] = None
+    status: Optional[str] = None
+    id_order: Optional[int] = Field(None, gt=0)
+    id_customer: Optional[int] = Field(None, gt=0)
+    delivery_country_iso: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=5,
+        description="ISO paese consegna (determina aliquota IVA)",
+    )
+    date_add_from: Optional[date] = None
+    date_add_to: Optional[date] = None
+    page: int = Field(1, ge=1)
+    limit: int = Field(100, ge=1, le=5000)
+
+    def for_xml_export(self, max_limit: int = 5000) -> "InvoiceExportFiltersSchema":
+        """Export XML: date, paese consegna + solo fatture elettroniche (FatturaPA)."""
+        return self.model_copy(
+            update={
+                "is_electronic": True,
+                "status": None,
+                "id_order": None,
+                "id_customer": None,
+                "page": 1,
+                "limit": max_limit,
+            }
+        )
+
+    @field_validator("delivery_country_iso")
+    @classmethod
+    def normalize_country_iso(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("date_add_to")
+    @classmethod
+    def validate_date_range(cls, end: Optional[date], info):
+        start = info.data.get("date_add_from")
+        if start and end and end < start:
+            raise ValueError("date_add_to deve essere >= date_add_from")
+        return end
+
+
+class InvoiceListExportItemSchema(BaseModel):
+    """Riga lista fatture per export Excel."""
+
+    id_fiscal_document: int
+    document_number: Optional[str] = None
+    internal_number: Optional[str] = None
+    tipo_documento_fe: Optional[str] = None
+    status: str
+    is_electronic: bool
+    id_order: int
+    order_reference: Optional[str] = None
+    customer_firstname: Optional[str] = None
+    customer_lastname: Optional[str] = None
+    customer_email: Optional[str] = None
+    delivery_country_iso: Optional[str] = None
+    delivery_city: Optional[str] = None
+    date_add: Optional[datetime] = None
+    total_price_net: Optional[float] = None
+    total_price_with_tax: Optional[float] = None
+    products_total_price_net: Optional[float] = None
+    products_total_price_with_tax: Optional[float] = None
+
+    @validator(
+        "total_price_net",
+        "total_price_with_tax",
+        "products_total_price_net",
+        "products_total_price_with_tax",
+        pre=True,
+        allow_reuse=True,
+    )
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
 
 
 # ==================== SCHEMAS PER UPDATE ====================

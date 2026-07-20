@@ -12,7 +12,6 @@ from src.models.tax import Tax
 from src.models import Order, Address, FiscalDocument, FiscalDocumentDetail, OrderDetail, Country
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.tax_repository import TaxRepository
-from src.services.external.province_service import province_service
 from src.services.external.fatturapa_validator import FatturaPAValidator
 from src.services.external.fatturapa_tax_line import (
     FatturaPALineTax,
@@ -20,6 +19,17 @@ from src.services.external.fatturapa_tax_line import (
     enrich_line_item_tax_fields,
     resolve_line_tax,
     vies_eligible_from_order_data,
+)
+from src.services.external.fatturapa_filename import (
+    build_fatturapa_filename,
+    normalize_id_codice,
+)
+from src.services.external.fatturapa_customer_address import (
+    normalize_customer_vat,
+    resolve_codice_destinatario,
+    resolve_invoice_state,
+    validate_customer_cap,
+    validate_customer_provincia,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,15 +268,11 @@ class FatturaPAService:
     
     def _generate_filename(self, document_number: str) -> str:
         """
-        Genera il nome del file XML FatturaPA
-        
-        Args:
-            document_number: Numero documento (es. "000001")
-        
-        Returns:
-            Nome file formato: IT{VAT_NUMBER}_{DOCUMENT_NUMBER}.xml
+        Genera il nome del file XML FatturaPA (formato SDI).
+
+        [IdPaese][IdCodice]_[ProgressivoInvio].xml — es. IT08632861210_101164.xml
         """
-        return f"{self.vat_number}_{document_number}.xml"
+        return build_fatturapa_filename("IT", self.vat_number or "", document_number)
 
     def _generate_xml(self, order_data: Dict[str, Any], line_items: list, document_number: str, include_shipping: bool = True) -> str:
         """
@@ -286,14 +292,14 @@ class FatturaPAService:
         print(order_data)
         # Estrai dati cliente
         customer_name = order_data.get('invoice_firstname', '') + ' ' + order_data.get('invoice_lastname', '')
-        customer_company = order_data.get('invoice_company', '')
+        customer_company = order_data.get('invoice_company') or order_data.get('customer_company', '')
         customer_cf = order_data.get('customer_fiscal_code', '')
         customer_pec = order_data.get('invoice_pec', '')
         customer_sdi = order_data.get('invoice_sdi', '')
-        
-        # Partita IVA - rimuovi lettere (es. "IT12345678901" → "12345678901")
+        country_iso = (order_data.get('country_iso') or 'IT').upper()
+
         customer_vat_raw = order_data.get('invoice_vat', '')
-        customer_vat = ''.join(filter(str.isdigit, customer_vat_raw)) if customer_vat_raw else ''
+        customer_vat = normalize_customer_vat(customer_vat_raw, country_iso)
         
         print(f"=== DATI CLIENTE ===")
         print(f"Cliente: '{customer_name.strip()}' (company: '{customer_company}')")
@@ -330,38 +336,18 @@ class FatturaPAService:
         
         id_trasmittente = self._create_element(dati_trasmissione, "IdTrasmittente")
         self._create_element(id_trasmittente, "IdPaese", "IT")
-        self._create_element(id_trasmittente, "IdCodice", self.vat_number)
+        self._create_element(id_trasmittente, "IdCodice", normalize_id_codice(self.vat_number))
         
         self._create_element(dati_trasmissione, "ProgressivoInvio", document_number)
         self._create_element(dati_trasmissione, "FormatoTrasmissione", "FPR12")
         
-        # Logica CodiceDestinatario basata su FormatoTrasmissione
-        formato_trasmissione = "FPR12"  # Default per privati
+        formato_trasmissione = "FPR12"
         print(f"=== VALIDAZIONE CODICE DESTINATARIO ===")
         print(f"FormatoTrasmissione: {formato_trasmissione}")
-        
-        if formato_trasmissione == "FPR12":
-            # Fatture verso privati: 7 caratteri o 0000000 se non accreditato
-            if customer_sdi and len(customer_sdi) == 7:
-                codice_destinatario = customer_sdi
-                print(f"CodiceDestinatario da SDI: '{codice_destinatario}'")
-            else:
-                codice_destinatario = "0000000"
-                print(f"CodiceDestinatario default (non accreditato): '{codice_destinatario}'")
-        elif formato_trasmissione == "FPA12":
-            # Fatture verso PA: 6 caratteri
-            if customer_sdi and len(customer_sdi) == 6:
-                codice_destinatario = customer_sdi
-                print(f"CodiceDestinatario PA: '{codice_destinatario}'")
-            else:
-                error_msg = f"Per FPA12 CodiceDestinatario deve essere esattamente 6 caratteri. Ricevuto: '{customer_sdi}' (lunghezza: {len(customer_sdi) if customer_sdi else 0})"
-                logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
-                raise ValueError(error_msg)
-        else:
-            # Operazioni transfrontaliere: XXXXXXX
-            codice_destinatario = "XXXXXXX"
-            print(f"CodiceDestinatario transfrontaliero: '{codice_destinatario}'")
-            
+        print(f"Paese cliente: {country_iso}")
+
+        codice_destinatario = resolve_codice_destinatario(country_iso, customer_sdi)
+        print(f"CodiceDestinatario: '{codice_destinatario}'")
         self._create_element(dati_trasmissione, "CodiceDestinatario", codice_destinatario)
         print(f"[OK] CodiceDestinatario validato: {codice_destinatario}")
         
@@ -455,38 +441,17 @@ class FatturaPAService:
             logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
             raise ValueError(error_msg)
         self._create_element(sede_cessionario, "Indirizzo", indirizzo_pulito)
-        cap = order_data.get('invoice_postcode', '20100')
-        if not cap or len(cap) != 5:
-            error_msg = f"CAP deve essere esattamente 5 caratteri. Ricevuto: '{cap}' (lunghezza: {len(cap) if cap else 0})"
-            logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
-            raise ValueError(error_msg)
+        cap = validate_customer_cap(order_data.get('invoice_postcode'), country_iso)
         self._create_element(sede_cessionario, "CAP", cap)
-        
+
         self._create_element(sede_cessionario, "Comune", order_data.get('invoice_city', 'MILANO'))
-        
-        # Provincia limitata a 2 caratteri (formato NA, MI, etc.)
-        provincia_originale = order_data.get('invoice_state') or order_data.get('provincia')
-        
-        # Usa ProvinceService per conversione
-        if provincia_originale:
-            # Se è già un'abbreviazione (2 caratteri), usala
-            if len(provincia_originale) == 2:
-                provincia = provincia_originale.upper()
-            else:
-                # Altrimenti converti usando il service
-                provincia = province_service.get_province_abbreviation(provincia_originale)
-                if not provincia:
-                    # Fallback: prime 2 lettere
-                    provincia = provincia_originale[:2].upper()
-        else:
-            provincia = None
-        
-        if not provincia or len(provincia) != 2:
-            error_msg = f"Provincia deve essere esattamente 2 caratteri. Ricevuto: '{provincia_originale}' (lunghezza: {len(provincia) if provincia else 0})"
-            logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
-            raise ValueError(error_msg)
-        self._create_element(sede_cessionario, "Provincia", provincia)
-        self._create_element(sede_cessionario, "Nazione", order_data.get('country_iso', 'IT'))
+
+        provincia = validate_customer_provincia(
+            order_data.get('invoice_state'), country_iso
+        )
+        if provincia:
+            self._create_element(sede_cessionario, "Provincia", provincia)
+        self._create_element(sede_cessionario, "Nazione", country_iso)
         
         # Body
         body = self._create_element(root, "FatturaElettronicaBody")
@@ -827,15 +792,12 @@ class FatturaPAService:
             order = self.db.query(Order).filter(Order.id_order == fiscal_doc.id_order).first()
             if not order:
                 raise ValueError(f"Ordine {fiscal_doc.id_order} non trovato")
-            
-            # Verifica indirizzo italiano
-            italy = self.db.query(Country).filter(Country.iso_code == 'IT').first()
-            if not italy:
-                raise ValueError("Paese Italia (IT) non trovato nel database")
-            
-            address = self.db.query(Address).filter(Address.id_address == order.id_address_invoice).first()
-            if not address or address.id_country != italy.id_country:
-                raise ValueError("La fattura elettronica può essere emessa solo per indirizzi italiani")
+
+            address = self.db.query(Address).filter(
+                Address.id_address == order.id_address_invoice
+            ).first()
+            if not address:
+                raise ValueError("Indirizzo di fatturazione non trovato")
             
             # Prepara order_data con tipo documento
             order_data = self._prepare_order_data_from_fiscal_document(fiscal_doc, order, address)
@@ -932,24 +894,16 @@ class FatturaPAService:
         # Converti result in dict
         customer = dict(customer_result._mapping)
         
-        # Recupera country ISO dall'address
-        country_iso = 'IT'  # Default
+        country_iso = 'IT'
         if address.id_country:
-            country = self.db.query(Country).filter(Country.id_country == address.id_country).first()
+            country = self.db.query(Country).filter(
+                Country.id_country == address.id_country
+            ).first()
             if country:
                 country_iso = country.iso_code
-        
-        # Determina company name da address o customer
+
         customer_company = address.company
-        
-        
-        # Converti provincia usando ProvinceService
-        provincia_abbreviation = None
-        if address.state:
-            provincia_abbreviation = province_service.get_province_abbreviation(address.state)
-            if not provincia_abbreviation:
-                # Se non trova, usa le prime 2 lettere maiuscole come fallback
-                provincia_abbreviation = address.state[:2].upper() if len(address.state) >= 2 else address.state.upper()
+        provincia_abbreviation = resolve_invoice_state(address.state, country_iso)
 
         tax_electronic_code = None
         tax_note = None
@@ -982,6 +936,7 @@ class FatturaPAService:
             'invoice_pec': address.pec,
             'invoice_sdi': address.sdi,
             'invoice_vat': address.vat,
+            'invoice_company': customer_company or '',
             
             # Altri campi legacy
             'address_line1': address.address1,
