@@ -14,15 +14,15 @@ class IFiscalDocumentService(IBaseService):
     """Interface per il servizio dei documenti fiscali"""
     
     @abstractmethod
-    async def create_invoice(self, id_order: int, is_electronic: bool = True) -> FiscalDocument:
-        """Crea una fattura per un ordine"""
+    async def create_invoice(self, id_order: int) -> FiscalDocument:
+        """Crea una fattura elettronica FatturaPA per un ordine"""
         pass
     
     @abstractmethod
     async def create_credit_note(self, id_invoice: int, reason: str, is_partial: bool = False, 
-                               items: Optional[List[dict]] = None, is_electronic: bool = True, 
+                               items: Optional[List[dict]] = None,
                                include_shipping: bool = True) -> FiscalDocument:
-        """Crea una nota di credito per una fattura"""
+        """Crea una nota di credito elettronica FatturaPA per una fattura"""
         pass
 
     @abstractmethod

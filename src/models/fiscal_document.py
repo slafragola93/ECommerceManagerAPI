@@ -12,7 +12,7 @@ class FiscalDocument(Base):
     
     - document_type: 'invoice' o 'credit_note'
     - tipo_documento_fe: TD01 (fattura), TD04 (nota credito), ecc.
-    - is_electronic: True se emessa elettronicamente (solo per IT)
+    - is_electronic: True se emessa elettronicamente; per invoice e credit_note è sempre True (FatturaPA)
     """
     __tablename__ = "fiscal_documents"
     

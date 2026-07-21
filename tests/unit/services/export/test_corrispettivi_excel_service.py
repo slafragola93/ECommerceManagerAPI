@@ -52,6 +52,14 @@ def _sample_riepilogo(*, delivery_country_iso: str | None = None) -> Corrispetti
 
 
 class TestCorrispettiviExcelService:
+    def test_riepilogo_workbook_single_day_footer(self):
+        riepilogo = _sample_riepilogo()
+        riepilogo.day = 8
+        raw = CorrispettiviExcelService().build_riepilogo_workbook(riepilogo)
+        sheet = load_workbook(BytesIO(raw)).active
+
+        assert sheet.cell(3, 1).value == "Totale 08/07/2026"
+
     def test_riepilogo_workbook_includes_tax_columns(self):
         raw = CorrispettiviExcelService().build_riepilogo_workbook(_sample_riepilogo())
         sheet = load_workbook(BytesIO(raw)).active

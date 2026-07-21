@@ -76,20 +76,12 @@ class FiscalDocumentService(IFiscalDocumentService):
         data_extractor=extract_invoice_created_data,
         source="fiscal_document_service.create_invoice"
     )
-    async def create_invoice(self, id_order: int, is_electronic: bool = True, user: dict = None) -> FiscalDocument:
+    async def create_invoice(self, id_order: int, user: dict = None) -> FiscalDocument:
         """
-        Crea una fattura per un ordine.
-        
-        Args:
-            id_order: ID dell'ordine per cui creare la fattura
-            is_electronic: Se True, genera fattura elettronica
-            user: Contesto utente per eventi (user_id)
-        
-        Returns:
-            FiscalDocument (fattura) creata
+        Crea una fattura elettronica FatturaPA per un ordine (is_electronic=True).
         """
         try:
-            return self._fiscal_document_repository.create_invoice(id_order, is_electronic)
+            return self._fiscal_document_repository.create_invoice(id_order)
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della fattura: {str(e)}")
     
@@ -99,26 +91,12 @@ class FiscalDocumentService(IFiscalDocumentService):
         source="fiscal_document_service.create_credit_note"
     )
     async def create_credit_note(self, id_invoice: int, reason: str, is_partial: bool = False, 
-                               items: Optional[List[dict]] = None, is_electronic: bool = True, 
+                               items: Optional[List[dict]] = None,
                                include_shipping: bool = True, user: dict = None) -> FiscalDocument:
-        """
-        Crea una nota di credito per una fattura.
-        
-        Args:
-            id_invoice: ID della fattura di riferimento
-            reason: Motivo della nota di credito
-            is_partial: Se True, nota parziale
-            items: Lista articoli da includere (per note parziali)
-            is_electronic: Se True, genera nota elettronica
-            include_shipping: Se True, include spese di spedizione
-            user: Contesto utente per eventi (user_id)
-        
-        Returns:
-            FiscalDocument (nota di credito) creata
-        """
+        """Crea una nota di credito elettronica FatturaPA per una fattura (is_electronic=True)."""
         try:
             return self._fiscal_document_repository.create_credit_note(
-                id_invoice, reason, is_partial, items, is_electronic, include_shipping
+                id_invoice, reason, is_partial, items, include_shipping
             )
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della nota di credito: {str(e)}")
@@ -126,6 +104,8 @@ class FiscalDocumentService(IFiscalDocumentService):
     async def create_return(self, order: Order, return_data: ReturnCreateSchema) -> FiscalDocument:
         """Crea un reso per un ordine"""
         try:
+            self._validate_return_payload(order, return_data)
+
             # Converte i dati dello schema in formato dict
             items_to_return = []
             for item in return_data.order_details:
@@ -150,25 +130,37 @@ class FiscalDocumentService(IFiscalDocumentService):
                     'unit_price_with_tax': unit_price_with_tax,
                     'id_tax': item.id_tax or (order_detail.id_tax if order_detail else None),
                 })
-            
-            items_already_returned = await self.get_items_returned_by_order(order.id_order)
-            items_already_returned_dict = {}
-            if items_already_returned:
-                for item in items_already_returned:
-                    id_order_detail = item['id_order_detail']
-                    if id_order_detail not in items_already_returned_dict:
-                        items_already_returned_dict[id_order_detail] = {k: v for k, v in item.items() if k != 'id_order_detail'}
-                    else:
-                        items_already_returned_dict[id_order_detail]['quantity_returned'] += item['quantity_returned']
-            is_returnable = await self.validate_return_items(items_to_return, items_already_returned_dict)
-            if not is_returnable:
-                raise ValidationException("Non è possibile creare il reso per questi articoli. Controllare la quantità di articoli già resi e la quantità da restituire.")
+
+            if items_to_return:
+                items_already_returned = await self.get_items_returned_by_order(order.id_order)
+                items_already_returned_dict = {}
+                if items_already_returned:
+                    for item in items_already_returned:
+                        id_order_detail = item['id_order_detail']
+                        if id_order_detail not in items_already_returned_dict:
+                            items_already_returned_dict[id_order_detail] = {
+                                k: v for k, v in item.items() if k != 'id_order_detail'
+                            }
+                        else:
+                            items_already_returned_dict[id_order_detail]['quantity_returned'] += item[
+                                'quantity_returned'
+                            ]
+                is_returnable = await self.validate_return_items(
+                    items_to_return, items_already_returned_dict
+                )
+                if not is_returnable:
+                    raise ValidationException(
+                        "Non è possibile creare il reso per questi articoli. "
+                        "Controllare la quantità di articoli già resi e la quantità da restituire."
+                    )
             return self._fiscal_document_repository.create_return(
                 order,
                 items_to_return,
                 return_data.includes_shipping,
                 return_data.note,
             )
+        except ValidationException:
+            raise
         except Exception as e:
             raise ValidationException(f"Errore nella creazione del reso: {str(e)}")
     
@@ -300,6 +292,7 @@ class FiscalDocumentService(IFiscalDocumentService):
                         img_url=img_url,
                         id_fiscal_document_detail=d.id_fiscal_document_detail,
                         id_fiscal_document=d.id_fiscal_document,
+                        is_shipping=False,
                     )
                 )
             else:
@@ -327,8 +320,15 @@ class FiscalDocumentService(IFiscalDocumentService):
                         img_url=None,
                         id_fiscal_document_detail=d.id_fiscal_document_detail,
                         id_fiscal_document=d.id_fiscal_document,
+                        is_shipping=False,
                     )
                 )
+
+        if doc.includes_shipping:
+            order = self._order_repository.get_by_id(doc.id_order)
+            shipping_line = self._build_return_shipping_detail(doc, order, shipping)
+            if shipping_line:
+                details_schemas.append(shipping_line)
 
         return ReturnResponseSchema(
             id_fiscal_document=doc.id_fiscal_document,
@@ -584,13 +584,30 @@ class FiscalDocumentService(IFiscalDocumentService):
             raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
         return schema
     
-    async def get_fiscal_documents(self, skip: int = 0, limit: int = 100, 
-                                 document_type: Optional[str] = None,
-                                 is_electronic: Optional[bool] = None,
-                                 status: Optional[str] = None):
+    async def get_fiscal_documents(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        document_type: Optional[str] = None,
+        is_electronic: Optional[bool] = None,
+        status: Optional[str] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[date] = None,
+        date_add_to: Optional[date] = None,
+    ):
         """Recupera lista documenti fiscali con filtri"""
         try:
-            return self._fiscal_document_repository.get_fiscal_documents(skip, limit, document_type, is_electronic, status)
+            date_from, date_to = self._export_date_bounds(date_add_from, date_add_to)
+            return self._fiscal_document_repository.get_fiscal_documents(
+                skip,
+                limit,
+                document_type,
+                is_electronic,
+                status,
+                delivery_country_iso,
+                date_from,
+                date_to,
+            )
         except Exception as e:
             raise ValidationException(f"Errore nel recupero dei documenti fiscali: {str(e)}")
     
@@ -641,6 +658,53 @@ class FiscalDocumentService(IFiscalDocumentService):
             if total_quantity > total_quantity_bought:
                 return False
         return True
+
+    def _validate_return_payload(self, order: Order, return_data: ReturnCreateSchema) -> None:
+        has_products = bool(return_data.order_details)
+        if not has_products and not return_data.includes_shipping:
+            raise ValidationException(
+                "Specificare almeno una riga prodotto o impostare includes_shipping=true"
+            )
+
+        if return_data.includes_shipping:
+            if self._fiscal_document_repository.is_shipping_already_returned(order.id_order):
+                raise ValidationException(
+                    "Le spese di spedizione sono già state incluse in un reso precedente"
+                )
+            shipping_net, shipping_incl = resolve_shipping_amounts(
+                order,
+                self._fiscal_document_repository.get_order_shipping(order),
+            )
+            if shipping_net <= 0 and shipping_incl <= 0:
+                raise ValidationException(
+                    "L'ordine non ha costi di spedizione da restituire"
+                )
+
+    def _build_return_shipping_detail(
+        self,
+        doc: FiscalDocument,
+        order: Optional[Order],
+        shipping,
+    ) -> Optional[ReturnDetailResponseSchema]:
+        if not order:
+            return None
+        shipping_line = build_shipping_line_dict(order, shipping, product_reference="SHIPPING")
+        if not shipping_line:
+            return None
+        return ReturnDetailResponseSchema(
+            id_order_detail=0,
+            id_order=doc.id_order,
+            id_tax=shipping_line.get("id_tax"),
+            product_name=shipping_line.get("product_name"),
+            product_reference=shipping_line.get("product_reference"),
+            product_qty=int(shipping_line.get("product_qty") or 1),
+            unit_price_net=self._to_float(shipping_line.get("unit_price_net")),
+            unit_price_with_tax=self._to_float(shipping_line.get("unit_price_with_tax")) or 0.0,
+            total_price_net=self._to_float(shipping_line.get("total_price_net")) or 0.0,
+            total_price_with_tax=self._to_float(shipping_line.get("total_price_with_tax")) or 0.0,
+            id_fiscal_document=doc.id_fiscal_document,
+            is_shipping=True,
+        )
 
     @staticmethod
     def _export_date_bounds(

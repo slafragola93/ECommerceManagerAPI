@@ -35,7 +35,10 @@ class ReturnItemSchema(BaseModel):
 
 class ReturnCreateSchema(BaseModel):
     """Schema per la creazione di un reso"""
-    order_details: List[ReturnItemSchema] = Field(..., description="Lista degli articoli da restituire")
+    order_details: List[ReturnItemSchema] = Field(
+        default_factory=list,
+        description="Lista degli articoli da restituire (può essere vuota se includes_shipping=true)",
+    )
     includes_shipping: bool = Field(False, description="Se includere le spese di spedizione")
     note: Optional[str] = Field(None, description="Note aggiuntive per il reso")
 
@@ -111,6 +114,10 @@ class ReturnDetailResponseSchema(BaseModel):
     # Campi specifici del reso
     id_fiscal_document_detail: Optional[int] = None
     id_fiscal_document: Optional[int] = None
+    is_shipping: bool = Field(
+        False,
+        description="True se la riga rappresenta la spedizione resa (id_order_detail=0)",
+    )
 
     class Config:
         from_attributes = True

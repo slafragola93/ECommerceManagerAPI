@@ -108,6 +108,58 @@ class TestCorrispettiviAPI:
         assert response.headers["content-type"] == "application/zip"
         assert len(response.content) > 100
 
+    def test_get_giorno_riepilogo(self, fiscal_admin_client, db_session, tax):
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="API-GIORNO-1",
+            order_date=datetime(2026, 8, 1, 10, 0, 0),
+        )
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="API-GIORNO-15",
+            order_date=datetime(2026, 8, 15, 10, 0, 0),
+        )
+
+        response = fiscal_admin_client.get(
+            "/api/v1/corrispettivi/giorno/riepilogo",
+            params={"year": 2026, "month": 8, "day": 1},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["day"] == 1
+        assert len(data["rows"]) == 1
+        assert data["rows"][0]["day"] == 1
+
+    def test_export_giorno_zip(self, fiscal_admin_client, db_session, tax):
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="API-EXP-GIORNO",
+            order_date=datetime(2026, 8, 3, 10, 0, 0),
+        )
+
+        response = fiscal_admin_client.post(
+            "/api/v1/corrispettivi/giorno/export",
+            json={"year": 2026, "month": 8, "day": 3},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "Registro_2026-08-03.zip" in response.headers.get(
+            "content-disposition", ""
+        )
+        assert len(response.content) > 100
+
+    def test_invalid_day_returns_422(self, fiscal_admin_client):
+        response = fiscal_admin_client.get(
+            "/api/v1/corrispettivi/giorno",
+            params={"year": 2026, "month": 2, "day": 30},
+        )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
     def test_forbidden_without_permissions(self, fiscal_user_client):
         response = fiscal_user_client.get(
             "/api/v1/corrispettivi/",

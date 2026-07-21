@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy import func
 
 from src.models.customer import Customer
@@ -12,6 +13,7 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.ricevuta import Ricevuta, RicevutaStato
 from src.repository.corrispettivo_repository import CorrispettivoRepository
 from src.schemas.corrispettivo_schema import (
+    CorrispettivoDayExportRequestSchema,
     CorrispettivoExportRequestSchema,
     CorrispettivoFiltersSchema,
 )
@@ -89,7 +91,31 @@ class TestCorrispettivoServiceDailySummary:
         )
 
         assert len(result.days) == 1
+        assert result.day == 1
         assert result.days[0].date == date(2026, 7, 1)
+
+    def test_riepilogo_filter_by_day(self, db_session, service, tax):
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="RIEP-D1",
+            order_date=datetime(2026, 7, 1, 10, 0, 0),
+        )
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="RIEP-D15",
+            order_date=datetime(2026, 7, 15, 10, 0, 0),
+        )
+
+        result = service.get_riepilogo(
+            2026, 7, CorrispettivoFiltersSchema(day=15)
+        )
+
+        assert result.day == 15
+        assert len(result.rows) == 1
+        assert result.rows[0].day == 15
+        assert result.month_totals.row_total == Decimal("122.00")
 
     def test_filter_by_platform_and_store(self, db_session, service, tax):
         seed_paid_order(
@@ -221,6 +247,43 @@ class TestCorrispettivoServiceExport:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             names = zf.namelist()
             assert any(n.endswith("registro.xlsx") for n in names)
+
+    def test_build_export_zip_single_day(self, db_session, service, tax):
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="EXP-D1",
+            order_date=datetime(2026, 7, 1, 10, 0, 0),
+            country_iso="IT",
+        )
+        seed_paid_order(
+            db_session,
+            tax,
+            reference="EXP-D15",
+            order_date=datetime(2026, 7, 15, 10, 0, 0),
+            country_iso="IT",
+        )
+
+        request = CorrispettivoDayExportRequestSchema(
+            year=2026, month=7, day=1
+        ).to_export_request()
+        zip_bytes = service.build_export_zip(request)
+        riepilogo = service.get_riepilogo(2026, 7, request.filters)
+
+        assert service.export_zip_filename(request) == "Registro_2026-07-01.zip"
+        assert len(riepilogo.rows) == 1
+        assert riepilogo.day == 1
+
+        excel = CorrispettiviExcelService()
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            registro_bytes = zf.read("registro.xlsx")
+        sheet = excel.build_riepilogo_workbook(riepilogo)
+        workbook = load_workbook(io.BytesIO(sheet))
+        ws = workbook.active
+        assert ws.max_row == 3
+        assert ws.cell(2, 1).value == "01/07/2026"
+        assert ws.cell(3, 1).value == "Totale 01/07/2026"
+        assert len(registro_bytes) > 0
 
 
 class TestChiusuraMeseAmministrativa:

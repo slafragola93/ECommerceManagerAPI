@@ -89,15 +89,13 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
 # ==================== SCHEMAS PER FATTURE ====================
 
 class InvoiceCreateSchema(BaseModel):
-    """Schema per creazione fattura"""
+    """Schema per creazione fattura (sempre elettronica FatturaPA, is_electronic=True)."""
     id_order: int = Field(..., gt=0, description="ID dell'ordine")
-    is_electronic: bool = Field(True, description="Se True, genera fattura elettronica FatturaPA (cliente IT o UE/VIES)")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "id_order": 12345,
-                "is_electronic": True
             }
         }
 
@@ -175,11 +173,10 @@ class InvoiceResponseSchema(BaseModel):
 # ==================== SCHEMAS PER NOTE DI CREDITO ====================
 
 class CreditNoteCreateSchema(BaseModel):
-    """Schema per creazione nota di credito"""
+    """Schema per creazione nota di credito (sempre elettronica FatturaPA TD04, is_electronic=True)."""
     id_invoice: int = Field(..., gt=0, description="ID della fattura di riferimento")
     reason: str = Field(..., min_length=1, max_length=500, description="Motivo della nota di credito")
     is_partial: bool = Field(False, description="Se True, nota di credito parziale")
-    is_electronic: bool = Field(True, description="Se True, genera XML elettronico")
     include_shipping: bool = Field(True, description="Se True, include spese di spedizione (solo per note totali o se non già stornate)")
     items: Optional[List[FiscalDocumentDetailSchema]] = Field(
         None, 
@@ -195,7 +192,6 @@ class CreditNoteCreateSchema(BaseModel):
                         "id_invoice": 123,
                         "reason": "Reso merce",
                         "is_partial": False,
-                        "is_electronic": True,
                         "include_shipping": True
                     }
                 },
@@ -205,7 +201,6 @@ class CreditNoteCreateSchema(BaseModel):
                         "id_invoice": 123,
                         "reason": "Reso merce - spedizione già stornata",
                         "is_partial": False,
-                        "is_electronic": True,
                         "include_shipping": False
                     }
                 },
@@ -215,7 +210,6 @@ class CreditNoteCreateSchema(BaseModel):
                         "id_invoice": 123,
                         "reason": "Reso parziale - articolo difettoso",
                         "is_partial": True,
-                        "is_electronic": True,
                         "include_shipping": False,
                         "items": [
                             {
@@ -303,6 +297,39 @@ class FiscalDocumentListResponseSchema(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class FiscalDocumentListFiltersSchema(BaseModel):
+    """Filtri lista paginata documenti fiscali (GET /fiscal_documents/)."""
+
+    document_type: Optional[str] = None
+    is_electronic: Optional[bool] = None
+    status: Optional[str] = None
+    delivery_country_iso: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=5,
+        description="ISO paese consegna ordine (stessa logica export/corrispettivi)",
+    )
+    date_add_from: Optional[date] = None
+    date_add_to: Optional[date] = None
+    page: int = Field(1, ge=1)
+    limit: int = Field(100, ge=1, le=1000)
+
+    @field_validator("delivery_country_iso")
+    @classmethod
+    def normalize_country_iso(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip().upper()
+
+    @field_validator("date_add_to")
+    @classmethod
+    def validate_date_range(cls, end: Optional[date], info):
+        start = info.data.get("date_add_from")
+        if start and end and end < start:
+            raise ValueError("date_add_to deve essere >= date_add_from")
+        return end
 
 
 # ==================== EXPORT LISTA FATTURE ====================

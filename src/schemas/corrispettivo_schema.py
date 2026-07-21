@@ -1,8 +1,18 @@
+import calendar
 from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, model_validator
+
+
+def validate_corrispettivo_day(year: int, month: int, day: int) -> None:
+    """Verifica che il giorno esista nel mese indicato."""
+    last_day = calendar.monthrange(year, month)[1]
+    if day > last_day:
+        raise ValueError(
+            f"Giorno {day} non valido per {month:02d}/{year} (massimo {last_day})"
+        )
 
 
 class CorrispettivoFiltersSchema(BaseModel):
@@ -96,6 +106,7 @@ class CorrispettivoDaySummarySchema(BaseModel):
 class CorrispettivoRiepilogoResponseSchema(BaseModel):
     year: int
     month: int
+    day: Optional[int] = None
     calculation_mode: str = "order_document_date"
     timezone: str = "Europe/Rome"
     delivery_country_iso: Optional[str] = None
@@ -107,6 +118,7 @@ class CorrispettivoRiepilogoResponseSchema(BaseModel):
 class CorrispettivoListResponseSchema(BaseModel):
     year: int
     month: int
+    day: Optional[int] = None
     timezone: str = "Europe/Rome"
     days: List[CorrispettivoDaySummarySchema]
     month_totals: CorrispettivoSplitTotalsSchema
@@ -116,3 +128,35 @@ class CorrispettivoExportRequestSchema(BaseModel):
     year: int = Field(..., ge=2000, le=2100)
     month: int = Field(..., ge=1, le=12)
     filters: Optional[CorrispettivoFiltersSchema] = None
+
+    @model_validator(mode="after")
+    def validate_filter_day(self):
+        if self.filters and self.filters.day is not None:
+            validate_corrispettivo_day(self.year, self.month, self.filters.day)
+        return self
+
+
+class CorrispettivoDayExportRequestSchema(BaseModel):
+    """Export corrispettivo ristretto a un singolo giorno del mese."""
+
+    year: int = Field(..., ge=2000, le=2100)
+    month: int = Field(..., ge=1, le=12)
+    day: int = Field(..., ge=1, le=31)
+    filters: Optional[CorrispettivoFiltersSchema] = None
+
+    @model_validator(mode="after")
+    def validate_calendar_day(self):
+        validate_corrispettivo_day(self.year, self.month, self.day)
+        if self.filters and self.filters.day is not None and self.filters.day != self.day:
+            raise ValueError("filters.day deve coincidere con day quando entrambi sono valorizzati")
+        return self
+
+    def to_export_request(self) -> CorrispettivoExportRequestSchema:
+        base = self.filters.model_dump(exclude_none=True) if self.filters else {}
+        base.pop("day", None)
+        merged_filters = CorrispettivoFiltersSchema(**base, day=self.day)
+        return CorrispettivoExportRequestSchema(
+            year=self.year,
+            month=self.month,
+            filters=merged_filters,
+        )

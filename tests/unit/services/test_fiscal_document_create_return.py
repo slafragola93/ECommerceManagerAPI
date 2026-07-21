@@ -73,6 +73,83 @@ class TestFiscalDocumentCreateReturn:
         assert returns_net > Decimal("0")
 
     @pytest.mark.asyncio
+    async def test_create_return_shipping_only(
+        self, db_session, fiscal_service, tax, repo
+    ):
+        order, _detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="RET-SHIP-ONLY",
+            order_date=datetime(2026, 7, 10, 10, 0, 0),
+            with_shipping=True,
+        )
+
+        return_doc = await fiscal_service.create_return(
+            order,
+            ReturnCreateSchema(
+                order_details=[],
+                includes_shipping=True,
+            ),
+        )
+
+        assert return_doc.document_type == "return"
+        assert return_doc.includes_shipping is True
+        assert float(return_doc.total_price_with_tax) == pytest.approx(12.20)
+
+        schema = await fiscal_service.get_fiscal_document_by_id(
+            return_doc.id_fiscal_document
+        )
+        assert schema.includes_shipping is True
+        assert float(schema.total_price_with_tax) == pytest.approx(12.20)
+        assert len(schema.details) == 1
+        shipping_row = schema.details[0]
+        assert shipping_row.is_shipping is True
+        assert shipping_row.id_order_detail == 0
+        assert shipping_row.product_name == "Spedizione"
+        assert shipping_row.product_reference == "SHIPPING"
+        assert float(shipping_row.total_price_with_tax) == pytest.approx(12.20)
+
+        movements = repo.fetch_movements(2026, 7)
+        shipping_returns = [m for m in movements if m.is_shipping and m.returns_amount]
+        assert len(shipping_returns) >= 1
+
+    @pytest.mark.asyncio
+    async def test_create_return_empty_without_shipping_raises(
+        self, db_session, fiscal_service, tax
+    ):
+        order, _detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="RET-EMPTY",
+            order_date=datetime(2026, 7, 12, 10, 0, 0),
+            with_shipping=True,
+        )
+
+        with pytest.raises(ValidationException, match="almeno una riga prodotto"):
+            await fiscal_service.create_return(
+                order,
+                ReturnCreateSchema(order_details=[], includes_shipping=False),
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_return_shipping_only_without_shipping_cost_raises(
+        self, db_session, fiscal_service, tax
+    ):
+        order, _detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="RET-NO-SHIP",
+            order_date=datetime(2026, 7, 13, 10, 0, 0),
+            with_shipping=False,
+        )
+
+        with pytest.raises(ValidationException, match="non ha costi di spedizione"):
+            await fiscal_service.create_return(
+                order,
+                ReturnCreateSchema(order_details=[], includes_shipping=True),
+            )
+
+    @pytest.mark.asyncio
     async def test_create_return_with_shipping_in_movements(
         self, db_session, fiscal_service, tax, repo
     ):

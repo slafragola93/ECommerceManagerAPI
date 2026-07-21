@@ -6,14 +6,16 @@ from typing import List, Optional, Dict, Any
 from src.core.interfaces import IRepository
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
+from src.models.order import Order
+from src.models.shipping import Shipping
 
 
 class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
     """Interface per la repository dei documenti fiscali"""
     
     @abstractmethod
-    def create_invoice(self, id_order: int, is_electronic: bool = True) -> FiscalDocument:
-        """Crea una fattura per un ordine"""
+    def create_invoice(self, id_order: int) -> FiscalDocument:
+        """Crea una fattura elettronica FatturaPA per un ordine"""
         pass
     
     @abstractmethod
@@ -28,9 +30,9 @@ class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
     
     @abstractmethod
     def create_credit_note(self, id_invoice: int, reason: str, is_partial: bool = False,
-                          items: Optional[List[Dict[str, Any]]] = None, is_electronic: bool = True,
+                          items: Optional[List[Dict[str, Any]]] = None,
                           include_shipping: bool = True) -> FiscalDocument:
-        """Crea una nota di credito per una fattura"""
+        """Crea una nota di credito elettronica FatturaPA per una fattura"""
         pass
     
     @abstractmethod
@@ -91,6 +93,16 @@ class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
     @abstractmethod
     def calculate_return_totals(self, order_details: List[dict], includes_shipping: bool, id_order: int) -> float:
         """Calcola il totale di un reso"""
+        pass
+
+    @abstractmethod
+    def is_shipping_already_returned(self, id_order: int) -> bool:
+        """True se esiste già un reso con includes_shipping per l'ordine"""
+        pass
+
+    @abstractmethod
+    def get_order_shipping(self, order: Order) -> Optional[Shipping]:
+        """Recupera la spedizione collegata all'ordine"""
         pass
     
     @abstractmethod

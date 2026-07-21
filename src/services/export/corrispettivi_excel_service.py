@@ -59,6 +59,11 @@ class CorrispettiviExcelService:
             )
         return values
 
+    def _totals_label(self, riepilogo: CorrispettivoRiepilogoResponseSchema) -> str:
+        if riepilogo.day is not None and len(riepilogo.rows) == 1:
+            return f"Totale {self._format_date(riepilogo.rows[0].date)}"
+        return f"Totale {riepilogo.month:02d}/{riepilogo.year}"
+
     def build_riepilogo_workbook(
         self, riepilogo: CorrispettivoRiepilogoResponseSchema
     ) -> bytes:
@@ -90,7 +95,7 @@ class CorrispettiviExcelService:
                 bucket.shipping_returns += cell.shipping_returns
 
         sheet.append(
-            [f"Totale {riepilogo.month:02d}/{riepilogo.year}"]
+            [self._totals_label(riepilogo)]
             + self._riepilogo_row_values(columns, month_cells)
         )
 

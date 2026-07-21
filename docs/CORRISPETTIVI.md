@@ -28,8 +28,8 @@ I corrispettivi sono un **report fiscale interno** (no SDI, no servizi esterni).
 | Perimetro vendite | Ordini **senza** `FiscalDocument` con `document_type = "invoice"` |
 | Stato pagamento (vendite) | Solo ordini con **`is_payed = true`** (Pagato) |
 | Data vendite | `Order.date_add` (giorno in timezone `Europe/Rome`) |
-| Ricevute emesse | Se **giorno** `data_emissione ≠ date_add` ordine (Europe/Rome): decurtazione su `date_add`, imputazione su giorno emissione. Se coincidono: ordine resta in vendite base del giorno ordine. L'ora di emissione non influisce sui totali giornalieri. |
-| Ordini con ricevuta differita | **Esclusi** dalle vendite base su `date_add` (contati via decurtazione/imputazione) |
+| Ricevute emesse | Se **giorno** `data_emissione ≠ date_add` ordine (Europe/Rome): nessun importo sul giorno ordine; **imputazione** sul giorno emissione. Se coincidono: ordine resta in vendite base del giorno ordine. L'ora di emissione non influisce sui totali giornalieri. |
+| Ordini con ricevuta differita | **Esclusi** dalle vendite base su `date_add`; conteggiati solo su **`data_emissione`** (imputazione) |
 | Data resi | `FiscalDocument.date_add` del documento reso |
 | Perimetro resi | Ordine **pagato** e (**non fatturato** oppure con **nota di credito** collegata) |
 | Stato pagamento (resi) | Stesso flag `is_payed = true` sull'ordine collegato |
@@ -91,9 +91,8 @@ Per ordini con **ricevuta emessa** (`ricevute.stato = 'emessa'`):
 
 1. Se **`date_add` ordine = `data_emissione` ricevuta** → l'importo **resta** nel corrispettivo vendite del giorno ordine (vendite base), nessun aggiustamento.
 2. Se **`date_add` ordine ≠ `data_emissione` ricevuta**:
-   - l'ordine **non** entra nelle vendite base su `date_add`;
-   - **decurtazione** (negativo) sul giorno **`Order.date_add`**;
-   - **imputazione** (positivo) sul giorno **`ricevute.data_emissione`**.
+   - l'ordine **non** entra nelle vendite base su `date_add` (giorno ordine = **zero**, nessuno storno negativo);
+   - **imputazione** (positivo) sul giorno **`ricevute.data_emissione`** (prodotti da `order_details`, spedizione da `Shipping.price_tax_incl` una volta per ordine).
 3. Ricevuta **eliminata** (o legacy **annullata**) → l'ordine torna nel flusso vendite standard su `date_add`.
 
 Importi sempre live da `order_details` / spedizione ordine. `data_incasso` resta campo audit ricevuta, **non** guida il corrispettivo.
@@ -104,10 +103,10 @@ Importi sempre live da `order_details` / spedizione ordine. `data_incasso` resta
 
 | Componente | Origine |
 |---|---|
-| `base` | Vendite standard su `Order.date_add` (senza ricevuta emessa) |
-| `ricevute_decurtazione` | Lordo negativo su `Order.date_add` (solo se `data_emissione ≠ date_add`) |
+| `base` | Vendite standard su `Order.date_add` (esclusi ordini con ricevuta emessa in giorno diverso) |
+| `ricevute_decurtazione` | Sempre **zero** (legacy audit; non più usato nel net) |
 | `ricevute_imputazione` | Lordo positivo su `ricevute.data_emissione` (solo se `data_emissione ≠ date_add`) |
-| `net` | Somma dei tre |
+| `net` | Somma di `base` + `ricevute_imputazione` |
 
 Esposto in `GET /api/v1/corrispettivi` (e alias `/summary`) nel campo opzionale `days[].sales_breakdown` per audit UI.
 
@@ -119,7 +118,7 @@ I resi restano conteggiati alla **data del documento reso** (`FiscalDocument.dat
 
 | Scenario | Comportamento atteso |
 |---|---|
-| Ordine con ricevuta emessa + reso | Imputazione/decurtazione ricevuta invariata; reso in `products_returns` / `shipping_returns` alla data reso |
+| Ordine con ricevuta emessa + reso | Imputazione ricevuta su emissione invariata; reso in `products_returns` / `shipping_returns` alla data reso |
 | Eliminazione reso (ordine con ricevuta) | Sparisce solo il movimento reso; aggiustamenti ricevuta invariati |
 | Eliminazione reso (ordine senza ricevuta) | Vendita su `date_add` invariata; reso rimosso |
 | Ricevuta annullata dopo delete reso | Ordine torna in vendite standard su `date_add` |
@@ -132,12 +131,12 @@ Test: `tests/unit/repository/test_corrispettivo_ricevute_returns.py`
 
 ## 2. Organizzazione endpoint
 
-Due endpoint **GET** per consultazione (viste diverse sugli stessi dati) + un **POST** per export file.
+Due endpoint **GET** per consultazione mensile + tre endpoint **giorno** + due **POST** export (mese o singolo giorno).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Filtri comuni: year, month, id_platform, id_store,             │
-│                 delivery_country_iso, day                         │
+│                 delivery_country_iso, day (opzionale)             │
 └────────────────────────────┬────────────────────────────────────┘
                              │
               ┌──────────────┴──────────────┐
@@ -147,15 +146,24 @@ Due endpoint **GET** per consultazione (viste diverse sugli stessi dati) + un **
               │                             │
               └──────────────┬──────────────┘
                              │
-                    POST /export
-                    (ZIP Registri.zip)
+              ┌──────────────┴──────────────┐
+              ▼                             ▼
+       POST /export                 POST /giorno/export
+       (ZIP Registri.zip)           (ZIP Registro_YYYY-MM-DD.zip)
+              │                             │
+              └──────────────┬──────────────┘
+                             │
+              GET /giorno/riepilogo · GET /giorno (day obbligatorio)
 ```
 
 | Endpoint | Quando usarlo (FE) |
 |---|---|
 | `GET /riepilogo` | **Schermata principale** — tabella giorni × aliquote; include `columns` (header aliquote) |
 | `GET /` | Opzionale — card/summary con totali giornalieri, split prodotti/spedizione, conteggi ordini/resi |
-| `POST /export` | Pulsante **Esporta** → download `Registri.zip` |
+| `GET /giorno/riepilogo` | **Genera corrispettivo singolo giorno** — matrice aliquote (`day` obbligatorio) |
+| `GET /giorno` | Summary KPI del singolo giorno |
+| `POST /export` | **Esporta mese** → `Registri.zip` (o `Registro_YYYY-MM-DD.zip` se `filters.day`) |
+| `POST /giorno/export` | **Esporta giorno** → body con `year`, `month`, `day` obbligatori |
 
 ---
 
@@ -170,7 +178,7 @@ Parametri identici su tutti i GET (query string) e nel body export (`filters`).
 | `id_platform` | int | No | Canale → `Order.id_platform` |
 | `id_store` | int | No | Conto/store → `Order.id_store` |
 | `delivery_country_iso` | string | No | Paese consegna ISO (es. `IT`, `DE`) — filtra matrice/export per paese |
-| `day` | int | No | Giorno del mese (1–31) — restringe a un solo giorno |
+| `day` | int | No | Giorno del mese (1–31) — restringe a un solo giorno; validato sul calendario del mese |
 
 **Mapping UI legacy → API**
 
@@ -204,6 +212,7 @@ Authorization: Bearer <token>
 interface CorrispettivoRiepilogoResponse {
   year: number;
   month: number;
+  day: number | null;       // valorizzato se filtro giorno attivo
   calculation_mode: "order_document_date";  // fisso
   timezone: "Europe/Rome";                // fisso
   delivery_country_iso: string | null;    // valorizzato se filtro paese attivo
@@ -305,6 +314,7 @@ GET /api/v1/corrispettivi/?year=2026&month=5
 interface CorrispettivoListResponse {
   year: number;
   month: number;
+  day: number | null;       // valorizzato se filtro giorno attivo
   timezone: "Europe/Rome";
   days: CorrispettivoDaySummary[];
   month_totals: CorrispettivoSplitTotals;
@@ -464,19 +474,93 @@ Authorization: Bearer <token>
 
 Il breakdown vendite/ricevute (`sales_breakdown`) resta disponibile solo su `GET /api/v1/corrispettivi`, non nell'export Excel.
 
+---
+
+### 4.4 Corrispettivo singolo giorno
+
+Endpoint dedicati quando l'UI deve **generare o esportare un solo giorno** (es. pulsante «Genera giorno 15»). Equivalenti ai GET/POST mensili con `day` obbligatorio; la response include `day` valorizzato.
+
+#### `GET /api/v1/corrispettivi/giorno/riepilogo`
+
+Stesso schema di §4.1 con **una sola riga** in `rows[]` (o riga a zero se nessun movimento).
+
+```http
+GET /api/v1/corrispettivi/giorno/riepilogo?year=2026&month=7&day=15
+Authorization: Bearer <token>
+```
+
+#### `GET /api/v1/corrispettivi/giorno`
+
+Stesso schema di §4.2 con **un solo elemento** in `days[]`.
+
+```http
+GET /api/v1/corrispettivi/giorno?year=2026&month=7&day=15
+```
+
+#### `POST /api/v1/corrispettivi/giorno/export`
+
+Genera ZIP con Excel del solo giorno indicato.
+
+**Request:**
+```http
+POST /api/v1/corrispettivi/giorno/export
+Content-Type: application/json
+
+{
+  "year": 2026,
+  "month": 7,
+  "day": 15,
+  "filters": {
+    "id_store": 1
+  }
+}
+```
+
+| Campo body | Tipo | Obbligatorio |
+|---|---|---|
+| `year` | int | Sì |
+| `month` | int | Sì |
+| `day` | int | Sì (1–31, validato sul mese) |
+| `filters` | object | No (`id_platform`, `id_store`, `delivery_country_iso` — **senza** `day`) |
+
+**Response `200`:**
+
+| Header | Valore |
+|---|---|
+| `Content-Type` | `application/zip` |
+| `Content-Disposition` | `attachment; filename="Registro_2026-07-15.zip"` |
+
+Contenuto: stessa struttura di §4.3 (`registro.xlsx` + `registro_{ISO}.xlsx` per paesi con movimenti **in quel giorno**). Footer Excel: `Totale 15/07/2026` invece di `Totale 07/2026`.
+
+**Alternativa:** `POST /export` con `filters.day` nel body mensile — stesso risultato, filename `Registro_YYYY-MM-DD.zip`.
+
 **FE — download blob:**
 ```typescript
-this.http.post(`${baseUrl}/api/v1/corrispettivi/export`, body, {
+this.http.post(`${baseUrl}/api/v1/corrispettivi/giorno/export`, {
+  year: 2026,
+  month: 7,
+  day: 15,
+  filters: { id_store: 1 }
+}, {
   responseType: 'blob',
   headers: { Authorization: `Bearer ${token}` }
 }).subscribe(blob => {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'Registri.zip';
+  a.download = 'Registro_2026-07-15.zip';
   a.click();
   window.URL.revokeObjectURL(url);
 });
+```
+
+**FE — consultazione:**
+```typescript
+// Matrice aliquote del giorno
+GET /api/v1/corrispettivi/giorno/riepilogo?year=2026&month=7&day=15
+
+// Summary KPI del giorno
+GET /api/v1/corrispettivi/giorno?year=2026&month=7&day=15
 ```
 
 ---
@@ -589,6 +673,7 @@ export interface CorrispettivoRiepilogoRow {
 export interface CorrispettivoRiepilogoResponse {
   year: number;
   month: number;
+  day?: number | null;
   calculation_mode: string;
   timezone: string;
   delivery_country_iso: string | null;
@@ -625,6 +710,7 @@ export interface CorrispettivoDaySummary {
 export interface CorrispettivoListResponse {
   year: number;
   month: number;
+  day?: number | null;
   timezone: string;
   days: CorrispettivoDaySummary[];
   month_totals: CorrispettivoSplitTotals;
@@ -634,6 +720,13 @@ export interface CorrispettivoExportRequest {
   year: number;
   month: number;
   filters?: CorrispettivoFilters;
+}
+
+export interface CorrispettivoDayExportRequest {
+  year: number;
+  month: number;
+  day: number;
+  filters?: Omit<CorrispettivoFilters, 'day'>;
 }
 ```
 
@@ -758,6 +851,7 @@ Esiti possibili per ogni caso report:
 
 | Data | Modifica |
 |---|---|
+| 2026-07-21 | **Singolo giorno:** `GET /giorno`, `GET /giorno/riepilogo`, `POST /giorno/export`; campo `day` in response; filename `Registro_YYYY-MM-DD.zip`; footer Excel giornaliero; validazione calendario |
 | 2026-07-15 | QA export ZIP: regole validazione per-giorno/per-ordine; script `scripts/verify_corrispettivi_shipping_hypothesis.py` |
 | 2026-07-15 | **Breaking:** riepilogo/export — 4 voci per aliquota con IVA, `row_total`, tutti i giorni del mese |
 | 2026-07-06 | Filtro corrispettivi: solo ordini **pagati** (`is_payed=true`) oltre a non fatturati |

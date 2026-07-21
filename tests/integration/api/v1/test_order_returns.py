@@ -104,3 +104,70 @@ class TestOrderReturnsAPI:
         )
         assert detail_resp.status_code == status.HTTP_200_OK
         assert detail_resp.json()["document_type"] == "return"
+
+    def test_create_shipping_only_return(self, fiscal_admin_client, db_session, tax):
+        order, _detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="API-RET-SHIP-ONLY",
+            order_date=datetime(2026, 8, 1, 10, 0, 0),
+            with_shipping=True,
+        )
+
+        create_resp = fiscal_admin_client.post(
+            f"/api/v1/orders/{order.id_order}/returns",
+            json={
+                "order_details": [],
+                "includes_shipping": True,
+                "note": "Solo spedizione",
+            },
+        )
+        assert create_resp.status_code == status.HTTP_201_CREATED
+        return_id = create_resp.json()["return_id"]
+
+        detail_resp = fiscal_admin_client.get(
+            f"/api/v1/orders/returns/get-return-by-id/{return_id}"
+        )
+        assert detail_resp.status_code == status.HTTP_200_OK
+        payload = detail_resp.json()
+        assert payload["includes_shipping"] is True
+        assert len(payload["details"]) == 1
+        shipping_row = payload["details"][0]
+        assert shipping_row["is_shipping"] is True
+        assert shipping_row["id_order_detail"] == 0
+        assert shipping_row["product_name"] == "Spedizione"
+        assert float(payload["total_price_with_tax"]) == pytest.approx(12.20)
+
+    def test_create_return_empty_without_shipping_returns_400(
+        self, fiscal_admin_client, db_session, tax
+    ):
+        order, _detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="API-RET-EMPTY",
+            order_date=datetime(2026, 8, 2, 10, 0, 0),
+            with_shipping=True,
+        )
+
+        create_resp = fiscal_admin_client.post(
+            f"/api/v1/orders/{order.id_order}/returns",
+            json={"order_details": [], "includes_shipping": False},
+        )
+        assert create_resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_shipping_only_without_shipping_cost_returns_400(
+        self, fiscal_admin_client, db_session, tax
+    ):
+        order, _detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="API-RET-NO-SHIP",
+            order_date=datetime(2026, 8, 3, 10, 0, 0),
+            with_shipping=False,
+        )
+
+        create_resp = fiscal_admin_client.post(
+            f"/api/v1/orders/{order.id_order}/returns",
+            json={"order_details": [], "includes_shipping": True},
+        )
+        assert create_resp.status_code == status.HTTP_400_BAD_REQUEST

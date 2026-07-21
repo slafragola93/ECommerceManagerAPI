@@ -185,7 +185,7 @@ class TestCorrispettivoRicevuteReturnsBE33:
 
         movements = repo.fetch_movements(2026, 7)
 
-        assert _sum_sales_amount(movements) == Decimal("0.00")
+        assert _sum_sales_amount(movements) == Decimal("122.00")
         assert _sum_returns_amount(movements) == Decimal("36.60")
 
     def test_delete_return_on_ricevuta_order_removes_only_return(
@@ -284,7 +284,7 @@ class TestCorrispettivoRicevuteReturnsBE33:
 
         movements = repo.fetch_movements(2026, 7)
         assert _sum_returns_amount(movements) == Decimal("0.00")
-        assert _sum_sales_amount(movements) == Decimal("0.00")
+        assert _sum_sales_amount(movements) == Decimal("122.00")
 
     def test_annullata_ricevuta_after_return_delete_restores_date_add_sales(
         self, db_session, repo, fiscal_repo, tax
@@ -348,11 +348,11 @@ class TestCorrispettivoRicevuteReturnsBE33:
         after_delete = service.get_daily_summary(2026, 7)
         month_net_after = after_delete.month_totals.total_with_tax
 
-        assert month_net_with_return == Decimal("-36.60")
-        assert month_net_after == Decimal("0.00")
+        assert month_net_with_return == Decimal("85.40")
+        assert month_net_after == Decimal("122.00")
 
-    def test_decurtazione_uses_order_date_not_incasso(self, db_session, repo, tax):
-        """Decurtazione su date_add ordine anche se data_incasso ricevuta è diversa (campo audit)."""
+    def test_imputazione_uses_emission_not_incasso(self, db_session, repo, tax):
+        """Imputazione su data_emissione; data_incasso e date_add non generano movimenti vendita."""
         order, _ = _add_paid_order(
             db_session,
             tax,
@@ -369,12 +369,11 @@ class TestCorrispettivoRicevuteReturnsBE33:
             date(2026, 7, 31),
         )
 
-        assert breakdown[date(2026, 7, 2)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
-            "-122.00"
+        assert date(2026, 7, 2) not in breakdown
+        assert date(2026, 7, 5) not in breakdown
+        assert breakdown[date(2026, 7, 10)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
+            "0"
         )
-        assert date(2026, 7, 5) not in breakdown or breakdown.get(
-            date(2026, 7, 5), {}
-        ).get("ricevute_decurtazione", {}).get("total_with_tax", Decimal("0")) == Decimal("0")
         assert breakdown[date(2026, 7, 10)]["ricevute_imputazione"]["total_with_tax"] == Decimal(
             "122.00"
         )

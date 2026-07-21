@@ -1,5 +1,5 @@
 from typing import List, Optional, Union
-from datetime import date
+from datetime import date, datetime, time
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from src.schemas.fiscal_document_schema import (
     CreditNoteResponseSchema,
     FiscalDocumentResponseSchema,
     FiscalDocumentListResponseSchema,
+    FiscalDocumentListFiltersSchema,
     FiscalDocumentUpdateStatusSchema,
     FiscalDocumentUpdateXMLSchema,
     FiscalDocumentDetailResponseSchema,
@@ -48,21 +49,12 @@ async def create_invoice(
         ...,
         examples={
             "fattura_elettronica": {
-                "summary": "Fattura elettronica (indirizzo IT)",
-                "description": "Crea una fattura elettronica FatturaPA (cliente IT o UE/VIES).",
+                "summary": "Fattura elettronica FatturaPA",
+                "description": "Crea una fattura elettronica da trasmettere via SDI (cliente IT o UE/VIES).",
                 "value": {
                     "id_order": 12345,
-                    "is_electronic": True
                 }
             },
-            "fattura_non_elettronica": {
-                "summary": "Fattura non elettronica",
-                "description": "Crea una fattura senza XML (per ordini esteri o non elettronici).",
-                "value": {
-                    "id_order": 12345,
-                    "is_electronic": False
-                }
-            }
         }
     ),
     user: dict = user_dependency,
@@ -70,18 +62,17 @@ async def create_invoice(
     _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
-    Crea una nuova fattura per un ordine
+    Crea una nuova fattura elettronica per un ordine
     
     ## Regole:
     - È consentito creare più fatture sullo stesso ordine (re-emissione / integrazioni)
-    - Se `is_electronic=True`, l'indirizzo di fatturazione deve esistere (IT o UE estero/VIES)
-    - Viene generato automaticamente un numero sequenziale per fatture elettroniche
-    - Il tipo documento FatturaPA sarà TD01
+    - Le fatture sono sempre elettroniche (`is_electronic=true`, tipo TD01)
+    - L'indirizzo di fatturazione deve esistere (IT o UE estero/VIES)
+    - Viene generato automaticamente un numero sequenziale FatturaPA
     """
     try:
         invoice = await fiscal_service.create_invoice(
             id_order=invoice_data.id_order,
-            is_electronic=invoice_data.is_electronic,
             user=user,
         )
         return await fiscal_service.get_invoice_response_by_id(invoice.id_fiscal_document)
@@ -179,14 +170,15 @@ async def create_credit_note(
     _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
-    Crea una nota di credito per una fattura esistente
+    Crea una nota di credito elettronica per una fattura esistente
+    
+    Le note di credito sono sempre elettroniche (`is_electronic=true`, tipo TD04).
     
     ## 📋 Parametri principali
     
     - **`id_invoice`** (int, obbligatorio): ID della fattura da stornare
     - **`reason`** (string, obbligatorio): Motivo della nota di credito (max 500 caratteri)
     - **`is_partial`** (bool, default: false): Tipo di storno
-    - **`is_electronic`** (bool, default: true): Se generare XML FatturaPA (TD04)
     - **`include_shipping`** (bool, default: true): Se includere spese di spedizione
     - **`items`** (array, opzionale): Articoli da stornare (obbligatorio se `is_partial=true`)
     
@@ -202,7 +194,6 @@ async def create_credit_note(
       "id_invoice": 123,
       "reason": "Reso completo merce",
       "is_partial": false,
-      "is_electronic": true,
       "include_shipping": true
     }
     ```
@@ -213,7 +204,6 @@ async def create_credit_note(
       "id_invoice": 123,
       "reason": "Reso merce - spedizione già stornata",
       "is_partial": false,
-      "is_electronic": true,
       "include_shipping": false
     }
     ```
@@ -236,7 +226,6 @@ async def create_credit_note(
       "id_invoice": 123,
       "reason": "Reso parziale - 2 articoli difettosi",
       "is_partial": true,
-      "is_electronic": true,
       "include_shipping": false,
       "items": [
         {
@@ -259,7 +248,6 @@ async def create_credit_note(
       "id_invoice": 123,
       "reason": "Reso parziale + spedizione",
       "is_partial": true,
-      "is_electronic": true,
       "include_shipping": true,
       "items": [
         {
@@ -288,8 +276,8 @@ async def create_credit_note(
     
     ### 1. Validazione fattura:
     - La fattura deve esistere e essere di tipo `invoice`
-    - Se `is_electronic=true`: la fattura deve essere elettronica
-    - Se `is_electronic=true`: indirizzo di fatturazione presente (IT o UE/VIES)
+    - La fattura deve essere elettronica (`is_electronic=true`)
+    - Indirizzo di fatturazione presente (IT o UE/VIES)
     
     ### 2. Validazione note di credito esistenti:
     - **Blocco nota totale duplicata**: Se esiste già una NC totale → Errore
@@ -340,7 +328,7 @@ async def create_credit_note(
     
     ### Errori fattura:
     - **400**: "Fattura non trovata" → `id_invoice` errato
-    - **400**: "La fattura deve essere elettronica" → Fattura non elettronica con `is_electronic=true`
+    - **400**: "La fattura deve essere elettronica" → Fattura legacy non elettronica
     - **400**: "Indirizzo di fatturazione mancante/non trovato" → Ordine senza indirizzo fattura valido
     
     ### Errori note duplicate:
@@ -360,9 +348,10 @@ async def create_credit_note(
     
     Restituisce il documento fiscale creato con:
     - `document_type`: "credit_note"
-    - `tipo_documento_fe`: "TD04" (se elettronico)
-    - `document_number`: Numero sequenziale (se elettronico)
-    - `status`: "pending" (se elettronica) o "issued" (se non elettronica)
+    - `tipo_documento_fe`: "TD04"
+    - `document_number`: Numero sequenziale FatturaPA
+    - `status`: "pending" (in attesa generazione XML)
+    - `is_electronic`: sempre `true`
     - `is_partial`: true/false
     - `includes_shipping`: true/false (traccia se include spese)
     - `total_price_with_tax`: Importo totale stornato (IVA inclusa)
@@ -408,7 +397,6 @@ async def create_credit_note(
         reason=credit_note_data.reason,
         is_partial=credit_note_data.is_partial,
         items=items,
-        is_electronic=credit_note_data.is_electronic,
         include_shipping=credit_note_data.include_shipping
     )
     
@@ -461,34 +449,76 @@ async def get_fiscal_documents(
     document_type: Optional[str] = Query(None, description="Filtra per tipo (invoice, credit_note)"),
     is_electronic: Optional[bool] = Query(None, description="Filtra per elettronici/non elettronici"),
     status: Optional[str] = Query(None, description="Filtra per status"),
+    delivery_country_iso: Optional[str] = Query(
+        None,
+        min_length=2,
+        max_length=5,
+        description="ISO paese consegna ordine (stessa logica export/corrispettivi)",
+    ),
+    date_add_from: Optional[date] = Query(None, description="Data emissione da (YYYY-MM-DD)"),
+    date_add_to: Optional[date] = Query(None, description="Data emissione a (YYYY-MM-DD)"),
     user: dict = user_dependency,
     db: Session = db_dependency,
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
     Recupera lista documenti fiscali con filtri
-    
+
     ## Filtri disponibili:
     - `document_type`: 'invoice' o 'credit_note'
     - `is_electronic`: true/false
     - `status`: pending, generated, uploaded, sent, error
+    - `delivery_country_iso`: ISO paese **consegna** dell'ordine collegato
+    - `date_add_from` / `date_add_to`: range data emissione (`date_add`)
     """
-    repo = get_fiscal_repository(db)
-    skip = (page - 1) * limit
-    
-    documents = repo.get_fiscal_documents(
-        skip=skip,
-        limit=limit,
+    filters = FiscalDocumentListFiltersSchema(
         document_type=document_type,
         is_electronic=is_electronic,
-        status=status
+        status=status,
+        delivery_country_iso=delivery_country_iso,
+        date_add_from=date_add_from,
+        date_add_to=date_add_to,
+        page=page,
+        limit=limit,
     )
-    
+    date_from = (
+        datetime.combine(filters.date_add_from, time.min)
+        if filters.date_add_from
+        else None
+    )
+    date_to = (
+        datetime.combine(filters.date_add_to, time.max)
+        if filters.date_add_to
+        else None
+    )
+
+    repo = get_fiscal_repository(db)
+    skip = (filters.page - 1) * filters.limit
+
+    total = repo.count_fiscal_documents(
+        document_type=filters.document_type,
+        is_electronic=filters.is_electronic,
+        status=filters.status,
+        delivery_country_iso=filters.delivery_country_iso,
+        date_add_from=date_from,
+        date_add_to=date_to,
+    )
+    documents = repo.get_fiscal_documents(
+        skip=skip,
+        limit=filters.limit,
+        document_type=filters.document_type,
+        is_electronic=filters.is_electronic,
+        status=filters.status,
+        delivery_country_iso=filters.delivery_country_iso,
+        date_add_from=date_from,
+        date_add_to=date_to,
+    )
+
     return FiscalDocumentListResponseSchema(
         documents=documents,
-        total=len(documents),
-        page=page,
-        limit=limit
+        total=total,
+        page=filters.page,
+        limit=filters.limit,
     )
 
 

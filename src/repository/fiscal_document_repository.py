@@ -50,47 +50,28 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             raise ValueError("Indirizzo di fatturazione non trovato")
         return address
     
-    def create_invoice(self, id_order: int, is_electronic: bool = True) -> FiscalDocument:
+    def create_invoice(self, id_order: int) -> FiscalDocument:
         """
-        Crea una nuova fattura per un ordine
-        
-        Args:
-            id_order: ID dell'ordine
-            is_electronic: Se True, genera fattura elettronica FatturaPA
-        
-        Returns:
-            FiscalDocument creato
+        Crea una nuova fattura elettronica FatturaPA per un ordine.
+
+        Le fatture sono sempre trasmesse via SDI (is_electronic=True).
         """
         # Verifica che l'ordine esista
         order = self._session.query(Order).filter(Order.id_order == id_order).first()
         if not order:
             raise ValueError(f"Ordine {id_order} non trovato")
-        
-        if is_electronic:
-            self._get_required_invoice_address(order)
-        
-        # Genera numero documento se elettronico
-        document_number = None
-        tipo_documento_fe = None
-        
-        if is_electronic:
-            document_number = self._get_next_electronic_number('invoice')
-            tipo_documento_fe = 'TD01'
-        
-        
-        # Determina status iniziale
-        # - 'pending': fatture elettroniche in attesa di generazione XML
-        # - 'issued': fatture non elettroniche già emesse manualmente
-        initial_status = 'pending' if is_electronic else 'issued'
-        
+
+        self._get_required_invoice_address(order)
+        document_number = self._get_next_electronic_number('invoice')
+
         invoice = FiscalDocument(
             document_type='invoice',
-            tipo_documento_fe=tipo_documento_fe,
+            tipo_documento_fe='TD01',
             id_order=id_order,
             id_store=order.id_store,  # Porta id_store dall'ordine
             document_number=document_number,
-            is_electronic=is_electronic,
-            status=initial_status,
+            is_electronic=True,
+            status='pending',
             includes_shipping=True,  # Le fatture includono sempre le spese di spedizione
             total_price_with_tax=order.total_price_with_tax  # Verrà aggiornato dopo aver creato i dettagli
         )
@@ -283,23 +264,12 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         reason: str,
         is_partial: bool = False,
         items: Optional[List[Dict[str, Any]]] = None,
-        is_electronic: bool = True,
         include_shipping: bool = True
     ) -> FiscalDocument:
         """
-        Crea una nota di credito per una fattura
-        
-        Args:
-            id_invoice: ID della fattura di riferimento
-            reason: Motivo della nota di credito
-            is_partial: Se True, nota di credito parziale
-            items: Lista di articoli da stornare (per NC parziali)
-                   Formato: [{"id_order_detail": X, "quantity": Y, "unit_price": Z}, ...]
-            is_electronic: Se True, genera XML elettronico
-            include_shipping: Se True, include spese di spedizione (default: True)
-        
-        Returns:
-            FiscalDocument creato (nota di credito)
+        Crea una nota di credito elettronica FatturaPA per una fattura.
+
+        Le note di credito sono sempre trasmesse via SDI (is_electronic=True, TD04).
         """
         # Verifica che la fattura esista
         invoice = self._session.query(FiscalDocument).filter(
@@ -312,15 +282,13 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if not invoice:
             raise ValueError(f"Fattura {id_invoice} non trovata")
         
-        # Se is_electronic, verifica che la fattura sia elettronica
-        if is_electronic and not invoice.is_electronic:
+        if not invoice.is_electronic:
             raise ValueError("Non è possibile emettere nota di credito elettronica per fattura non elettronica")
-        
-        if is_electronic:
-            order = self._session.query(Order).filter(Order.id_order == invoice.id_order).first()
-            if not order:
-                raise ValueError(f"Ordine {invoice.id_order} non trovato")
-            self._get_required_invoice_address(order)
+
+        order = self._session.query(Order).filter(Order.id_order == invoice.id_order).first()
+        if not order:
+            raise ValueError(f"Ordine {invoice.id_order} non trovato")
+        self._get_required_invoice_address(order)
         
         # Recupera articoli della fattura (serve per i controlli)
         invoice_details = self._session.query(FiscalDocumentDetail).filter(
@@ -335,14 +303,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         # ==================== VALIDAZIONE NOTE DI CREDITO ====================
         self._validate_credit_note_creation(invoice, invoice_details, is_partial, items, include_shipping)
-        
-        # Genera numero documento se elettronico
-        document_number = None
-        tipo_documento_fe = None
-        
-        if is_electronic:
-            document_number = self._get_next_electronic_number('credit_note')
-            tipo_documento_fe = 'TD04'
+
+        document_number = self._get_next_electronic_number('credit_note')
+        tipo_documento_fe = 'TD04'
         
         # Prepara i dettagli della nota di credito PRIMA di calcolare il totale
         credit_note_details_data = []
@@ -492,12 +455,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         total_with_vat = total_imponibile + total_vat_amount
         print(f"TOTALE NC: Imponibile={total_imponibile}€, IVA={total_vat_amount}€, Totale={total_with_vat}€")
         
-        # Determina status iniziale
-        # - 'pending': note elettroniche in attesa di generazione XML
-        # - 'issued': note non elettroniche già emesse manualmente
-        initial_status = 'pending' if is_electronic else 'issued'
-        
-        # Crea nota di credito
+        # Crea nota di credito elettronica
         credit_note = FiscalDocument(
             document_type='credit_note',
             tipo_documento_fe=tipo_documento_fe,
@@ -505,8 +463,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             id_store=invoice.id_store,  # Porta id_store dalla fattura di riferimento
             id_fiscal_document_ref=id_invoice,
             document_number=document_number,
-            is_electronic=is_electronic,
-            status=initial_status,
+            is_electronic=True,
+            status='pending',
             credit_note_reason=reason,
             is_partial=is_partial,
             includes_shipping=include_shipping,  # Traccia se include spese di spedizione
@@ -637,36 +595,111 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             FiscalDocument.id_fiscal_document == id_fiscal_document
         ).first()
     
-    def get_fiscal_documents(
-        self, 
-        skip: int = 0, 
-        limit: int = 100, 
+    def _build_fiscal_documents_list_query(
+        self,
         document_type: Optional[str] = None,
         is_electronic: Optional[bool] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[datetime] = None,
+        date_add_to: Optional[datetime] = None,
+    ):
+        query = self._session.query(FiscalDocument)
+
+        if delivery_country_iso:
+            AddressDelivery = aliased(Address)
+            CountryDelivery = aliased(Country)
+            query = (
+                query.outerjoin(Order, Order.id_order == FiscalDocument.id_order)
+                .outerjoin(
+                    AddressDelivery,
+                    AddressDelivery.id_address == Order.id_address_delivery,
+                )
+                .outerjoin(
+                    CountryDelivery,
+                    CountryDelivery.id_country == AddressDelivery.id_country,
+                )
+            )
+
+        if document_type:
+            query = query.filter(FiscalDocument.document_type == document_type)
+
+        if is_electronic is not None:
+            query = query.filter(FiscalDocument.is_electronic == is_electronic)
+
+        if status:
+            query = query.filter(FiscalDocument.status == status)
+
+        if delivery_country_iso:
+            query = query.filter(
+                func.upper(CountryDelivery.iso_code) == delivery_country_iso.upper()
+            )
+
+        if date_add_from:
+            query = query.filter(FiscalDocument.date_add >= date_add_from)
+
+        if date_add_to:
+            query = query.filter(FiscalDocument.date_add <= date_add_to)
+
+        return query
+
+    def count_fiscal_documents(
+        self,
+        document_type: Optional[str] = None,
+        is_electronic: Optional[bool] = None,
+        status: Optional[str] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[datetime] = None,
+        date_add_to: Optional[datetime] = None,
+    ) -> int:
+        """Conta documenti fiscali che matchano i filtri lista."""
+        return self._build_fiscal_documents_list_query(
+            document_type=document_type,
+            is_electronic=is_electronic,
+            status=status,
+            delivery_country_iso=delivery_country_iso,
+            date_add_from=date_add_from,
+            date_add_to=date_add_to,
+        ).count()
+
+    def get_fiscal_documents(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        document_type: Optional[str] = None,
+        is_electronic: Optional[bool] = None,
+        status: Optional[str] = None,
+        delivery_country_iso: Optional[str] = None,
+        date_add_from: Optional[datetime] = None,
+        date_add_to: Optional[datetime] = None,
     ) -> List[FiscalDocument]:
         """
         Recupera lista documenti fiscali con filtri
-        
+
         Args:
             skip: Offset per paginazione
             limit: Limite risultati
             document_type: Filtra per tipo ('invoice', 'credit_note')
             is_electronic: Filtra per elettronici/non elettronici
             status: Filtra per status
+            delivery_country_iso: ISO paese consegna ordine collegato
+            date_add_from: Data emissione minima (inclusiva)
+            date_add_to: Data emissione massima (inclusiva, fine giornata)
         """
-        query = self._session.query(FiscalDocument)
-        
-        if document_type:
-            query = query.filter(FiscalDocument.document_type == document_type)
-        
-        if is_electronic is not None:
-            query = query.filter(FiscalDocument.is_electronic == is_electronic)
-        
-        if status:
-            query = query.filter(FiscalDocument.status == status)
-        
-        return query.order_by(desc(FiscalDocument.date_add)).offset(skip).limit(limit).all()
+        return (
+            self._build_fiscal_documents_list_query(
+                document_type=document_type,
+                is_electronic=is_electronic,
+                status=status,
+                delivery_country_iso=delivery_country_iso,
+                date_add_from=date_add_from,
+                date_add_to=date_add_to,
+            )
+            .order_by(desc(FiscalDocument.date_add))
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
     def _build_invoice_export_query(
         self,
@@ -851,6 +884,29 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         return True
     
     # ==================== RESI ====================
+
+    def is_shipping_already_returned(self, id_order: int) -> bool:
+        """True se esiste già un reso con includes_shipping per l'ordine."""
+        existing = (
+            self._session.query(FiscalDocument.id_fiscal_document)
+            .filter(
+                FiscalDocument.id_order == id_order,
+                FiscalDocument.document_type == "return",
+                FiscalDocument.includes_shipping.is_(True),
+            )
+            .first()
+        )
+        return existing is not None
+
+    def get_order_shipping(self, order: Order) -> Optional[Shipping]:
+        """Recupera la spedizione collegata all'ordine."""
+        if not order or not order.id_shipping:
+            return None
+        return (
+            self._session.query(Shipping)
+            .filter(Shipping.id_shipping == order.id_shipping)
+            .first()
+        )
     
     def create_return(
         self, 
@@ -874,6 +930,11 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         # Verifica che l'ordine esista
         if not order:
             raise ValueError(f"Ordine non trovato")
+
+        if not order_details and not includes_shipping:
+            raise ValueError(
+                "Specificare almeno una riga prodotto o impostare includes_shipping=true"
+            )
         
         # Genera numero sequenziale per reso
         document_number = self.get_next_document_number('return')

@@ -111,7 +111,7 @@ class TestInvoiceResponseSchema:
             document_type="invoice",
             id_order=order.id_order,
             status="pending",
-            is_electronic=False,
+            is_electronic=True,
             includes_shipping=False,
             total_price_net=order.total_price_net,
             total_price_with_tax=order.total_price_with_tax,

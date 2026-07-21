@@ -67,7 +67,7 @@ class TestRicevutaCorrispettiviIntegration:
         after = corrispettivo_service.get_daily_summary(2026, 7)
         day_10 = next(d for d in after.days if d.date == date(2026, 7, 10))
         assert day_10.sales_breakdown.ricevute_imputazione.total_with_tax == Decimal("122.00")
-        assert after.month_totals.total_with_tax == Decimal("0.00")
+        assert after.month_totals.total_with_tax == Decimal("122.00")
 
     def test_update_emission_date_moves_totals(
         self, db_session, ricevuta_service, corrispettivo_service, tax, company_info

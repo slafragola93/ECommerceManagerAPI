@@ -176,9 +176,9 @@ class CorrispettivoRepository:
 
         Componenti per giorno:
         - `base`: ordini standard su Order.date_add (inclusi ordini con ricevuta same-day)
-        - `ricevute_decurtazione`: negativo su Order.date_add se emissione ≠ date ordine
+        - `ricevute_decurtazione`: sempre zero (legacy audit; gli ordini differiti sono già esclusi da `base`)
         - `ricevute_imputazione`: positivo su ricevute.data_emissione se emissione ≠ date ordine
-        - `net`: somma dei tre
+        - `net`: somma di `base` + `ricevute_imputazione`
         """
         order_day = self._order_day_expr()
         emission_day = self._ricevuta_emission_day_expr()
@@ -201,28 +201,6 @@ class CorrispettivoRepository:
             .group_by(order_day)
         )
         base_query = self._apply_order_filters(base_query, filters)
-
-        decurtazione_query = (
-            self._session.query(
-                order_day.label("movement_date"),
-                literal(self.SALES_COMPONENT_RICEVUTE_DECURTAZIONE).label("component"),
-                (-func.sum(Order.total_price_with_tax)).label("total_with_tax"),
-                (-func.sum(Order.total_price_net)).label("total_net"),
-                (-func.sum(Order.products_total_price_with_tax)).label("products_with_tax"),
-                (-func.sum(Order.products_total_price_net)).label("products_net"),
-            )
-            .select_from(Ricevuta)
-            .join(Order, Ricevuta.id_order == Order.id_order)
-            .filter(
-                Ricevuta.stato == RicevutaStato.EMESSA,
-                emission_day != order_day,
-                order_day >= start_date,
-                order_day <= end_date,
-                *self._ricevuta_order_eligibility_filters(),
-            )
-            .group_by(order_day)
-        )
-        decurtazione_query = self._apply_order_filters(decurtazione_query, filters)
 
         imputazione_query = (
             self._session.query(
@@ -248,7 +226,6 @@ class CorrispettivoRepository:
 
         combined = union_all(
             base_query.statement,
-            decurtazione_query.statement,
             imputazione_query.statement,
         ).alias("sales_gross_union")
 
@@ -286,7 +263,7 @@ class CorrispettivoRepository:
         end_date: date,
         filters: Optional[dict],
     ) -> None:
-        """BE-3.1/3.2 — Aggiustamenti ricevuta via UNION ALL (prodotti + spedizione)."""
+        """BE-3.1/3.2 — Imputazione ricevuta su data_emissione (prodotti + spedizione)."""
         movements.extend(
             self._fetch_ricevuta_adjustment_movements(start_date, end_date, filters)
         )
@@ -300,64 +277,58 @@ class CorrispettivoRepository:
         order_day = self._order_day_expr()
         emission_day = self._ricevuta_emission_day_expr()
         parts = []
-        for movement_date_col, sign, use_order_day in (
-            (order_day, -1, True),
-            (emission_day, 1, False),
-        ):
-            ricevuta_filters = [
-                Ricevuta.stato == RicevutaStato.EMESSA,
-                emission_day != order_day,
+        common_ricevuta_filters = [
+            Ricevuta.stato == RicevutaStato.EMESSA,
+            emission_day != order_day,
+            emission_day >= start_date,
+            emission_day <= end_date,
+            *self._ricevuta_order_eligibility_filters(),
+        ]
+
+        product_part = (
+            self._session.query(
+                emission_day.label("movement_date"),
+                Country.iso_code.label("country_iso"),
+                OrderDetail.id_tax.label("id_tax"),
+                func.sum(OrderDetail.total_price_with_tax).label("amount"),
+                literal(0).label("is_shipping"),
+            )
+            .select_from(Ricevuta)
+            .join(Order, Ricevuta.id_order == Order.id_order)
+            .join(OrderDetail, OrderDetail.id_order == Order.id_order)
+            .outerjoin(Address, Order.id_address_delivery == Address.id_address)
+            .outerjoin(Country, Address.id_country == Country.id_country)
+            .filter(
+                *common_ricevuta_filters,
                 self._order_detail_line_filter(),
-                *self._ricevuta_order_eligibility_filters(),
-            ]
-            ricevuta_filters.extend(
-                [
-                    movement_date_col >= start_date,
-                    movement_date_col <= end_date,
-                ]
             )
+            .group_by(emission_day, Country.iso_code, OrderDetail.id_tax)
+        )
+        product_part = self._apply_order_filters(product_part, filters)
+        parts.append(product_part.statement)
 
-            product_part = (
-                self._session.query(
-                    movement_date_col.label("movement_date"),
-                    Country.iso_code.label("country_iso"),
-                    OrderDetail.id_tax.label("id_tax"),
-                    (func.sum(OrderDetail.total_price_with_tax) * sign).label("amount"),
-                    literal(0).label("is_shipping"),
-                )
-                .select_from(Ricevuta)
-                .join(Order, Ricevuta.id_order == Order.id_order)
-                .join(OrderDetail, OrderDetail.id_order == Order.id_order)
-                .outerjoin(Address, Order.id_address_delivery == Address.id_address)
-                .outerjoin(Country, Address.id_country == Country.id_country)
-                .filter(*ricevuta_filters)
-                .group_by(movement_date_col, Country.iso_code, OrderDetail.id_tax)
+        shipping_part = (
+            self._session.query(
+                emission_day.label("movement_date"),
+                Country.iso_code.label("country_iso"),
+                Shipping.id_tax.label("id_tax"),
+                func.sum(Shipping.price_tax_incl).label("amount"),
+                literal(1).label("is_shipping"),
             )
-            product_part = self._apply_order_filters(product_part, filters)
-            parts.append(product_part.statement)
-
-            shipping_part = (
-                self._session.query(
-                    movement_date_col.label("movement_date"),
-                    Country.iso_code.label("country_iso"),
-                    Shipping.id_tax.label("id_tax"),
-                    (func.sum(Shipping.price_tax_incl) * sign).label("amount"),
-                    literal(1).label("is_shipping"),
-                )
-                .select_from(Ricevuta)
-                .join(Order, Ricevuta.id_order == Order.id_order)
-                .join(Shipping, Order.id_shipping == Shipping.id_shipping)
-                .outerjoin(Address, Order.id_address_delivery == Address.id_address)
-                .outerjoin(Country, Address.id_country == Country.id_country)
-                .filter(
-                    *ricevuta_filters,
-                    Shipping.price_tax_incl.isnot(None),
-                    Shipping.price_tax_incl > 0,
-                )
-                .group_by(movement_date_col, Country.iso_code, Shipping.id_tax)
+            .select_from(Ricevuta)
+            .join(Order, Ricevuta.id_order == Order.id_order)
+            .join(Shipping, Order.id_shipping == Shipping.id_shipping)
+            .outerjoin(Address, Order.id_address_delivery == Address.id_address)
+            .outerjoin(Country, Address.id_country == Country.id_country)
+            .filter(
+                *common_ricevuta_filters,
+                Shipping.price_tax_incl.isnot(None),
+                Shipping.price_tax_incl > 0,
             )
-            shipping_part = self._apply_order_filters(shipping_part, filters)
-            parts.append(shipping_part.statement)
+            .group_by(emission_day, Country.iso_code, Shipping.id_tax)
+        )
+        shipping_part = self._apply_order_filters(shipping_part, filters)
+        parts.append(shipping_part.statement)
 
         if not parts:
             return []

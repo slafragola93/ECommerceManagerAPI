@@ -4,7 +4,131 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
-## Ultime modifiche (2026-07-20) — FatturaPA clienti UE / VIES
+## Ultime modifiche (2026-07-21) — Reso solo spedizione
+
+**Scope:** `POST /api/v1/orders/{id_order}/returns` accetta `order_details: []` con `includes_shipping: true` per creare un reso dell'importo spedizione ordine (senza righe prodotto).
+
+| Caso | Esito |
+|------|-------|
+| `includes_shipping=true` + `order_details=[]` | **201** — reso spedizione |
+| `includes_shipping=true` + prodotti | **201** — invariato |
+| `includes_shipping=false` + `order_details=[]` | **400** — almeno prodotto o spedizione |
+| `includes_shipping=true` ma ordine senza spedizione | **400** — messaggio esplicito |
+
+**GET dettaglio reso** (`/api/v1/orders/returns/get-return-by-id/{id}`): se `includes_shipping=true`, in `details[]` compare una riga sintetica con `is_shipping: true`, `id_order_detail: 0`, `product_name: "Spedizione"`, `product_reference: "SHIPPING"`.
+
+| Area | Path |
+|------|------|
+| Schema | `src/schemas/return_schema.py` |
+| Service | `src/services/routers/fiscal_document_service.py` |
+| Repository | `src/repository/fiscal_document_repository.py` |
+| Router | `src/routers/order.py` |
+
+```powershell
+pytest tests/unit/services/test_fiscal_document_create_return.py tests/integration/api/v1/test_order_returns.py -v
+```
+
+**Esempio payload:** `{ "order_details": [], "includes_shipping": true, "note": "opzionale" }`
+
+---
+
+## Ultime modifiche (2026-07-21) — Fatture e note di credito sempre elettroniche
+
+**Scope:** i documenti fiscali di tipo `invoice` e `credit_note` sono creati sempre con `is_electronic=true` (FatturaPA TD01/TD04, trasmissione SDI).
+
+| Cambiamento | Dettaglio |
+|-------------|-----------|
+| `POST /api/v1/fiscal_documents/invoices` | Body `{ "id_order": <int> }` — rimosso `is_electronic` |
+| `POST /api/v1/fiscal_documents/credit-notes` | Rimosso `is_electronic` dal payload |
+| Response | `is_electronic` resta in output ed è sempre `true` per fatture e note di credito |
+
+| Area | Path |
+|------|------|
+| Schema | `src/schemas/fiscal_document_schema.py` |
+| Repository | `src/repository/fiscal_document_repository.py` |
+| Service / Router | `src/services/routers/fiscal_document_service.py`, `src/routers/fiscal_documents.py` |
+
+**Breaking change FE:** non inviare più `is_electronic` in creazione fattura/NC; assumere `true` in lettura.
+
+---
+
+## Ultime modifiche (2026-07-21) — Corrispettivo singolo giorno
+
+**Scope:** endpoint dedicati per generare/consultare il corrispettivo di **un solo giorno** del mese, con export Excel e filename dedicato.
+
+| Endpoint | Descrizione |
+|----------|-------------|
+| `GET /api/v1/corrispettivi/giorno/riepilogo` | Matrice aliquote del giorno (`day` obbligatorio) |
+| `GET /api/v1/corrispettivi/giorno` | Summary vendite/resi/netto del giorno |
+| `POST /api/v1/corrispettivi/giorno/export` | ZIP `Registro_YYYY-MM-DD.zip` (solo quel giorno) |
+
+Restano validi anche i filtri opzionali `day` sui GET/POST mensili esistenti. Validazione calendario (es. 30/02 → 422). Footer Excel: `Totale DD/MM/YYYY` per export giornaliero.
+
+| Area | Path |
+|------|------|
+| Router | `src/routers/corrispettivi.py` |
+| Schema | `src/schemas/corrispettivo_schema.py` |
+| Service / Excel | `src/services/routers/corrispettivo_service.py`, `src/services/export/corrispettivi_excel_service.py` |
+| Doc API | `docs/CORRISPETTIVI.md` §4.4 |
+
+```powershell
+pytest tests/unit/services/test_corrispettivo_service.py tests/integration/api/v1/test_corrispettivi.py tests/unit/services/export/test_corrispettivi_excel_service.py -v
+```
+
+**Esempio export giorno:** `POST /api/v1/corrispettivi/giorno/export` body `{ "year": 2026, "month": 7, "day": 15 }`
+
+---
+
+## Ultime modifiche (2026-07-21) — Filtri paese e date su GET lista fatture
+
+**Scope:** la lista paginata `GET /api/v1/fiscal_documents/` espone ora i filtri `delivery_country_iso`, `date_add_from` e `date_add_to`, allineati all'export bulk e ai corrispettivi.
+
+| Query param | Descrizione |
+|-------------|-------------|
+| `delivery_country_iso` | ISO paese **consegna** ordine collegato (es. `IT`, `FR`) |
+| `date_add_from` | Data emissione minima (`YYYY-MM-DD`, campo `date_add`) |
+| `date_add_to` | Data emissione massima (`YYYY-MM-DD`, inclusiva) |
+
+Filtri già presenti: `document_type`, `is_electronic`, `status`, `page`, `limit`. Il campo `total` nella risposta ora riflette il conteggio reale (non solo la pagina corrente).
+
+| Area | Path |
+|------|------|
+| Router | `src/routers/fiscal_documents.py` |
+| Repository | `src/repository/fiscal_document_repository.py` |
+| Schema filtri | `src/schemas/fiscal_document_schema.py` (`FiscalDocumentListFiltersSchema`) |
+| Test | `tests/unit/repository/test_fiscal_document_list_filters.py` |
+
+```powershell
+pytest tests/unit/repository/test_fiscal_document_list_filters.py -v
+```
+
+**Esempio:** `GET /api/v1/fiscal_documents/?document_type=invoice&delivery_country_iso=IT&date_add_from=2026-01-01&date_add_to=2026-01-31`
+
+---
+
+## Ultime modifiche (2026-07-21) — Fix corrispettivi ricevuta differita (riepilogo + spedizione)
+
+**Scope:** corretta la logica di spostamento corrispettivi quando `data_emissione` ricevuta ≠ `date_add` ordine.
+
+| Problema | Fix |
+|----------|-----|
+| Giorno ordine con `products_sales` / `shipping_sales` **negativi** | Rimossa la decurtazione ridondante: gli ordini differiti erano già esclusi dalle vendite base |
+| Spedizione moltiplicata (es. 20 → 4300) su ordini multi-riga | Query spedizione ricevuta senza filtro `order_details` che causava prodotto cartesiano |
+| `row_total` incoerente | Imputazione solo su `data_emissione`; `row_total = prod + ship - resi` |
+
+**Comportamento atteso (es. ordine 15/07, ricevuta 21/07):** giorno 15 = zero; giorno 21 = Prod 289,97 + Ship 20,00 = 309,97.
+
+| Area | Path |
+|------|------|
+| Repository movimenti | `src/repository/corrispettivo_repository.py` |
+| Test scenario multi-riga + spedizione | `tests/unit/repository/test_corrispettivo_ricevute.py` |
+| Doc API | `docs/CORRISPETTIVI.md` |
+
+```powershell
+pytest tests/unit/repository/test_corrispettivo_ricevute.py tests/unit/repository/test_corrispettivo_ricevute_returns.py tests/unit/services/test_ricevuta_corrispettivi_integration.py -v
+```
+
+---
 
 **Scope:** rimosso il vincolo legacy «solo indirizzo fatturazione IT» per fatture elettroniche. Ora sono supportati clienti **UE esteri** (operazioni intra-UE / VIES): P.IVA estera, `CodiceDestinatario=XXXXXXX`, CAP/provincia con regole internazionali.
 
@@ -411,7 +535,7 @@ pytest tests/unit/repository/test_corrispettivo_repository.py tests/unit/reposit
 ### Flusso amministrativo (reference)
 
 1. **Corrispettivi** = incassi ordini pagati **non fatturati** (live query, nessuno snapshot).
-2. **Ricevuta estero** = documento interno; sposta incasso solo se `data_emissione ≠ date_add` ordine (decurtazione/imputazione).
+2. **Ricevuta estero** = documento interno; sposta incasso solo se `data_emissione ≠ date_add` ordine (imputazione su emissione, zero sul giorno ordine).
 3. **Reso** = movimento negativo alla **data documento reso**, indipendente dalla ricevuta.
 4. Ordine **fatturato** esce dalle vendite; reso ammesso solo con **nota di credito**.
 5. Delete reso/ricevuta → corrispettivi si ricalcolano al prossimo GET.

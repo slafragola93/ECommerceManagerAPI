@@ -9,8 +9,11 @@ from src.models.customer import Customer
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
 from src.models.ricevuta import Ricevuta, RicevutaStato
+from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.repository.corrispettivo_repository import CorrispettivoRepository
+from src.services.corrispettivi.aggregation import aggregate_matrix, build_riepilogo_rows
+from src.services.routers.corrispettivo_service import CorrispettivoService
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +122,7 @@ class TestCorrispettivoRicevute:
                 sales_by_day.setdefault(movement.movement_date, Decimal("0"))
                 sales_by_day[movement.movement_date] += movement.sales_amount
 
-        assert sales_by_day.get(date(2026, 7, 1)) == Decimal("-122.00")
+        assert sales_by_day.get(date(2026, 7, 1)) is None
         assert sales_by_day.get(date(2026, 7, 3)) is None
         assert sales_by_day.get(date(2026, 7, 8)) == Decimal("122.00")
 
@@ -186,8 +189,7 @@ class TestCorrispettivoRicevute:
 
         totals = repo.fetch_daily_gross_totals(2026, 7)
 
-        assert date(2026, 7, 1) in totals
-        assert totals[date(2026, 7, 1)]["sales"]["total_with_tax"] == Decimal("-122.00")
+        assert date(2026, 7, 1) not in totals
         assert totals[date(2026, 7, 8)]["sales"]["total_with_tax"] == Decimal("122.00")
 
     def test_sales_gross_breakdown_union_all(self, db_session, repo, tax):
@@ -206,9 +208,9 @@ class TestCorrispettivoRicevute:
             date(2026, 7, 31),
         )
 
-        assert date(2026, 7, 1) in breakdown
-        assert breakdown[date(2026, 7, 1)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
-            "-122.00"
+        assert date(2026, 7, 1) not in breakdown
+        assert breakdown[date(2026, 7, 8)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
+            "0"
         )
         assert breakdown[date(2026, 7, 8)]["ricevute_imputazione"]["total_with_tax"] == Decimal(
             "122.00"
@@ -382,6 +384,113 @@ class TestCorrispettivoRicevute:
         assert day["ricevute_imputazione"]["total_with_tax"] == Decimal("122.00")
         assert day["ricevute_decurtazione"]["total_with_tax"] == Decimal("0")
         assert day["net"]["total_with_tax"] == Decimal("172.00")
-        assert breakdown[date(2026, 7, 1)]["ricevute_decurtazione"]["total_with_tax"] == Decimal(
-            "-122.00"
+        assert date(2026, 7, 1) not in breakdown
+
+    def test_deferred_ricevuta_imputazione_with_shipping_and_multiple_lines(
+        self, db_session, repo, tax
+    ):
+        """Ordine multi-riga + spedizione: imputazione solo su emissione, niente storno negativo."""
+        shipping = Shipping(
+            price_tax_incl=Decimal("20.00"),
+            price_tax_excl=Decimal("16.39"),
+            id_tax=tax.id_tax,
         )
+        db_session.add(shipping)
+        db_session.commit()
+        db_session.refresh(shipping)
+
+        customer = Customer(
+            id_lang=1,
+            firstname="Anna",
+            lastname="Bianchi",
+            email="multi-line@example.com",
+        )
+        db_session.add(customer)
+        db_session.commit()
+        db_session.refresh(customer)
+
+        order = Order(
+            id_customer=customer.id_customer,
+            id_order_state=1,
+            reference="RICE-MULTI",
+            date_add=datetime(2026, 7, 15, 10, 0, 0),
+            payment_date=date(2026, 7, 15),
+            is_payed=True,
+            id_shipping=shipping.id_shipping,
+            total_price_with_tax=Decimal("309.97"),
+            total_price_net=Decimal("254.07"),
+            products_total_price_with_tax=Decimal("289.97"),
+            products_total_price_net=Decimal("237.68"),
+        )
+        db_session.add(order)
+        db_session.commit()
+        db_session.refresh(order)
+
+        for idx, gross in enumerate(
+            (Decimal("100.00"), Decimal("89.97"), Decimal("100.00")), start=1
+        ):
+            net = (gross / Decimal("1.22")).quantize(Decimal("0.01"))
+            db_session.add(
+                OrderDetail(
+                    id_order=order.id_order,
+                    id_tax=tax.id_tax,
+                    product_name=f"Prodotto {idx}",
+                    product_qty=1,
+                    unit_price_with_tax=gross,
+                    unit_price_net=net,
+                    total_price_with_tax=gross,
+                    total_price_net=net,
+                )
+            )
+        db_session.add(
+            Ricevuta(
+                numero=6,
+                anno=2026,
+                id_order=order.id_order,
+                id_customer=customer.id_customer,
+                data_incasso=date(2026, 7, 15),
+                data_emissione=datetime(2026, 7, 21, 12, 0),
+                stato=RicevutaStato.EMESSA,
+            )
+        )
+        db_session.commit()
+
+        movements = repo.fetch_movements(2026, 7)
+        sales_by_day: dict[date, dict[str, Decimal]] = {}
+        for movement in movements:
+            if not movement.sales_amount:
+                continue
+            bucket = sales_by_day.setdefault(
+                movement.movement_date,
+                {"products": Decimal("0"), "shipping": Decimal("0")},
+            )
+            if movement.is_shipping:
+                bucket["shipping"] += movement.sales_amount
+            else:
+                bucket["products"] += movement.sales_amount
+
+        assert date(2026, 7, 15) not in sales_by_day
+        assert sales_by_day[date(2026, 7, 21)]["products"] == Decimal("289.97")
+        assert sales_by_day[date(2026, 7, 21)]["shipping"] == Decimal("20.00")
+
+        matrix = aggregate_matrix(movements)
+        rows, _ = build_riepilogo_rows(matrix, 2026, 7, {tax.id_tax: tax})
+        row_15 = next(row for row in rows if row["date"] == date(2026, 7, 15))
+        row_21 = next(row for row in rows if row["date"] == date(2026, 7, 21))
+        cell_15 = row_15["cells"][str(tax.id_tax)]
+        cell_21 = row_21["cells"][str(tax.id_tax)]
+
+        assert cell_15["products_sales"] == Decimal("0")
+        assert cell_15["shipping_sales"] == Decimal("0")
+        assert cell_15["products_returns"] == Decimal("0")
+        assert cell_15["shipping_returns"] == Decimal("0")
+        assert row_15["row_total"] == Decimal("0")
+
+        assert cell_21["products_sales"] == Decimal("289.97")
+        assert cell_21["shipping_sales"] == Decimal("20.00")
+        assert row_21["row_total"] == Decimal("309.97")
+
+        service = CorrispettivoService(db_session)
+        riepilogo = service.get_riepilogo(2026, 7)
+        day_21 = next(r for r in riepilogo.rows if r.date == date(2026, 7, 21))
+        assert day_21.row_total == Decimal("309.97")

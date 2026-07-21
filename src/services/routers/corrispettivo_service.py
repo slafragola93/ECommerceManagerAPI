@@ -88,6 +88,7 @@ class CorrispettivoService:
         return CorrispettivoRiepilogoResponseSchema(
             year=year,
             month=month,
+            day=day_filter,
             delivery_country_iso=country_iso,
             columns=[CorrispettivoTaxColumnSchema(**column) for column in columns],
             rows=rows,
@@ -190,9 +191,17 @@ class CorrispettivoService:
         return CorrispettivoListResponseSchema(
             year=year,
             month=month,
+            day=day_filter,
             days=days,
             month_totals=month_net,
         )
+
+    @staticmethod
+    def export_zip_filename(request: CorrispettivoExportRequestSchema) -> str:
+        day = request.filters.day if request.filters else None
+        if day is not None:
+            return f"Registro_{request.year}-{request.month:02d}-{day:02d}.zip"
+        return "Registri.zip"
 
     def build_export_zip(self, request: CorrispettivoExportRequestSchema) -> bytes:
         consolidated_filters = self._filters_without_country(request.filters)

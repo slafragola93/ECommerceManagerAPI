@@ -135,6 +135,7 @@ def build_shipping_line_dict(
     shipping: Optional[Shipping],
     *,
     product_name: str = "Spedizione",
+    product_reference: str = "-",
 ) -> Optional[dict]:
     shipping_net, shipping_incl = resolve_shipping_amounts(order, shipping)
     if shipping_net <= 0 and shipping_incl <= 0:
@@ -143,7 +144,7 @@ def build_shipping_line_dict(
         "id_order_detail": 0,
         "id_product": None,
         "product_name": product_name,
-        "product_reference": "-",
+        "product_reference": product_reference,
         "product_qty": 1,
         "id_tax": shipping.id_tax if shipping else None,
         "unit_price_net": shipping_net,

@@ -236,7 +236,8 @@ def seed_credit_note(db_session, order: Order) -> FiscalDocument:
     credit_note = FiscalDocument(
         document_type="credit_note",
         id_order=order.id_order,
-        status="issued",
+        status="pending",
+        is_electronic=True,
         total_price_net=Decimal("50.00"),
         total_price_with_tax=Decimal("61.00"),
     )
