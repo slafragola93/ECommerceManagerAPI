@@ -254,14 +254,25 @@ Il router propaga `send_to_sdi` a `upload_stop(name, send_to_sdi=...)` e imposta
 
 ---
 
-### BE-PA-P1-02 — Download XML strutturato
+### BE-PA-P1-02 — Download XML singolo (attachment)
 
-**Stato:** ✅ Parziale (`xml_content` nel response schema dettaglio)  
+**Stato:** ⏸ Opzionale — coperto da percorsi esistenti  
 **Scope:** Backend
 
-**Task:**
-- `GET /api/v1/fiscal_documents/{id}/xml` → `Content-Disposition: attachment; filename=IT{PIVA}_{progressivo}.xml`.
-- Non esporre XML enorme nel JSON lista.
+**Situazione attuale (2026-07-22):**
+
+| Esigenza | Endpoint già disponibile |
+|----------|--------------------------|
+| Generare + persistere XML (workflow SDI) | `POST /api/v1/fiscal_documents/{id}/generate-xml` |
+| Export bulk contabilità | `GET /api/v1/fiscal_documents/invoices/export?fmt=xml` |
+| Leggere XML in JSON | `GET /api/v1/fiscal_documents/{id}` → `xml_content` |
+
+**Task residuo (nice-to-have):**
+
+- `GET /api/v1/fiscal_documents/{id}/xml` → `Content-Disposition: attachment; filename=IT{PIVA}_{progressivo}.xml` (solo download del blob già in DB, senza logica nuova).
+- Non esporre XML enorme nel JSON **lista** (già rispettato: lista minimal).
+
+Vedi matrice completa in [docs/FATTURAPA.md §6](../../docs/FATTURAPA.md).
 
 ---
 
@@ -396,10 +407,18 @@ Raggruppamento righe per `(AliquotaIVA, Natura)` con N blocchi `DatiRiepilogo`. 
 | FE-PA-3.2 | Azione "Invia a SDI" da dettaglio | P0 | |
 | FE-PA-3.3 | Badge stato (bozza/inviata/consegnata/scartata) | P0 | |
 | FE-PA-3.4 | Timeline notifiche SDI | P1 | Dipende da P0-03/P0-04 BE |
-| FE-PA-3.5 | Download XML e PDF | P1 | PDF BE ok; XML download dedicato mancante (P1-02) |
+| FE-PA-3.5 | Download XML e PDF | P1 | PDF: `GET .../pdf`. XML singolo: export bulk, `generate-xml`, o `xml_content` in dettaglio; attachment dedicato opzionale (P1-02) |
 
-**API backend da consumare:**  
-`POST .../invoices` · `POST .../generate-xml` · `POST .../send-to-sdi` · `GET .../sdi-status` (da creare) · `GET .../pdf` · `GET .../xml` (da creare)
+**API backend da consumare (output fiscale):**  
+Vedi matrice in [docs/FATTURAPA.md §6](../../../docs/FATTURAPA.md).
+
+| Caso d'uso | Endpoint |
+|------------|----------|
+| Ciclo SDI singolo | `POST .../generate-xml` · `POST .../send-to-sdi` |
+| PDF cortesia singola | `GET .../pdf` |
+| Export bulk Excel/XML | `GET .../invoices/export?fmt=xlsx\|xml` |
+| Stato SDI (futuro) | `GET .../sdi-status` (da creare, P1-01) |
+| Download XML attachment (opzionale) | `GET .../xml` (P1-02, non implementato) |
 
 ---
 

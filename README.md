@@ -2,6 +2,100 @@
 
 API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-commerce (PrestaShop).
 
+**Prompt FE (incolla in chat Angular):** [`.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md`](.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)
+
+---
+
+## Ultime modifiche (2026-07-22) — Fix PDF nota di credito parziale (importi errati)
+
+**Scope:** il PDF NC parziale mostrava totali ordine (es. Merce netta € 920,49) invece dei totali documento (€ 5,44 + spedizione).
+
+| Causa | `_compute_totals` usava `order.products_total_price_net` e spedizione ordine anche per NC parziali |
+| Fix | Totali da `fiscal_document.products_total_*` / `total_price_*`; spedizione solo se `includes_shipping=true`; peso da righe NC |
+| File | `src/services/pdf/fiscal_document_pdf_service.py`, `fiscal_document_pdf_builder.py` |
+| Test | `tests/unit/services/pdf/test_fiscal_document_pdf_layout.py` |
+
+```powershell
+pytest tests/unit/services/pdf/test_fiscal_document_pdf_layout.py -v
+```
+
+---
+
+## Ultime modifiche (2026-07-22) — Note di credito: payload v3 unificato + export
+
+**Scope:** le note di credito sono documenti fiscali con lo **stesso contratto response delle fatture** (`InvoiceResponseSchema` v3), differenziati da `document_type=credit_note` e campi NC-specifici. Export bulk esteso alle NC.
+
+| Area | Dettaglio |
+|------|-----------|
+| GET/POST NC | `InvoiceResponseSchema` arricchito (`order_details[]`, `customer`, indirizzi, totali) |
+| Campi NC | `id_fiscal_document_ref`, `credit_note_reason`, `is_partial` (null su fatture) |
+| GET `/{id}` | Fattura **e** NC → stesso shape v3 |
+| Export bulk | `GET /invoices/export?document_type=credit_note&fmt=xlsx\|xml` |
+| Alias schema | `CreditNoteResponseSchema` = alias di `InvoiceResponseSchema` |
+
+**File:** `src/schemas/fiscal_document_schema.py`, `src/services/routers/fiscal_document_service.py`, `src/repository/fiscal_document_repository.py`, `src/services/export/fiscal_document_export_service.py`, `src/routers/fiscal_documents.py`  
+**Test:**
+
+```powershell
+pytest tests/unit/services/test_fiscal_document_invoice_response.py tests/unit/services/export/test_fiscal_document_export_service.py -v
+```
+
+**Doc:** [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §5, §6, §8  
+**Prompt FE:** [`.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md`](.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)
+
+---
+
+## Ultime modifiche (2026-07-22) — Fix POST nota di credito + spedizione
+
+**Scope:** correzione `TypeError: Decimal + float` in `create_credit_note` quando `include_shipping=true` o calcoli proporzionali NC parziale.
+
+| Area | Dettaglio |
+|------|-----------|
+| Causa | Somme/moltiplicazioni tra `Decimal` (DB) e `float` |
+| Fix | Cast esplicito a `float` in totali e righe proporzionali |
+| Test | `tests/unit/repository/test_fiscal_document_create_credit_note.py` |
+
+```powershell
+pytest tests/unit/repository/test_fiscal_document_create_credit_note.py -v
+```
+
+---
+
+## Ultime modifiche (2026-07-22) — Endpoint NC parziale `details-with-products`
+
+**Scope:** `GET /api/v1/fiscal_documents/{id_fiscal_document}/details-with-products` — payload minimale per modale nota di credito parziale con qty calcolate lato BE.
+
+| Campo response | Descrizione |
+|----------------|-------------|
+| `details[].remaining_qty` / `refunded_qty` | Quantità residua vs già stornata |
+| `shipping_already_refunded` / `shipping_eligible` | Stato toggle `include_shipping` |
+| `can_create_credit_note` | `false` se esiste NC totale |
+
+**File:** `src/repository/fiscal_document_repository.py`, `src/services/routers/fiscal_document_service.py`, `src/routers/fiscal_documents.py`, `src/schemas/fiscal_document_schema.py`  
+**Test:** `pytest tests/unit/repository/test_fiscal_document_credit_note_eligible_lines.py -v`  
+**Doc:** [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §5 e §8
+
+---
+
+## Ultime modifiche (2026-07-22) — Documentazione FatturaPA (XML / PDF / export)
+
+**Scope:** allineamento documentazione endpoint output fiscali — nessuna modifica alle route API.
+
+| Documento | Contenuto |
+|-----------|-----------|
+| [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §6 | **Fonte canonica** — matrice «quale endpoint usare», export bulk, chiarimento assenza duplicati HTTP |
+| `ANALISI_PROGETTO.md` | Aggiunto `GET /invoices/export` alla tabella FiscalDocuments |
+| `fatturapa_backlog_implementazione.md` | P1-02 (`GET /{id}/xml`) marcato opzionale vs percorsi esistenti |
+| OpenAPI docstring NC | `order_details[]` da `GET /{id_invoice}` al posto di endpoint inesistente `details-with-products` |
+
+**Riepilogo endpoint output (dettaglio in FATTURAPA.md):**
+
+| Obiettivo | Endpoint |
+|-----------|----------|
+| XML singolo (SDI) | `POST /api/v1/fiscal_documents/{id}/generate-xml` |
+| PDF singolo | `GET /api/v1/fiscal_documents/{id}/pdf` |
+| Export bulk Excel/XML | `GET /api/v1/fiscal_documents/invoices/export?fmt=xlsx\|xml` |
+
 ---
 
 ## Ultime modifiche (2026-07-21) — Reso solo spedizione
@@ -156,6 +250,8 @@ pytest tests/unit/services/external/test_fatturapa_customer_address.py -v
 
 **Scope:** export bulk della lista fatture in Excel e XML FatturaPA (ZIP), con filtro per **paese di consegna** (stessa logica IVA ordine/corrispettivi). Il PDF resta **solo singolo** (`GET /{id}/pdf`).
 
+**Documentazione completa (matrice XML/PDF/export, permessi, troubleshooting):** [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §6.
+
 ### Endpoint
 
 | Metodo | Path | Output |
@@ -190,7 +286,11 @@ pytest tests/unit/services/external/test_fatturapa_customer_address.py -v
 pytest tests/unit/services/export/test_fiscal_document_export_service.py -v
 ```
 
+**Test:** `pytest tests/unit/services/export/test_fiscal_document_export_service.py -v`
+
 **Prompt FE (incolla in chat Angular):** [`.cursor/tasks_claude/fatturazione/prompt_FE_fatture_export_bulk.md`](.cursor/tasks_claude/fatturazione/prompt_FE_fatture_export_bulk.md)
+
+**Prompt FE nota di credito parziale:** [`.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md`](.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)
 
 ---
 
@@ -393,7 +493,7 @@ Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 | Label i18n | `src/services/pdf/i18n/invoice_pdf_labels.py` (IT/FR/DE/ES/EN) |
 | Locale | `src/services/pdf/i18n/locale_resolver.py` — ISO paese → locale |
 | Config NOTE | `invoice_pdf.pre_invoice_disclaimer`, `invoice_pdf.append_tax_normative` |
-| Endpoint | `GET /api/v1/fiscal_documents/{id}/pdf` |
+| Endpoint | `GET /api/v1/fiscal_documents/{id}/pdf` — vedi [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §6 |
 | Test | `tests/unit/services/pdf/test_fiscal_document_pdf_layout.py` |
 
 ```bash
@@ -424,7 +524,7 @@ Dopo deploy: eseguire `python scripts/setup_initial.py` (o inserire manualmente 
 | Metodo | Path | Response |
 |--------|------|----------|
 | GET | `/api/v1/fiscal_documents/invoices/order/{id_order}` | `InvoiceResponseSchema[]` arricchito |
-| GET | `/api/v1/fiscal_documents/{id}` | `InvoiceResponseSchema` se `document_type=invoice`, altrimenti schema generico |
+| GET | `/api/v1/fiscal_documents/{id}` | `InvoiceResponseSchema` se `document_type=invoice` o `credit_note`, altrimenti schema generico |
 | POST | `/api/v1/fiscal_documents/invoices` | `InvoiceResponseSchema` arricchito dopo creazione |
 
 ### Response `InvoiceResponseSchema`

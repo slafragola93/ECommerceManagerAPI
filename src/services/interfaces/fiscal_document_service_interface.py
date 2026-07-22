@@ -8,6 +8,7 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.schemas.return_schema import ReturnCreateSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
+from src.schemas.fiscal_document_schema import CreditNoteEligibleLinesResponseSchema
 
 
 class IFiscalDocumentService(IBaseService):
@@ -68,4 +69,11 @@ class IFiscalDocumentService(IBaseService):
     @abstractmethod
     async def get_fiscal_document_count_by_type(self, document_type: str) -> int:
         """Conta i documenti fiscali per tipo"""
+        pass
+
+    @abstractmethod
+    async def get_credit_note_eligible_lines(
+        self, id_fiscal_document: int
+    ) -> CreditNoteEligibleLinesResponseSchema:
+        """Righe fattura per modale NC parziale (qty residue, stato spedizione)."""
         pass

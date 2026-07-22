@@ -14,6 +14,7 @@ from src.schemas.fiscal_document_schema import InvoiceListExportItemSchema
 class FiscalDocumentExportService:
     LIST_HEADERS = [
         "id_fiscal_document",
+        "document_type",
         "document_number",
         "internal_number",
         "tipo_documento_fe",
@@ -44,6 +45,7 @@ class FiscalDocumentExportService:
         date_add = item.date_add.isoformat(sep=" ") if item.date_add else None
         return [
             item.id_fiscal_document,
+            item.document_type,
             item.document_number,
             item.internal_number,
             item.tipo_documento_fe,
@@ -62,10 +64,15 @@ class FiscalDocumentExportService:
             item.products_total_price_with_tax,
         ]
 
-    def build_list_xlsx(self, items: Iterable[InvoiceListExportItemSchema]) -> bytes:
+    def build_list_xlsx(
+        self,
+        items: Iterable[InvoiceListExportItemSchema],
+        *,
+        sheet_title: str = "Fatture",
+    ) -> bytes:
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "Fatture"
+        sheet.title = sheet_title
         sheet.append(self.LIST_HEADERS)
         for cell in sheet[1]:
             cell.font = Font(bold=True)
@@ -98,11 +105,13 @@ class FiscalDocumentExportService:
         self,
         invoice_ids: Sequence[int],
         xml_loader: Callable[[int], tuple[bytes, str]],
+        *,
+        duplicate_prefix: str = "fattura",
     ) -> bytes:
         """
-        Crea ZIP con un XML FatturaPA per ogni fattura.
+        Crea ZIP con un XML FatturaPA per ogni documento.
 
         xml_loader: callable(id_fiscal_document) -> (bytes, filename)
         """
         entries = [xml_loader(invoice_id) for invoice_id in invoice_ids]
-        return self._build_zip(entries, "fattura")
+        return self._build_zip(entries, duplicate_prefix)

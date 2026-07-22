@@ -16,13 +16,13 @@ from src.schemas.fiscal_document_schema import (
     InvoiceResponseSchema,
     CreditNoteCreateSchema,
     CreditNoteResponseSchema,
+    CreditNoteEligibleLinesResponseSchema,
     FiscalDocumentResponseSchema,
     FiscalDocumentListResponseSchema,
     FiscalDocumentListFiltersSchema,
     FiscalDocumentUpdateStatusSchema,
     FiscalDocumentUpdateXMLSchema,
     FiscalDocumentDetailResponseSchema,
-    FiscalDocumentDetailWithProductSchema,
     InvoiceExportFormatSchema,
     InvoiceExportFiltersSchema,
 )
@@ -112,6 +112,10 @@ async def export_invoices(
         InvoiceExportFormatSchema.XLSX,
         description="xlsx o xml (ZIP FatturaPA)",
     ),
+    document_type: str = Query(
+        "invoice",
+        description="Tipo documento: invoice o credit_note",
+    ),
     is_electronic: Optional[bool] = Query(None, description="Filtra per elettroniche/non elettroniche"),
     status_filter: Optional[str] = Query(None, alias="status", description="Filtra per status"),
     id_order: Optional[int] = Query(None, gt=0, description="Filtra per ordine"),
@@ -129,17 +133,22 @@ async def export_invoices(
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
-    Export massivo fatture.
+    Export massivo fatture o note di credito.
 
     - **xlsx**: tabella riepilogativa (max 5000 righe). Filtri opzionali: status,
       is_electronic, id_order, id_customer, delivery_country_iso, date_add_from/to.
     - **xml**: ZIP FatturaPA (max 5000). **Solo filtri** `date_add_from`, `date_add_to`,
       `delivery_country_iso` (paese consegna). Status ed altri filtri query sono **ignorati**.
-      Se l'XML non esiste viene generato automaticamente (senza vincoli di status).
+      Se l'XML non esiste viene generato automaticamente (stesso motore di `POST /{id}/generate-xml`).
 
-    PDF singola fattura: `GET /{id_fiscal_document}/pdf`.
+    Parametro **`document_type`**: `invoice` (default) o `credit_note`.
+
+    PDF singolo: `GET /{id_fiscal_document}/pdf` (non disponibile in bulk).
+
+    Matrice completa XML/PDF/export: `docs/FATTURAPA.md` §6.
     """
     filters = InvoiceExportFiltersSchema(
+        document_type=document_type,
         is_electronic=is_electronic if fmt != InvoiceExportFormatSchema.XML else None,
         status=status_filter if fmt != InvoiceExportFormatSchema.XML else None,
         id_order=id_order if fmt != InvoiceExportFormatSchema.XML else None,
@@ -162,11 +171,11 @@ async def export_invoices(
 
 # ==================== NOTE DI CREDITO ====================
 
-@router.post("/credit-notes", response_model=CreditNoteResponseSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/credit-notes", response_model=InvoiceResponseSchema, status_code=status.HTTP_201_CREATED)
 async def create_credit_note(
     credit_note_data: CreditNoteCreateSchema,
     user: dict = user_dependency,
-    db: Session = db_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
@@ -267,8 +276,9 @@ async def create_credit_note(
     
     ### Come trovare gli `id_order_detail`:
     ```
-    GET /api/v1/fiscal-documents/{id_fiscal_document}/details-with-products
+    GET /api/v1/fiscal_documents/{id_invoice}/details-with-products
     ```
+    Oppure `GET /api/v1/fiscal_documents/{id_invoice}` → `order_details[]` (payload più pesante).
     
     ---
     
@@ -317,8 +327,8 @@ async def create_credit_note(
     
     ### Per nota PARZIALE:
     ```
-    1. GET /fiscal-documents/{id}/details-with-products
-    2. Identificare id_order_detail degli articoli da stornare
+    1. GET /api/v1/fiscal_documents/{id_invoice}/details-with-products
+    2. Selezionare righe con remaining_qty > 0
     3. POST /credit-notes con is_partial=true e items[]
     ```
     
@@ -379,9 +389,6 @@ async def create_credit_note(
     }
     ```
     """
-    repo = get_fiscal_repository(db)
-    
-    # Prepara items se parziale
     items = None
     if credit_note_data.is_partial and credit_note_data.items:
         items = [
@@ -392,28 +399,58 @@ async def create_credit_note(
             for item in credit_note_data.items
         ]
     
-    credit_note = repo.create_credit_note(
+    credit_note = await fiscal_service.create_credit_note(
         id_invoice=credit_note_data.id_invoice,
         reason=credit_note_data.reason,
         is_partial=credit_note_data.is_partial,
         items=items,
-        include_shipping=credit_note_data.include_shipping
+        include_shipping=credit_note_data.include_shipping,
+        user=user,
     )
     
-    return credit_note
+    return await fiscal_service.get_fiscal_document_detail_response_by_id(
+        credit_note.id_fiscal_document
+    )
 
 
-@router.get("/credit-notes/invoice/{id_invoice}", response_model=List[CreditNoteResponseSchema])
+@router.get(
+    "/{id_fiscal_document}/details-with-products",
+    response_model=CreditNoteEligibleLinesResponseSchema,
+    summary="Righe fattura eleggibili per nota di credito parziale",
+)
+async def get_credit_note_eligible_lines(
+    id_fiscal_document: int = Path(..., gt=0, description="ID della fattura"),
+    user: dict = user_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
+):
+    """
+    Payload minimale per il modale **nota di credito parziale**.
+
+    Restituisce le righe prodotto fatturate con:
+    - `product_name`, `product_reference`, prezzi da snapshot fattura
+    - `product_qty` (fatturata), `refunded_qty`, `remaining_qty`
+    - `is_fully_refunded` per disabilitare righe esaurite
+
+    Metadati NC:
+    - `shipping_already_refunded` / `shipping_eligible` — toggle `include_shipping`
+    - `has_total_credit_note` / `can_create_credit_note` — blocco se esiste NC totale
+    - `shipping` — importi spedizione fatturati (se eleggibile)
+
+    Il `unit_price` per il POST NC parziale resta quello della fattura (non serve inviarlo).
+    """
+    return await fiscal_service.get_credit_note_eligible_lines(id_fiscal_document)
+
+
+@router.get("/credit-notes/invoice/{id_invoice}", response_model=List[InvoiceResponseSchema])
 async def get_credit_notes_by_invoice(
     id_invoice: int = Path(..., gt=0, description="ID della fattura"),
     user: dict = user_dependency,
-    db: Session = db_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
-    """Recupera tutte le note di credito di una fattura"""
-    repo = get_fiscal_repository(db)
-    credit_notes = repo.get_credit_notes_by_invoice(id_invoice)
-    return credit_notes
+    """Recupera tutte le note di credito di una fattura (contratto v3 arricchito)."""
+    return await fiscal_service.get_credit_notes_by_invoice_response(id_invoice)
 
 
 # ==================== OPERAZIONI GENERICHE ====================
@@ -429,15 +466,17 @@ async def get_fiscal_document(
     fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
-    """Recupera documento fiscale per ID (fattura arricchita o nota di credito generica)"""
+    """Recupera documento fiscale per ID (fattura/NC arricchiti v3, altri tipi generici)"""
     repo = get_fiscal_repository(db)
     doc = repo.get_fiscal_document_by_id(id_fiscal_document)
 
     if not doc:
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
 
-    if doc.document_type == "invoice":
-        return await fiscal_service.get_invoice_response_by_id(id_fiscal_document)
+    if doc.document_type in ("invoice", "credit_note"):
+        return await fiscal_service.get_fiscal_document_detail_response_by_id(
+            id_fiscal_document
+        )
 
     return doc
 

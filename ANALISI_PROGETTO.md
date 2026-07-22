@@ -1077,8 +1077,10 @@ CRUD standard: GET `/`, GET `/{id}`, POST `/`, PUT `/{id}`, DELETE `/{id}`
 |---|---|---|
 | POST | `/invoices` | `create_invoice` |
 | GET | `/invoices/order/{id_order}` | `get_invoices_by_order` |
+| GET | `/invoices/export` | `export_invoices` — bulk Excel (`fmt=xlsx`) o ZIP XML FatturaPA (`fmt=xml`); PDF solo singolo |
 | POST | `/credit-notes` | `create_credit_note` |
 | GET | `/credit-notes/invoice/{id_invoice}` | `get_credit_notes_by_invoice` |
+| GET | `/{id_fiscal_document}/details-with-products` | `get_credit_note_eligible_lines` — modale NC parziale |
 | GET | `/{id_fiscal_document}` | `get_fiscal_document` |
 | GET | `/` | `get_fiscal_documents` |
 | DELETE | `/{id_fiscal_document}` | `delete_fiscal_document` |

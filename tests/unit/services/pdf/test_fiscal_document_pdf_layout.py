@@ -356,3 +356,61 @@ class TestFiscalDocumentPDFService:
         assert vat_summary[0]["vat"] == pytest.approx(507.9778)
         assert totals["doc_total"] == pytest.approx(2816.965)
         assert totals["total_vat"] == pytest.approx(507.9778)
+
+    def test_partial_credit_note_uses_document_totals_not_order(self):
+        """NC parziale: totali PDF da fiscal_document, non da ordine completo."""
+        svc = FiscalDocumentPDFService()
+        fiscal = SimpleNamespace(
+            document_type="credit_note",
+            includes_shipping=True,
+            products_total_price_net=5.44,
+            products_total_price_with_tax=6.64,
+            total_price_net=31.66,
+            total_price_with_tax=38.63,
+        )
+        order = SimpleNamespace(
+            products_total_price_net=920.49,
+            total_price_with_tax=1123.0,
+            total_weight=95.14,
+            shipments=SimpleNamespace(
+                price_tax_excl=26.22,
+                price_tax_incl=31.99,
+                id_tax=217,
+            ),
+        )
+        details = [
+            {
+                "product_qty": 1,
+                "product_weight": 0.095,
+                "total_price_net": 5.44,
+                "vat_rate": 22.0,
+            }
+        ]
+
+        class _TaxRepo:
+            def get_percentage_by_id(self, id_tax):
+                return 22.0 if id_tax == 217 else 0.0
+
+        from unittest.mock import patch
+
+        with patch(
+            "src.repository.tax_repository.TaxRepository",
+            return_value=_TaxRepo(),
+        ):
+            totals, vat_summary = svc._compute_totals(
+                fiscal_document=fiscal,
+                order=order,
+                details=details,
+                db=object(),
+            )
+
+        assert totals["merchandise_net"] == pytest.approx(5.44)
+        assert totals["merchandise_gross"] == pytest.approx(6.64)
+        assert totals["shipping_excl"] == pytest.approx(26.22)
+        assert totals["shipping_incl"] == pytest.approx(31.99)
+        assert totals["taxable_total"] == pytest.approx(31.66)
+        assert totals["doc_total"] == pytest.approx(38.63)
+        assert totals["total_weight"] == pytest.approx(0.095)
+        assert len(vat_summary) == 1
+        assert vat_summary[0]["merchandise"] == pytest.approx(5.44)
+        assert vat_summary[0]["shipping"] == pytest.approx(26.22)

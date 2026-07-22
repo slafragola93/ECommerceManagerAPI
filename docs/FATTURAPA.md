@@ -14,9 +14,10 @@ Documenti correlati:
 | [fatturapa_riassunto_piano.md](../.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md) | Normativa, formato XML, ciclo SDI, piano fasi |
 | [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md) | Gap analysis P0–P3, checklist go-live |
 | [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md) | Handoff FE — contratto `InvoiceDetail` v3 |
+| [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-07-20
+**Aggiornato:** 2026-07-22
 
 ---
 
@@ -119,7 +120,8 @@ Per fattura elettronica (`is_electronic=true`):
 | POST creazione fattura / NC | `fiscal_documents:create` |
 | POST generate-xml, send-to-sdi, PATCH status | `fiscal_documents:update` |
 | DELETE documento (solo `pending`) | `fiscal_documents:delete` |
-| GET PDF | `fiscal_documents:read` |
+| GET PDF singola | `fiscal_documents:read` |
+| GET export bulk (`/invoices/export`) | `fiscal_documents:read` |
 
 ---
 
@@ -165,7 +167,9 @@ Handoff FE: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione
 | Metodo | Path | Response | Note |
 |--------|------|----------|------|
 | GET | `/invoices/order/{id_order}` | `InvoiceResponseSchema[]` | Tutte le fatture dell'ordine |
-| GET | `/{id_fiscal_document}` | `InvoiceResponseSchema` se `invoice`, altrimenti generico | Dettaglio arricchito per fatture |
+| GET | `/credit-notes/invoice/{id_invoice}` | `InvoiceResponseSchema[]` | Note di credito di una fattura (v3 arricchito) |
+| GET | `/{id_fiscal_document}` | `InvoiceResponseSchema` se `invoice` o `credit_note` | Dettaglio arricchito v3 |
+| GET | `/{id_fiscal_document}/details-with-products` | `CreditNoteEligibleLinesResponseSchema` | Modale NC parziale (qty residue, spedizione) |
 | GET | `/` | `FiscalDocumentListResponseSchema` | Lista **minimal** (senza embed) |
 
 Query lista: `page`, `limit`, `document_type`, `is_electronic`, `status`.
@@ -174,7 +178,23 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 
 ---
 
-## 6. API — Ciclo XML e invio SDI
+## 6. API — XML, PDF, export e invio SDI
+
+**Fonte canonica** per tutti gli endpoint di output fiscale. Non esistono route HTTP duplicate: ogni path ha uno scopo distinto.
+
+### Matrice — quale endpoint usare
+
+| Obiettivo | Metodo | Path | Note |
+|-----------|--------|------|------|
+| Generare XML FatturaPA (**singolo** doc, workflow SDI) | `POST` | `/{id}/generate-xml` | Aggiorna `status=generated`, errori **422** strutturati |
+| Caricare / inviare a SDI | `POST` | `/{id}/send-to-sdi` | Richiede XML già generato |
+| PDF di cortesia (**singolo** doc) | `GET` | `/{id}/pdf` | Layout elettronew; **non** c’è export PDF bulk |
+| Export **bulk** Excel lista | `GET` | `/invoices/export?fmt=xlsx&document_type=invoice\|credit_note` | Max 5000 righe; colonna `document_type` |
+| Export **bulk** XML (ZIP) | `GET` | `/invoices/export?fmt=xml&document_type=invoice\|credit_note` | Max 5000; TD01/TD04; genera XML se mancante |
+| Leggere XML già in DB (debug/admin) | `GET` | `/{id}` | Campo `xml_content` nel JSON dettaglio fattura |
+| Download XML singolo come file | — | `/{id}/xml` | **Non implementato** (backlog P1-02, opzionale) |
+
+**Non confondere:** `POST /{id}/generate-xml` (passo esplicito del ciclo SDI) e `GET /invoices/export?fmt=xml` (export contabilità multi-documento) usano lo stesso generatore ma **contesti diversi** — vedi sotto.
 
 ### POST `/{id_fiscal_document}/generate-xml`
 
@@ -238,6 +258,32 @@ Il PDF **non** sostituisce l'originale elettronico trasmesso allo SDI (dicitura 
 
 File: `src/services/pdf/fiscal_document_pdf_service.py`, `src/services/pdf/fiscal_document_pdf_layout.py`, `src/services/pdf/i18n/`.
 
+### GET `/invoices/export`
+
+**Permesso:** `fiscal_documents:read`  
+**Output:** file binario (`Content-Disposition: attachment`) — **non** JSON.
+
+| Query | Valori | Output |
+|-------|--------|--------|
+| `fmt` | `xlsx` (default) | Excel riepilogativo |
+| `fmt` | `xml` | ZIP con un file `.xml` FatturaPA per documento (flat root) |
+| `fmt` | `pdf` | **400** — PDF solo singolo (`GET /{id}/pdf`) |
+| `document_type` | `invoice` (default) \| `credit_note` | Filtra fatture o note di credito |
+
+**Filtri export Excel:** `document_type`, `is_electronic`, `status`, `id_order`, `id_customer`, `delivery_country_iso`, `date_add_from`, `date_add_to`.
+
+**Filtri export XML (solo questi; gli altri query param vengono ignorati):** `document_type`, `delivery_country_iso`, `date_add_from`, `date_add_to`.
+
+**Comportamento export XML:**
+
+- Candidate solo documenti **elettronici** nel set filtrato (`invoice` TD01 o `credit_note` TD04).
+- Nessun vincolo di `status` — se `xml_content` manca, il BE tenta generazione automatica (`FatturaPAService.generate_xml_from_fiscal_document`, come `POST /{id}/generate-xml`) e persiste in DB con `status=generated`.
+- Se tutti i documenti del set falliscono → **400** con `details.failure_summary`.
+- Nome file XML: `[IdPaese][IdCodice]_[ProgressivoInvio].xml` (helper `fatturapa_filename.py`).
+- Filename download: `fatture-*` se `document_type=invoice`, `note-credito-*` se `credit_note`.
+
+Handoff FE: [prompt_FE_fatture_export_bulk.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_export_bulk.md).
+
 ### PATCH `/{id_fiscal_document}/status`
 
 Aggiornamento manuale status / `upload_result` (uso amministrativo).
@@ -291,7 +337,36 @@ Handoff Tax: [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_COD
 | `include_shipping` | No | `true` | Solo NC totali o se spedizione non già stornata |
 | `items` | Se `is_partial=true` | — | `[{ id_order_detail, quantity }]` |
 
-Response: `CreditNoteResponseSchema` (schema generico, non v3 arricchito come fattura).
+Response: **`InvoiceResponseSchema` v3 arricchito** — stesso contratto delle fatture (`order_details[]`, `customer`, `address_invoice`, totali, …), con in più:
+
+| Campo NC | Descrizione |
+|----------|-------------|
+| `document_type` | `"credit_note"` |
+| `tipo_documento_fe` | `"TD04"` |
+| `id_fiscal_document_ref` | ID fattura stornata |
+| `credit_note_reason` | Motivo NC |
+| `is_partial` | Storno parziale |
+
+`CreditNoteResponseSchema` è alias di `InvoiceResponseSchema` (retrocompatibilità OpenAPI).
+
+**Consultazione NC:**
+
+| Metodo | Path | Response |
+|--------|------|----------|
+| GET | `/{id_nc}` | `InvoiceResponseSchema` v3 |
+| GET | `/credit-notes/invoice/{id_invoice}` | `InvoiceResponseSchema[]` v3 |
+
+**NC parziale — modale righe eleggibili:**
+
+```
+GET /api/v1/fiscal_documents/{id_invoice}/details-with-products
+```
+
+Response `CreditNoteEligibleLinesResponseSchema`: righe prodotto con `refunded_qty`, `remaining_qty`, `is_fully_refunded`; metadati `shipping_already_refunded`, `shipping_eligible`, `can_create_credit_note`. Alternativa payload completo: `GET /{id_invoice}` → `order_details[]`.
+
+**Test BE:** `pytest tests/unit/repository/test_fiscal_document_credit_note_eligible_lines.py tests/unit/repository/test_fiscal_document_create_credit_note.py -v`
+
+**Handoff FE:** [prompt_FE_nota_credito_parziale.md](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)
 
 **Gap P0-06:** blocco XML `DatiFattureCollegate` (riferimento fattura originale) **non ancora generato**.
 
@@ -322,7 +397,7 @@ Eliminazione: solo se `status=pending` (fatture/NC); non eliminabile se esistono
 
 ## 10. Gap noti e backlog
 
-Stato al **2026-07-17**. Dettaglio completo: [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
+Stato al **2026-07-22**. Dettaglio completo: [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
 
 | ID | Area | Stato |
 |----|------|-------|
@@ -334,7 +409,7 @@ Stato al **2026-07-17**. Dettaglio completo: [fatturapa_backlog_implementazione.
 | P0-06 | `DatiFattureCollegate` per NC TD04 | Assente |
 | P0-07 | Test suite generazione XML completa | Parziale |
 | P1-01 | `GET .../sdi-status` dedicato | Assente |
-| P1-02 | `GET .../xml` download attachment | Assente |
+| P1-02 | `GET .../xml` download attachment singolo | Opzionale — oggi: `POST .../generate-xml`, `GET .../export?fmt=xml`, o `xml_content` in `GET /{id}` |
 | P1-05 | `DatiRiepilogo` multi-aliquota | Completato |
 
 ---
@@ -418,6 +493,7 @@ Per attivazione manuale oggi: istanziare `FatturaPAPoolSyncService(db)` da scrip
 | Tax per riga + VIES N3.2 | `src/services/external/fatturapa_tax_line.py` |
 | Scadenza pagamento XML | `resolve_payment_due_date()` in `fatturapa_service.py` |
 | PDF | `src/services/pdf/fiscal_document_pdf_service.py`, `fiscal_document_pdf_layout.py`, `i18n/` |
+| Export bulk Excel/ZIP | `src/services/export/fiscal_document_export_service.py` |
 | Schemi Pydantic | `src/schemas/fiscal_document_schema.py` |
 | Modello ORM | `src/models/fiscal_document.py` |
 | VIES ordini | `src/services/vies/`, `src/vies/tax_resolution.py` |

@@ -166,6 +166,7 @@ class FiscalDocumentPDFService(BasePDFService):
                     "product_reference": d.get("product_reference") or "",
                     "product_name": d.get("product_name") or "",
                     "product_qty": qty,
+                    "product_weight": self._as_float(d.get("product_weight"), 0),
                     "unit_price_net": unit_net,
                     "total_price_net": line_net,
                     "reduction_percent": self._as_float(
@@ -251,10 +252,28 @@ class FiscalDocumentPDFService(BasePDFService):
         details: List[Dict[str, Any]],
         db,
     ) -> tuple:
+        is_credit_note = getattr(fiscal_document, "document_type", None) == "credit_note"
+        includes_shipping_flag = getattr(fiscal_document, "includes_shipping", None)
+        if is_credit_note:
+            includes_shipping = bool(includes_shipping_flag)
+        else:
+            includes_shipping = includes_shipping_flag is not False
+
         merchandise_net = sum(
             self._as_float(d.get("total_price_net"), 0) for d in details
         )
-        if order and getattr(order, "products_total_price_net", None):
+        products_total_net = getattr(fiscal_document, "products_total_price_net", None)
+        products_total_with_tax = getattr(
+            fiscal_document, "products_total_price_with_tax", None
+        )
+        doc_total_net = getattr(fiscal_document, "total_price_net", None)
+        doc_total_with_tax = getattr(fiscal_document, "total_price_with_tax", None)
+
+        if products_total_net is not None:
+            merchandise_net = self._as_float(products_total_net)
+        elif not is_credit_note and order and getattr(
+            order, "products_total_price_net", None
+        ):
             merchandise_net = self._as_float(order.products_total_price_net)
 
         shipping_excl = 0.0
@@ -262,22 +281,37 @@ class FiscalDocumentPDFService(BasePDFService):
         shipping_vat_rate = 0.0
 
         shipping = None
-        if order and getattr(order, "shipments", None):
-            shipping = order.shipments
-        if shipping:
-            shipping_excl = self._as_float(shipping.price_tax_excl)
-            shipping_incl = self._as_float(shipping.price_tax_incl)
-            if getattr(shipping, "id_tax", None) and db:
-                from src.repository.tax_repository import TaxRepository
-
-                tax_repo = TaxRepository(db)
-                shipping_vat_rate = self._as_float(
-                    tax_repo.get_percentage_by_id(shipping.id_tax)
+        if includes_shipping:
+            if doc_total_net is not None and products_total_net is not None:
+                shipping_excl = max(
+                    0.0,
+                    self._as_float(doc_total_net) - self._as_float(products_total_net),
                 )
-                if shipping_vat_rate and not shipping_incl and shipping_excl:
-                    shipping_incl = shipping_excl * (
-                        1 + shipping_vat_rate / 100.0
+            if doc_total_with_tax is not None and products_total_with_tax is not None:
+                shipping_incl = max(
+                    0.0,
+                    self._as_float(doc_total_with_tax)
+                    - self._as_float(products_total_with_tax),
+                )
+
+            if order and getattr(order, "shipments", None):
+                shipping = order.shipments
+            if shipping:
+                if not shipping_excl:
+                    shipping_excl = self._as_float(shipping.price_tax_excl)
+                if not shipping_incl:
+                    shipping_incl = self._as_float(shipping.price_tax_incl)
+                if getattr(shipping, "id_tax", None) and db:
+                    from src.repository.tax_repository import TaxRepository
+
+                    tax_repo = TaxRepository(db)
+                    shipping_vat_rate = self._as_float(
+                        tax_repo.get_percentage_by_id(shipping.id_tax)
                     )
+                    if shipping_vat_rate and not shipping_incl and shipping_excl:
+                        shipping_incl = shipping_excl * (
+                            1 + shipping_vat_rate / 100.0
+                        )
 
         # Raggruppa IVA per aliquota (merce)
         buckets: Dict[float, Dict[str, float]] = {}
@@ -311,22 +345,28 @@ class FiscalDocumentPDFService(BasePDFService):
         total_vat = sum(r["vat"] for r in vat_summary)
 
         taxable_total = merchandise_net + shipping_excl
-        doc_total = self._as_float(
-            getattr(fiscal_document, "total_price_with_tax", None)
-        )
+        doc_total = self._as_float(doc_total_with_tax)
         if not doc_total and order:
             doc_total = self._as_float(order.total_price_with_tax)
         if not doc_total:
             doc_total = taxable_total + total_vat
 
-        merchandise_gross = merchandise_net + sum(
-            self._as_float(d.get("total_price_net"), 0)
-            * (self._as_float(d.get("vat_rate"), 0) / 100.0)
-            for d in details
-        )
+        if products_total_with_tax is not None:
+            merchandise_gross = self._as_float(products_total_with_tax)
+        else:
+            merchandise_gross = merchandise_net + sum(
+                self._as_float(d.get("total_price_net"), 0)
+                * (self._as_float(d.get("vat_rate"), 0) / 100.0)
+                for d in details
+            )
 
         total_weight = 0.0
-        if order and getattr(order, "total_weight", None):
+        if is_credit_note:
+            for d in details:
+                qty = self._as_float(d.get("product_qty"), 0)
+                weight = self._as_float(d.get("product_weight"), 0)
+                total_weight += qty * weight
+        elif order and getattr(order, "total_weight", None):
             total_weight = self._as_float(order.total_weight)
 
         totals = {

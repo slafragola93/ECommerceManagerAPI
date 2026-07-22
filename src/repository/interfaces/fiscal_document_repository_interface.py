@@ -39,6 +39,11 @@ class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
     def get_credit_notes_by_invoice(self, id_invoice: int) -> List[FiscalDocument]:
         """Ottiene tutte le note di credito per una fattura"""
         pass
+
+    @abstractmethod
+    def get_credit_note_eligible_lines(self, id_invoice: int) -> Dict[str, Any]:
+        """Righe fattura eleggibili per NC parziale con qty residue e stato spedizione."""
+        pass
     
     @abstractmethod
     def get_fiscal_document_by_id(self, id_fiscal_document: int) -> Optional[FiscalDocument]:

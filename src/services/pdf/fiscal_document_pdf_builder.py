@@ -47,6 +47,9 @@ def _build_details_with_products(db: Session, id_fiscal_document: int, details) 
                 "id_fiscal_document_detail": detail.id_fiscal_document_detail,
                 "id_order_detail": detail.id_order_detail,
                 "product_qty": detail.product_qty,
+                "product_weight": getattr(order_detail, "product_weight", None)
+                if order_detail
+                else None,
                 "unit_price": detail.unit_price_net
                 if detail.unit_price_net is not None
                 else detail.unit_price,

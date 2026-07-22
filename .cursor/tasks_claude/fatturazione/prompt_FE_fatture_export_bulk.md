@@ -2,7 +2,7 @@
 
 Copia tutto il contenuto **sotto la riga `---`** e incollalo in una nuova chat Cursor sul **repository del gestionale Angular**.
 
-Handoff BE: sezione *Export massivo lista fatture* in `README.md` (repo **ECommerceManagerAPI**).  
+Handoff BE: sezione *Export massivo lista fatture* in `README.md` e **matrice endpoint output** in [`docs/FATTURAPA.md`](../../../docs/FATTURAPA.md) §6 (repo **ECommerceManagerAPI**).  
 Pattern export già implementato sul FE per le **Ricevute** → riusare stesso approccio (`responseType: 'blob'`, helper download, filtri lista).
 
 **Obiettivo sessione:** collegare la **lista fatture** all'export bulk BE — **Excel e XML FatturaPA (ZIP)**.  

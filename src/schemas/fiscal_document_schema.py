@@ -86,6 +86,71 @@ class FiscalDocumentDetailWithProductSchema(BaseModel):
         self.unit_price_net = value
 
 
+class CreditNoteEligibleLineSchema(FiscalDocumentDetailWithProductSchema):
+    """Riga fattura eleggibile per nota di credito parziale."""
+
+    refunded_qty: float = Field(0, ge=0, description="Quantità già stornata in NC precedenti")
+    remaining_qty: float = Field(..., ge=0, description="Quantità ancora stornabile")
+    is_fully_refunded: bool = Field(
+        False, description="True se remaining_qty <= 0"
+    )
+
+    @validator(
+        "product_qty",
+        "refunded_qty",
+        "remaining_qty",
+        "unit_price_net",
+        "unit_price_with_tax",
+        "total_price_net",
+        "total_price_with_tax",
+        pre=True,
+        allow_reuse=True,
+    )
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
+
+class CreditNoteEligibleShippingSchema(BaseModel):
+    """Importi spedizione fatturati (per toggle include_shipping in NC)."""
+
+    unit_price_net: Optional[float] = None
+    unit_price_with_tax: Optional[float] = None
+    id_tax: Optional[int] = None
+
+    @validator("unit_price_net", "unit_price_with_tax", pre=True, allow_reuse=True)
+    def round_decimal(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 2)
+
+
+class CreditNoteEligibleLinesResponseSchema(BaseModel):
+    """Payload minimale per modale NC parziale."""
+
+    id_fiscal_document: int = Field(..., description="ID fattura di riferimento")
+    id_order: int
+    includes_shipping: bool = Field(
+        ..., description="La fattura include spese di spedizione"
+    )
+    shipping_already_refunded: bool = Field(
+        ..., description="True se una NC precedente ha includes_shipping=true"
+    )
+    shipping_eligible: bool = Field(
+        ...,
+        description="True se la spedizione può ancora essere stornata (includes_shipping e non già stornata, con importo > 0)",
+    )
+    has_total_credit_note: bool = Field(
+        ..., description="True se esiste già una NC totale sulla fattura"
+    )
+    can_create_credit_note: bool = Field(
+        ..., description="False se has_total_credit_note (nessuna altra NC ammessa)"
+    )
+    shipping: Optional[CreditNoteEligibleShippingSchema] = None
+    details: List[CreditNoteEligibleLineSchema] = Field(default_factory=list)
+
+
 # ==================== SCHEMAS PER FATTURE ====================
 
 class InvoiceCreateSchema(BaseModel):
@@ -101,12 +166,20 @@ class InvoiceCreateSchema(BaseModel):
 
 
 class InvoiceResponseSchema(BaseModel):
-    """Schema risposta fattura (dettaglio GET/POST): campi documento + contesto ordine come ricevuta v3."""
+    """Schema risposta documento fiscale attivo (fattura TD01 / nota di credito TD04).
+
+    Contratto v3 arricchito condiviso: differenziare tramite `document_type`.
+    Campi NC-specifici (`id_fiscal_document_ref`, `credit_note_reason`, `is_partial`)
+    sono valorizzati solo se `document_type=credit_note`.
+    """
 
     id_fiscal_document: int
     document_type: str
     tipo_documento_fe: Optional[str] = None
     id_order: int
+    id_fiscal_document_ref: Optional[int] = Field(
+        None, description="ID fattura di riferimento (solo credit_note)"
+    )
     document_number: Optional[str] = None
     internal_number: Optional[str] = None
     filename: Optional[str] = None
@@ -114,6 +187,12 @@ class InvoiceResponseSchema(BaseModel):
     status: str
     is_electronic: bool
     upload_result: Optional[str] = None
+    credit_note_reason: Optional[str] = Field(
+        None, description="Motivo nota di credito (solo credit_note)"
+    )
+    is_partial: Optional[bool] = Field(
+        None, description="Nota di credito parziale (solo credit_note)"
+    )
     includes_shipping: bool
     total_price_with_tax: Optional[float] = None
     total_price_net: Optional[float] = None
@@ -223,37 +302,10 @@ class CreditNoteCreateSchema(BaseModel):
         }
 
 
-class CreditNoteResponseSchema(BaseModel):
-    """Schema risposta nota di credito"""
-    id_fiscal_document: int
-    document_type: str
-    tipo_documento_fe: Optional[str]
-    id_order: int
-    id_fiscal_document_ref: Optional[int]
-    document_number: Optional[str]
-    internal_number: Optional[str]
-    filename: Optional[str]
-    status: str
-    is_electronic: bool
-    credit_note_reason: Optional[str]
-    is_partial: bool
-    includes_shipping: bool
-    total_price_with_tax: Optional[float] = None
-    total_price_net: Optional[float] = None
-    products_total_price_net: Optional[float] = None
-    products_total_price_with_tax: Optional[float] = None
-    date_add: Optional[datetime] = None
-    date_upd: Optional[datetime] = None
-    details: List[FiscalDocumentDetailResponseSchema] = []
+class CreditNoteResponseSchema(InvoiceResponseSchema):
+    """Alias di InvoiceResponseSchema per nota di credito (stesso contratto v3)."""
 
-    @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
-    def round_decimal(cls, v):
-        if v is None:
-            return None
-        return round(float(v), 2)
-
-    class Config:
-        from_attributes = True
+    pass
 
 
 # ==================== SCHEMAS UNIFICATI ====================
@@ -341,8 +393,12 @@ class InvoiceExportFormatSchema(str, Enum):
 
 
 class InvoiceExportFiltersSchema(BaseModel):
-    """Filtri export massivo fatture."""
+    """Filtri export massivo documenti fiscali elettronici (fatture / note di credito)."""
 
+    document_type: str = Field(
+        "invoice",
+        description="Tipo documento: invoice o credit_note",
+    )
     is_electronic: Optional[bool] = None
     status: Optional[str] = None
     id_order: Optional[int] = Field(None, gt=0)
@@ -359,7 +415,7 @@ class InvoiceExportFiltersSchema(BaseModel):
     limit: int = Field(100, ge=1, le=5000)
 
     def for_xml_export(self, max_limit: int = 5000) -> "InvoiceExportFiltersSchema":
-        """Export XML: date, paese consegna + solo fatture elettroniche (FatturaPA)."""
+        """Export XML: date, paese consegna + solo documenti elettronici (FatturaPA)."""
         return self.model_copy(
             update={
                 "is_electronic": True,
@@ -370,6 +426,14 @@ class InvoiceExportFiltersSchema(BaseModel):
                 "limit": max_limit,
             }
         )
+
+    @field_validator("document_type")
+    @classmethod
+    def normalize_document_type(cls, value: str) -> str:
+        normalized = (value or "invoice").strip().lower()
+        if normalized not in ("invoice", "credit_note"):
+            raise ValueError("document_type deve essere invoice o credit_note")
+        return normalized
 
     @field_validator("delivery_country_iso")
     @classmethod
@@ -388,9 +452,10 @@ class InvoiceExportFiltersSchema(BaseModel):
 
 
 class InvoiceListExportItemSchema(BaseModel):
-    """Riga lista fatture per export Excel."""
+    """Riga lista documenti fiscali per export Excel."""
 
     id_fiscal_document: int
+    document_type: str
     document_number: Optional[str] = None
     internal_number: Optional[str] = None
     tipo_documento_fe: Optional[str] = None

@@ -12,6 +12,7 @@ from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 from src.schemas.fiscal_document_schema import (
+    CreditNoteEligibleLinesResponseSchema,
     InvoiceExportFiltersSchema,
     InvoiceExportFormatSchema,
     InvoiceListExportItemSchema,
@@ -98,6 +99,8 @@ class FiscalDocumentService(IFiscalDocumentService):
             return self._fiscal_document_repository.create_credit_note(
                 id_invoice, reason, is_partial, items, include_shipping
             )
+        except ValueError as e:
+            raise ValidationException(str(e)) from e
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della nota di credito: {str(e)}")
     
@@ -410,19 +413,19 @@ class FiscalDocumentService(IFiscalDocumentService):
                 order_details.append(RicevutaOrderDetailEmbedSchema(**shipping_line))
         return order_details
 
-    def _row_to_invoice_response_schema(self, row) -> Optional[InvoiceResponseSchema]:
-        """Converte (doc, addr_del, addr_inv, customer, payment, shipping) in InvoiceResponseSchema."""
+    def _row_to_fiscal_document_detail_schema(self, row) -> Optional[InvoiceResponseSchema]:
+        """Converte (doc, addr_del, addr_inv, customer, payment, shipping) in schema v3."""
         if not row:
             return None
         doc, address_delivery, address_invoice, customer, payment, shipping = row
-        if doc.document_type != "invoice":
+        if doc.document_type not in ("invoice", "credit_note"):
             return None
 
         order = self._order_repository.get_by_id(doc.id_order)
         details_list = doc.details or []
         order_detail_map = (
             self._fiscal_document_repository.get_order_details_with_images(
-                [d.id_order_detail for d in details_list]
+                [d.id_order_detail for d in details_list if d.id_order_detail]
             )
             if details_list
             else {}
@@ -439,12 +442,14 @@ class FiscalDocumentService(IFiscalDocumentService):
             else []
         )
         ship_net, ship_incl = self._resolve_invoice_shipping_totals(doc, order, shipping)
+        is_credit_note = doc.document_type == "credit_note"
 
         return InvoiceResponseSchema(
             id_fiscal_document=doc.id_fiscal_document,
             document_type=doc.document_type,
             tipo_documento_fe=doc.tipo_documento_fe,
             id_order=doc.id_order,
+            id_fiscal_document_ref=doc.id_fiscal_document_ref if is_credit_note else None,
             document_number=doc.document_number,
             internal_number=doc.internal_number,
             filename=doc.filename,
@@ -452,6 +457,8 @@ class FiscalDocumentService(IFiscalDocumentService):
             status=doc.status,
             is_electronic=bool(doc.is_electronic),
             upload_result=doc.upload_result,
+            credit_note_reason=doc.credit_note_reason if is_credit_note else None,
+            is_partial=bool(doc.is_partial) if is_credit_note else None,
             includes_shipping=bool(doc.includes_shipping),
             total_price_with_tax=self._to_float(doc.total_price_with_tax),
             total_price_net=self._to_float(doc.total_price_net),
@@ -482,6 +489,12 @@ class FiscalDocumentService(IFiscalDocumentService):
             ),
         )
 
+    def _row_to_invoice_response_schema(self, row) -> Optional[InvoiceResponseSchema]:
+        schema = self._row_to_fiscal_document_detail_schema(row)
+        if schema and schema.document_type != "invoice":
+            return None
+        return schema
+
     async def get_invoices_by_order_response(self, id_order: int) -> List[InvoiceResponseSchema]:
         """Fatture ordine arricchite (contratto allineato a ricevuta v3)."""
         try:
@@ -495,15 +508,46 @@ class FiscalDocumentService(IFiscalDocumentService):
 
     async def get_invoice_response_by_id(self, id_fiscal_document: int) -> InvoiceResponseSchema:
         """Dettaglio fattura per ID con relazioni ordine."""
+        schema = await self.get_fiscal_document_detail_response_by_id(id_fiscal_document)
+        if schema.document_type != "invoice":
+            raise NotFoundException(f"Fattura {id_fiscal_document} non trovata")
+        return schema
+
+    async def get_fiscal_document_detail_response_by_id(
+        self, id_fiscal_document: int
+    ) -> InvoiceResponseSchema:
+        """Dettaglio fattura o nota di credito (contratto v3 arricchito)."""
         row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(
             id_fiscal_document
         )
         if not row:
             raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
-        schema = self._row_to_invoice_response_schema(row)
+        schema = self._row_to_fiscal_document_detail_schema(row)
         if not schema:
-            raise NotFoundException(f"Fattura {id_fiscal_document} non trovata")
+            raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
         return schema
+
+    async def get_credit_notes_by_invoice_response(
+        self, id_invoice: int
+    ) -> List[InvoiceResponseSchema]:
+        """Note di credito di una fattura (contratto v3 arricchito)."""
+        try:
+            credit_notes = self._fiscal_document_repository.get_credit_notes_by_invoice(
+                id_invoice
+            )
+            results: List[InvoiceResponseSchema] = []
+            for cn in credit_notes:
+                row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(
+                    cn.id_fiscal_document
+                )
+                schema = self._row_to_fiscal_document_detail_schema(row)
+                if schema:
+                    results.append(schema)
+            return results
+        except Exception as e:
+            raise ValidationException(
+                f"Errore nel recupero delle note di credito: {str(e)}"
+            ) from e
 
     async def get_fiscal_documents_by_order(self, id_order: int, page: int = 1, limit: int = 10, document_type: Optional[str] = None) -> List[ReturnResponseSchema]:
         """Ottiene i documenti fiscali per un ordine, formattati come ReturnResponseSchema."""
@@ -573,6 +617,22 @@ class FiscalDocumentService(IFiscalDocumentService):
             return self._fiscal_document_repository.get_credit_notes_by_invoice(id_invoice)
         except Exception as e:
             raise ValidationException(f"Errore nel recupero delle note di credito: {str(e)}")
+
+    async def get_credit_note_eligible_lines(
+        self, id_fiscal_document: int
+    ) -> CreditNoteEligibleLinesResponseSchema:
+        """Righe fattura per modale NC parziale."""
+        try:
+            payload = self._fiscal_document_repository.get_credit_note_eligible_lines(
+                id_fiscal_document
+            )
+            return CreditNoteEligibleLinesResponseSchema(**payload)
+        except ValueError as e:
+            raise NotFoundException(str(e)) from e
+        except Exception as e:
+            raise ValidationException(
+                f"Errore nel recupero righe eleggibili per NC: {str(e)}"
+            ) from e
     
     async def get_fiscal_document_by_id(self, id_fiscal_document: int) -> ReturnResponseSchema:
         """Recupera documento fiscale per ID con relazioni, formattato come ReturnResponseSchema."""
@@ -719,6 +779,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         fiscal_document, order, customer, address_delivery, country_delivery = row
         return InvoiceListExportItemSchema(
             id_fiscal_document=fiscal_document.id_fiscal_document,
+            document_type=fiscal_document.document_type,
             document_number=fiscal_document.document_number,
             internal_number=fiscal_document.internal_number,
             tipo_documento_fe=fiscal_document.tipo_documento_fe,
@@ -746,6 +807,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             filters.date_add_from, filters.date_add_to
         )
         total = self._fiscal_document_repository.count_invoices_for_export(
+            document_type=filters.document_type,
             is_electronic=filters.is_electronic,
             status=filters.status,
             id_order=filters.id_order,
@@ -758,6 +820,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         rows = self._fiscal_document_repository.list_invoices_for_export(
             skip=skip,
             limit=filters.limit,
+            document_type=filters.document_type,
             is_electronic=filters.is_electronic,
             status=filters.status,
             id_order=filters.id_order,
@@ -800,57 +863,106 @@ class FiscalDocumentService(IFiscalDocumentService):
             return EXPORT_XML_MAX_LIMIT
         return EXPORT_XLSX_MAX_LIMIT
 
-    def _ensure_invoice_xml(self, invoice_id: int) -> None:
-        """Genera e persiste XML FatturaPA se mancante (indipendente dallo status documento)."""
+    @staticmethod
+    def _export_label_prefix(document_type: str) -> str:
+        return "note-credito" if document_type == "credit_note" else "fatture"
+
+    @staticmethod
+    def _export_sheet_title(document_type: str) -> str:
+        return (
+            "Note di credito" if document_type == "credit_note" else "Fatture"
+        )
+
+    def _ensure_fiscal_document_xml(self, id_fiscal_document: int) -> None:
+        """Genera e persiste XML FatturaPA se mancante."""
         from src.services.external.fatturapa_service import FatturaPAService
 
-        doc = self._fiscal_document_repository.get_fiscal_document_by_id(invoice_id)
+        doc = self._fiscal_document_repository.get_fiscal_document_by_id(
+            id_fiscal_document
+        )
         if not doc:
-            raise NotFoundException("FiscalDocument", invoice_id)
+            raise NotFoundException("FiscalDocument", id_fiscal_document)
         if doc.xml_content:
             return
 
         result = FatturaPAService(self._session).generate_xml_from_fiscal_document(
-            invoice_id
+            id_fiscal_document
         )
         if result.get("status") == "validation_error":
             raise ValidationException(
-                f"Validazione XML FatturaPA fallita per fattura {invoice_id}",
+                f"Validazione XML FatturaPA fallita per documento {id_fiscal_document}",
                 details={
-                    "id_fiscal_document": invoice_id,
+                    "id_fiscal_document": id_fiscal_document,
                     "errors": result.get("errors", []),
                 },
             )
         if result.get("status") != "success":
             raise ValidationException(
-                result.get("message", f"Generazione XML fallita per fattura {invoice_id}"),
-                details={"id_fiscal_document": invoice_id, "result": result},
+                result.get(
+                    "message",
+                    f"Generazione XML fallita per documento {id_fiscal_document}",
+                ),
+                details={"id_fiscal_document": id_fiscal_document, "result": result},
             )
 
         self._fiscal_document_repository.update_fiscal_document_xml(
-            invoice_id,
+            id_fiscal_document,
             result["filename"],
             result["xml_content"],
         )
 
-    def _prepare_invoice_ids_for_xml_export(
-        self, invoice_ids: List[int]
+    def _ensure_invoice_xml(self, invoice_id: int) -> None:
+        """Backward-compatible wrapper."""
+        self._ensure_fiscal_document_xml(invoice_id)
+
+    def _prepare_fiscal_document_ids_for_xml_export(
+        self, document_ids: List[int]
     ) -> tuple[List[int], List[Dict[str, Any]]]:
         ready: List[int] = []
         failures: List[Dict[str, Any]] = []
-        for invoice_id in invoice_ids:
+        for document_id in document_ids:
             try:
-                self._ensure_invoice_xml(invoice_id)
-                ready.append(invoice_id)
+                self._ensure_fiscal_document_xml(document_id)
+                ready.append(document_id)
             except (ValidationException, NotFoundException) as exc:
                 failures.append(
                     {
-                        "id_fiscal_document": invoice_id,
+                        "id_fiscal_document": document_id,
                         "message": exc.message,
                         "details": exc.details,
                     }
                 )
         return ready, failures
+
+    def _prepare_invoice_ids_for_xml_export(
+        self, invoice_ids: List[int]
+    ) -> tuple[List[int], List[Dict[str, Any]]]:
+        return self._prepare_fiscal_document_ids_for_xml_export(invoice_ids)
+
+    def _load_fiscal_document_xml(self, id_fiscal_document: int) -> tuple[bytes, str]:
+        doc = self._fiscal_document_repository.get_fiscal_document_by_id(
+            id_fiscal_document
+        )
+        if not doc:
+            raise NotFoundException(f"Documento {id_fiscal_document} non trovato")
+        if not doc.xml_content:
+            raise ValidationException(
+                f"Documento {id_fiscal_document} senza XML generato",
+                details={"id_fiscal_document": id_fiscal_document},
+            )
+        fallback = (
+            f"nota-credito-{id_fiscal_document}.xml"
+            if doc.document_type == "credit_note"
+            else f"fattura-{id_fiscal_document}.xml"
+        )
+        filename = resolve_fatturapa_filename_from_xml(
+            doc.xml_content,
+            fallback_filename=doc.filename or fallback,
+        )
+        return normalize_xml_bytes(doc.xml_content), filename
+
+    def _load_invoice_xml(self, invoice_id: int) -> tuple[bytes, str]:
+        return self._load_fiscal_document_xml(invoice_id)
 
     @staticmethod
     def _summarize_xml_export_failures(
@@ -871,27 +983,13 @@ class FiscalDocumentService(IFiscalDocumentService):
             buckets[key]["id_fiscal_documents"].append(item.get("id_fiscal_document"))
         return list(buckets.values())
 
-    def _load_invoice_xml(self, invoice_id: int) -> tuple[bytes, str]:
-        doc = self._fiscal_document_repository.get_fiscal_document_by_id(invoice_id)
-        if not doc:
-            raise NotFoundException(f"Fattura {invoice_id} non trovata")
-        if not doc.xml_content:
-            raise ValidationException(
-                f"Fattura {invoice_id} senza XML generato",
-                details={"id_fiscal_document": invoice_id},
-            )
-        filename = resolve_fatturapa_filename_from_xml(
-            doc.xml_content,
-            fallback_filename=doc.filename or f"fattura-{invoice_id}.xml",
-        )
-        return normalize_xml_bytes(doc.xml_content), filename
-
     async def export_invoices(
         self, filters: InvoiceExportFiltersSchema, fmt: str
     ) -> Tuple[bytes, str, str]:
-        """Export massivo lista fatture in Excel o ZIP XML."""
+        """Export massivo fatture o note di credito in Excel o ZIP XML."""
         export_fmt = self._parse_export_format(fmt)
         max_limit = self._export_max_limit(export_fmt)
+        label_prefix = self._export_label_prefix(filters.document_type)
 
         if export_fmt == InvoiceExportFormatSchema.XML:
             export_filters = filters.for_xml_export(max_limit=max_limit)
@@ -905,7 +1003,10 @@ class FiscalDocumentService(IFiscalDocumentService):
                 "InvoiceExport",
                 None,
                 details={
-                    "message": "Nessuna fattura trovata con i filtri indicati",
+                    "message": (
+                        "Nessun documento trovato con i filtri indicati "
+                        f"(document_type={export_filters.document_type})"
+                    ),
                     "fmt": export_fmt.value,
                     "filters": export_filters.model_dump(mode="json"),
                 },
@@ -923,24 +1024,30 @@ class FiscalDocumentService(IFiscalDocumentService):
         )
 
         if export_fmt == InvoiceExportFormatSchema.XLSX:
-            content = self._export_service.build_list_xlsx(items)
+            content = self._export_service.build_list_xlsx(
+                items,
+                sheet_title=self._export_sheet_title(export_filters.document_type),
+            )
             media_type = (
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            filename = f"fatture-export{suffix}.xlsx"
+            filename = f"{label_prefix}-export{suffix}.xlsx"
             return content, media_type, filename
 
-        invoice_ids = [item.id_fiscal_document for item in items]
-        ready_ids, xml_failures = self._prepare_invoice_ids_for_xml_export(invoice_ids)
+        document_ids = [item.id_fiscal_document for item in items]
+        ready_ids, xml_failures = self._prepare_fiscal_document_ids_for_xml_export(
+            document_ids
+        )
         if not ready_ids:
             summary = self._summarize_xml_export_failures(xml_failures)
             raise ValidationException(
-                "Nessuna fattura esportabile in XML FatturaPA",
+                "Nessun documento esportabile in XML FatturaPA",
                 details={
                     "fmt": "xml",
+                    "document_type": export_filters.document_type,
                     "failed": xml_failures,
                     "failure_summary": summary,
-                    "total_candidates": len(invoice_ids),
+                    "total_candidates": len(document_ids),
                     "hint": (
                         "Verificare P.IVA/CF e indirizzi fatturazione; "
                         "restringere con date_add_from/to e delivery_country_iso"
@@ -948,10 +1055,17 @@ class FiscalDocumentService(IFiscalDocumentService):
                 },
             )
 
+        zip_prefix = (
+            "nota-credito"
+            if export_filters.document_type == "credit_note"
+            else "fattura"
+        )
         content = self._export_service.build_xml_zip(
-            ready_ids, self._load_invoice_xml
+            ready_ids,
+            self._load_fiscal_document_xml,
+            duplicate_prefix=zip_prefix,
         )
         media_type = "application/zip"
-        filename = f"fatture-xml-export{suffix}.zip"
+        filename = f"{label_prefix}-xml-export{suffix}.zip"
         return content, media_type, filename
     

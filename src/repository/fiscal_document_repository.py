@@ -327,15 +327,21 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     raise ValueError(f"Quantità da stornare ({quantity_to_refund}) superiore a quella fatturata ({invoice_detail.product_qty})")
                 
                 # USA i valori dalla fattura (già contengono sconti applicati)
-                unit_price_net = invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
-                unit_price_with_tax = invoice_detail.unit_price_with_tax or 0.0
+                unit_price_net = float(
+                    invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
+                )
+                unit_price_with_tax = float(invoice_detail.unit_price_with_tax or 0.0)
+                quantity_to_refund = float(quantity_to_refund)
+                invoiced_qty = float(invoice_detail.product_qty or 0)
                 
                 # Calcola totali proporzionali
-                # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.product_qty
-                # Calcolo proporzionale: (total_fatturato / qty_fatturata) × qty_da_stornare
-                if invoice_detail.product_qty > 0:
-                    total_price_net = (invoice_detail.total_price_net / invoice_detail.product_qty) * quantity_to_refund
-                    total_price_with_tax = (invoice_detail.total_price_with_tax / invoice_detail.product_qty) * quantity_to_refund
+                if invoiced_qty > 0:
+                    total_price_net = (
+                        float(invoice_detail.total_price_net or 0) / invoiced_qty
+                    ) * quantity_to_refund
+                    total_price_with_tax = (
+                        float(invoice_detail.total_price_with_tax or 0) / invoiced_qty
+                    ) * quantity_to_refund
                 else:
                     total_price_net = 0.0
                     total_price_with_tax = 0.0
@@ -385,15 +391,20 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 # Includi solo se c'è quantità residua
                 if remaining_quantity > 0:
                     # USA i valori dalla fattura (già contengono sconti applicati)
-                    unit_price_net = invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
-                    unit_price_with_tax = invoice_detail.unit_price_with_tax or 0.0
+                    unit_price_net = float(
+                        invoice_detail.unit_price_net or invoice_detail.unit_price or 0.0
+                    )
+                    unit_price_with_tax = float(invoice_detail.unit_price_with_tax or 0.0)
+                    original_qty_f = float(original_quantity or 0)
+                    remaining_qty_f = float(remaining_quantity)
                     
-                    # Calcola totali proporzionali
-                    # invoice_detail.total_price_net e total_price_with_tax sono già scontati per invoice_detail.product_qty
-                    # Calcolo proporzionale: (total_fatturato / qty_fatturata) × qty_residua
-                    if original_quantity > 0:
-                        total_price_net = (invoice_detail.total_price_net / original_quantity) * remaining_quantity
-                        total_price_with_tax = (invoice_detail.total_price_with_tax / original_quantity) * remaining_quantity
+                    if original_qty_f > 0:
+                        total_price_net = (
+                            float(invoice_detail.total_price_net or 0) / original_qty_f
+                        ) * remaining_qty_f
+                        total_price_with_tax = (
+                            float(invoice_detail.total_price_with_tax or 0) / original_qty_f
+                        ) * remaining_qty_f
                     else:
                         total_price_net = 0.0
                         total_price_with_tax = 0.0
@@ -418,7 +429,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             )
         
         # Calcola il totale IMPONIBILE (senza IVA) dai dettagli preparati (solo prodotti)
-        total_imponibile_prodotti = sum(d['total_price_net'] for d in credit_note_details_data)
+        total_imponibile_prodotti = sum(
+            float(d["total_price_net"] or 0) for d in credit_note_details_data
+        )
         
         # Aggiungi spese di spedizione se richieste
         shipping_cost_no_vat = 0.0
@@ -428,15 +441,17 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             order = self._session.query(Order).filter(Order.id_order == invoice.id_order).first()
             if order and order.id_shipping:
                 shipping = self._session.query(Shipping).filter(Shipping.id_shipping == order.id_shipping).first()
-                if shipping and shipping.price_tax_excl and shipping.price_tax_excl > 0:
+                if shipping and shipping.price_tax_excl and float(shipping.price_tax_excl) > 0:
                     shipping_cost_no_vat = float(shipping.price_tax_excl)
                     # Calcola IVA spedizione
                     shipping_vat_percentage = self._get_vat_percentage_from_shipping(shipping)
-                    shipping_vat_amount = calculate_amount_with_percentage(shipping_cost_no_vat, shipping_vat_percentage)
+                    shipping_vat_amount = calculate_amount_with_percentage(
+                        shipping_cost_no_vat, shipping_vat_percentage
+                    )
                     print(f"Spese spedizione: {shipping_cost_no_vat}€ (IVA {shipping_vat_percentage}% = {shipping_vat_amount}€)")
         
         # Totale imponibile (prodotti + spedizione)
-        total_imponibile = total_imponibile_prodotti + shipping_cost_no_vat
+        total_imponibile = float(total_imponibile_prodotti) + float(shipping_cost_no_vat)
         
         # Recupera l'aliquota IVA dei prodotti
         first_detail_id = credit_note_details_data[0]['id_order_detail']
@@ -445,14 +460,17 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         # Calcola l'IVA sui prodotti
         vat_percentage = self._get_vat_percentage_from_order_details([od_first]) 
         print(f"vat_percentage prodotti: {vat_percentage}")
-        products_vat_amount = calculate_amount_with_percentage(total_imponibile_prodotti, vat_percentage)
+        products_vat_amount = calculate_amount_with_percentage(
+            float(total_imponibile_prodotti), vat_percentage
+        )
         print(f"IVA prodotti: {products_vat_amount}")
         
         # Totale IVA (prodotti + spedizione)
-        total_vat_amount = products_vat_amount + shipping_vat_amount
+        total_vat_amount = float(products_vat_amount) + float(shipping_vat_amount)
         
         # Totale con IVA (imponibile + IVA)
-        total_with_vat = total_imponibile + total_vat_amount
+        total_with_vat = float(total_imponibile) + float(total_vat_amount)
+        total_with_vat = self._round_money(total_with_vat)
         print(f"TOTALE NC: Imponibile={total_imponibile}€, IVA={total_vat_amount}€, Totale={total_with_vat}€")
         
         # Crea nota di credito elettronica
@@ -502,6 +520,131 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 FiscalDocument.document_type == 'credit_note'
             )
         ).all()
+
+    @staticmethod
+    def _round_money(value) -> Optional[float]:
+        if value is None:
+            return None
+        return round(float(value), 2)
+
+    def _refunded_quantities_for_invoice(
+        self, credit_note_ids: List[int]
+    ) -> Dict[int, float]:
+        """Mappa id_order_detail → quantità già stornata dalle NC indicate."""
+        if not credit_note_ids:
+            return {}
+
+        refunded_details = self._session.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document.in_(credit_note_ids)
+        ).all()
+
+        refunded_quantities: Dict[int, float] = {}
+        for detail in refunded_details:
+            if not detail.id_order_detail or detail.id_order_detail <= 0:
+                continue
+            qty = float(detail.product_qty or 0)
+            refunded_quantities[detail.id_order_detail] = (
+                refunded_quantities.get(detail.id_order_detail, 0.0) + qty
+            )
+        return refunded_quantities
+
+    def get_credit_note_eligible_lines(self, id_invoice: int) -> Dict[str, Any]:
+        """
+        Righe fattura con info prodotto e quantità residua per modale NC parziale.
+        """
+        invoice = self._session.query(FiscalDocument).filter(
+            and_(
+                FiscalDocument.id_fiscal_document == id_invoice,
+                FiscalDocument.document_type == 'invoice',
+            )
+        ).first()
+        if not invoice:
+            raise ValueError(f"Fattura {id_invoice} non trovata")
+
+        invoice_details = self._session.query(FiscalDocumentDetail).filter(
+            FiscalDocumentDetail.id_fiscal_document == id_invoice
+        ).order_by(FiscalDocumentDetail.id_fiscal_document_detail).all()
+
+        existing_credit_notes = self.get_credit_notes_by_invoice(id_invoice)
+        has_total_credit_note = any(
+            cn for cn in existing_credit_notes if not cn.is_partial
+        )
+        shipping_already_refunded = any(
+            cn.includes_shipping for cn in existing_credit_notes
+        )
+        refunded_quantities = self._refunded_quantities_for_invoice(
+            [cn.id_fiscal_document for cn in existing_credit_notes]
+        )
+
+        order_detail_ids = [
+            d.id_order_detail for d in invoice_details if d.id_order_detail
+        ]
+        order_details_map = {
+            od.id_order_detail: od
+            for od in self._session.query(OrderDetail)
+            .filter(OrderDetail.id_order_detail.in_(order_detail_ids))
+            .all()
+        } if order_detail_ids else {}
+
+        lines: List[Dict[str, Any]] = []
+        for inv_detail in invoice_details:
+            if not inv_detail.id_order_detail or inv_detail.id_order_detail <= 0:
+                continue
+
+            od = order_details_map.get(inv_detail.id_order_detail)
+            invoiced_qty = float(inv_detail.product_qty or 0)
+            refunded_qty = refunded_quantities.get(inv_detail.id_order_detail, 0.0)
+            remaining_qty = max(invoiced_qty - refunded_qty, 0.0)
+
+            lines.append(
+                {
+                    "id_fiscal_document_detail": inv_detail.id_fiscal_document_detail,
+                    "id_fiscal_document": inv_detail.id_fiscal_document,
+                    "id_order_detail": inv_detail.id_order_detail,
+                    "product_qty": invoiced_qty,
+                    "refunded_qty": refunded_qty,
+                    "remaining_qty": remaining_qty,
+                    "is_fully_refunded": remaining_qty <= 0,
+                    "unit_price_net": self._round_money(inv_detail.unit_price_net),
+                    "unit_price_with_tax": self._round_money(
+                        inv_detail.unit_price_with_tax
+                    ),
+                    "total_price_net": self._round_money(inv_detail.total_price_net),
+                    "total_price_with_tax": self._round_money(
+                        inv_detail.total_price_with_tax
+                    ),
+                    "id_tax": inv_detail.id_tax,
+                    "product_name": od.product_name if od else None,
+                    "product_reference": od.product_reference if od else None,
+                }
+            )
+
+        shipping_payload = None
+        shipping_eligible = False
+        if invoice.includes_shipping and not shipping_already_refunded:
+            order = self._session.query(Order).filter(
+                Order.id_order == invoice.id_order
+            ).first()
+            shipping = self.get_order_shipping(order) if order else None
+            if shipping and shipping.price_tax_excl and float(shipping.price_tax_excl) > 0:
+                shipping_eligible = True
+                shipping_payload = {
+                    "unit_price_net": self._round_money(shipping.price_tax_excl),
+                    "unit_price_with_tax": self._round_money(shipping.price_tax_incl),
+                    "id_tax": shipping.id_tax,
+                }
+
+        return {
+            "id_fiscal_document": invoice.id_fiscal_document,
+            "id_order": invoice.id_order,
+            "includes_shipping": bool(invoice.includes_shipping),
+            "shipping_already_refunded": shipping_already_refunded,
+            "shipping_eligible": shipping_eligible,
+            "has_total_credit_note": has_total_credit_note,
+            "can_create_credit_note": not has_total_credit_note,
+            "shipping": shipping_payload,
+            "details": lines,
+        }
     
     # ==================== UTILITY ====================
     
@@ -701,8 +844,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             .all()
         )
 
-    def _build_invoice_export_query(
+    def _build_fiscal_document_export_query(
         self,
+        document_type: str = "invoice",
         is_electronic: Optional[bool] = None,
         status: Optional[str] = None,
         id_order: Optional[int] = None,
@@ -723,7 +867,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 AddressDelivery,
                 CountryDelivery,
             )
-            .filter(FiscalDocument.document_type == "invoice")
+            .filter(FiscalDocument.document_type == document_type)
             .outerjoin(Order, Order.id_order == FiscalDocument.id_order)
             .outerjoin(Customer, Customer.id_customer == Order.id_customer)
             .outerjoin(
@@ -760,8 +904,14 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
 
         return query
 
+    def _build_invoice_export_query(self, **kwargs):
+        """Backward-compatible wrapper (default document_type=invoice)."""
+        kwargs.setdefault("document_type", "invoice")
+        return self._build_fiscal_document_export_query(**kwargs)
+
     def count_invoices_for_export(
         self,
+        document_type: str = "invoice",
         is_electronic: Optional[bool] = None,
         status: Optional[str] = None,
         id_order: Optional[int] = None,
@@ -771,8 +921,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         date_add_to: Optional[datetime] = None,
         require_generated_xml: bool = False,
     ) -> int:
-        """Conta fatture che matchano i filtri export."""
-        return self._build_invoice_export_query(
+        """Conta documenti fiscali che matchano i filtri export."""
+        return self._build_fiscal_document_export_query(
+            document_type=document_type,
             is_electronic=is_electronic,
             status=status,
             id_order=id_order,
@@ -787,6 +938,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         self,
         skip: int = 0,
         limit: int = 5000,
+        document_type: str = "invoice",
         is_electronic: Optional[bool] = None,
         status: Optional[str] = None,
         id_order: Optional[int] = None,
@@ -796,9 +948,10 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         date_add_to: Optional[datetime] = None,
         require_generated_xml: bool = False,
     ):
-        """Lista fatture con ordine, cliente e paese consegna per export."""
+        """Lista documenti fiscali con ordine, cliente e paese consegna per export."""
         return (
-            self._build_invoice_export_query(
+            self._build_fiscal_document_export_query(
+                document_type=document_type,
                 is_electronic=is_electronic,
                 status=status,
                 id_order=id_order,

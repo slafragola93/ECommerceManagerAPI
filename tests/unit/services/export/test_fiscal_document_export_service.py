@@ -18,6 +18,7 @@ from src.services.export.fiscal_document_export_service import FiscalDocumentExp
 def _sample_item(**overrides) -> InvoiceListExportItemSchema:
     data = {
         "id_fiscal_document": 1,
+        "document_type": "invoice",
         "document_number": "000001",
         "internal_number": None,
         "tipo_documento_fe": "TD01",
@@ -52,9 +53,11 @@ class TestFiscalDocumentExportService:
         assert sheet.title == "Fatture"
         assert sheet.max_row == 2
         assert sheet.cell(row=1, column=1).value == "id_fiscal_document"
-        assert sheet.cell(row=2, column=2).value == "000001"
-        assert sheet.cell(row=2, column=9).value == "Mario Rossi"
-        assert sheet.cell(row=2, column=14).value == 100.0
+        assert sheet.cell(row=1, column=2).value == "document_type"
+        assert sheet.cell(row=2, column=2).value == "invoice"
+        assert sheet.cell(row=2, column=3).value == "000001"
+        assert sheet.cell(row=2, column=10).value == "Mario Rossi"
+        assert sheet.cell(row=2, column=15).value == 100.0
 
     def test_build_xml_zip_contains_files(self):
         def fake_loader(invoice_id: int) -> tuple[bytes, str]:
@@ -77,6 +80,10 @@ class TestInvoiceExportFiltersSchema:
     def test_normalizes_delivery_country_iso(self):
         filters = InvoiceExportFiltersSchema(delivery_country_iso="it")
         assert filters.delivery_country_iso == "IT"
+
+    def test_normalizes_document_type(self):
+        filters = InvoiceExportFiltersSchema(document_type="CREDIT_NOTE")
+        assert filters.document_type == "credit_note"
 
     def test_for_xml_export_strips_extra_filters(self):
         source = InvoiceExportFiltersSchema(
