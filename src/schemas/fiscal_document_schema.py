@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator, validator
+from pydantic import BaseModel, Field, field_validator, model_validator, validator
 from datetime import date, datetime
 
 from src.models.order import ViesStatus
@@ -258,9 +258,24 @@ class CreditNoteCreateSchema(BaseModel):
     is_partial: bool = Field(False, description="Se True, nota di credito parziale")
     include_shipping: bool = Field(True, description="Se True, include spese di spedizione (solo per note totali o se non già stornate)")
     items: Optional[List[FiscalDocumentDetailSchema]] = Field(
-        None, 
-        description="Articoli da stornare (obbligatorio se is_partial=True)"
+        None,
+        description=(
+            "Articoli da stornare. Obbligatorio se is_partial=True e include_shipping=False. "
+            "Opzionale/vuoto se is_partial=True e include_shipping=True (NC solo spedizione)."
+        ),
     )
+
+    @model_validator(mode="after")
+    def require_items_or_shipping_when_partial(self):
+        if not self.is_partial:
+            return self
+        has_items = bool(self.items)
+        if not has_items and not self.include_shipping:
+            raise ValueError(
+                "Per una NC parziale indicare items non vuoti, "
+                "oppure include_shipping=true per stornare solo la spedizione"
+            )
+        return self
     
     class Config:
         json_schema_extra = {
@@ -296,6 +311,16 @@ class CreditNoteCreateSchema(BaseModel):
                                 "quantity": 2.0
                             }
                         ]
+                    }
+                },
+                {
+                    "summary": "Nota di credito solo spedizione",
+                    "value": {
+                        "id_invoice": 123,
+                        "reason": "Rimborso spese di spedizione",
+                        "is_partial": True,
+                        "include_shipping": True,
+                        "items": []
                     }
                 }
             ]
@@ -489,6 +514,107 @@ class InvoiceListExportItemSchema(BaseModel):
 
 
 # ==================== SCHEMAS PER UPDATE ====================
+
+class InvoiceOrderDetailUpdateSchema(BaseModel):
+    """Riga fattura da aggiornare (match su id_order_detail dello snapshot)."""
+
+    id_order_detail: int = Field(..., gt=0, description="ID order_detail collegato alla riga fiscale")
+    product_name: Optional[str] = Field(None, max_length=100)
+    product_reference: Optional[str] = Field(None, max_length=100)
+    product_qty: Optional[int] = Field(None, gt=0)
+    product_weight: Optional[float] = Field(None, ge=0)
+    id_tax: Optional[int] = Field(None, gt=0)
+    unit_price_net: Optional[float] = Field(None, ge=0)
+    unit_price_with_tax: Optional[float] = Field(None, ge=0)
+    total_price_net: Optional[float] = Field(None, ge=0)
+    total_price_with_tax: Optional[float] = Field(None, ge=0)
+    reduction_percent: Optional[float] = Field(None, ge=0, le=100)
+    reduction_amount: Optional[float] = Field(None, ge=0)
+    note: Optional[str] = Field(None, max_length=200)
+
+
+class SyncOrderResultSchema(BaseModel):
+    """Metadato esito sync ordine nel PATCH fattura."""
+
+    enabled: bool
+    order_id: Optional[int] = None
+    updated_lines: int = 0
+    status: str = Field(..., description="success | skipped")
+
+
+class InvoiceUpdateSchema(BaseModel):
+    """Payload PATCH fattura: header commerciale + righe + flag sync_order.
+
+    I campi header possono arrivare flat in root oppure annidati in `header`
+    (il validator li promuove in root; in caso di conflitto vince il root).
+    """
+
+    note: Optional[str] = Field(None, description="Mappato su order.general_note")
+    default_note: Optional[bool] = Field(
+        None, description="Accettato per compat FE; ignorato (nessuna colonna BE)"
+    )
+    id_payment: Optional[int] = Field(None, gt=0)
+    is_payed: Optional[bool] = None
+    payment_due_date: Optional[date] = None
+    shipping_total_price_net: Optional[float] = Field(None, ge=0)
+    shipping_total_price_with_tax: Optional[float] = Field(None, ge=0)
+    total_weight: Optional[float] = Field(None, ge=0)
+    id_carrier_api: Optional[int] = Field(None, gt=0)
+    id_tax: Optional[int] = Field(
+        None, gt=0, description="IVA spedizione (Shipping.id_tax)"
+    )
+    shipping_message: Optional[str] = None
+    sync_order: bool = Field(
+        False,
+        description="Se true e order_details presenti, aggiorna anche le order_details",
+    )
+    order_details: Optional[List[InvoiceOrderDetailUpdateSchema]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_header(cls, data):
+        if not isinstance(data, dict):
+            return data
+        header = data.get("header")
+        if not isinstance(header, dict):
+            return data
+        merged = dict(header)
+        for key, value in data.items():
+            if key != "header":
+                merged[key] = value
+        return merged
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "note": "Aggiornamento condizioni commerciali",
+                "id_payment": 3,
+                "payment_due_date": "2026-08-15",
+                "shipping_total_price_net": 50.0,
+                "shipping_total_price_with_tax": 61.0,
+                "sync_order": True,
+                "order_details": [
+                    {
+                        "id_order_detail": 5012,
+                        "product_qty": 1,
+                        "id_tax": 7,
+                        "unit_price_net": 2244.24,
+                        "unit_price_with_tax": 2737.97,
+                        "total_price_net": 2000.24,
+                        "total_price_with_tax": 2440.29,
+                        "reduction_percent": 0,
+                        "reduction_amount": 244.0,
+                    }
+                ],
+            }
+        }
+
+
+class InvoicePatchResponseSchema(InvoiceResponseSchema):
+    """Risposta PATCH: stesso contratto GET v3 + metadato sync ordine."""
+
+    sync_order_result: Optional[SyncOrderResultSchema] = None
+
 
 class FiscalDocumentUpdateStatusSchema(BaseModel):
     """Schema per aggiornamento status"""

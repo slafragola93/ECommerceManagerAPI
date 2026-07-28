@@ -126,3 +126,45 @@ class TestCreateCreditNote:
         assert credit_note.is_partial is True
         assert credit_note.includes_shipping is True
         assert len(credit_note.details) == 1
+
+    def test_partial_without_items_raises(self, db_session, repo, tax):
+        invoice, _detail = _seed_electronic_invoice(db_session, tax)
+
+        with pytest.raises(ValueError, match="items non vuoti|solo la spedizione"):
+            repo.create_credit_note(
+                id_invoice=invoice.id_fiscal_document,
+                reason="Parziale senza items",
+                is_partial=True,
+                include_shipping=False,
+                items=None,
+            )
+
+    def test_partial_with_empty_items_raises(self, db_session, repo, tax):
+        invoice, _detail = _seed_electronic_invoice(db_session, tax)
+
+        with pytest.raises(ValueError, match="items non vuoti|solo la spedizione"):
+            repo.create_credit_note(
+                id_invoice=invoice.id_fiscal_document,
+                reason="Parziale items vuoti",
+                is_partial=True,
+                include_shipping=False,
+                items=[],
+            )
+
+    def test_partial_shipping_only_without_items(self, db_session, repo, tax):
+        invoice, _detail = _seed_electronic_invoice(db_session, tax)
+
+        credit_note = repo.create_credit_note(
+            id_invoice=invoice.id_fiscal_document,
+            reason="Rimborso solo spedizione",
+            is_partial=True,
+            include_shipping=True,
+            items=None,
+        )
+
+        assert credit_note.is_partial is True
+        assert credit_note.includes_shipping is True
+        assert len(credit_note.details or []) == 0
+        assert float(credit_note.total_price_with_tax or 0) > 0
+        # Solo spedizione: products totali a zero
+        assert float(credit_note.products_total_price_with_tax or 0) == 0

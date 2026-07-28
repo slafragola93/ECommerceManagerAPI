@@ -111,6 +111,32 @@ class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
         pass
     
     @abstractmethod
-    def recalculate_fiscal_document_total(self, id_fiscal_document: int) -> None:
+    def recalculate_fiscal_document_total(
+        self, id_fiscal_document: int, commit: bool = True
+    ) -> None:
         """Ricalcola il totale di un documento fiscale basato sui suoi dettagli"""
+        pass
+
+    @abstractmethod
+    def get_invoice_detail_by_order_detail(
+        self, id_fiscal_document: int, id_order_detail: int
+    ) -> Optional[FiscalDocumentDetail]:
+        """Dettaglio fiscale per documento + id_order_detail."""
+        pass
+
+    @abstractmethod
+    def update_invoice_detail_economics(
+        self,
+        id_fiscal_document: int,
+        id_order_detail: int,
+        *,
+        product_qty: Optional[int] = None,
+        id_tax: Optional[int] = None,
+        unit_price_net: Optional[float] = None,
+        unit_price_with_tax: Optional[float] = None,
+        total_price_net: Optional[float] = None,
+        total_price_with_tax: Optional[float] = None,
+        commit: bool = True,
+    ) -> FiscalDocumentDetail:
+        """Aggiorna qty/prezzi/tassa di una riga fattura (non reso)."""
         pass

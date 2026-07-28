@@ -1,0 +1,24 @@
+# Schema XSD FatturaPA
+
+Schema ufficiale FatturaPA v1.2 (vendored) per validazione pre-persistenza XML.
+
+## File
+
+| File | Descrizione |
+|------|-------------|
+| `Schema_del_file_xml_FatturaPA_versione_1.2.xsd` | Schema usato da `fatturapa_xsd_validator.py` |
+| `Schema_del_file_xml_FatturaPA_versione_1.2.1.xsd` | Copia allineata (stesso contenuto) |
+| `xmldsig-core-schema.xsd` | Import W3C XML Signature (riferimento locale, no rete) |
+
+## Requisiti
+
+- Python package `lxml` (vedi `requirements.txt`)
+
+## Note
+
+- `NaturaType` è esteso con i codici post-01/01/2021 (`N2.1`, `N3.2`, `N6.x`, …) richiesti dai controlli SDI correnti.
+- Import `xmldsig` risolto in locale (`schemaLocation="xmldsig-core-schema.xsd"`).
+
+## Ultime modifiche (2026-07-27)
+
+- Aggiunta cartella e integrazione BE-PA-P0-02 (`validate_fatturapa_xml` dopo `_generate_xml`).

@@ -17,7 +17,7 @@ Documenti correlati:
 | [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-07-22
+**Aggiornato:** 2026-07-28
 
 ---
 
@@ -48,7 +48,7 @@ Elettronew genera fatture elettroniche **FatturaPA** (formato **FPR12**, B2B/B2C
 | **Ricevuta estero** | No | No (live ordine) | `/api/v1/ricevute` |
 | **Corrispettivi** | No | No (report live) | `/api/v1/corrispettivi` |
 
-Un ordine **fatturato** esce dai corrispettivi vendite (`has_invoice=true`). La fattura è uno **snapshot**: modifiche ordine post-emissione non aggiornano il documento.
+Un ordine **fatturato** esce dai corrispettivi vendite (`has_invoice=true`). La fattura è uno **snapshot** in `fiscal_document_details`; con `PATCH /{id}` (solo `pending`) si può aggiornare lo snapshot e, con `sync_order=true`, riallineare l'ordine collegato in modo atomico.
 
 ### Flusso operativo
 
@@ -100,7 +100,7 @@ Per fattura elettronica (`is_electronic=true`):
 | Cliente IT: P.IVA **oppure** CF | `addresses.vat` o `addresses.dni` |
 | Cliente UE B2B (VIES): P.IVA estera | `addresses.vat` con prefisso paese; `CodiceDestinatario=XXXXXXX` |
 | Denominazione **oppure** Nome+Cognome | `addresses.company` o `firstname`/`lastname` |
-| Sede completa | `address1`, `city`, `postcode`; `state` obbligatoria 2 char solo per IT |
+| Sede completa | `address1`, `city`, `postcode`; `state` obbligatoria 2 char **solo per IT**. Per `Nazione != IT`: omettere `Provincia`, `CAP=00000` (FAQ AdE), CAP reale eventualmente in `Indirizzo`; non serializzare `NumeroCivico` vuoto |
 | Codice destinatario (solo IT) | `addresses.sdi` (7 char) o `0000000` B2C; estero → `XXXXXXX` automatico |
 | Righe ordine con prezzi/IVA | `order_details` → snapshot in `fiscal_document_details` |
 | Aliquota / natura IVA | `taxes` per riga (`order_detail.id_tax`) + spedizione; VIES → N3.2 (vedi [§7](#7-vies-e-natura-iva)) |
@@ -118,7 +118,7 @@ Per fattura elettronica (`is_electronic=true`):
 |------------|---------------|
 | GET lista / dettaglio fattura | `fiscal_documents:read` |
 | POST creazione fattura / NC | `fiscal_documents:create` |
-| POST generate-xml, send-to-sdi, PATCH status | `fiscal_documents:update` |
+| POST generate-xml, send-to-sdi, PATCH status / PATCH fattura | `fiscal_documents:update` |
 | DELETE documento (solo `pending`) | `fiscal_documents:delete` |
 | GET PDF singola | `fiscal_documents:read` |
 | GET export bulk (`/invoices/export`) | `fiscal_documents:read` |
@@ -162,6 +162,64 @@ Handoff FE: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione
 
 ---
 
+## 4bis. API — Aggiornamento fattura + sync ordine
+
+### PATCH `/api/v1/fiscal_documents/{id_fiscal_document}`
+
+Aggiorna una fattura in stato **`pending`** (header commerciale + righe snapshot). Opzionalmente sincronizza l'ordine collegato nella stessa transazione.
+
+#### Body (`InvoiceUpdateSchema`)
+
+| Campo | Obbligatorio | Note |
+|-------|--------------|------|
+| `note`, `id_payment`, `is_payed`, `payment_due_date` | No | Persistiti su **Order** (il GET li legge dall'ordine) |
+| `shipping_total_price_*`, `id_carrier_api`, `id_tax`, `shipping_message`, `total_weight` | No | Persistiti su **Shipping** / Order |
+| `default_note` | No | Accettato per compat FE; **ignorato** (nessuna colonna BE) |
+| `sync_order` | No | Default `false`. Se `true` + `order_details`, aggiorna anche `order_details` |
+| `order_details[]` | No | Match per `id_order_detail`; aggiorna `fiscal_document_details` |
+| `header` | No | Se presente, i campi vengono flattenati in root (root vince sui conflitti) |
+
+```json
+{
+  "note": "Aggiornamento condizioni",
+  "id_payment": 3,
+  "shipping_total_price_net": 50.0,
+  "shipping_total_price_with_tax": 61.0,
+  "sync_order": true,
+  "order_details": [
+    {
+      "id_order_detail": 5012,
+      "product_qty": 1,
+      "id_tax": 7,
+      "unit_price_net": 2244.24,
+      "unit_price_with_tax": 2737.97,
+      "total_price_net": 2000.24,
+      "total_price_with_tax": 2440.29,
+      "reduction_percent": 0,
+      "reduction_amount": 244.0
+    }
+  ]
+}
+```
+
+#### Regole business
+
+- Solo `document_type=invoice` e `status=pending`.
+- Bloccato se esistono note di credito collegate.
+- Atomicità: update fattura + sync ordine in un'unica transazione (rollback completo se fallisce il sync).
+- Prezzi: `resolve_price_fields` (payload completo = persist arrotondato).
+- Response: stesso shape GET v3 + `sync_order_result` opzionale (`enabled`, `order_id`, `updated_lines`, `status`).
+
+#### Errori
+
+| HTTP | Caso |
+|------|------|
+| 404 | Documento o `id_order_detail` non nel documento |
+| 409 | Tipo/stato non ammesso, NC collegate |
+| 422 | Validazione payload / sconti |
+
+---
+
 ## 5. API — Consultazione
 
 | Metodo | Path | Response | Note |
@@ -190,7 +248,7 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 | Caricare / inviare a SDI | `POST` | `/{id}/send-to-sdi` | Richiede XML già generato |
 | PDF di cortesia (**singolo** doc) | `GET` | `/{id}/pdf` | Layout elettronew; **non** c’è export PDF bulk |
 | Export **bulk** Excel lista | `GET` | `/invoices/export?fmt=xlsx&document_type=invoice\|credit_note` | Max 5000 righe; colonna `document_type` |
-| Export **bulk** XML (ZIP) | `GET` | `/invoices/export?fmt=xml&document_type=invoice\|credit_note` | Max 5000; TD01/TD04; genera XML se mancante |
+| Export **bulk** XML (ZIP) | `GET` | `/invoices/export?fmt=xml&document_type=invoice\|credit_note` | Max 5000; soft: ZIP parziale + `export-scarti.json` |
 | Leggere XML già in DB (debug/admin) | `GET` | `/{id}` | Campo `xml_content` nel JSON dettaglio fattura |
 | Download XML singolo come file | — | `/{id}/xml` | **Non implementato** (backlog P1-02, opzionale) |
 
@@ -203,21 +261,26 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 1. Verifica `is_electronic=true`
 2. Valida dati con `FatturaPAValidator` (regole business FatturaPA)
 3. Genera XML FPR12
-4. Salva `filename`, `xml_content` in DB
-5. Imposta `status=generated`
+4. Valida XML contro XSD ufficiale v1.2 (`fatturapa_xsd_validator`)
+5. Salva `filename`, `xml_content` in DB
+6. Imposta `status=generated`
 
-**Errori validazione:** HTTP **422** con elenco strutturato `{ field, message, rule, value }`.
+**Errori validazione (business o XSD):** HTTP **422** con elenco strutturato `{ field, message, rule, value }`.
 
 Campi XML principali generati:
 
 | Blocco XML | Fonte dati |
 |------------|------------|
-| CedentePrestatore | `company_info` + `electronic_invoicing.tax_regime` |
-| CessionarioCommittente | `address_invoice` ordine |
+| CedentePrestatore | `company_info` + `electronic_invoicing.tax_regime`; `CodiceFiscale` cedente IT = `IdCodice` P.IVA (`normalize_id_codice`) |
+| CessionarioCommittente | `address_invoice` ordine (CF/P.IVA cliente) |
 | TipoDocumento | `TD01` (fattura) o `TD04` (NC) |
+| Data documento | `fiscal_documents.date_add` (non la data di generazione XML) |
+| Arrotondamento | Sempre presente in `DatiGeneraliDocumento` (anche `0.00`): `ImportoTotaleDocumento − Σ(Imponibile+Imposta)` |
+| DatiFattureCollegate | Solo TD04: `IdDocumento` + `Data` della fattura in `id_fiscal_document_ref` (mai usata per la scadenza) |
 | DettaglioLinee | `fiscal_document_details` (+ riga spedizione se `includes_shipping`) |
 | DatiRiepilogo | Un blocco per coppia `(AliquotaIVA, Natura)` — es. prodotti VIES 0% + spedizione 22% |
-| DatiPagamento | Metodo pagamento ordine; `DataScadenzaPagamento` da `payment_due_date` o `date_add + 30 gg` |
+| DatiPagamento | Metodo ordine; IBAN/`IstitutoFinanziario` solo se `ModalitaPagamento=MP05`. `DataScadenzaPagamento`: base = Data documento (+ `payment_term_days`, default 30) se `payment_due_date` assente o &lt; Data; **TD04 di default omette** la scadenza (Opzione B). Flag `electronic_invoicing.td04_include_payment_due_date=true` → Opzione A |
+| PECDestinatario | Emesso se PEC nota (anche con `CodiceDestinatario=0000000`); obbligatorio solo con `XXXXXXX` |
 
 ### POST `/{id_fiscal_document}/send-to-sdi`
 
@@ -274,11 +337,14 @@ File: `src/services/pdf/fiscal_document_pdf_service.py`, `src/services/pdf/fisca
 
 **Filtri export XML (solo questi; gli altri query param vengono ignorati):** `document_type`, `delivery_country_iso`, `date_add_from`, `date_add_to`.
 
-**Comportamento export XML:**
+**Comportamento export XML (soft / parziale):**
 
 - Candidate solo documenti **elettronici** nel set filtrato (`invoice` TD01 o `credit_note` TD04).
 - Nessun vincolo di `status` — se `xml_content` manca, il BE tenta generazione automatica (`FatturaPAService.generate_xml_from_fiscal_document`, come `POST /{id}/generate-xml`) e persiste in DB con `status=generated`.
-- Se tutti i documenti del set falliscono → **400** con `details.failure_summary`.
+- Documenti **validi** → XML nello ZIP + status aggiornato a `generated`.
+- Documenti **non validi** (P.IVA/CF/XSD/…) → **lasciati invariati**, elencati in `export-scarti.json` dentro lo ZIP.
+- Header risposta: `X-Export-Success-Count`, `X-Export-Failed-Count`, `X-Export-Total-Candidates`, `X-Export-Partial` (`true`/`false`).
+- Se **nessun** documento del set è esportabile → **400** con `details.failure_summary` (nessun ZIP).
 - Nome file XML: `[IdPaese][IdCodice]_[ProgressivoInvio].xml` (helper `fatturapa_filename.py`).
 - Filename download: `fatture-*` se `document_type=invoice`, `note-credito-*` se `credit_note`.
 
@@ -335,7 +401,7 @@ Handoff Tax: [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_COD
 | `is_partial` | No | `false` | |
 | `is_electronic` | No | `true` | |
 | `include_shipping` | No | `true` | Solo NC totali o se spedizione non già stornata |
-| `items` | Se `is_partial=true` | — | `[{ id_order_detail, quantity }]` |
+| `items` | Se `is_partial=true` e **non** solo spedizione | — | Lista non vuota. **Eccezione:** NC solo spedizione → `is_partial=true` + `include_shipping=true` + `items` assenti/`[]` |
 
 Response: **`InvoiceResponseSchema` v3 arricchito** — stesso contratto delle fatture (`order_details[]`, `customer`, `address_invoice`, totali, …), con in più:
 
@@ -368,7 +434,18 @@ Response `CreditNoteEligibleLinesResponseSchema`: righe prodotto con `refunded_q
 
 **Handoff FE:** [prompt_FE_nota_credito_parziale.md](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)
 
-**Gap P0-06:** blocco XML `DatiFattureCollegate` (riferimento fattura originale) **non ancora generato**.
+**Gap P0-06:** ~~blocco XML `DatiFattureCollegate`~~ — **completato** (`IdDocumento` + `Data` della fattura `id_fiscal_document_ref`).
+
+**XML TD04 — pagamento (Opzione B):** di default le NC di storno **omettono** `DataScadenzaPagamento`. Per emetterla (Opzione A) impostare `electronic_invoicing.td04_include_payment_due_date=true`; in quel caso la scadenza è calcolata sulla **Data della NC**, mai sulla data della fattura collegata.
+
+**XML TD04 — buoni sconto ordine:** la riga “Buoni Sconto” da `order.total_discounts` **non** viene emessa sulle NC (i totali NC non includono i voucher carrello). Resta attiva sulle fatture TD01.
+
+Config correlate (`app_configurations` / categoria `electronic_invoicing`):
+
+| Chiave | Default | Effetto |
+|--------|---------|---------|
+| `td04_include_payment_due_date` | `false` | Se `true`, emette `DataScadenzaPagamento` anche su TD04 |
+| `payment_term_days` | `30` | Giorni da aggiungere a Data documento se `payment_due_date` assente o antecedente |
 
 ---
 
@@ -397,20 +474,23 @@ Eliminazione: solo se `status=pending` (fatture/NC); non eliminabile se esistono
 
 ## 10. Gap noti e backlog
 
-Stato al **2026-07-22**. Dettaglio completo: [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
+Stato al **2026-07-27**. Dettaglio completo: [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
 
 | ID | Area | Stato |
 |----|------|-------|
 | P0-01 | Fix propagazione `send_to_sdi` fino a HTTP intermediario | Parziale (bug) |
-| P0-02 | Validazione XSD ufficiale pre-invio | Assente |
+| P0-02 | Validazione XSD ufficiale pre-invio | Completato |
 | P0-03 | Webhook / polling notifiche SDI | Assente |
 | P0-04 | Campi `protocollo_sdi`, storico notifiche | Assente |
 | P0-05 | VIES eligible → N3.2 in XML + natura per riga | Completato |
-| P0-06 | `DatiFattureCollegate` per NC TD04 | Assente |
+| P0-06 | `DatiFattureCollegate` per NC TD04 | Completato |
 | P0-07 | Test suite generazione XML completa | Parziale |
+| P0-08 | NC: `is_partial=true` richiede `items` non vuoti | Completato |
+| P0-09 | NC XML: non riusare `order.total_discounts` su TD04 | Completato |
 | P1-01 | `GET .../sdi-status` dedicato | Assente |
 | P1-02 | `GET .../xml` download attachment singolo | Opzionale — oggi: `POST .../generate-xml`, `GET .../export?fmt=xml`, o `xml_content` in `GET /{id}` |
 | P1-05 | `DatiRiepilogo` multi-aliquota | Completato |
+| P1-09 | Modellare voucher carrello come detail fiscale (TD01/NC proporzionale) | Aperto (TD04 ora skippa i buoni ordine) |
 
 ---
 
@@ -445,7 +525,7 @@ Verificare `fatturapa.api_key`, connettività, formato XML. Controllare `upload_
 
 ### Totali fattura ≠ totali ordine live
 
-Comportamento **atteso**: la fattura è snapshot al momento dell'emissione. Non usare totali ordine per la UI fattura dopo il load.
+Comportamento **atteso** se l'ordine è stato modificato **dopo** l'emissione senza `PATCH` fattura: lo snapshot resta fermo. Per riallineare in `pending`: `PATCH /{id}` con `sync_order=true`. Non usare totali ordine live per la UI fattura senza reload del documento.
 
 ### VIES: ordine eligible ma XML senza N3.2
 
@@ -491,7 +571,7 @@ Per attivazione manuale oggi: istanziare `FatturaPAPoolSyncService(db)` da scrip
 | Validatore business | `src/services/external/fatturapa_validator.py` |
 | Normalizzazione Natura | `src/services/external/fatturapa_natura.py` |
 | Tax per riga + VIES N3.2 | `src/services/external/fatturapa_tax_line.py` |
-| Scadenza pagamento XML | `resolve_payment_due_date()` in `fatturapa_service.py` |
+| Scadenza pagamento XML | `resolve_payment_due_date()` ancorata a Data documento; TD04 omette di default |
 | PDF | `src/services/pdf/fiscal_document_pdf_service.py`, `fiscal_document_pdf_layout.py`, `i18n/` |
 | Export bulk Excel/ZIP | `src/services/export/fiscal_document_export_service.py` |
 | Schemi Pydantic | `src/schemas/fiscal_document_schema.py` |
@@ -510,8 +590,8 @@ pytest tests/unit/services/test_fiscal_document_invoice_response.py -v
 # Natura IVA / codice elettronico + VIES N3.2
 pytest tests/unit/services/external/test_fatturapa_natura.py tests/unit/services/external/test_fatturapa_tax_line.py -v
 
-# Data scadenza pagamento in XML
-pytest tests/unit/services/external/test_fatturapa_payment_due_date.py -v
+# Data scadenza pagamento / NC XML
+pytest tests/unit/services/external/test_fatturapa_payment_due_date.py tests/unit/services/external/test_fatturapa_nc_xml.py -v
 ```
 
 Suite generazione XML end-to-end: **da implementare** (P0-07).

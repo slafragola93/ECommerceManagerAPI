@@ -3,6 +3,9 @@ Servizio centralizzato per la gestione dei documenti fiscali
 """
 from datetime import date, datetime, time
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
+import logging
+
 from src.repository.interfaces.order_repository_interface import IOrderRepository
 from src.repository.interfaces.order_detail_repository_interface import IOrderDetailRepository
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
@@ -10,13 +13,18 @@ from src.repository.interfaces.fiscal_document_repository_interface import IFisc
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
+from src.models.order_detail import OrderDetail
+from src.models.shipping import Shipping
 from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 from src.schemas.fiscal_document_schema import (
     CreditNoteEligibleLinesResponseSchema,
     InvoiceExportFiltersSchema,
     InvoiceExportFormatSchema,
     InvoiceListExportItemSchema,
+    InvoicePatchResponseSchema,
     InvoiceResponseSchema,
+    InvoiceUpdateSchema,
+    SyncOrderResultSchema,
 )
 from src.services.export.fiscal_document_export_service import FiscalDocumentExportService
 from src.services.external.fatturapa_filename import (
@@ -36,6 +44,8 @@ from src.events.extractors import (
     extract_credit_note_created_data
 )
 from src.services.core.tool import resolve_return_unit_prices
+from src.services.core.price_persistence import resolve_price_fields
+from src.services.routers.order_service import OrderService
 from src.services.ricevute.order_embed_formatters import (
     map_ricevuta_address_embed,
     map_ricevuta_customer_embed,
@@ -52,6 +62,8 @@ from src.services.ricevute.order_lines import (
 
 EXPORT_XLSX_MAX_LIMIT = 5000
 EXPORT_XML_MAX_LIMIT = 5000
+
+logger = logging.getLogger(__name__)
 
 
 class FiscalDocumentService(IFiscalDocumentService):
@@ -167,6 +179,366 @@ class FiscalDocumentService(IFiscalDocumentService):
         except Exception as e:
             raise ValidationException(f"Errore nella creazione del reso: {str(e)}")
     
+    async def update_invoice(
+        self,
+        id_fiscal_document: int,
+        update_data: InvoiceUpdateSchema,
+    ) -> InvoicePatchResponseSchema:
+        """
+        Aggiorna fattura (header Order/Shipping + righe snapshot) in modo atomico.
+        Con sync_order=True aggiorna anche le order_details collegate.
+        """
+        correlation_id = str(uuid4())
+        session = self._session
+        doc = self._fiscal_document_repository.get_fiscal_document_by_id(
+            id_fiscal_document
+        )
+        if not doc:
+            raise NotFoundException("FiscalDocument", id_fiscal_document)
+
+        if doc.document_type != "invoice":
+            raise BusinessRuleException(
+                f"Solo le fatture possono essere aggiornate con questo endpoint "
+                f"(document_type={doc.document_type})",
+                details={
+                    "id_fiscal_document": id_fiscal_document,
+                    "document_type": doc.document_type,
+                },
+                status_code=409,
+            )
+
+        if doc.status != "pending":
+            raise BusinessRuleException(
+                f"Fattura non aggiornabile nello stato '{doc.status}'. "
+                "Consentito solo status=pending",
+                details={
+                    "id_fiscal_document": id_fiscal_document,
+                    "status": doc.status,
+                },
+                status_code=409,
+            )
+
+        credit_notes = self._fiscal_document_repository.get_credit_notes_by_invoice(
+            id_fiscal_document
+        )
+        if credit_notes:
+            raise BusinessRuleException(
+                "Impossibile aggiornare una fattura con note di credito collegate",
+                details={
+                    "id_fiscal_document": id_fiscal_document,
+                    "credit_notes_count": len(credit_notes),
+                },
+                status_code=409,
+            )
+
+        order = self._order_repository.get_by_id(_id=doc.id_order)
+        if not order:
+            raise NotFoundException("Order", doc.id_order)
+
+        logger.info(
+            "invoice_update start",
+            extra={
+                "correlation_id": correlation_id,
+                "id_fiscal_document": id_fiscal_document,
+                "id_order": doc.id_order,
+                "sync_order": update_data.sync_order,
+                "phase": "invoice_update",
+            },
+        )
+
+        updated_lines = 0
+        try:
+            self._apply_invoice_header_to_order_shipping(order, update_data)
+
+            if update_data.order_details:
+                for line in update_data.order_details:
+                    fiscal_detail = (
+                        self._fiscal_document_repository.get_invoice_detail_by_order_detail(
+                            id_fiscal_document, line.id_order_detail
+                        )
+                    )
+                    if not fiscal_detail:
+                        raise NotFoundException(
+                            "FiscalDocumentDetail",
+                            line.id_order_detail,
+                            details={
+                                "id_fiscal_document": id_fiscal_document,
+                                "id_order_detail": line.id_order_detail,
+                            },
+                        )
+
+                    price_payload = self._merge_line_price_payload(fiscal_detail, line)
+                    prices = resolve_price_fields(
+                        price_payload,
+                        session,
+                        product_qty=price_payload.get("product_qty"),
+                        reduction_percent=price_payload.get("reduction_percent"),
+                        reduction_amount=price_payload.get("reduction_amount"),
+                    )
+                    self._validate_line_discount(
+                        unit_price_net=prices["unit_price_net"],
+                        product_qty=int(price_payload.get("product_qty") or 1),
+                        reduction_percent=float(
+                            price_payload.get("reduction_percent") or 0.0
+                        ),
+                        reduction_amount=float(
+                            price_payload.get("reduction_amount") or 0.0
+                        ),
+                        id_order_detail=line.id_order_detail,
+                    )
+
+                    self._fiscal_document_repository.update_invoice_detail_economics(
+                        id_fiscal_document,
+                        line.id_order_detail,
+                        product_qty=int(price_payload["product_qty"]),
+                        id_tax=price_payload.get("id_tax"),
+                        unit_price_net=prices["unit_price_net"],
+                        unit_price_with_tax=prices["unit_price_with_tax"],
+                        total_price_net=prices["total_price_net"],
+                        total_price_with_tax=prices["total_price_with_tax"],
+                        commit=False,
+                    )
+
+                    if update_data.sync_order:
+                        self._sync_order_detail_from_invoice_line(
+                            order_id=doc.id_order,
+                            line=line,
+                            prices=prices,
+                            product_qty=int(price_payload["product_qty"]),
+                            id_tax=price_payload.get("id_tax"),
+                            reduction_percent=float(
+                                price_payload.get("reduction_percent") or 0.0
+                            ),
+                            reduction_amount=float(
+                                price_payload.get("reduction_amount") or 0.0
+                            ),
+                        )
+                        updated_lines += 1
+                        logger.info(
+                            "order_sync line updated",
+                            extra={
+                                "correlation_id": correlation_id,
+                                "id_order_detail": line.id_order_detail,
+                                "phase": "order_sync",
+                            },
+                        )
+
+            self._fiscal_document_repository.recalculate_fiscal_document_total(
+                id_fiscal_document, commit=False
+            )
+
+            if update_data.sync_order and updated_lines > 0:
+                OrderService(self._order_repository).recalculate_totals_for_order(
+                    doc.id_order, commit=False
+                )
+
+            doc.date_upd = datetime.utcnow()
+            session.commit()
+        except (NotFoundException, ValidationException, BusinessRuleException):
+            session.rollback()
+            raise
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "invoice_update failed",
+                extra={
+                    "correlation_id": correlation_id,
+                    "id_fiscal_document": id_fiscal_document,
+                },
+            )
+            raise
+
+        logger.info(
+            "invoice_update committed",
+            extra={
+                "correlation_id": correlation_id,
+                "id_fiscal_document": id_fiscal_document,
+                "id_order": doc.id_order,
+                "updated_lines": updated_lines,
+                "phase": "invoice_update",
+            },
+        )
+
+        invoice = await self.get_fiscal_document_detail_response_by_id(
+            id_fiscal_document
+        )
+        if update_data.sync_order:
+            sync_result = SyncOrderResultSchema(
+                enabled=True,
+                order_id=doc.id_order,
+                updated_lines=updated_lines,
+                status="success",
+            )
+        else:
+            sync_result = SyncOrderResultSchema(
+                enabled=False,
+                order_id=doc.id_order,
+                updated_lines=0,
+                status="skipped",
+            )
+
+        payload = invoice.model_dump()
+        payload["sync_order_result"] = sync_result.model_dump()
+        return InvoicePatchResponseSchema(**payload)
+
+    def _apply_invoice_header_to_order_shipping(
+        self, order: Order, update_data: InvoiceUpdateSchema
+    ) -> None:
+        """Persiste campi header commerciali su Order / Shipping (non su FiscalDocument)."""
+        session = self._session
+        if update_data.note is not None:
+            order.general_note = update_data.note
+        if update_data.id_payment is not None:
+            order.id_payment = update_data.id_payment
+        if update_data.is_payed is not None:
+            order.is_payed = update_data.is_payed
+        if update_data.payment_due_date is not None:
+            order.payment_due_date = update_data.payment_due_date
+        if update_data.total_weight is not None:
+            order.total_weight = update_data.total_weight
+
+        shipping_fields_set = any(
+            getattr(update_data, field) is not None
+            for field in (
+                "shipping_total_price_net",
+                "shipping_total_price_with_tax",
+                "id_carrier_api",
+                "id_tax",
+                "shipping_message",
+                "total_weight",
+            )
+        )
+        if not shipping_fields_set or not order.id_shipping:
+            return
+
+        shipping = (
+            session.query(Shipping)
+            .filter(Shipping.id_shipping == order.id_shipping)
+            .first()
+        )
+        if not shipping:
+            return
+
+        if update_data.shipping_total_price_net is not None:
+            shipping.price_tax_excl = update_data.shipping_total_price_net
+        if update_data.shipping_total_price_with_tax is not None:
+            shipping.price_tax_incl = update_data.shipping_total_price_with_tax
+        if update_data.id_carrier_api is not None:
+            shipping.id_carrier_api = update_data.id_carrier_api
+        if update_data.id_tax is not None:
+            shipping.id_tax = update_data.id_tax
+        if update_data.shipping_message is not None:
+            shipping.shipping_message = update_data.shipping_message
+        if update_data.total_weight is not None:
+            shipping.weight = update_data.total_weight
+
+    @staticmethod
+    def _merge_line_price_payload(
+        fiscal_detail: FiscalDocumentDetail, line
+    ) -> Dict[str, Any]:
+        """Unisce valori correnti snapshot + campi inviati dal client."""
+        payload = {
+            "product_qty": fiscal_detail.product_qty,
+            "id_tax": fiscal_detail.id_tax,
+            "unit_price_net": float(fiscal_detail.unit_price_net or 0),
+            "unit_price_with_tax": float(fiscal_detail.unit_price_with_tax or 0),
+            "total_price_net": float(fiscal_detail.total_price_net or 0),
+            "total_price_with_tax": float(fiscal_detail.total_price_with_tax or 0),
+            "reduction_percent": 0.0,
+            "reduction_amount": 0.0,
+        }
+        provided = line.model_dump(exclude_unset=True)
+        for key in (
+            "product_qty",
+            "id_tax",
+            "unit_price_net",
+            "unit_price_with_tax",
+            "total_price_net",
+            "total_price_with_tax",
+            "reduction_percent",
+            "reduction_amount",
+        ):
+            if key in provided and provided[key] is not None:
+                payload[key] = provided[key]
+        return payload
+
+    @staticmethod
+    def _validate_line_discount(
+        *,
+        unit_price_net: float,
+        product_qty: int,
+        reduction_percent: float,
+        reduction_amount: float,
+        id_order_detail: int,
+    ) -> None:
+        if reduction_percent < 0 or reduction_percent > 100:
+            raise ValidationException(
+                f"reduction_percent non valido per order_detail {id_order_detail}",
+                details={
+                    "id_order_detail": id_order_detail,
+                    "reduction_percent": reduction_percent,
+                },
+            )
+        base_net = float(unit_price_net or 0) * int(product_qty or 1)
+        if reduction_amount > base_net + 1e-6:
+            raise ValidationException(
+                f"reduction_amount supera l'imponibile riga per order_detail "
+                f"{id_order_detail}",
+                details={
+                    "id_order_detail": id_order_detail,
+                    "reduction_amount": reduction_amount,
+                    "line_net": base_net,
+                },
+            )
+
+    def _sync_order_detail_from_invoice_line(
+        self,
+        *,
+        order_id: int,
+        line,
+        prices: Dict[str, float],
+        product_qty: int,
+        id_tax: Optional[int],
+        reduction_percent: float,
+        reduction_amount: float,
+    ) -> None:
+        session = self._session
+        order_detail = (
+            session.query(OrderDetail)
+            .filter(
+                OrderDetail.id_order_detail == line.id_order_detail,
+                OrderDetail.id_order == order_id,
+            )
+            .first()
+        )
+        if not order_detail:
+            raise NotFoundException(
+                "OrderDetail",
+                line.id_order_detail,
+                details={"id_order": order_id},
+            )
+
+        provided = line.model_dump(exclude_unset=True)
+        for field in (
+            "product_name",
+            "product_reference",
+            "product_weight",
+            "note",
+        ):
+            if field in provided and provided[field] is not None:
+                setattr(order_detail, field, provided[field])
+
+        order_detail.product_qty = product_qty
+        if id_tax is not None:
+            order_detail.id_tax = id_tax
+        order_detail.unit_price_net = prices["unit_price_net"]
+        order_detail.unit_price_with_tax = prices["unit_price_with_tax"]
+        order_detail.total_price_net = prices["total_price_net"]
+        order_detail.total_price_with_tax = prices["total_price_with_tax"]
+        order_detail.reduction_percent = reduction_percent
+        order_detail.reduction_amount = reduction_amount
+        session.flush()
+
     async def update_fiscal_document(self, id_fiscal_document: int, update_data: ReturnUpdateSchema) -> FiscalDocument:
         """Aggiorna un documento fiscale"""
         try:
@@ -174,23 +546,23 @@ class FiscalDocumentService(IFiscalDocumentService):
             fiscal_doc = self._fiscal_document_repository.get_by_id(id_fiscal_document)
             if not fiscal_doc:
                 raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
-            
+
             # Aggiorna i campi se forniti
             if update_data.includes_shipping is not None:
                 fiscal_doc.includes_shipping = update_data.includes_shipping
-            
+
             if update_data.note is not None:
                 fiscal_doc.credit_note_reason = update_data.note
-            
+
             if update_data.status is not None:
                 if update_data.status not in ['pending', 'processed', 'cancelled']:
                     raise ValidationException("Status non valido. Valori ammessi: pending, processed, cancelled")
                 fiscal_doc.status = update_data.status
-            
+
             # Ricalcola il totale se necessario
             if update_data.includes_shipping is not None:
                 self._fiscal_document_repository.recalculate_fiscal_document_total(id_fiscal_document)
-            
+
             return self._fiscal_document_repository.update(fiscal_doc)
         except Exception as e:
             raise ValidationException(f"Errore nell'aggiornamento del documento fiscale: {str(e)}")
@@ -985,8 +1357,13 @@ class FiscalDocumentService(IFiscalDocumentService):
 
     async def export_invoices(
         self, filters: InvoiceExportFiltersSchema, fmt: str
-    ) -> Tuple[bytes, str, str]:
-        """Export massivo fatture o note di credito in Excel o ZIP XML."""
+    ) -> Tuple[bytes, str, str, Dict[str, str]]:
+        """
+        Export massivo fatture o note di credito in Excel o ZIP XML.
+
+        Returns:
+            (content, media_type, filename, extra_headers)
+        """
         export_fmt = self._parse_export_format(fmt)
         max_limit = self._export_max_limit(export_fmt)
         label_prefix = self._export_label_prefix(filters.document_type)
@@ -1032,7 +1409,7 @@ class FiscalDocumentService(IFiscalDocumentService):
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             filename = f"{label_prefix}-export{suffix}.xlsx"
-            return content, media_type, filename
+            return content, media_type, filename, {}
 
         document_ids = [item.id_fiscal_document for item in items]
         ready_ids, xml_failures = self._prepare_fiscal_document_ids_for_xml_export(
@@ -1048,12 +1425,32 @@ class FiscalDocumentService(IFiscalDocumentService):
                     "failed": xml_failures,
                     "failure_summary": summary,
                     "total_candidates": len(document_ids),
+                    "exported": 0,
                     "hint": (
                         "Verificare P.IVA/CF e indirizzi fatturazione; "
                         "restringere con date_add_from/to e delivery_country_iso"
                     ),
                 },
             )
+
+        # Export soft: ZIP con i documenti validi; scarti in report (status già
+        # aggiornato a generated per i ready via _ensure_fiscal_document_xml).
+        scarti_report = None
+        if xml_failures:
+            scarti_report = {
+                "partial": True,
+                "document_type": export_filters.document_type,
+                "exported_count": len(ready_ids),
+                "failed_count": len(xml_failures),
+                "total_candidates": len(document_ids),
+                "exported_ids": ready_ids,
+                "failed": xml_failures,
+                "failure_summary": self._summarize_xml_export_failures(xml_failures),
+                "hint": (
+                    "I documenti in failed non sono nel ZIP e restano senza XML "
+                    "(status invariato). Correggere anagrafica e riesportare."
+                ),
+            }
 
         zip_prefix = (
             "nota-credito"
@@ -1064,8 +1461,15 @@ class FiscalDocumentService(IFiscalDocumentService):
             ready_ids,
             self._load_fiscal_document_xml,
             duplicate_prefix=zip_prefix,
+            scarti_report=scarti_report,
         )
         media_type = "application/zip"
         filename = f"{label_prefix}-xml-export{suffix}.zip"
-        return content, media_type, filename
+        extra_headers = {
+            "X-Export-Success-Count": str(len(ready_ids)),
+            "X-Export-Failed-Count": str(len(xml_failures)),
+            "X-Export-Total-Candidates": str(len(document_ids)),
+            "X-Export-Partial": "true" if xml_failures else "false",
+        }
+        return content, media_type, filename, extra_headers
     

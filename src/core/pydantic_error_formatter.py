@@ -65,13 +65,14 @@ class PydanticErrorParser:
             Returns last element if it's a simple field
         """
         if not loc:
-            return 'unknown'
+            # model_validator errors often have empty loc
+            return '__root__'
         
         # Skip 'body', 'query', 'path', 'header' prefixes
         path_parts = [str(part) for part in loc if part not in ('body', 'query', 'path', 'header')]
         
         if not path_parts:
-            return 'unknown'
+            return '__root__'
         
         # If single field, return it directly
         if len(path_parts) == 1:
@@ -79,6 +80,23 @@ class PydanticErrorParser:
         
         # For nested fields, join with dots
         return '.'.join(path_parts)
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        """Rende JSON-serializzabili valori Pydantic (es. ctx.error = ValueError)."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(k): PydanticErrorParser._json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [PydanticErrorParser._json_safe(v) for v in value]
+        if isinstance(value, BaseException):
+            return str(value)
+        return str(value)
+
+    @staticmethod
+    def _sanitize_raw_errors(pydantic_errors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [PydanticErrorParser._json_safe(err) for err in pydantic_errors]
     
     @staticmethod
     def _categorize_error(error_type: str, error_msg: str) -> str:
@@ -163,7 +181,7 @@ class PydanticErrorParser:
             invalid_fields=invalid_fields,
             type_errors=type_errors,
             constraint_errors=constraint_errors,
-            raw_errors=pydantic_errors
+            raw_errors=PydanticErrorParser._sanitize_raw_errors(pydantic_errors),
         )
     
     @staticmethod

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
-from typing import Callable, Iterable, Sequence
+from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -32,6 +33,9 @@ class FiscalDocumentExportService:
         "products_total_price_net",
         "products_total_price_with_tax",
     ]
+
+    SCARTI_REPORT_FILENAME = "export-scarti.json"
+
     @staticmethod
     def _customer_name(item: InvoiceListExportItemSchema) -> str:
         return " ".join(
@@ -83,10 +87,14 @@ class FiscalDocumentExportService:
         workbook.save(buffer)
         return buffer.getvalue()
 
-    @staticmethod
+    @classmethod
     def _build_zip(
+        cls,
         entries: Sequence[tuple[bytes, str]],
         duplicate_prefix: str,
+        *,
+        report: Optional[Dict[str, Any]] = None,
+        report_filename: str = SCARTI_REPORT_FILENAME,
     ) -> bytes:
         buffer = io.BytesIO()
         used_names: set[str] = set()
@@ -95,9 +103,21 @@ class FiscalDocumentExportService:
             for index, (payload, filename) in enumerate(entries, start=1):
                 unique_name = filename
                 if unique_name in used_names:
-                    unique_name = f"{duplicate_prefix}-{index}{unique_name[unique_name.rfind('.'):]}"
+                    unique_name = (
+                        f"{duplicate_prefix}-{index}"
+                        f"{unique_name[unique_name.rfind('.'):]}"
+                    )
                 used_names.add(unique_name)
                 archive.writestr(unique_name, payload)
+
+            if report is not None:
+                name = report_filename
+                if name in used_names:
+                    name = f"_{report_filename}"
+                archive.writestr(
+                    name,
+                    json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
+                )
 
         return buffer.getvalue()
 
@@ -107,11 +127,17 @@ class FiscalDocumentExportService:
         xml_loader: Callable[[int], tuple[bytes, str]],
         *,
         duplicate_prefix: str = "fattura",
+        scarti_report: Optional[Dict[str, Any]] = None,
     ) -> bytes:
         """
         Crea ZIP con un XML FatturaPA per ogni documento.
 
         xml_loader: callable(id_fiscal_document) -> (bytes, filename)
+        scarti_report: se presente, aggiunto come ``export-scarti.json`` (export soft).
         """
         entries = [xml_loader(invoice_id) for invoice_id in invoice_ids]
-        return self._build_zip(entries, duplicate_prefix)
+        return self._build_zip(
+            entries,
+            duplicate_prefix,
+            report=scarti_report,
+        )

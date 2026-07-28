@@ -8,7 +8,11 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.schemas.return_schema import ReturnCreateSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
-from src.schemas.fiscal_document_schema import CreditNoteEligibleLinesResponseSchema
+from src.schemas.fiscal_document_schema import (
+    CreditNoteEligibleLinesResponseSchema,
+    InvoicePatchResponseSchema,
+    InvoiceUpdateSchema,
+)
 
 
 class IFiscalDocumentService(IBaseService):
@@ -17,6 +21,13 @@ class IFiscalDocumentService(IBaseService):
     @abstractmethod
     async def create_invoice(self, id_order: int) -> FiscalDocument:
         """Crea una fattura elettronica FatturaPA per un ordine"""
+        pass
+
+    @abstractmethod
+    async def update_invoice(
+        self, id_fiscal_document: int, update_data: InvoiceUpdateSchema
+    ) -> InvoicePatchResponseSchema:
+        """Aggiorna fattura (header + righe) e opzionalmente sincronizza l'ordine"""
         pass
     
     @abstractmethod

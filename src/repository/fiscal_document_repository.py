@@ -191,6 +191,13 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         Raises:
             ValueError: Se i controlli falliscono
         """
+        # CONTROLLO 0: NC parziale richiede items non vuoti OPPURE solo spedizione
+        if is_partial and not items and not include_shipping:
+            raise ValueError(
+                "Per una NC parziale indicare items non vuoti, "
+                "oppure include_shipping=true per stornare solo la spedizione"
+            )
+
         # Recupera tutte le note di credito esistenti per questa fattura
         existing_credit_notes = self._session.query(FiscalDocument).filter(
             and_(
@@ -309,7 +316,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         # Prepara i dettagli della nota di credito PRIMA di calcolare il totale
         credit_note_details_data = []
-        
+        shipping_only = bool(is_partial and not items and include_shipping)
+
         if is_partial and items:
             # NOTA PARZIALE: Prepara i dettagli degli articoli specificati
             # USA i valori già salvati in FiscalDocumentDetail della fattura (non ricalcolare sconti!)
@@ -357,6 +365,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     'total_price_with_tax': total_price_with_tax,
                     'id_tax': invoice_detail.id_tax
                 })
+        elif shipping_only:
+            # NC solo spedizione: nessun dettaglio prodotto (totali da includes_shipping)
+            credit_note_details_data = []
         else:
             # NOTA TOTALE: Prepara dettagli SOLO degli articoli NON ancora stornati completamente
             # Recupera le note di credito esistenti per calcolare quantità residue
@@ -421,8 +432,8 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                         'id_tax': invoice_detail.id_tax
                     })
         
-        # Verifica che ci siano articoli da stornare
-        if not credit_note_details_data:
+        # Verifica che ci siano articoli da stornare (eccetto NC solo spedizione)
+        if not credit_note_details_data and not shipping_only:
             raise ValueError(
                 "Nessun articolo residuo da stornare. "
                 "Tutti gli articoli della fattura sono già stati completamente stornati in note di credito precedenti."
@@ -448,22 +459,27 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                     shipping_vat_amount = calculate_amount_with_percentage(
                         shipping_cost_no_vat, shipping_vat_percentage
                     )
-                    print(f"Spese spedizione: {shipping_cost_no_vat}€ (IVA {shipping_vat_percentage}% = {shipping_vat_amount}€)")
+
+        if shipping_only and shipping_cost_no_vat <= 0:
+            raise ValueError(
+                "Impossibile creare NC solo spedizione: nessun costo di spedizione "
+                "stornabile sulla fattura (assente, zero, o già stornato)."
+            )
         
         # Totale imponibile (prodotti + spedizione)
         total_imponibile = float(total_imponibile_prodotti) + float(shipping_cost_no_vat)
         
-        # Recupera l'aliquota IVA dei prodotti
-        first_detail_id = credit_note_details_data[0]['id_order_detail']
-        od_first = self._session.query(OrderDetail).filter(OrderDetail.id_order_detail == first_detail_id).first()
-        
-        # Calcola l'IVA sui prodotti
-        vat_percentage = self._get_vat_percentage_from_order_details([od_first]) 
-        print(f"vat_percentage prodotti: {vat_percentage}")
-        products_vat_amount = calculate_amount_with_percentage(
-            float(total_imponibile_prodotti), vat_percentage
-        )
-        print(f"IVA prodotti: {products_vat_amount}")
+        # IVA prodotti (0 se NC solo spedizione)
+        products_vat_amount = 0.0
+        if credit_note_details_data:
+            first_detail_id = credit_note_details_data[0]['id_order_detail']
+            od_first = self._session.query(OrderDetail).filter(
+                OrderDetail.id_order_detail == first_detail_id
+            ).first()
+            vat_percentage = self._get_vat_percentage_from_order_details([od_first])
+            products_vat_amount = calculate_amount_with_percentage(
+                float(total_imponibile_prodotti), vat_percentage
+            )
         
         # Totale IVA (prodotti + spedizione)
         total_vat_amount = float(products_vat_amount) + float(shipping_vat_amount)
@@ -471,7 +487,6 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         # Totale con IVA (imponibile + IVA)
         total_with_vat = float(total_imponibile) + float(total_vat_amount)
         total_with_vat = self._round_money(total_with_vat)
-        print(f"TOTALE NC: Imponibile={total_imponibile}€, IVA={total_vat_amount}€, Totale={total_with_vat}€")
         
         # Crea nota di credito elettronica
         credit_note = FiscalDocument(
@@ -1282,7 +1297,66 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         
         return True
     
-    def recalculate_fiscal_document_total(self, id_fiscal_document: int) -> None:
+    def get_invoice_detail_by_order_detail(
+        self, id_fiscal_document: int, id_order_detail: int
+    ) -> Optional[FiscalDocumentDetail]:
+        """Dettaglio fiscale per documento + id_order_detail."""
+        return (
+            self._session.query(FiscalDocumentDetail)
+            .filter(
+                FiscalDocumentDetail.id_fiscal_document == id_fiscal_document,
+                FiscalDocumentDetail.id_order_detail == id_order_detail,
+            )
+            .first()
+        )
+
+    def update_invoice_detail_economics(
+        self,
+        id_fiscal_document: int,
+        id_order_detail: int,
+        *,
+        product_qty: Optional[int] = None,
+        id_tax: Optional[int] = None,
+        unit_price_net: Optional[float] = None,
+        unit_price_with_tax: Optional[float] = None,
+        total_price_net: Optional[float] = None,
+        total_price_with_tax: Optional[float] = None,
+        commit: bool = True,
+    ) -> FiscalDocumentDetail:
+        """Aggiorna qty/prezzi/tassa di una riga fattura (non usa logica reso)."""
+        detail = self.get_invoice_detail_by_order_detail(
+            id_fiscal_document, id_order_detail
+        )
+        if not detail:
+            raise ValueError(
+                f"Riga fiscale non trovata per documento {id_fiscal_document} "
+                f"e order_detail {id_order_detail}"
+            )
+
+        if product_qty is not None:
+            detail.product_qty = product_qty
+        if id_tax is not None:
+            detail.id_tax = id_tax
+        if unit_price_net is not None:
+            detail.unit_price_net = unit_price_net
+        if unit_price_with_tax is not None:
+            detail.unit_price_with_tax = unit_price_with_tax
+        if total_price_net is not None:
+            detail.total_price_net = total_price_net
+        if total_price_with_tax is not None:
+            detail.total_price_with_tax = total_price_with_tax
+
+        if commit:
+            self._session.commit()
+            self._session.refresh(detail)
+        else:
+            self._session.flush()
+
+        return detail
+
+    def recalculate_fiscal_document_total(
+        self, id_fiscal_document: int, commit: bool = True
+    ) -> None:
         """Ricalcola il totale di un documento fiscale basato sui suoi dettagli"""
         fiscal_doc = self._session.query(FiscalDocument).filter(
             FiscalDocument.id_fiscal_document == id_fiscal_document
@@ -1320,7 +1394,10 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         fiscal_doc.products_total_price_with_tax = products_total_price_with_tax
         fiscal_doc.total_price_net = total_price_net
         fiscal_doc.total_price_with_tax = total_price_with_tax
-        self._session.commit()
+        if commit:
+            self._session.commit()
+        else:
+            self._session.flush()
     
     # ==================== METODI INTERFACCIA ====================
     

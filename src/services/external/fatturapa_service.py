@@ -13,6 +13,7 @@ from src.models import Order, Address, FiscalDocument, FiscalDocumentDetail, Ord
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.tax_repository import TaxRepository
 from src.services.external.fatturapa_validator import FatturaPAValidator
+from src.services.external.fatturapa_xsd_validator import validate_fatturapa_xml
 from src.services.external.fatturapa_tax_line import (
     FatturaPALineTax,
     build_riepilogo_groups,
@@ -25,35 +26,90 @@ from src.services.external.fatturapa_filename import (
     normalize_id_codice,
 )
 from src.services.external.fatturapa_customer_address import (
+    build_sede_fields,
     normalize_customer_vat,
     resolve_codice_destinatario,
     resolve_invoice_state,
-    validate_customer_cap,
-    validate_customer_provincia,
 )
 
 logger = logging.getLogger(__name__)
 
+# Modalità pagamento che richiedono IBAN / IstitutoFinanziario (FatturaPA)
+PAYMENT_MODES_REQUIRING_IBAN = frozenset({"MP05"})
+DEFAULT_PAYMENT_TERM_DAYS = 30
 
-def resolve_payment_due_date(order_data: Dict[str, Any]) -> date:
-    """
-    Data scadenza pagamento FatturaPA: payment_due_date ordine se impostata,
-    altrimenti data ordine + 30 giorni.
-    """
-    payment_due = order_data.get("payment_due_date")
-    if payment_due:
-        if isinstance(payment_due, str):
-            return datetime.strptime(payment_due[:10], "%Y-%m-%d").date()
-        if isinstance(payment_due, datetime):
-            return payment_due.date()
-        return payment_due
 
-    order_date = order_data.get("date_add", datetime.now())
-    if isinstance(order_date, str):
-        order_date = datetime.strptime(order_date[:19], "%Y-%m-%d %H:%M:%S")
-    if isinstance(order_date, datetime):
-        return (order_date + timedelta(days=30)).date()
-    return order_date + timedelta(days=30)
+def _parse_optional_date(raw: Any) -> Optional[date]:
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, str) and len(raw) >= 10:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+    return None
+
+
+def resolve_document_date(order_data: Dict[str, Any]) -> date:
+    """
+    Data documento FatturaPA (DatiGeneraliDocumento/Data):
+    ``document_date`` / ``fiscal_document_date`` da fiscal_documents.date_add.
+    Fallback: oggi solo se assente (es. test legacy).
+    """
+    raw = order_data.get("document_date") or order_data.get("fiscal_document_date")
+    parsed = _parse_optional_date(raw)
+    return parsed if parsed is not None else date.today()
+
+
+def resolve_payment_due_date(
+    order_data: Dict[str, Any],
+    *,
+    payment_term_days: int = DEFAULT_PAYMENT_TERM_DAYS,
+) -> date:
+    """
+    DataScadenzaPagamento: sempre ancorata a ``DatiGeneraliDocumento/Data``.
+
+    - se ``payment_due_date`` >= Data documento → usarla;
+    - altrimenti Data documento + ``payment_term_days`` (default 30).
+
+    Non usa mai ``DatiFattureCollegate/Data`` né solo ``order.date_add``.
+    """
+    document_date = resolve_document_date(order_data)
+    due = _parse_optional_date(order_data.get("payment_due_date"))
+    if due is not None and due >= document_date:
+        return due
+    days = payment_term_days if payment_term_days and payment_term_days > 0 else DEFAULT_PAYMENT_TERM_DAYS
+    return document_date + timedelta(days=days)
+
+
+def format_id_documento(document_number: Optional[str]) -> str:
+    """IdDocumento FatturaPA: progressivo senza zeri iniziali se numerico."""
+    if not document_number:
+        return ""
+    raw = str(document_number).strip()
+    if raw.isdigit():
+        return str(int(raw))
+    return raw
+
+
+def resolve_linked_invoice_date(order_data: Dict[str, Any]) -> Optional[date]:
+    """Data fattura collegata per DatiFattureCollegate (TD04)."""
+    return _parse_optional_date(order_data.get("linked_invoice_date"))
+
+
+def compute_arrotondamento(
+    importo_totale: float,
+    riepilogo_groups: List[Dict[str, Any]],
+) -> Decimal:
+    """Differenza ImportoTotaleDocumento − Σ(ImponibileImporto + Imposta)."""
+    total = Decimal(str(importo_totale)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    lines_sum = Decimal("0.00")
+    for group in riepilogo_groups:
+        lines_sum += Decimal(str(group.get("ImponibileImporto", 0)))
+        lines_sum += Decimal(str(group.get("Imposta", 0)))
+    lines_sum = lines_sum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return (total - lines_sum).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 class FatturaPAService:
@@ -79,6 +135,7 @@ class FatturaPAService:
             self.vat_number = self._get_config_value("company_info", "vat_number")
         
         self.company_name = self._get_config_value("company_info", "company_name")
+        self.company_fiscal_code = self._get_config_value("company_info", "fiscal_code")
         self.company_address = self._get_config_value("company_info", "address")
         self.company_civic = self._get_config_value("company_info", "civic_number")
         self.company_cap = self._get_config_value("company_info", "postal_code")
@@ -101,7 +158,29 @@ class FatturaPAService:
         except Exception as e:
             logger.warning(f"Errore nel recupero configurazione {category}.{name}: {e}")
             return default
-    
+
+    def _td04_include_payment_due_date(self) -> bool:
+        """Opzione A: emettere DataScadenzaPagamento anche sulle NC TD04 (default: no)."""
+        raw = self._get_config_value(
+            "electronic_invoicing", "td04_include_payment_due_date", "false"
+        )
+        if raw is None:
+            return False
+        return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+    def _payment_term_days(self) -> int:
+        """Giorni di pagamento da Data documento se payment_due_date assente/non valida."""
+        raw = self._get_config_value(
+            "electronic_invoicing",
+            "payment_term_days",
+            str(DEFAULT_PAYMENT_TERM_DAYS),
+        )
+        try:
+            days = int(str(raw).strip())
+            return days if days > 0 else DEFAULT_PAYMENT_TERM_DAYS
+        except (TypeError, ValueError):
+            return DEFAULT_PAYMENT_TERM_DAYS
+
     def _get_next_document_number(self) -> str:
         """Genera il prossimo numero di documento sequenziale annuale"""
         current_year = datetime.now().year
@@ -167,7 +246,6 @@ class FatturaPAService:
         """)
         
         result = self.db.execute(query, {"order_id": order_id}).fetchone()
-        print(result)
         if not result:
             raise ValueError(f"Ordine {order_id} non trovato")
         
@@ -256,15 +334,21 @@ class FatturaPAService:
             element.set(key, value)
         return element
 
-        """Helper per creare elementi XML"""
-        # Usa prefisso p: solo se esplicitamente richiesto (per FatturaElettronica root)
-        element_tag = f"p:{tag}" if use_prefix else tag
-        element = ET.SubElement(parent, element_tag)
-        if text:
-            element.text = text
-        for key, value in attrs.items():
-            element.set(key, value)
-        return element
+    def _append_sede(self, parent: ET.Element, fields: Dict[str, Any]) -> ET.Element:
+        """
+        Serializza blocco Sede FatturaPA (ordine XSD).
+        Ommette NumeroCivico/Provincia se assenti in ``fields`` (mai tag vuoti).
+        """
+        sede = self._create_element(parent, "Sede")
+        self._create_element(sede, "Indirizzo", fields["Indirizzo"])
+        if fields.get("NumeroCivico"):
+            self._create_element(sede, "NumeroCivico", fields["NumeroCivico"])
+        self._create_element(sede, "CAP", fields["CAP"])
+        self._create_element(sede, "Comune", fields["Comune"])
+        if fields.get("Provincia"):
+            self._create_element(sede, "Provincia", fields["Provincia"])
+        self._create_element(sede, "Nazione", fields["Nazione"])
+        return sede
     
     def _generate_filename(self, document_number: str) -> str:
         """
@@ -284,13 +368,6 @@ class FatturaPAService:
             document_number: Numero documento progressivo
             include_shipping: Se True, include le spese di spedizione (default: True)
         """
-        print(f"=== _generate_xml CHIAMATO ===")
-        print(f"=== INIZIO GENERAZIONE XML FATTURAPA ===")
-        print(f"Documento: {document_number}")
-        print(f"Line items count: {len(line_items)}")
-        
-        print(order_data)
-        # Estrai dati cliente
         customer_name = order_data.get('invoice_firstname', '') + ' ' + order_data.get('invoice_lastname', '')
         customer_company = order_data.get('invoice_company') or order_data.get('customer_company', '')
         customer_cf = order_data.get('customer_fiscal_code', '')
@@ -300,14 +377,7 @@ class FatturaPAService:
 
         customer_vat_raw = order_data.get('invoice_vat', '')
         customer_vat = normalize_customer_vat(customer_vat_raw, country_iso)
-        
-        print(f"=== DATI CLIENTE ===")
-        print(f"Cliente: '{customer_name.strip()}' (company: '{customer_company}')")
-        print(f"CodiceFiscale: '{customer_cf}' (lunghezza: {len(customer_cf) if customer_cf else 0})")
-        print(f"SDI: '{customer_sdi}' (lunghezza: {len(customer_sdi) if customer_sdi else 0})")
-        print(f"PEC: '{customer_pec}'")
-        print(f"VAT: '{customer_vat}' (originale: '{customer_vat_raw}')")
-        
+
         total_amount = float(order_data.get('total_price', 0))
 
         if line_items and "tax_percentage" not in line_items[0]:
@@ -315,11 +385,14 @@ class FatturaPAService:
 
         riepilogo_lines: List[Dict[str, Any]] = []
 
-        print(f"=== TOTALI DOCUMENTO ===")
-        print(f"Totale con IVA: {total_amount:.2f}")
-        print(f"VIES eligible: {vies_eligible_from_order_data(order_data)}")
+        logger.debug(
+            "Generazione XML FatturaPA doc=%s lines=%s country=%s vies=%s",
+            document_number,
+            len(line_items),
+            country_iso,
+            vies_eligible_from_order_data(order_data),
+        )
 
-        print(f"=== CREAZIONE XML ===")
         # Crea root element con prefisso p:
         root = ET.Element("p:FatturaElettronica")
         root.set("versione", "FPR12")
@@ -340,30 +413,26 @@ class FatturaPAService:
         
         self._create_element(dati_trasmissione, "ProgressivoInvio", document_number)
         self._create_element(dati_trasmissione, "FormatoTrasmissione", "FPR12")
-        
-        formato_trasmissione = "FPR12"
-        print(f"=== VALIDAZIONE CODICE DESTINATARIO ===")
-        print(f"FormatoTrasmissione: {formato_trasmissione}")
-        print(f"Paese cliente: {country_iso}")
 
         codice_destinatario = resolve_codice_destinatario(country_iso, customer_sdi)
-        print(f"CodiceDestinatario: '{codice_destinatario}'")
         self._create_element(dati_trasmissione, "CodiceDestinatario", codice_destinatario)
-        print(f"[OK] CodiceDestinatario validato: {codice_destinatario}")
-        
-        # Gestione PEC del destinatario
+
+        # Ordine XSD: ContattiTrasmittente prima di PECDestinatario
+        if self.company_phone or self.company_email:
+            contatti_trasmittente = self._create_element(dati_trasmissione, "ContattiTrasmittente")
+            if self.company_phone:
+                self._create_element(contatti_trasmittente, "Telefono", self.company_phone)
+            if self.company_email:
+                self._create_element(contatti_trasmittente, "Email", self.company_email)
+
         if customer_pec:
             self._create_element(dati_trasmissione, "PECDestinatario", customer_pec)
-        else:
-            # Se non c'è PEC nell'indirizzo, cerca SDI o usa "0000000"
-            # TODO: Implementare fallback PEC da altri indirizzi customer se necessario
-            pass
-        
-        contatti_trasmittente = self._create_element(dati_trasmissione, "ContattiTrasmittente")
-        self._create_element(contatti_trasmittente, "Telefono", self.company_phone)
-        self._create_element(contatti_trasmittente, "Email", self.company_email)
-        
-
+        elif codice_destinatario == "0000000":
+            logger.warning(
+                "CodiceDestinatario=0000000 senza PECDestinatario: "
+                "recapito SDI solo via area riservata (doc %s)",
+                document_number,
+            )
 
         # CedentePrestatore
         cedente = self._create_element(header, "CedentePrestatore")
@@ -371,12 +440,12 @@ class FatturaPAService:
         dati_anagrafici_cedente = self._create_element(cedente, "DatiAnagrafici")
         id_fiscale_cedente = self._create_element(dati_anagrafici_cedente, "IdFiscaleIVA")
         self._create_element(id_fiscale_cedente, "IdPaese", "IT")
-        self._create_element(id_fiscale_cedente, "IdCodice", self.vat_number)
-        
-        
-        # Aggiungi CodiceFiscale solo se presente
-        if customer_cf:
-            self._create_element(dati_anagrafici_cedente, "CodiceFiscale", customer_cf) 
+        cedente_id_codice = normalize_id_codice(self.vat_number or "")
+        self._create_element(id_fiscale_cedente, "IdCodice", cedente_id_codice)
+
+        # CodiceFiscale cedente IT = IdCodice P.IVA (allineato a IdFiscaleIVA)
+        if cedente_id_codice:
+            self._create_element(dati_anagrafici_cedente, "CodiceFiscale", cedente_id_codice)
         
         anagrafica_cedente = self._create_element(dati_anagrafici_cedente, "Anagrafica")
         self._create_element(anagrafica_cedente, "Denominazione", self.company_name)
@@ -385,19 +454,26 @@ class FatturaPAService:
         tax_regime = self._get_config_value("electronic_invoicing", "tax_regime", "RF01")
         self._create_element(dati_anagrafici_cedente, "RegimeFiscale", tax_regime)
         
-        sede_cedente = self._create_element(cedente, "Sede")
-        self._create_element(sede_cedente, "Indirizzo", self.company_address)
-        self._create_element(sede_cedente, "NumeroCivico", self.company_civic)
-        self._create_element(sede_cedente, "CAP", self.company_cap)
-        self._create_element(sede_cedente, "Comune", self.company_city)
-        self._create_element(sede_cedente, "Provincia", self.company_province)
-        self._create_element(sede_cedente, "Nazione", "IT")
-        
+        self._append_sede(
+            cedente,
+            build_sede_fields(
+                indirizzo=self.company_address or "",
+                nazione="IT",
+                comune=self.company_city or "",
+                cap=self.company_cap,
+                numero_civico=self.company_civic,
+                provincia=self.company_province,
+            ),
+        )
+
         contatti_cedente = self._create_element(cedente, "Contatti")
-        self._create_element(contatti_cedente, "Telefono", self.company_phone)
-        self._create_element(contatti_cedente, "Email", self.company_email)
-        
-        self._create_element(cedente, "RiferimentoAmministrazione", self.company_contact)
+        if self.company_phone:
+            self._create_element(contatti_cedente, "Telefono", self.company_phone)
+        if self.company_email:
+            self._create_element(contatti_cedente, "Email", self.company_email)
+
+        if self.company_contact:
+            self._create_element(cedente, "RiferimentoAmministrazione", self.company_contact)
         
         # CessionarioCommittente
         cessionario = self._create_element(header, "CessionarioCommittente")
@@ -419,7 +495,7 @@ class FatturaPAService:
                 raise ValueError(error_msg)
             self._create_element(dati_anagrafici_cessionario, "CodiceFiscale", customer_cf)
         else:
-            logger.warning("[WARNING] CodiceFiscale non presente")
+            logger.debug("CodiceFiscale cessionario non presente")
         
         anagrafica_cessionario = self._create_element(dati_anagrafici_cessionario, "Anagrafica")
         
@@ -432,27 +508,24 @@ class FatturaPAService:
             if len(name_parts) >= 2:
                 self._create_element(anagrafica_cessionario, "Cognome", name_parts[1])
         
-        sede_cessionario = self._create_element(cessionario, "Sede")
-        # Pulisci l'indirizzo da caratteri speciali e virgole
         indirizzo = order_data.get('invoice_address1', 'VIA CLIENTE')
         indirizzo_pulito = indirizzo.replace(',', '').replace(';', '').strip()
         if not indirizzo_pulito:
             error_msg = "Indirizzo cliente non può essere vuoto"
             logger.error(f"ERRORE VALIDAZIONE: {error_msg}")
             raise ValueError(error_msg)
-        self._create_element(sede_cessionario, "Indirizzo", indirizzo_pulito)
-        cap = validate_customer_cap(order_data.get('invoice_postcode'), country_iso)
-        self._create_element(sede_cessionario, "CAP", cap)
-
-        self._create_element(sede_cessionario, "Comune", order_data.get('invoice_city', 'MILANO'))
-
-        provincia = validate_customer_provincia(
-            order_data.get('invoice_state'), country_iso
+        self._append_sede(
+            cessionario,
+            build_sede_fields(
+                indirizzo=indirizzo_pulito,
+                nazione=country_iso,
+                comune=order_data.get('invoice_city', 'MILANO'),
+                cap=order_data.get('invoice_postcode'),
+                numero_civico=order_data.get('invoice_address2'),
+                provincia=order_data.get('invoice_state'),
+            ),
         )
-        if provincia:
-            self._create_element(sede_cessionario, "Provincia", provincia)
-        self._create_element(sede_cessionario, "Nazione", country_iso)
-        
+
         # Body
         body = self._create_element(root, "FatturaElettronicaBody")
         
@@ -464,11 +537,29 @@ class FatturaPAService:
         tipo_documento = order_data.get('tipo_documento_fe')
         self._create_element(dati_generali_documento, "TipoDocumento", tipo_documento)
         self._create_element(dati_generali_documento, "Divisa", "EUR")
-        self._create_element(dati_generali_documento, "Data", date.today().strftime("%Y-%m-%d"))
+        document_date = resolve_document_date(order_data)
+        self._create_element(dati_generali_documento, "Data", document_date.strftime("%Y-%m-%d"))
         # Converte il document_number in intero per il campo Numero
         numero_sequenziale = int(document_number)
         self._create_element(dati_generali_documento, "Numero", str(numero_sequenziale))
         self._create_element(dati_generali_documento, "ImportoTotaleDocumento", f"{total_amount:.2f}")
+        # Arrotondamento: aggiunto dopo DatiRiepilogo (stesso elemento, ordine XSD)
+
+        # TD04: riferimento obbligatorio alla fattura originale (BE-PA-P0-06)
+        if tipo_documento == "TD04":
+            linked_number = format_id_documento(order_data.get("linked_invoice_number"))
+            if not linked_number:
+                raise ValueError(
+                    "Nota di credito TD04 richiede fattura di riferimento "
+                    "(linked_invoice_number / id_fiscal_document_ref)"
+                )
+            dati_collegate = self._create_element(dati_generali, "DatiFattureCollegate")
+            self._create_element(dati_collegate, "IdDocumento", linked_number)
+            linked_date = resolve_linked_invoice_date(order_data)
+            if linked_date:
+                self._create_element(
+                    dati_collegate, "Data", linked_date.strftime("%Y-%m-%d")
+                )
 
         # DatiBeniServizi
         dati_beni_servizi = self._create_element(body, "DatiBeniServizi")
@@ -522,8 +613,11 @@ class FatturaPAService:
                 self._line_tax_for_riepilogo(line_tax, prezzo_totale_netto)
             )
 
-        # Buoni sconto (stessa aliquota della prima riga prodotto)
+        # Buoni sconto ordine: non applicare su TD04 (totali NC senza voucher carrello).
+        # Su TD01 resta la riga "Buoni Sconto" da order.total_discounts.
         total_discounts = float(order_data.get('total_discounts', 0))
+        if tipo_documento == "TD04":
+            total_discounts = 0.0
         if total_discounts > 0:
             discount_tax = (
                 self._fattura_pa_line_tax_from_enriched(line_items[0])
@@ -572,68 +666,75 @@ class FatturaPAService:
                 self._line_tax_for_riepilogo(shipping_tax, shipping_net)
             )
 
-        # DatiRiepilogo — un blocco per (AliquotaIVA, Natura)
-        for group in build_riepilogo_groups(riepilogo_lines):
+        # DatiRiepilogo — un blocco per (AliquotaIVA, Natura); ordine XSD
+        riepilogo_groups = build_riepilogo_groups(riepilogo_lines)
+        for group in riepilogo_groups:
             dati_riepilogo = self._create_element(dati_beni_servizi, "DatiRiepilogo")
             self._create_element(
                 dati_riepilogo, "AliquotaIVA", f"{group['AliquotaIVA']:.2f}"
             )
             if group.get("Natura"):
                 self._create_element(dati_riepilogo, "Natura", group["Natura"])
-            if group.get("RiferimentoNormativo"):
-                self._create_element(
-                    dati_riepilogo, "RiferimentoNormativo", group["RiferimentoNormativo"]
-                )
             self._create_element(
                 dati_riepilogo, "ImponibileImporto", f"{group['ImponibileImporto']:.2f}"
             )
             self._create_element(dati_riepilogo, "Imposta", f"{group['Imposta']:.2f}")
             self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
+            if group.get("RiferimentoNormativo"):
+                self._create_element(
+                    dati_riepilogo, "RiferimentoNormativo", group["RiferimentoNormativo"]
+                )
+
+        # Arrotondamento sempre presente (anche 0.00) dopo ImportoTotaleDocumento
+        arrotondamento = compute_arrotondamento(total_amount, riepilogo_groups)
+        self._create_element(
+            dati_generali_documento, "Arrotondamento", f"{arrotondamento:.2f}"
+        )
 
         # DatiPagamento
-        print(f"=== AGGIUNTA DATI PAGAMENTO ===")
         dati_pagamento = self._create_element(body, "DatiPagamento")
         
         # CondizioniPagamento (TP01=immediato, TP02=scadenza, TP03=rate)
         condizioni_pagamento = order_data.get('condizioni_pagamento', 'TP02')  # Default: scadenza
         self._create_element(dati_pagamento, "CondizioniPagamento", condizioni_pagamento)
         
-        # DettaglioPagamento
+        # DettaglioPagamento — ordine XSD: Modalita → DataScadenza → Importo → Istituto → IBAN
         dettaglio_pagamento = self._create_element(dati_pagamento, "DettaglioPagamento")
         
-        # ModalitaPagamento - recupera dal payment method
         fiscal_mode_payment = order_data.get('fiscal_mode_payment', 'MP05')  # Default: bonifico
         if not fiscal_mode_payment or fiscal_mode_payment not in [f'MP{i:02d}' for i in range(1, 24)]:
             fiscal_mode_payment = 'MP05'  # Fallback a bonifico
-            print(f"[WARNING] Modalita pagamento non valida, uso default: {fiscal_mode_payment}")
+            logger.warning("Modalita pagamento non valida, uso default MP05")
         
         self._create_element(dettaglio_pagamento, "ModalitaPagamento", fiscal_mode_payment)
-        print(f"Modalità pagamento: {fiscal_mode_payment}")
-        
-        # Se bonifico (MP05), aggiungi dati bancari
-        if fiscal_mode_payment == 'MP05':
-            self._create_element(dettaglio_pagamento, "IstitutoFinanziario", self.company_bank_name)
-            self._create_element(dettaglio_pagamento, "IBAN", self.company_iban)
-            print(f"Dati bancari: {self.company_bank_name} - {self.company_iban}")
-        
-        # ImportoPagamento (totale documento)
+
+        # TD04 storno: di default omettere DataScadenzaPagamento (Opzione B).
+        # Flag electronic_invoicing.td04_include_payment_due_date=true → Opzione A.
+        include_scadenza = condizioni_pagamento == "TP02"
+        if tipo_documento == "TD04":
+            include_scadenza = include_scadenza and self._td04_include_payment_due_date()
+        if include_scadenza:
+            term_days = self._payment_term_days()
+            scadenza = resolve_payment_due_date(order_data, payment_term_days=term_days)
+            self._create_element(
+                dettaglio_pagamento,
+                "DataScadenzaPagamento",
+                scadenza.strftime("%Y-%m-%d"),
+            )
+
         self._create_element(dettaglio_pagamento, "ImportoPagamento", f"{total_amount:.2f}")
-        print(f"Importo pagamento: {total_amount:.2f}")
+
+        if fiscal_mode_payment in PAYMENT_MODES_REQUIRING_IBAN:
+            if self.company_bank_name:
+                self._create_element(
+                    dettaglio_pagamento, "IstitutoFinanziario", self.company_bank_name
+                )
+            if self.company_iban:
+                self._create_element(dettaglio_pagamento, "IBAN", self.company_iban)
         
-        # DataScadenzaPagamento (opzionale, solo se TP02)
-        if condizioni_pagamento == 'TP02':
-            scadenza = resolve_payment_due_date(order_data)
-            self._create_element(dettaglio_pagamento, "DataScadenzaPagamento", scadenza.strftime('%Y-%m-%d'))
-            print(f"Data scadenza: {scadenza.strftime('%Y-%m-%d')}")
-        
-        print(f"=== DATI PAGAMENTO COMPLETATI ===")
-        
-        # Converti in stringa XML
-        print(f"=== FINALIZZAZIONE XML ===")
         ET.indent(root, space="  ", level=0)
         xml_str = ET.tostring(root, encoding='unicode', xml_declaration=True)
-        print(f"XML generato con successo (lunghezza: {len(xml_str)} caratteri)")
-        print(f"=== FINE GENERAZIONE XML FATTURAPA ===")
+        logger.debug("XML FatturaPA generato (%s caratteri) per doc %s", len(xml_str), document_number)
         
         return xml_str
     
@@ -659,7 +760,7 @@ class FatturaPAService:
             status_code, _, body = await self._http_request('GET', url)
             
             if status_code == 200 and 'true' in body.lower():
-                print("Verifica API FatturaPA completata con successo")
+                logger.info("Verifica API FatturaPA completata con successo")
                 return True
             else:
                 logger.error(f"Verifica API fallita: {status_code} - {body}")
@@ -682,7 +783,7 @@ class FatturaPAService:
                     complete = data.get('Complete') or data.get('complete')
                     
                     if name and complete:
-                        print(f"UploadStart1 completato: {name}")
+                        logger.info("UploadStart1 completato: %s", name)
                         return name, complete
                 except json.JSONDecodeError:
                     pass
@@ -711,7 +812,7 @@ class FatturaPAService:
                                                           headers=headers, content=xml_bytes)
             
             if 200 <= status_code < 300:
-                print("Upload XML completato con successo")
+                logger.info("Upload XML completato con successo")
                 return True
             else:
                 logger.error(f"Upload XML fallito: {status_code} - {body}")
@@ -732,7 +833,7 @@ class FatturaPAService:
             if status_code == 200:
                 try:
                     result = json.loads(body)
-                    print(f"UploadStop completato: {endpoint}")
+                    logger.info("UploadStop completato: %s", endpoint)
                     return result
                 except json.JSONDecodeError:
                     return {"status": "success", "message": body}
@@ -810,10 +911,11 @@ class FatturaPAService:
             # Usa il valore salvato nel FiscalDocument (gestito al momento della creazione)
             include_shipping = fiscal_doc.includes_shipping
             
-            # Prepara company_data per validazione
+            # Prepara company_data per validazione (CF cedente = IdCodice P.IVA)
+            cedente_id = normalize_id_codice(self.vat_number or "")
             company_data = {
-                'vat_number': self.vat_number,
-                'fiscal_code': self._get_config_value("company_info", "fiscal_code"),
+                'vat_number': cedente_id,
+                'fiscal_code': cedente_id,
                 'company_name': self.company_name,
                 'address': self.company_address,
                 'civic_number': self.company_civic,
@@ -839,6 +941,19 @@ class FatturaPAService:
             
             # Genera XML
             xml_content = self._generate_xml(order_data, line_items, fiscal_doc.document_number, include_shipping=include_shipping)
+
+            # Validazione XSD ufficiale (BE-PA-P0-02)
+            xsd_result = validate_fatturapa_xml(xml_content)
+            if not xsd_result["valid"]:
+                logger.error(
+                    "Validazione XSD FatturaPA fallita per fiscal document %s: %s errori",
+                    id_fiscal_document,
+                    len(xsd_result["errors"]),
+                )
+                return {
+                    "status": "validation_error",
+                    "errors": xsd_result["errors"],
+                }
             
             # Genera filename
             filename = self._generate_filename(fiscal_doc.document_number)
@@ -913,10 +1028,32 @@ class FatturaPAService:
             if tax:
                 tax_electronic_code = tax.electronic_code
                 tax_note = tax.note
+
+        linked_invoice_number = None
+        linked_invoice_date = None
+        if fiscal_doc.tipo_documento_fe == "TD04" and fiscal_doc.id_fiscal_document_ref:
+            referenced = fiscal_doc.referenced_document
+            if referenced is None:
+                referenced = (
+                    self.db.query(FiscalDocument)
+                    .filter(
+                        FiscalDocument.id_fiscal_document
+                        == fiscal_doc.id_fiscal_document_ref
+                    )
+                    .first()
+                )
+            if referenced:
+                linked_invoice_number = (
+                    referenced.document_number or referenced.internal_number
+                )
+                linked_invoice_date = referenced.date_add
         
         return {
             'id_order': order.id_order,
             'tipo_documento_fe': fiscal_doc.tipo_documento_fe,  # TD01 o TD04
+            'id_fiscal_document_ref': fiscal_doc.id_fiscal_document_ref,
+            'linked_invoice_number': linked_invoice_number,
+            'linked_invoice_date': linked_invoice_date,
             
             # Dati anagrafici - usa address (priorità) o customer (fallback)
             'customer_company': customer_company,
@@ -948,7 +1085,12 @@ class FatturaPAService:
             'pec': address.pec,
             'sdi': address.sdi,
             'total_price': fiscal_doc.total_price_with_tax or 0.0,
-            'total_discounts': order.total_discounts or 0.0,
+            # Su TD04 non riusare i buoni carrello ordine (create_credit_note non li include nei totali)
+            'total_discounts': (
+                0.0
+                if fiscal_doc.tipo_documento_fe == "TD04"
+                else (order.total_discounts or 0.0)
+            ),
             'shipping_price_tax_excl': customer.get('shipping_price_tax_excl', 0.0),
             'shipping_id_tax': customer.get('shipping_id_tax'),
             'shipping_tax_percentage': customer.get('shipping_tax_percentage', 22.0),
@@ -959,7 +1101,10 @@ class FatturaPAService:
             'vies_status': (
                 order.vies_status.value if order.vies_status is not None else None
             ),
+            # date_add ordine (legacy / audit; DataScadenza usa document_date)
             'date_add': order.date_add,
+            # data legale documento fiscale → DatiGeneraliDocumento/Data
+            'document_date': fiscal_doc.date_add,
             'payment_due_date': order.payment_due_date,
         }
     

@@ -14,6 +14,8 @@ from src.services.interfaces.fiscal_document_service_interface import IFiscalDoc
 from src.schemas.fiscal_document_schema import (
     InvoiceCreateSchema,
     InvoiceResponseSchema,
+    InvoiceUpdateSchema,
+    InvoicePatchResponseSchema,
     CreditNoteCreateSchema,
     CreditNoteResponseSchema,
     CreditNoteEligibleLinesResponseSchema,
@@ -140,6 +142,9 @@ async def export_invoices(
     - **xml**: ZIP FatturaPA (max 5000). **Solo filtri** `date_add_from`, `date_add_to`,
       `delivery_country_iso` (paese consegna). Status ed altri filtri query sono **ignorati**.
       Se l'XML non esiste viene generato automaticamente (stesso motore di `POST /{id}/generate-xml`).
+      **Export soft:** i documenti validi vanno nello ZIP (status → `generated`); gli scarti
+      restano invariati e sono elencati in `export-scarti.json` + header `X-Export-*`.
+      HTTP 400 solo se **nessun** documento è esportabile.
 
     Parametro **`document_type`**: `invoice` (default) o `credit_note`.
 
@@ -157,14 +162,17 @@ async def export_invoices(
         date_add_from=date_add_from,
         date_add_to=date_add_to,
     )
-    content, media_type, filename = await fiscal_service.export_invoices(
+    content, media_type, filename, extra_headers = await fiscal_service.export_invoices(
         filters, fmt.value
     )
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    headers.update(extra_headers)
 
     return StreamingResponse(
         BytesIO(content),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=headers,
     )
 
 
@@ -454,6 +462,30 @@ async def get_credit_notes_by_invoice(
 
 
 # ==================== OPERAZIONI GENERICHE ====================
+
+@router.patch(
+    "/{id_fiscal_document}",
+    response_model=InvoicePatchResponseSchema,
+)
+async def update_invoice(
+    id_fiscal_document: int = Path(..., gt=0, description="ID della fattura"),
+    update_data: InvoiceUpdateSchema = Body(...),
+    user: dict = user_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "update")),
+):
+    """
+    Aggiorna una fattura in stato `pending` (header commerciale + righe snapshot).
+
+    - I campi header (`note`, `id_payment`, shipping, …) aggiornano Order/Shipping
+      (il GET fattura li legge dall'ordine collegato).
+    - `order_details` aggiornano `fiscal_document_details` e i totali documento.
+    - Con `sync_order=true` le stesse righe vengono riallineate sull'`order_detail`
+      e i totali ordine sono ricalcolati nella stessa transazione.
+    - Non consentito su note di credito / resi, su status ≠ pending, o se esistono NC collegate.
+    """
+    return await fiscal_service.update_invoice(id_fiscal_document, update_data)
+
 
 @router.get(
     "/{id_fiscal_document}",

@@ -181,3 +181,319 @@ class TestGenerateXmlViesIntegration:
         assert "0.00" in aliquote
         assert "22.00" in aliquote
         assert len(riepilogo_blocks) == 2
+
+
+class TestGenerateXmlSedeStructure:
+    """Regressione Gap Sede: NumeroCivico vuoto, Provincia estera, CAP AdE."""
+
+    @pytest.fixture
+    def fatturapa_service(self, db_session):
+        from src.services.external.fatturapa_service import FatturaPAService
+
+        service = FatturaPAService(db_session)
+        service.vat_number = "08632861210"
+        service.company_name = "Test Srl"
+        service.company_address = "Via Roma"
+        service.company_civic = ""  # Gap 1: non deve produrre <NumeroCivico />
+        service.company_cap = "20100"
+        service.company_city = "Milano"
+        service.company_province = "MI"
+        service.company_phone = "02123456"
+        service.company_email = "test@example.com"
+        service.company_contact = "Admin"
+        service.company_iban = "IT60X0542811101000000123456"
+        service.company_bank_name = "Banca Test"
+        return service
+
+    def _base_line(self):
+        from src.models.tax import Tax
+        from src.services.external.fatturapa_tax_line import (
+            enrich_line_item_tax_fields,
+            resolve_line_tax,
+        )
+
+        return enrich_line_item_tax_fields(
+            {
+                "product_name": "Prodotto",
+                "product_qty": 1,
+                "product_price": 100.0,
+                "reduction_percent": 0,
+                "reduction_amount": 0,
+                "id_tax": 1,
+            },
+            resolve_line_tax(
+                Tax(percentage=22, electronic_code="", note=""),
+                vies_eligible=False,
+                is_product_line=True,
+            ),
+        )
+
+    def test_italy_cliente_has_provincia_and_no_empty_civico(self, fatturapa_service):
+        order_data = {
+            "invoice_firstname": "Mario",
+            "invoice_lastname": "Rossi",
+            "invoice_company": "Cliente Spa",
+            "customer_fiscal_code": "RSSMRA80A01F205X",
+            "invoice_pec": "",
+            "invoice_sdi": "0000000",
+            "invoice_vat": "IT12345678901",
+            "invoice_address1": "Via Test 1",
+            "invoice_postcode": "20100",
+            "invoice_city": "Milano",
+            "invoice_state": "MI",
+            "country_iso": "IT",
+            "tipo_documento_fe": "TD01",
+            "total_price": 122.0,
+            "total_discounts": 0,
+            "shipping_price_tax_excl": 0,
+            "condizioni_pagamento": "TP02",
+            "fiscal_mode_payment": "MP05",
+            "date_add": "2026-07-01 10:00:00",
+        }
+        xml = fatturapa_service._generate_xml(
+            order_data, [self._base_line()], "00001", include_shipping=False
+        )
+        assert "<NumeroCivico />" not in xml
+        assert "<NumeroCivico></NumeroCivico>" not in xml
+
+        root = ET.fromstring(xml)
+        sedi = list(root.iter("Sede"))
+        assert len(sedi) == 2
+        cedente_sede, cessionario_sede = sedi
+        assert cedente_sede.find("NumeroCivico") is None
+        assert cedente_sede.find("Provincia").text == "MI"
+        assert cessionario_sede.find("Provincia").text == "MI"
+        assert cessionario_sede.find("CAP").text == "20100"
+        assert cessionario_sede.find("Nazione").text == "IT"
+
+    def test_france_cliente_no_provincia_cap_00000_no_empty_civico(
+        self, fatturapa_service
+    ):
+        """Regressione IT08632861210_000020.xml (L'Oreal / Francia)."""
+        order_data = {
+            "invoice_firstname": "",
+            "invoice_lastname": "",
+            "invoice_company": "L Oreal",
+            "customer_fiscal_code": "",
+            "invoice_pec": "",
+            "invoice_sdi": "",
+            "invoice_vat": "FR12345678901",
+            "invoice_address1": "41 Rue Martre",
+            "invoice_postcode": "75002",
+            "invoice_city": "Clichy",
+            "invoice_state": "Paris",
+            "country_iso": "FR",
+            "tipo_documento_fe": "TD01",
+            "total_price": 122.0,
+            "total_discounts": 0,
+            "shipping_price_tax_excl": 0,
+            "vies_status": "eligible",
+            "condizioni_pagamento": "TP02",
+            "fiscal_mode_payment": "MP05",
+            "date_add": "2026-07-01 10:00:00",
+        }
+        xml = fatturapa_service._generate_xml(
+            order_data, [self._base_line()], "00020", include_shipping=False
+        )
+        assert "<NumeroCivico />" not in xml
+        assert "<NumeroCivico></NumeroCivico>" not in xml
+
+        root = ET.fromstring(xml)
+        sedi = list(root.iter("Sede"))
+        assert len(sedi) == 2
+        cedente_sede, cessionario_sede = sedi
+
+        assert cedente_sede.find("NumeroCivico") is None
+        assert cedente_sede.find("Nazione").text == "IT"
+        assert cedente_sede.find("Provincia").text == "MI"
+
+        assert cessionario_sede.find("Provincia") is None
+        assert cessionario_sede.find("CAP").text == "00000"
+        assert cessionario_sede.find("Nazione").text == "FR"
+        assert "75002" in (cessionario_sede.find("Indirizzo").text or "")
+
+
+class TestGenerateXmlCedenteAndDocumentDate:
+    """CF cedente = azienda; Data = document_date fiscale."""
+
+    @pytest.fixture
+    def fatturapa_service(self, db_session):
+        from src.services.external.fatturapa_service import FatturaPAService
+
+        service = FatturaPAService(db_session)
+        service.vat_number = "08632861210"
+        service.company_fiscal_code = "08632861210"
+        service.company_name = "Test Srl"
+        service.company_address = "Via Roma"
+        service.company_civic = "1"
+        service.company_cap = "20100"
+        service.company_city = "Milano"
+        service.company_province = "MI"
+        service.company_phone = "02123456"
+        service.company_email = "test@example.com"
+        service.company_contact = "Admin"
+        service.company_iban = "IT60X0542811101000000123456"
+        service.company_bank_name = "Banca Test"
+        return service
+
+    def _base_line(self):
+        return enrich_line_item_tax_fields(
+            {
+                "product_name": "Prodotto",
+                "product_qty": 1,
+                "product_price": 100.0,
+                "reduction_percent": 0,
+                "reduction_amount": 0,
+                "id_tax": 1,
+            },
+            resolve_line_tax(
+                Tax(percentage=22, electronic_code="", note=""),
+                vies_eligible=False,
+                is_product_line=True,
+            ),
+        )
+
+    def test_cedente_cf_is_company_not_customer(self, fatturapa_service):
+        customer_cf = "RSSMRA80A01F205X"
+        order_data = {
+            "invoice_firstname": "Mario",
+            "invoice_lastname": "Rossi",
+            "invoice_company": "",
+            "customer_fiscal_code": customer_cf,
+            "invoice_pec": "",
+            "invoice_sdi": "0000000",
+            "invoice_vat": "",
+            "invoice_address1": "Via Test 1",
+            "invoice_postcode": "20100",
+            "invoice_city": "Milano",
+            "invoice_state": "MI",
+            "country_iso": "IT",
+            "tipo_documento_fe": "TD01",
+            "total_price": 122.0,
+            "total_discounts": 0,
+            "shipping_price_tax_excl": 0,
+            "document_date": "2026-07-10",
+            "condizioni_pagamento": "TP02",
+            "fiscal_mode_payment": "MP05",
+            "date_add": "2026-07-01 10:00:00",
+        }
+        xml = fatturapa_service._generate_xml(
+            order_data, [self._base_line()], "00001", include_shipping=False
+        )
+        root = ET.fromstring(xml)
+        cedente = next(root.iter("CedentePrestatore"))
+        cessionario = next(root.iter("CessionarioCommittente"))
+        cedente_cf = cedente.find("DatiAnagrafici/CodiceFiscale")
+        cessionario_cf = cessionario.find("DatiAnagrafici/CodiceFiscale")
+        assert cedente_cf is not None
+        assert cedente_cf.text == "08632861210"
+        assert cedente_cf.text != customer_cf
+        assert cessionario_cf is not None
+        assert cessionario_cf.text == customer_cf
+
+        data_el = next(root.iter("Data"))
+        assert data_el.text == "2026-07-10"
+
+
+class TestGenerateXmlDatiFattureCollegateTd04:
+    """BE-PA-P0-06: TD04 deve riferire la fattura originale."""
+
+    @pytest.fixture
+    def fatturapa_service(self, db_session):
+        from src.services.external.fatturapa_service import FatturaPAService
+
+        service = FatturaPAService(db_session)
+        service.vat_number = "08632861210"
+        service.company_fiscal_code = "08632861210"
+        service.company_name = "Test Srl"
+        service.company_address = "Via Roma"
+        service.company_civic = "1"
+        service.company_cap = "20100"
+        service.company_city = "Milano"
+        service.company_province = "MI"
+        service.company_phone = "02123456"
+        service.company_email = "test@example.com"
+        service.company_contact = "Admin"
+        service.company_iban = "IT60X0542811101000000123456"
+        service.company_bank_name = "Banca Test"
+        return service
+
+    def _base_line(self):
+        return enrich_line_item_tax_fields(
+            {
+                "product_name": "Prodotto",
+                "product_qty": 1,
+                "product_price": 100.0,
+                "reduction_percent": 0,
+                "reduction_amount": 0,
+                "id_tax": 1,
+            },
+            resolve_line_tax(
+                Tax(percentage=22, electronic_code="", note=""),
+                vies_eligible=False,
+                is_product_line=True,
+            ),
+        )
+
+    def _order_data_td04(self, **overrides):
+        data = {
+            "invoice_firstname": "Mario",
+            "invoice_lastname": "Rossi",
+            "invoice_company": "",
+            "customer_fiscal_code": "RSSMRA80A01F205X",
+            "invoice_pec": "",
+            "invoice_sdi": "0000000",
+            "invoice_vat": "",
+            "invoice_address1": "Via Test 1",
+            "invoice_postcode": "20100",
+            "invoice_city": "Milano",
+            "invoice_state": "MI",
+            "country_iso": "IT",
+            "tipo_documento_fe": "TD04",
+            "total_price": 122.0,
+            "total_discounts": 0,
+            "shipping_price_tax_excl": 0,
+            "document_date": "2026-07-15",
+            "linked_invoice_number": "00020",
+            "linked_invoice_date": "2026-07-10",
+            "id_fiscal_document_ref": 99,
+            "condizioni_pagamento": "TP02",
+            "fiscal_mode_payment": "MP05",
+            "date_add": "2026-07-01 10:00:00",
+        }
+        data.update(overrides)
+        return data
+
+    def test_td04_emits_dati_fatture_collegate(self, fatturapa_service):
+        xml = fatturapa_service._generate_xml(
+            self._order_data_td04(),
+            [self._base_line()],
+            "00021",
+            include_shipping=False,
+        )
+        root = ET.fromstring(xml)
+        assert next(root.iter("TipoDocumento")).text == "TD04"
+        collegate = next(root.iter("DatiFattureCollegate"))
+        assert collegate.find("IdDocumento").text == "20"
+        assert collegate.find("Data").text == "2026-07-10"
+
+    def test_td04_without_linked_invoice_raises(self, fatturapa_service):
+        with pytest.raises(ValueError, match="fattura di riferimento"):
+            fatturapa_service._generate_xml(
+                self._order_data_td04(
+                    linked_invoice_number=None, linked_invoice_date=None
+                ),
+                [self._base_line()],
+                "00021",
+                include_shipping=False,
+            )
+
+    def test_td01_does_not_emit_dati_fatture_collegate(self, fatturapa_service):
+        order = self._order_data_td04(tipo_documento_fe="TD01")
+        order.pop("linked_invoice_number", None)
+        order.pop("linked_invoice_date", None)
+        xml = fatturapa_service._generate_xml(
+            order, [self._base_line()], "00020", include_shipping=False
+        )
+        root = ET.fromstring(xml)
+        assert list(root.iter("DatiFattureCollegate")) == []

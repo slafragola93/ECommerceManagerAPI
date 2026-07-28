@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from datetime import datetime
 
@@ -67,6 +68,27 @@ class TestFiscalDocumentExportService:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             names = sorted(archive.namelist())
             assert names == ["IT01234567890_00001.xml", "IT01234567890_00002.xml"]
+
+    def test_build_xml_zip_includes_scarti_report_when_partial(self):
+        def fake_loader(invoice_id: int) -> tuple[bytes, str]:
+            return b"<xml/>", f"IT01234567890_{invoice_id:05d}.xml"
+
+        report = {
+            "partial": True,
+            "exported_count": 1,
+            "failed_count": 2,
+            "failed": [{"id_fiscal_document": 70, "message": "P.IVA non valida"}],
+        }
+        content = self.service.build_xml_zip(
+            [1], fake_loader, scarti_report=report
+        )
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = set(archive.namelist())
+            assert "IT01234567890_00001.xml" in names
+            assert "export-scarti.json" in names
+            payload = json.loads(archive.read("export-scarti.json").decode("utf-8"))
+            assert payload["partial"] is True
+            assert payload["failed_count"] == 2
 
 
 class TestInvoiceExportFiltersSchema:

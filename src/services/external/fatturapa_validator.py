@@ -7,12 +7,51 @@ import logging
 
 from src.services.core.tool import valida_piva
 from src.services.external.fatturapa_customer_address import (
+    FOREIGN_CAP_PLACEHOLDER,
+    build_sede_fields,
     normalize_customer_vat,
     resolve_codice_destinatario,
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_document_date_for_validation(order_data: Dict[str, Any]) -> str:
+    """Data documento per validazione: allineata a resolve_document_date del generator."""
+    raw = order_data.get("document_date") or order_data.get("fiscal_document_date")
+    if raw:
+        if isinstance(raw, datetime):
+            return raw.date().strftime("%Y-%m-%d")
+        if isinstance(raw, date) and not isinstance(raw, datetime):
+            return raw.strftime("%Y-%m-%d")
+        if isinstance(raw, str) and len(raw) >= 10:
+            return raw[:10]
+    return date.today().strftime("%Y-%m-%d")
+
+
+def _build_dati_fatture_collegate(order_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Blocco DatiFattureCollegate per TD04 (None se assente / non NC)."""
+    if (order_data.get("tipo_documento_fe") or "").upper() != "TD04":
+        return None
+    linked_number = order_data.get("linked_invoice_number")
+    if not linked_number:
+        return None
+    raw = str(linked_number).strip()
+    id_documento = str(int(raw)) if raw.isdigit() else raw
+    linked_date = order_data.get("linked_invoice_date")
+    data_str = None
+    if linked_date:
+        if isinstance(linked_date, datetime):
+            data_str = linked_date.date().strftime("%Y-%m-%d")
+        elif isinstance(linked_date, date):
+            data_str = linked_date.strftime("%Y-%m-%d")
+        elif isinstance(linked_date, str) and len(linked_date) >= 10:
+            data_str = linked_date[:10]
+    block: Dict[str, Any] = {"IdDocumento": id_documento}
+    if data_str:
+        block["Data"] = data_str
+    return block
 
 
 class FatturaPAValidator:
@@ -277,7 +316,7 @@ class FatturaPAValidator:
     
     def _validate_cap_internazionale(self, value: str, country_code: str = 'IT') -> Tuple[bool, Optional[str]]:
         """
-        Valida CAP italiano o estero
+        Valida CAP italiano o estero (FAQ AdE: estero = 00000).
         
         Args:
             value: CAP da validare
@@ -291,12 +330,13 @@ class FatturaPAValidator:
         
         if country_code == 'IT':
             return self._validate_cap_italiano(value)
-        
-        # Per paesi esteri, validazione base (lunghezza variabile)
-        cap_clean = value.strip()
-        if len(cap_clean) < 3 or len(cap_clean) > 10:
-            return False, f"CAP deve essere tra 3 e 10 caratteri (ricevuto: {len(cap_clean)})"
-        
+
+        # Prassi AdE / FatturaPA: CAP generico per Nazione != IT
+        if value.strip() != FOREIGN_CAP_PLACEHOLDER:
+            return False, (
+                f"CAP per nazione estera deve essere '{FOREIGN_CAP_PLACEHOLDER}' "
+                f"(FAQ AdE; ricevuto: '{value}')"
+            )
         return True, None
     
     def _validate_provincia_italiana(self, value: str) -> Tuple[bool, Optional[str]]:
@@ -321,30 +361,20 @@ class FatturaPAValidator:
     
     def _validate_provincia_internazionale(self, value: str, country_code: str = 'IT') -> Tuple[bool, Optional[str]]:
         """
-        Valida provincia (2 caratteri se Italia, opzionale se estero)
-        
-        Args:
-            value: Provincia da validare
-            country_code: Codice paese (2 caratteri ISO)
-            
-        Returns:
-            (is_valid, error_message)
+        Valida provincia: obbligatoria 2 char se Italia; vietata se estero (pattern XSD [A-Z]{2}).
         """
+        if country_code != 'IT':
+            if value and str(value).strip():
+                return False, (
+                    "Provincia non deve essere valorizzata quando Nazione != IT "
+                    "(schema FatturaPA: solo sigle provinciali italiane)"
+                )
+            return True, None
+
         if not value:
-            if country_code == 'IT':
-                return False, "Provincia obbligatoria per nazione Italia"
-            return True, None  # Opzionale per paesi esteri
-        
-        if country_code == 'IT':
-            return self._validate_provincia_italiana(value)
-        
-        # Per paesi esteri, validazione base (lunghezza variabile)
-        provincia_clean = value.strip()
-        if len(provincia_clean) < 2 or len(provincia_clean) > 10:
-            return False, f"Provincia deve essere tra 2 e 10 caratteri (ricevuto: {len(provincia_clean)})"
-        
-        return True, None
-    
+            return False, "Provincia obbligatoria per nazione Italia"
+
+        return self._validate_provincia_italiana(value)    
     def _validate_codice_destinatario(self, value: str, formato_trasmissione: str = 'FPR12') -> Tuple[bool, Optional[str]]:
         """
         Valida Codice Destinatario (6 o 7 caratteri o XXXXXXX)
@@ -1301,19 +1331,27 @@ class FatturaPAValidator:
         field_prefix: str,
         errors: List[Dict[str, Any]]
     ) -> None:
-        """Controlla che Provincia sia obbligatoria se Nazione = IT"""
-        if nazione == 'IT' and not provincia:
+        """Provincia obbligatoria se Nazione=IT; vietata se Nazione!=IT."""
+        nazione_norm = (nazione or 'IT').upper()
+        if nazione_norm == 'IT' and not provincia:
             errors.append({
                 "field": f"{field_prefix}/Sede/Provincia",
                 "message": "Provincia è obbligatoria quando Nazione = IT",
                 "rule": "provincia_italia",
                 "value": None
             })
-        elif nazione == 'IT' and provincia and len(provincia) != 2:
+        elif nazione_norm == 'IT' and provincia and len(provincia) != 2:
             errors.append({
                 "field": f"{field_prefix}/Sede/Provincia",
                 "message": "Provincia deve essere esattamente 2 caratteri quando Nazione = IT",
                 "rule": "provincia_italia",
+                "value": provincia
+            })
+        elif nazione_norm != 'IT' and provincia and str(provincia).strip():
+            errors.append({
+                "field": f"{field_prefix}/Sede/Provincia",
+                "message": "Provincia non deve essere valorizzata quando Nazione != IT",
+                "rule": "provincia_estera_vietata",
                 "value": provincia
             })
     
@@ -1334,6 +1372,31 @@ class FatturaPAValidator:
                     "rule": "cap_italia",
                     "value": cap
                 })
+
+    def _check_dati_fatture_collegate_td04(
+        self,
+        order_data: Dict[str, Any],
+        xml_data: Dict[str, Any],
+        errors: List[Dict[str, Any]],
+    ) -> None:
+        """TD04 richiede DatiFattureCollegate con IdDocumento della fattura originale."""
+        tipo = (order_data.get("tipo_documento_fe") or "").upper()
+        if tipo != "TD04":
+            return
+        block = xml_data.get("DatiFattureCollegate")
+        id_documento = None
+        if isinstance(block, dict):
+            id_documento = block.get("IdDocumento")
+        if not id_documento:
+            errors.append({
+                "field": "DatiFattureCollegate/IdDocumento",
+                "message": (
+                    "Nota di credito TD04 richiede riferimento alla fattura originale "
+                    "(DatiFattureCollegate/IdDocumento)"
+                ),
+                "rule": "dati_fatture_collegate_td04",
+                "value": order_data.get("id_fiscal_document_ref"),
+            })
     
     def _check_natura_zero_iva(
         self, 
@@ -1500,6 +1563,46 @@ class FatturaPAValidator:
             xml_line_items.append(xml_item)
         
         return xml_line_items
+
+    @staticmethod
+    def _sede_dict_for_validation(
+        *,
+        indirizzo: str,
+        nazione: str,
+        comune: str,
+        cap: str = "",
+        numero_civico: str = "",
+        provincia: str = "",
+    ) -> Dict[str, Any]:
+        """Normalizza Sede (CAP/Provincia/NumeroCivico) prima della validazione."""
+        country = (nazione or "IT").upper()
+        try:
+            fields = build_sede_fields(
+                indirizzo=indirizzo,
+                nazione=country,
+                comune=comune,
+                cap=cap,
+                numero_civico=numero_civico,
+                provincia=provincia,
+            )
+            return {
+                "Indirizzo": fields.get("Indirizzo", ""),
+                "NumeroCivico": fields.get("NumeroCivico") or "",
+                "CAP": fields.get("CAP", ""),
+                "Comune": fields.get("Comune", ""),
+                "Provincia": fields.get("Provincia") or "",
+                "Nazione": fields.get("Nazione", "IT"),
+            }
+        except ValueError:
+            # Struttura grezza: le regole VALIDATION_RULES segnalano l'errore
+            return {
+                "Indirizzo": (indirizzo or "").replace(",", "").replace(";", "").strip()[:60],
+                "NumeroCivico": (numero_civico or "").strip()[:8],
+                "CAP": FOREIGN_CAP_PLACEHOLDER if country != "IT" else (cap or "").strip(),
+                "Comune": (comune or "").strip()[:60],
+                "Provincia": "" if country != "IT" else (provincia or "").strip(),
+                "Nazione": country,
+            }
     
     # ==================== METODO PRINCIPALE DI VALIDAZIONE ====================
     
@@ -1561,14 +1664,14 @@ class FatturaPAValidator:
                     },
                     'RegimeFiscale': company_data.get('tax_regime', 'RF01')
                 },
-                'Sede': {
-                    'Indirizzo': company_data.get('address', ''),
-                    'NumeroCivico': company_data.get('civic_number', ''),
-                    'CAP': company_data.get('postal_code', ''),
-                    'Comune': company_data.get('city', ''),
-                    'Provincia': company_data.get('province', ''),
-                    'Nazione': 'IT'
-                },
+                'Sede': self._sede_dict_for_validation(
+                    indirizzo=company_data.get('address', ''),
+                    nazione='IT',
+                    comune=company_data.get('city', ''),
+                    cap=company_data.get('postal_code', ''),
+                    numero_civico=company_data.get('civic_number', ''),
+                    provincia=company_data.get('province', ''),
+                ),
                 'Contatti': {
                     'Telefono': company_data.get('phone', ''),
                     'Email': company_data.get('email', ''),
@@ -1591,23 +1694,24 @@ class FatturaPAValidator:
                         'Cognome': customer_name.split(' ', 1)[1] if customer_name and len(customer_name.split(' ', 1)) > 1 and not customer_company else None
                     }
                 },
-                'Sede': {
-                    'Indirizzo': order_data.get('invoice_address1', ''),
-                    'NumeroCivico': order_data.get('invoice_address2', ''),
-                    'CAP': order_data.get('invoice_postcode', ''),
-                    'Comune': order_data.get('invoice_city', ''),
-                    'Provincia': order_data.get('invoice_state', ''),
-                    'Nazione': country_iso
-                }
+                'Sede': self._sede_dict_for_validation(
+                    indirizzo=order_data.get('invoice_address1', ''),
+                    nazione=country_iso,
+                    comune=order_data.get('invoice_city', ''),
+                    cap=order_data.get('invoice_postcode', ''),
+                    numero_civico=order_data.get('invoice_address2', ''),
+                    provincia=order_data.get('invoice_state', ''),
+                )
             },
             
             # Dati Generali Documento
             'DatiGeneraliDocumento': {
                 'TipoDocumento': order_data.get('tipo_documento_fe', 'TD01'),
                 'Divisa': 'EUR',
-                'Data': date.today().strftime('%Y-%m-%d'),
+                'Data': _resolve_document_date_for_validation(order_data),
                 'Numero': order_data.get('document_number', '')
             },
+            'DatiFattureCollegate': _build_dati_fatture_collegate(order_data),
             
             # Dettaglio Linee (converti formato)
             'DettaglioLinee': self._convert_line_items_to_xml_format(line_items),
@@ -1783,6 +1887,8 @@ class FatturaPAValidator:
         data_scadenza = self._get_field_value(xml_data, 'DatiPagamento/DettaglioPagamento/DataScadenzaPagamento')
         if data_documento and data_scadenza:
             self._check_scadenza_coerenza(data_documento, data_scadenza, errors)
+
+        self._check_dati_fatture_collegate_td04(order_data, xml_data, errors)
         
         # CORREZIONE 3: Deduplica errori per (field + value + ruleCategory)
         # #region agent log

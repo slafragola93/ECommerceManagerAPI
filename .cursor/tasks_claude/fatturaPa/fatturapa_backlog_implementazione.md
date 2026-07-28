@@ -20,7 +20,7 @@ Documento operativo: cosa **sviluppare ancora**, partendo da ciò che esiste gi�
 | 2026-06–07 | VIES su **ordini** | ✅ Completato | `apply-vies-exemption`, bulk, filtro `vies_status`, ricalcolo righe/spedizione |
 | 2026-06–07 | VIES → **XML FatturaPA N3.2** | ✅ Completato | BE-PA-P0-05 — `fatturapa_tax_line.py`, riepilogo multi-aliquota |
 | 2026-07-16 | Fattura GET/POST v3 | ✅ Completato | `InvoiceResponseSchema` arricchito, test mapper, prompt FE v3 |
-| — | `send_to_sdi`, XSD, webhook SDI, `DatiFattureCollegate` | ❌ Invariato | Restano P0 aperti |
+| — | `send_to_sdi`, webhook SDI | ❌ Parziale / aperto | P0-01, P0-03; **XSD e DatiFattureCollegate completati** |
 
 ---
 
@@ -129,19 +129,20 @@ Il router propaga `send_to_sdi` a `upload_stop(name, send_to_sdi=...)` e imposta
 
 ### BE-PA-P0-02 — Validazione XSD ufficiale pre-invio
 
-**Stato:** ❌ Assente (esiste solo validazione business custom)  
+**Stato:** ✅ Completato (2026-07-27)  
 **Scope:** Backend  
-**File nuovo/modificati:** `src/services/external/fatturapa_xsd_validator.py`, `fatturapa_service.py`, cartella schemi XSD
+**File:** `src/services/external/fatturapa_xsd_validator.py`, `fatturapa_service.py`, `resources/fatturapa/xsd/`
 
 **Task:**
-- Scaricare XSD ufficiale v1.2 da [fatturapa.gov.it](https://www.fatturapa.gov.it/it/norme-e-regole/documentazione-fattura-elettronica/formato-fatturapa/).
-- Aggiungere dipendenza `lxml` (se non presente) e validare XML generato prima di salvare/inviare.
-- Integrare in `generate_xml_from_fiscal_document()` dopo generazione e prima del persist.
-- Restituire errori XSD strutturati (come già fatto per `FatturaPAValidator`).
+- [x] XSD ufficiale v1.2 vendored (+ `xmldsig` locale; `NaturaType` esteso post-2021)
+- [x] Dipendenza `lxml`
+- [x] Validazione dopo `_generate_xml` in `generate_xml_from_fiscal_document()`
+- [x] Errori strutturati `{field, message, rule, value}` → stesso percorso `validation_error` / HTTP 422
 
 **Acceptance criteria:**
-- XML non conforme → HTTP 422 con dettaglio righe XSD.
-- XML conforme → passa a upload.
+- [x] XML non conforme → `status=validation_error` con dettaglio XSD
+- [x] XML conforme (TD01 IT, TD04, VIES N3.2) → success
+- [x] Test: `tests/unit/services/external/test_fatturapa_xsd_validator.py`
 
 ---
 
@@ -206,16 +207,18 @@ Il router propaga `send_to_sdi` a `upload_stop(name, send_to_sdi=...)` e imposta
 
 ### BE-PA-P0-06 — `DatiFattureCollegate` per note di credito TD04
 
-**Stato:** ❌ Assente  
+**Stato:** ✅ Completato (2026-07-27)  
 **Scope:** Backend  
-**File:** `fatturapa_service.py` (`_generate_xml`)
+**File:** `fatturapa_service.py` (`_generate_xml`, `_prepare_order_data_from_fiscal_document`), `fatturapa_validator.py`
 
 **Task:**
 - Per `tipo_documento_fe=TD04`, aggiungere blocco `DatiGenerali/DatiFattureCollegate` con riferimento alla fattura originale (`id_fiscal_document_ref` → numero/data fattura collegata).
 - Validare presenza fattura di riferimento in `FatturaPAValidator`.
 
 **Acceptance criteria:**
-- NC elettronica contiene riferimento obbligatorio alla fattura TD01 originale.
+- [x] NC elettronica contiene riferimento obbligatorio alla fattura TD01 originale (`IdDocumento` + `Data`).
+- [x] Validatore rifiuta TD04 senza `linked_invoice_number`.
+- [x] Test: `test_fatturapa_tax_line.py`, `test_fatturapa_dati_fatture_collegate.py`
 
 ---
 
