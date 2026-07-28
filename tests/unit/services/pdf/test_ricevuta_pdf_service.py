@@ -1,6 +1,7 @@
 """Unit test generazione PDF ricevuta — layout elettronew."""
 from datetime import date, datetime
 from decimal import Decimal
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,13 @@ from src.services.pdf.ricevuta_pdf_layout import (
     _vat_display,
 )
 from src.services.pdf.ricevuta_pdf_service import RicevutaPDFService
+
+
+def _pdf_text(pdf_bytes: bytes) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(BytesIO(pdf_bytes))
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 def _address(**kwargs):
@@ -58,6 +66,8 @@ def _minimal_context():
                 "unit_price": 349.98,
                 "total_price_net": 349.98,
                 "reduction_percent": 0.0,
+                "reduction_amount": 0.0,
+                "line_discount": 0.0,
                 "vat_rate": 20.0,
                 "tax_code": "20FR",
             }
@@ -67,6 +77,7 @@ def _minimal_context():
             "shipping_incl": 0.0,
             "total_vat": 70.0,
             "total_gross": 419.98,
+            "total_discount": 0.0,
         },
         "locale_iso": "FR",
     }
@@ -77,6 +88,8 @@ class TestRicevutaPDFLayout:
         labels = _labels_for_country("FR")
         assert labels["billing"] == "En-t\u00eate"
         assert labels["headers"][2] == "Prix"
+        assert labels["headers"][4] == "R\u00e9d."
+        assert labels["discount"] == "Remise"
 
     def test_vat_display_prefers_tax_code(self):
         assert _vat_display(20.0, "20FR", "FR") == "20FR"
@@ -99,6 +112,36 @@ class TestRicevutaPDFLayout:
         out = pdf.output()
         assert out[:4] == b"%PDF"
 
+    def test_discount_amount_shows_cifra_and_totals_sconto(self):
+        pdf = RicevutaPDFLayout.create_pdf()
+        ctx = _minimal_context()
+        ctx["details"] = [
+            {
+                "product_reference": "FHA50Z",
+                "product_name": "Climatizzatore Daikin",
+                "product_qty": 1,
+                "unit_price": 2565.57,
+                "total_price_net": 2065.57,
+                "reduction_percent": 0.0,
+                "reduction_amount": 500.0,
+                "line_discount": 500.0,
+                "vat_rate": 20.0,
+                "tax_code": "20FR",
+            }
+        ]
+        ctx["totals"] = {
+            "merchandise_net": 2065.57,
+            "shipping_incl": 0.0,
+            "total_vat": 413.11,
+            "total_gross": 2478.68,
+            "total_discount": 500.0,
+        }
+        RicevutaPDFLayout.render(pdf, **ctx)
+        text = _pdf_text(pdf.output())
+        assert "500,00" in text
+        assert "19,49" not in text
+        assert "Remise" in text or "Sconto" in text
+
 
 class TestRicevutaPDFService:
     def test_compute_totals_from_order(self):
@@ -114,6 +157,27 @@ class TestRicevutaPDFService:
         assert totals["merchandise_net"] == pytest.approx(349.98)
         assert totals["total_vat"] == pytest.approx(70.0)
         assert totals["total_gross"] == pytest.approx(419.98)
+        assert totals["total_discount"] == pytest.approx(0.0)
+
+    def test_compute_totals_includes_line_discount_amount(self):
+        order = SimpleNamespace(
+            products_total_price_net=Decimal("2065.57"),
+            products_total_price_with_tax=Decimal("2478.68"),
+            total_price_net=Decimal("2065.57"),
+            total_price_with_tax=Decimal("2478.68"),
+            shipments=None,
+        )
+        details = [
+            {
+                "product_qty": 1,
+                "unit_price": 2565.57,
+                "total_price_net": 2065.57,
+                "reduction_percent": 0.0,
+                "reduction_amount": 500.0,
+            }
+        ]
+        totals = RicevutaPDFService._compute_totals(order, details)
+        assert totals["total_discount"] == pytest.approx(500.0)
 
     def test_compute_totals_includes_shipping(self):
         order = SimpleNamespace(

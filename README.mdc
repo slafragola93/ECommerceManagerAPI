@@ -10,23 +10,22 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
-## Ultime modifiche (2026-07-28) — PDF: sconto allineato (fattura/NC, ordine, preventivo)
+## Ultime modifiche (2026-07-28) — PDF reso + sconto allineato su tutti i documenti
 
-**Problema:** con sconto a importo (`reduction_amount`) i totali erano già scontati ma la colonna sconto restava `0,00 %` (o assente) e nei totali mancava **Sconto**.
+**PDF reso (nuovo):** `GET /api/v1/orders/returns/{id_fiscal_document}/pdf`  
+Layout elettronew titolo **RESO**, permesso `returns:read`. Colonna **Sc.** (% o cifra) e totali con **Sconto**. Supporta reso solo-spedizione (riga sintetica).
 
-**Regola unica** (`src/services/pdf/discount_display.py`):
-- colonna **Sc.**: se `%` → `12,00 %`; se importo → cifra `500,00`
-- totali: riga **Sconto** negativa (es. `-500,00`), informativa
+| File | Ruolo |
+|------|--------|
+| `reso_pdf_service.py` / `reso_pdf_layout.py` | generazione PDF |
+| `order.py` | endpoint download |
 
-| Documento | File |
-|-----------|------|
-| Fattura / Nota di credito | `fiscal_document_pdf_*` + `invoice_pdf_labels.py` |
-| Ordine | `order_pdf_service.py` |
-| Preventivo | `preventivo_pdf_service.py` (nuova colonna Sc.) |
+**Regola sconto condivisa** (`discount_display.py`) su fattura/NC, ordine, preventivo, ricevuta, reso:
+- colonna **Sc.**: `%` → `12,00 %`; importo → `500,00`
+- totali: **Sconto** negativa (es. `-500,00`)
 
-**Test:**
 ```powershell
-pytest tests/unit/services/pdf/test_discount_display.py tests/unit/services/pdf/test_fiscal_document_pdf_layout.py tests/unit/services/pdf/test_order_pdf_service.py tests/unit/services/pdf/test_preventivo_pdf_service.py -v
+pytest tests/unit/services/pdf/test_discount_display.py tests/unit/services/pdf/test_fiscal_document_pdf_layout.py tests/unit/services/pdf/test_order_pdf_service.py tests/unit/services/pdf/test_preventivo_pdf_service.py tests/unit/services/pdf/test_ricevuta_pdf_service.py tests/unit/services/pdf/test_reso_pdf_service.py -v
 ```
 
 ---
@@ -335,12 +334,15 @@ pytest tests/unit/repository/test_fiscal_document_create_credit_note.py -v
 
 **GET dettaglio reso** (`/api/v1/orders/returns/get-return-by-id/{id}`): se `includes_shipping=true`, in `details[]` compare una riga sintetica con `is_shipping: true`, `id_order_detail: 0`, `product_name: "Spedizione"`, `product_reference: "SHIPPING"`.
 
+**GET PDF reso** (`/api/v1/orders/returns/{id}/pdf`): stampa layout elettronew (RESO), permesso `returns:read`. Vedi sezione «PDF reso» nelle ultime modifiche 2026-07-28.
+
 | Area | Path |
 |------|------|
 | Schema | `src/schemas/return_schema.py` |
 | Service | `src/services/routers/fiscal_document_service.py` |
 | Repository | `src/repository/fiscal_document_repository.py` |
 | Router | `src/routers/order.py` |
+| PDF | `src/services/pdf/reso_pdf_service.py`, `reso_pdf_layout.py` |
 
 ```powershell
 pytest tests/unit/services/test_fiscal_document_create_return.py tests/integration/api/v1/test_order_returns.py -v
@@ -698,7 +700,7 @@ Permessi write: `fiscal_documents:create|update|delete`.
 
 **Migration:** modello `src/models/ricevuta.py`, script `scripts/migrations/create_ricevute_table.py` e `alter_ricevute_data_emissione_datetime.py`. Numerazione annuale `(numero, anno)` con `UNIQUE` e `get_next_numero()` (`SELECT FOR UPDATE`). Lista ordinata per `data_emissione` DESC (con ora), poi `numero` DESC.
 
-**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {gg/mm/aaaa hh:mm}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra (merce, spedizione, IVA, totale — senza voce spese incasso). Non include note ordine (solo uso interno app). Non riusa più il layout fattura SDI.
+**PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {gg/mm/aaaa hh:mm}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/`Sc.` …), riferimento ordine, totali a destra (merce, **Sconto**/**Remise**, spedizione, IVA, totale — senza voce spese incasso). Colonna `Sc.`: `%` o cifra importo come fattura/ordine. Non include note ordine (solo uso interno app). Non riusa più il layout fattura SDI.
 
 **PDF fattura/nota di credito:** layout elettronew (`src/services/pdf/fiscal_document_pdf_layout.py`) allineato ai campioni cartacei — logo + anagrafica (IBAN/BIC), titolo `FATTURA`/`FACTURE`/…, Intestazione/consegna, tabella Impon./IVA/`Sc.`, riepilogo aliquote, totali (inclusa voce **Sconto** se presente), pagamento, firme, NOTE precompilate. Colonna `Sc.`: `%` se `reduction_percent`, cifra se `reduction_amount` (o differenza Impon.×qty − Totale). Lingue etichette: **IT, FR, DE, ES, EN** (da paese indirizzo fattura). Dicitura NOTE da `app_configurations` categoria `invoice_pdf` (non usa `order.general_note`). Data documento `gg/mm/aaaa`; XML FatturaPA resta con sola data (requisito SDI).
 

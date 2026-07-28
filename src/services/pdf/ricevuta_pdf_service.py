@@ -14,6 +14,7 @@ from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.services.media.media_utils import get_store_logo_path
 from src.services.pdf.base_pdf_service import BasePDFService
+from src.services.pdf.discount_display import resolve_line_discount
 from src.services.pdf.ricevuta_pdf_layout import (
     RicevutaPDFLayout,
     _labels_for_country,
@@ -77,6 +78,17 @@ class RicevutaPDFService(BasePDFService):
             line_net = self._as_float(
                 detail.total_price_net, unit_net * qty if unit_net else 0.0
             )
+            reduction_percent = self._as_float(detail.reduction_percent)
+            reduction_amount = self._as_float(
+                getattr(detail, "reduction_amount", None)
+            )
+            line_discount, _ = resolve_line_discount(
+                qty=qty,
+                unit_net=unit_net,
+                line_net=line_net,
+                reduction_percent=reduction_percent,
+                reduction_amount=reduction_amount,
+            )
 
             rows.append(
                 {
@@ -85,7 +97,9 @@ class RicevutaPDFService(BasePDFService):
                     "total_price_net": line_net,
                     "product_name": detail.product_name or "N/A",
                     "product_reference": detail.product_reference or "N/A",
-                    "reduction_percent": self._as_float(detail.reduction_percent),
+                    "reduction_percent": reduction_percent,
+                    "reduction_amount": reduction_amount,
+                    "line_discount": line_discount,
                     "vat_rate": vat_rate,
                     "tax_code": tax_code,
                     "is_shipping": False,
@@ -115,6 +129,8 @@ class RicevutaPDFService(BasePDFService):
                         "product_name": shipping_line["product_name"],
                         "product_reference": shipping_line["product_reference"],
                         "reduction_percent": 0.0,
+                        "reduction_amount": 0.0,
+                        "line_discount": 0.0,
                         "vat_rate": vat_rate,
                         "tax_code": tax_code,
                         "is_shipping": True,
@@ -144,12 +160,32 @@ class RicevutaPDFService(BasePDFService):
             total_net = merchandise_net + shipping_net
         total_vat = max(total_gross - total_net, 0.0)
 
+        total_discount = 0.0
+        for d in details or []:
+            if d.get("is_shipping"):
+                continue
+            line_discount = RicevutaPDFService._as_float(d.get("line_discount"))
+            if line_discount <= 0:
+                line_discount, _ = resolve_line_discount(
+                    qty=RicevutaPDFService._as_float(d.get("product_qty")),
+                    unit_net=RicevutaPDFService._as_float(d.get("unit_price")),
+                    line_net=RicevutaPDFService._as_float(d.get("total_price_net")),
+                    reduction_percent=RicevutaPDFService._as_float(
+                        d.get("reduction_percent")
+                    ),
+                    reduction_amount=RicevutaPDFService._as_float(
+                        d.get("reduction_amount")
+                    ),
+                )
+            total_discount += line_discount
+
         return {
             "merchandise_net": merchandise_net,
             "shipping_incl": shipping_incl,
             "shipping_net": shipping_net,
             "total_vat": total_vat,
             "total_gross": total_gross,
+            "total_discount": total_discount,
         }
 
     def generate_pdf(self, *args, **kwargs) -> bytes:

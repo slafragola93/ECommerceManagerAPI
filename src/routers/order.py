@@ -757,6 +757,51 @@ async def get_return_by_id(
     """Recupera un documento di reso per ID (ReturnResponseSchema con details)."""
     return await fiscal_document_service.get_fiscal_document_by_id(id_fiscal_document)
 
+
+@router.get(
+    "/returns/{id_fiscal_document}/pdf",
+    status_code=status.HTTP_200_OK,
+    summary="Stampa PDF reso",
+    description=(
+        "Genera il PDF di stampa del reso (layout elettronew: Sc. %/importo, "
+        "totali con voce Sconto)."
+    ),
+    response_description="File PDF del reso",
+)
+@check_authentication
+async def download_return_pdf(
+    id_fiscal_document: int = Path(..., gt=0, description="ID del documento di reso"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    _: None = Depends(require_permission("returns", "read")),
+):
+    """Scarica il PDF di riepilogo reso per stampa/archivio."""
+    from src.services.pdf.reso_pdf_service import build_reso_pdf_buffer
+
+    try:
+        pdf_buffer, filename = build_reso_pdf_buffer(db, id_fiscal_document)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Errore generazione PDF reso %s: %s", id_fiscal_document, e, exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Errore durante la generazione del PDF: {str(e)}",
+        )
+
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/pdf",
+        },
+    )
+
+
 @router.put("/returns/{id_fiscal_document}", 
            status_code=status.HTTP_200_OK,
            summary="Aggiorna un reso",

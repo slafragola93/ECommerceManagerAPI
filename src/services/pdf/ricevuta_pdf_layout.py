@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional, Union
 import os
 
 from src.services.ricevute.date_utils import format_emission_datetime
+from src.services.pdf.discount_display import (
+    format_discount_label,
+    resolve_line_discount,
+)
 from src.services.pdf.i18n.locale_resolver import resolve_country_iso
 from src.services.pdf.order_pdf_service import (
     CONTENT_W,
@@ -41,8 +45,9 @@ _LABELS_IT = {
     "delivery": "Indirizzo di consegna",
     "doc_title": "RICEVUTA",
     "order_ref": "ORDINE n\u00b0 {reference} del {date}",
-    "headers": ["Code", "Description", "Prezzo", "IVA", "Sconto", "Quant.", "Totale"],
+    "headers": ["Code", "Description", "Prezzo", "IVA", "Sc.", "Quant.", "Totale"],
     "merchandise": "Totale merce",
+    "discount": "Sconto",
     "shipping": "Spedizione",
     "shipping_line": "Spedizione",
     "total_vat": "Totale IVA",
@@ -54,8 +59,9 @@ _LABELS_FR = {
     "delivery": "Adresse de livraison",
     "doc_title": "RICEVUTA",
     "order_ref": "ORDINE n\u00b0 {reference} del {date}",
-    "headers": ["Code", "Description", "Prix", "TVA", "R\u00e9duction", "Quant.", "Total"],
+    "headers": ["Code", "Description", "Prix", "TVA", "R\u00e9d.", "Quant.", "Total"],
     "merchandise": "Totale merce",
+    "discount": "Remise",
     "shipping": "Spedizione",
     "shipping_line": "Livraison",
     "total_vat": "TVA totale",
@@ -388,6 +394,22 @@ class RicevutaPDFLayout:
             tax_code = detail.get("tax_code")
             vat_label = _vat_display(vat_rate, tax_code, locale_iso)
 
+            line_discount = float(detail.get("line_discount") or 0)
+            if line_discount <= 0:
+                line_discount, _ = resolve_line_discount(
+                    qty=float(qty),
+                    unit_net=unit_net,
+                    line_net=line_net,
+                    reduction_percent=reduction_pct,
+                    reduction_amount=float(detail.get("reduction_amount") or 0),
+                )
+            discount_label = format_discount_label(
+                reduction_percent=reduction_pct,
+                discount_amount=line_discount,
+                fmt_num=_fmt_num,
+                fmt_pct=_fmt_pct,
+            )
+
             code_text = _fit_cell_text(
                 pdf, str(detail.get("product_reference") or ""), _RICEVUTA_ITEM_COLS[0]
             )
@@ -401,7 +423,7 @@ class RicevutaPDFLayout:
                 None,
                 _fit_cell_text(pdf, _fmt_num(unit_net, 2), _RICEVUTA_ITEM_COLS[2]),
                 _fit_cell_text(pdf, vat_label, _RICEVUTA_ITEM_COLS[3]),
-                _fit_cell_text(pdf, _fmt_pct(reduction_pct), _RICEVUTA_ITEM_COLS[4]),
+                _fit_cell_text(pdf, discount_label, _RICEVUTA_ITEM_COLS[4]),
                 _fit_cell_text(pdf, _fmt_qty(qty), _RICEVUTA_ITEM_COLS[5]),
                 _fit_cell_text(pdf, _fmt_num(line_net, 2), _RICEVUTA_ITEM_COLS[6]),
             ]
@@ -452,7 +474,11 @@ class RicevutaPDFLayout:
             pdf.cell(label_w, 5, _safe(label), 0, 0, "L")
             pdf.cell(value_w, 5, _safe(value), 0, 1, "R")
 
+        discount_abs = float(totals.get("total_discount") or 0)
+        discount_value = -discount_abs if discount_abs > 0 else 0.0
+
         row(labels["merchandise"], _fmt_eur(totals["merchandise_net"]))
+        row(labels.get("discount") or "Sconto", _fmt_eur(discount_value))
         row(labels["shipping"], _fmt_eur(totals["shipping_incl"]))
         row(labels["total_vat"], _fmt_eur(totals["total_vat"]))
         pdf.ln(1)
