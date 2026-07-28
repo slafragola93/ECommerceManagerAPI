@@ -104,6 +104,7 @@ def _minimal_context(locale="it", n_details=2, tax_note=None):
             "misc_fee": 0.0,
             "doc_total": merchandise * 1.22 + 37.99,
             "total_weight": 80.546,
+            "total_discount": 0.0,
         },
         "vat_summary": [
             {
@@ -151,6 +152,7 @@ class TestInvoiceLabels:
             "billing",
             "delivery",
             "item_headers",
+            "discount",
             "doc_total",
             "notes_title",
             "page_footer",
@@ -221,6 +223,32 @@ class TestFiscalDocumentPDFLayout:
         assert "NOTA DI CREDITO" in text or "CREDITO" in text
         assert "9000" in text
 
+    def test_discount_amount_shows_cifra_and_totals_sconto(self):
+        """Sconto importo riga: colonna Sc. con cifra (non %) + voce Sconto nei totali."""
+        ctx = _minimal_context("it", n_details=1)
+        ctx["details"] = [
+            {
+                "product_reference": "FHA50Z",
+                "product_name": "Climatizzatore Daikin Stylish",
+                "product_qty": 1,
+                "unit_price_net": 2565.57,
+                "total_price_net": 2065.57,
+                "reduction_percent": 0.0,
+                "reduction_amount": 500.0,
+                "line_discount": 500.0,
+                "vat_rate": 22.0,
+            }
+        ]
+        ctx["totals"]["merchandise_net"] = 2065.57
+        ctx["totals"]["total_discount"] = 500.0
+        ctx["totals"]["taxable_total"] = 2065.57 + 31.14
+        out = FiscalDocumentPDFLayout.render_document(ctx)
+        text = _pdf_text(out)
+        assert "500,00" in text
+        assert "19,49" not in text
+        assert "Sconto" in text
+        assert "-500,00" in text or "−500,00" in text
+
 
 class TestFiscalDocumentPDFService:
     def test_build_notes_default_disclaimer(self):
@@ -246,6 +274,78 @@ class TestFiscalDocumentPDFService:
             details=[{"tax_note": "art. 41"}],
         )
         assert "art. 41" not in text
+
+    def test_resolve_line_discount_from_amount(self):
+        discount, pct = FiscalDocumentPDFService._resolve_line_discount(
+            qty=1,
+            unit_net=2565.57,
+            line_net=2065.57,
+            reduction_percent=0.0,
+            reduction_amount=500.0,
+        )
+        assert discount == pytest.approx(500.0)
+        assert pct == pytest.approx(500.0 / 2565.57 * 100.0)
+
+    def test_resolve_line_discount_from_percent(self):
+        discount, pct = FiscalDocumentPDFService._resolve_line_discount(
+            qty=2,
+            unit_net=100.0,
+            line_net=180.0,
+            reduction_percent=10.0,
+            reduction_amount=0.0,
+        )
+        assert discount == pytest.approx(20.0)
+        assert pct == pytest.approx(10.0)
+
+    def test_resolve_line_discount_derived_from_totals(self):
+        discount, pct = FiscalDocumentPDFService._resolve_line_discount(
+            qty=1,
+            unit_net=2565.57,
+            line_net=2065.57,
+            reduction_percent=0.0,
+            reduction_amount=0.0,
+        )
+        assert discount == pytest.approx(500.0)
+        assert pct == pytest.approx(500.0 / 2565.57 * 100.0)
+
+    def test_compute_totals_includes_line_discount_amount(self):
+        svc = FiscalDocumentPDFService()
+        fiscal = SimpleNamespace(
+            document_type="invoice",
+            products_total_price_net=2065.57,
+            products_total_price_with_tax=2520.0,
+            total_price_net=2091.79,
+            total_price_with_tax=2551.99,
+            includes_shipping=True,
+        )
+        order = SimpleNamespace(
+            products_total_price_net=2065.57,
+            total_price_with_tax=2551.99,
+            total_weight=40.0,
+            shipments=SimpleNamespace(
+                price_tax_excl=26.22,
+                price_tax_incl=31.99,
+                id_tax=None,
+            ),
+        )
+        details = [
+            {
+                "product_qty": 1,
+                "unit_price_net": 2565.57,
+                "total_price_net": 2065.57,
+                "reduction_percent": 0.0,
+                "reduction_amount": 500.0,
+                "vat_rate": 22.0,
+            }
+        ]
+        totals, _ = svc._compute_totals(
+            fiscal_document=fiscal,
+            order=order,
+            details=details,
+            db=None,
+        )
+        assert totals["total_discount"] == pytest.approx(500.0)
+        assert totals["merchandise_net"] == pytest.approx(2065.57)
 
     def test_generate_pdf_end_to_end(self):
         svc = FiscalDocumentPDFService()

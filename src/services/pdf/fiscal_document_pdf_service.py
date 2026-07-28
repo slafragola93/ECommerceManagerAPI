@@ -161,6 +161,15 @@ class FiscalDocumentPDFService(BasePDFService):
             if d.get("total_price_net") is not None:
                 line_net = self._as_float(d.get("total_price_net"), 0)
             vat_rate = self._as_float(d.get("vat_rate"), 0)
+            reduction_percent = self._as_float(d.get("reduction_percent"), 0)
+            reduction_amount = self._as_float(d.get("reduction_amount"), 0)
+            line_discount, _ = self._resolve_line_discount(
+                qty=qty,
+                unit_net=unit_net,
+                line_net=line_net,
+                reduction_percent=reduction_percent,
+                reduction_amount=reduction_amount,
+            )
             details.append(
                 {
                     "product_reference": d.get("product_reference") or "",
@@ -169,9 +178,10 @@ class FiscalDocumentPDFService(BasePDFService):
                     "product_weight": self._as_float(d.get("product_weight"), 0),
                     "unit_price_net": unit_net,
                     "total_price_net": line_net,
-                    "reduction_percent": self._as_float(
-                        d.get("reduction_percent"), 0
-                    ),
+                    # % originale (non convertita da importo): layout mostra % o cifra
+                    "reduction_percent": reduction_percent,
+                    "reduction_amount": reduction_amount,
+                    "line_discount": line_discount,
                     "vat_rate": vat_rate,
                     "vat_display": d.get("vat_display"),
                     "tax_note": (d.get("tax_note") or "").strip() or None,
@@ -369,6 +379,20 @@ class FiscalDocumentPDFService(BasePDFService):
         elif order and getattr(order, "total_weight", None):
             total_weight = self._as_float(order.total_weight)
 
+        # Sconto totale informativo (già incluso in merce netta / totali riga)
+        total_discount = 0.0
+        for d in details:
+            line_discount = self._as_float(d.get("line_discount"), 0)
+            if line_discount <= 0:
+                line_discount, _ = self._resolve_line_discount(
+                    qty=self._as_float(d.get("product_qty"), 0),
+                    unit_net=self._as_float(d.get("unit_price_net"), 0),
+                    line_net=self._as_float(d.get("total_price_net"), 0),
+                    reduction_percent=self._as_float(d.get("reduction_percent"), 0),
+                    reduction_amount=self._as_float(d.get("reduction_amount"), 0),
+                )
+            total_discount += line_discount
+
         totals = {
             "merchandise_net": merchandise_net,
             "shipping_incl": shipping_incl,
@@ -380,8 +404,43 @@ class FiscalDocumentPDFService(BasePDFService):
             "misc_fee": 0.0,
             "doc_total": doc_total,
             "total_weight": total_weight,
+            "total_discount": total_discount,
         }
         return totals, vat_summary
+
+    @classmethod
+    def _resolve_line_discount(
+        cls,
+        *,
+        qty: float,
+        unit_net: float,
+        line_net: float,
+        reduction_percent: float,
+        reduction_amount: float,
+    ) -> tuple[float, float]:
+        """
+        Calcola importo sconto riga e % da mostrare in Sc.(%).
+
+        Priorità allineata a snapshot/FatturaPA: % > importo > differenza
+        imponibile unitario×qty − totale riga.
+        """
+        line_base = unit_net * qty if unit_net and qty else 0.0
+        discount = 0.0
+        display_percent = max(0.0, reduction_percent or 0.0)
+
+        if display_percent > 0 and line_base > 0:
+            discount = line_base * (display_percent / 100.0)
+        elif reduction_amount and reduction_amount > 0:
+            discount = float(reduction_amount)
+            if line_base > 0:
+                display_percent = (discount / line_base) * 100.0
+        elif line_base > 0 and line_net >= 0:
+            derived = line_base - line_net
+            if derived > 1e-6:
+                discount = derived
+                display_percent = (discount / line_base) * 100.0
+
+        return max(0.0, discount), display_percent
 
     @staticmethod
     def _build_notes_text(

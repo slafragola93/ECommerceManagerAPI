@@ -10,6 +10,30 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-07-28) — PDF fattura: sconto in riga e nei totali
+
+**Problema:** con sconto a importo (`reduction_amount`, es. buono −500 €) i totali riga erano già scontati ma `Sc.(%)` restava `0,00 %` e nei totali mancava la voce **Sconto**.
+
+**Fix:**
+- PDF legge anche `reduction_amount` da `order_details`
+- Colonna **Sc.**: se sconto `%` → `12,00 %`; se sconto a importo → cifra `500,00` (non la % equivalente)
+- Blocco totali: riga **Sconto** con importo negativo (es. `-500,00`), informativa (già inclusa in merce netta)
+
+| File | Ruolo |
+|------|--------|
+| `fiscal_document_pdf_builder.py` | passa `reduction_amount` |
+| `fiscal_document_pdf_service.py` | `_resolve_line_discount` + `totals.total_discount` |
+| `fiscal_document_pdf_layout.py` | Sc.(%) derivata + riga Sconto |
+| `invoice_pdf_labels.py` | label `discount` IT/FR/DE/ES/EN |
+
+**Test:** `tests/unit/services/pdf/test_fiscal_document_pdf_layout.py`
+
+```powershell
+pytest tests/unit/services/pdf/test_fiscal_document_pdf_layout.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-07-28) — PATCH fattura + sync ordine
 
 **Endpoint:** `PATCH /api/v1/fiscal_documents/{id}`  
@@ -679,7 +703,7 @@ Permessi write: `fiscal_documents:create|update|delete`.
 
 **PDF ricevuta:** layout elettronew dedicato (`src/services/pdf/ricevuta_pdf_layout.py`) — logo + anagrafica, titolo `RICEVUTA n° {numero}/{anno} la {gg/mm/aaaa hh:mm}`, colonne En-tête / indirizzo consegna (label FR se cliente estero), tabella righe (Code, Prix/TVA/…), riferimento ordine, totali a destra (merce, spedizione, IVA, totale — senza voce spese incasso). Non include note ordine (solo uso interno app). Non riusa più il layout fattura SDI.
 
-**PDF fattura/nota di credito:** layout elettronew (`src/services/pdf/fiscal_document_pdf_layout.py`) allineato ai campioni cartacei — logo + anagrafica (IBAN/BIC), titolo `FATTURA`/`FACTURE`/…, Intestazione/consegna, tabella Impon./IVA, riepilogo aliquote, totali, pagamento, firme, NOTE precompilate. Lingue etichette: **IT, FR, DE, ES, EN** (da paese indirizzo fattura). Dicitura NOTE da `app_configurations` categoria `invoice_pdf` (non usa `order.general_note`). Data documento `gg/mm/aaaa`; XML FatturaPA resta con sola data (requisito SDI).
+**PDF fattura/nota di credito:** layout elettronew (`src/services/pdf/fiscal_document_pdf_layout.py`) allineato ai campioni cartacei — logo + anagrafica (IBAN/BIC), titolo `FATTURA`/`FACTURE`/…, Intestazione/consegna, tabella Impon./IVA/`Sc.`, riepilogo aliquote, totali (inclusa voce **Sconto** se presente), pagamento, firme, NOTE precompilate. Colonna `Sc.`: `%` se `reduction_percent`, cifra se `reduction_amount` (o differenza Impon.×qty − Totale). Lingue etichette: **IT, FR, DE, ES, EN** (da paese indirizzo fattura). Dicitura NOTE da `app_configurations` categoria `invoice_pdf` (non usa `order.general_note`). Data documento `gg/mm/aaaa`; XML FatturaPA resta con sola data (requisito SDI).
 
 Prossimi step: BE-3 impatto corrispettivi, BE-2.5 export, BE-2.6 email.
 

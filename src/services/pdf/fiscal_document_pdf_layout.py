@@ -460,6 +460,21 @@ class FiscalDocumentPDFLayout:
             if not unit_net and line_net and qty:
                 unit_net = line_net / qty
 
+            # Sconto riga: se % → "12,00 %"; se importo → cifra "500,00"
+            discount_label = _fmt_pct(0)
+            if reduction_pct > 0:
+                discount_label = _fmt_pct(reduction_pct)
+            else:
+                line_discount = float(detail.get("line_discount") or 0)
+                if line_discount <= 0:
+                    line_discount = float(detail.get("reduction_amount") or 0)
+                if line_discount <= 0 and unit_net and qty and line_net >= 0:
+                    derived = unit_net * qty - line_net
+                    if derived > 1e-6:
+                        line_discount = derived
+                if line_discount > 0:
+                    discount_label = _fmt_num(line_discount, 2)
+
             code_text = _fit_cell_text(
                 pdf, str(detail.get("product_reference") or ""), _ITEM_COLS[0]
             )
@@ -480,7 +495,7 @@ class FiscalDocumentPDFLayout:
                 None,
                 _fit_cell_text(pdf, _fmt_num(unit_net, 2), _ITEM_COLS[2]),
                 _fit_cell_text(pdf, str(vat_label), _ITEM_COLS[3]),
-                _fit_cell_text(pdf, _fmt_pct(reduction_pct), _ITEM_COLS[4]),
+                _fit_cell_text(pdf, discount_label, _ITEM_COLS[4]),
                 _fit_cell_text(pdf, _fmt_qty(qty), _ITEM_COLS[5]),
                 _fit_cell_text(pdf, _fmt_num(line_net, 2), _ITEM_COLS[6]),
             ]
@@ -628,9 +643,14 @@ class FiscalDocumentPDFLayout:
             y_vat += row_h
 
         # --- Righe totali a destra (allineate in alto con l'header IVA) ---
+        # Sconto: valore negativo informativo (già riflesso in merce netta / totali riga)
+        discount_abs = float(totals.get("total_discount") or 0)
+        discount_value = -discount_abs if discount_abs > 0 else 0.0
+
         tot_items = [
             (labels["shipping_cost"], _fmt_num(totals.get("shipping_incl") or 0, 2), False),
             (labels["merchandise_net"], _fmt_num(totals.get("merchandise_net") or 0, 2), False),
+            (labels.get("discount") or "Sconto", _fmt_num(discount_value, 2), False),
             (labels["taxable_total"], _fmt_num(totals.get("taxable_total") or 0, 2), False),
             (labels["collection_fee"], _fmt_num(totals.get("collection_fee") or 0, 2), False),
             (labels["merchandise_gross"], _fmt_num(totals.get("merchandise_gross") or 0, 2), False),

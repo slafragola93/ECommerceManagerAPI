@@ -67,6 +67,9 @@ def _build_details_with_products(db: Session, id_fiscal_document: int, details) 
                 "reduction_percent": order_detail.reduction_percent
                 if order_detail
                 else 0.0,
+                "reduction_amount": order_detail.reduction_amount
+                if order_detail
+                else 0.0,
                 "vat_rate": vat_rate,
                 "tax_note": tax_note,
                 "id_tax": tax_id,
