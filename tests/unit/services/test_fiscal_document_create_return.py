@@ -6,13 +6,18 @@ import pytest
 from sqlalchemy import func
 
 from src.core.container_config import get_configured_container
-from src.core.exceptions import ValidationException
+from src.core.exceptions import BusinessRuleException, ValidationException
 from src.models.fiscal_document import FiscalDocument
 from src.models.order import Order
 from src.repository.corrispettivo_repository import CorrispettivoRepository
 from src.schemas.return_schema import ReturnCreateSchema, ReturnItemSchema
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
-from tests.helpers.fiscal_test_helpers import seed_invoice, seed_paid_order, seed_tax
+from tests.helpers.fiscal_test_helpers import (
+    seed_invoice,
+    seed_paid_order,
+    seed_return,
+    seed_tax,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -219,8 +224,8 @@ class TestFiscalDocumentCreateReturn:
             )
 
     @pytest.mark.asyncio
-    async def test_return_on_invoiced_order_excluded_from_corrispettivi(
-        self, db_session, fiscal_service, tax, repo
+    async def test_create_return_blocked_when_order_invoiced(
+        self, db_session, fiscal_service, tax
     ):
         order, detail = seed_paid_order(
             db_session,
@@ -230,17 +235,38 @@ class TestFiscalDocumentCreateReturn:
         )
         seed_invoice(db_session, order)
 
-        await fiscal_service.create_return(
+        with pytest.raises(BusinessRuleException, match="già fatturato"):
+            await fiscal_service.create_return(
+                order,
+                ReturnCreateSchema(
+                    order_details=[
+                        ReturnItemSchema(
+                            id_order_detail=detail.id_order_detail,
+                            quantity=1,
+                            id_tax=tax.id_tax,
+                        )
+                    ],
+                ),
+            )
+
+    @pytest.mark.asyncio
+    async def test_legacy_return_on_invoiced_order_excluded_from_corrispettivi(
+        self, db_session, fiscal_service, tax, repo
+    ):
+        """Resi storici seedati su ordine fatturato restano esclusi dai corrispettivi."""
+        order, detail = seed_paid_order(
+            db_session,
+            tax,
+            reference="RET-INV-LEGACY",
+            order_date=datetime(2026, 7, 14, 10, 0, 0),
+        )
+        seed_invoice(db_session, order)
+        seed_return(
+            db_session,
+            tax,
             order,
-            ReturnCreateSchema(
-                order_details=[
-                    ReturnItemSchema(
-                        id_order_detail=detail.id_order_detail,
-                        quantity=1,
-                        id_tax=tax.id_tax,
-                    )
-                ],
-            ),
+            detail,
+            return_date=datetime(2026, 7, 15, 10, 0, 0),
         )
 
         movements = repo.fetch_movements(2026, 7)

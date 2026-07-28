@@ -699,6 +699,9 @@ async def create_return(
     - Il numero sequenziale del reso
     - Il totale con IVA inclusa
     - Se il reso è parziale o totale
+
+    ## Vincolo percorso documenti
+    - Bloccato se l'ordine ha già una fattura (percorso fattura/NC vs corrispettivi)
     """
     order = or_repo.get_by_id(_id=id_order)
     if not order:

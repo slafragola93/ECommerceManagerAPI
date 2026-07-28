@@ -493,12 +493,10 @@ class RicevutaService(IRicevutaService):
             )
 
     def _ensure_order_not_invoiced(self, id_order: int) -> None:
-        if OrderDocumentService(self._session).check_order_invoiced(id_order):
-            raise BusinessRuleException(
-                "Impossibile emettere ricevuta: ordine già fatturato",
-                ErrorCode.BUSINESS_RULE_VIOLATION,
-                {"id_order": id_order},
-            )
+        # Percorso corrispettivi vs fattura/NC (messaggio centralizzato)
+        OrderDocumentService(self._session).ensure_can_create_corrispettivi_document(
+            id_order
+        )
 
     def _generate_and_persist_pdf(self, ricevuta: Ricevuta, order: Order) -> bytes:
         order_for_pdf = order

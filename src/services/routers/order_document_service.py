@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from datetime import datetime
+from src.core.exceptions import BusinessRuleException, ErrorCode
 from src.models.order_document import OrderDocument
 from src.models.order_detail import OrderDetail
 from src.models.tax import Tax
@@ -9,6 +10,7 @@ from src.models.shipping import Shipping
 from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
 from src.models.order import Order
+from src.models.ricevuta import Ricevuta, RicevutaStato
 from src.schemas.preventivo_schema import ArticoloPreventivoSchema, ArticoloPreventivoUpdateSchema
 from src.services.core.tool import calculate_price_without_tax, calculate_price_with_tax
 
@@ -119,6 +121,73 @@ class OrderDocumentService:
         ).first()
         
         return invoice_exists is not None
+
+    def check_order_has_return(self, id_order: int) -> bool:
+        """True se esiste almeno un reso sull'ordine."""
+        return (
+            self.db.query(FiscalDocument.id_fiscal_document)
+            .filter(
+                and_(
+                    FiscalDocument.id_order == id_order,
+                    FiscalDocument.document_type == "return",
+                )
+            )
+            .first()
+            is not None
+        )
+
+    def check_order_has_ricevuta(self, id_order: int) -> bool:
+        """True se esiste una ricevuta EMESSA sull'ordine."""
+        return (
+            self.db.query(Ricevuta.id_ricevuta)
+            .filter(
+                and_(
+                    Ricevuta.id_order == id_order,
+                    Ricevuta.stato == RicevutaStato.EMESSA,
+                )
+            )
+            .first()
+            is not None
+        )
+
+    def ensure_can_create_invoice(self, id_order: int) -> None:
+        """
+        Percorso fattura/NC: bloccato se l'ordine è già sul percorso
+        corrispettivi (ricevuta e/o reso).
+        """
+        has_ricevuta = self.check_order_has_ricevuta(id_order)
+        has_return = self.check_order_has_return(id_order)
+        if not has_ricevuta and not has_return:
+            return
+
+        parts = []
+        if has_ricevuta:
+            parts.append("ricevuta")
+        if has_return:
+            parts.append("reso")
+        raise BusinessRuleException(
+            "Impossibile creare fattura: ordine già gestito con "
+            + " e ".join(parts)
+            + " (percorso corrispettivi)",
+            ErrorCode.BUSINESS_RULE_VIOLATION,
+            {
+                "id_order": id_order,
+                "has_ricevuta": has_ricevuta,
+                "has_return": has_return,
+            },
+        )
+
+    def ensure_can_create_corrispettivi_document(self, id_order: int) -> None:
+        """
+        Percorso corrispettivi (ricevuta/reso): bloccato se esiste già una fattura.
+        """
+        if self.check_order_invoiced(id_order):
+            raise BusinessRuleException(
+                "Impossibile procedere: ordine già fatturato "
+                "(percorso fattura/nota di credito)",
+                ErrorCode.BUSINESS_RULE_VIOLATION,
+                {"id_order": id_order},
+            )
     
     def check_order_shipped(self, id_order: int) -> bool:
         """

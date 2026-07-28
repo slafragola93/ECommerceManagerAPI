@@ -68,16 +68,21 @@ async def create_invoice(
     
     ## Regole:
     - È consentito creare più fatture sullo stesso ordine (re-emissione / integrazioni)
+    - Bloccata se esiste già ricevuta EMESSA o reso (percorso corrispettivi)
     - Le fatture sono sempre elettroniche (`is_electronic=true`, tipo TD01)
     - L'indirizzo di fatturazione deve esistere (IT o UE estero/VIES)
     - Viene generato automaticamente un numero sequenziale FatturaPA
     """
+    from src.core.exceptions import BaseApplicationException
+
     try:
         invoice = await fiscal_service.create_invoice(
             id_order=invoice_data.id_order,
             user=user,
         )
         return await fiscal_service.get_invoice_response_by_id(invoice.id_fiscal_document)
+    except BaseApplicationException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

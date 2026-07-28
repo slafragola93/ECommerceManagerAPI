@@ -115,9 +115,11 @@ Authorization: Bearer <JWT>
 **Response 201:** `RicevutaDetail` completa con `pdf_path` popolato.
 
 **Errori business (400):**
-- ordine già fatturato
+- ordine già fatturato (percorso fattura/NC — messaggio: `Impossibile procedere: ordine già fatturato (percorso fattura/nota di credito)`)
 - ricevuta emessa già presente per l'ordine
 - ordine senza `payment_date` / non pagato
+
+**Vincolo percorsi (2026-07-28):** ricevuta+reso vs fattura+NC sono mutuamente esclusivi. Se esiste ricevuta/reso non si può creare fattura; se esiste fattura non si può creare ricevuta né reso.
 
 ---
 

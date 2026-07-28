@@ -36,7 +36,12 @@ from src.schemas.customer_schema import CustomerResponseWithoutAddressSchema
 from src.schemas.address_schema import AddressResponseSchema
 from src.schemas.payment_schema import PaymentResponseSchema
 from src.schemas.shipping_schema import ShippingResponseSchema
-from src.core.exceptions import ValidationException, NotFoundException, BusinessRuleException
+from src.core.exceptions import (
+    ValidationException,
+    NotFoundException,
+    BusinessRuleException,
+)
+from src.services.routers.order_document_service import OrderDocumentService
 from src.events.decorators import emit_event_on_success
 from src.events.core.event import EventType
 from src.events.extractors import (
@@ -92,9 +97,14 @@ class FiscalDocumentService(IFiscalDocumentService):
     async def create_invoice(self, id_order: int, user: dict = None) -> FiscalDocument:
         """
         Crea una fattura elettronica FatturaPA per un ordine (is_electronic=True).
+
+        Bloccata se l'ordine è già sul percorso corrispettivi (ricevuta e/o reso).
         """
         try:
+            OrderDocumentService(self._session).ensure_can_create_invoice(id_order)
             return self._fiscal_document_repository.create_invoice(id_order)
+        except BusinessRuleException:
+            raise
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della fattura: {str(e)}")
     
@@ -117,8 +127,11 @@ class FiscalDocumentService(IFiscalDocumentService):
             raise ValidationException(f"Errore nella creazione della nota di credito: {str(e)}")
     
     async def create_return(self, order: Order, return_data: ReturnCreateSchema) -> FiscalDocument:
-        """Crea un reso per un ordine"""
+        """Crea un reso per un ordine (bloccato se ordine già fatturato)."""
         try:
+            OrderDocumentService(self._session).ensure_can_create_corrispettivi_document(
+                order.id_order
+            )
             self._validate_return_payload(order, return_data)
 
             # Converte i dati dello schema in formato dict
@@ -174,7 +187,7 @@ class FiscalDocumentService(IFiscalDocumentService):
                 return_data.includes_shipping,
                 return_data.note,
             )
-        except ValidationException:
+        except (ValidationException, BusinessRuleException):
             raise
         except Exception as e:
             raise ValidationException(f"Errore nella creazione del reso: {str(e)}")

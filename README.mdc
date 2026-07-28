@@ -7,6 +7,30 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 - Contratto NC v3 / export: [`.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md`](.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)
 - Allineamento BE 2026-07-27 (`is_partial`+`items`, XML TD04): [`.cursor/tasks_claude/fatturazione/prompt_FE_allineamento_nc_be_2026-07-27.md`](.cursor/tasks_claude/fatturazione/prompt_FE_allineamento_nc_be_2026-07-27.md)
 - Update fattura + sync ordine: [`.cursor/tasks_claude/fatturazione/prompt_BE_update_invoice_sync_order_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_BE_update_invoice_sync_order_2026-07-28.md)
+- Download PDF reso: [`.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md)
+
+---
+
+## Ultime modifiche (2026-07-28) — Vincolo percorsi documenti (corrispettivi vs fattura)
+
+Due processi separati sull’ordine:
+
+| Percorso | Documenti | Blocco |
+|----------|-----------|--------|
+| **Corrispettivi** | Ricevuta + Reso | se esiste **fattura** → no ricevuta, no reso |
+| **Fattura/NC** | Fattura + Nota di credito | se esiste **ricevuta EMESSA** o **reso** → no fattura |
+
+NC resta legata alla fattura (nessun blocco reciproco aggiuntivo).
+
+| File | Ruolo |
+|------|--------|
+| `order_document_service.py` | `ensure_can_create_invoice` / `ensure_can_create_corrispettivi_document` |
+| `fiscal_document_service.py` | create_invoice / create_return |
+| `ricevuta_service.py` | create_ricevuta (già bloccava su fattura) |
+
+```powershell
+pytest tests/unit/services/test_document_process_path_guards.py tests/unit/services/test_fiscal_document_create_return.py tests/unit/services/test_ricevuta_create.py -v
+```
 
 ---
 
