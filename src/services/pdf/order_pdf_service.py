@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, Union
 import os
 
 from src.services.pdf.base_pdf_service import BasePDFService
+from src.services.pdf.discount_display import (
+    format_discount_label,
+    resolve_line_discount,
+)
 
 MARGIN = 10
 CONTENT_X = 10
@@ -25,7 +29,7 @@ COL_RIGHT_X = CONTENT_X + COL_LEFT_W
 # Larghezze colonne tabella articoli (totale = CONTENT_W 190 mm)
 # Codice più largo per reference tipo "VOR 0000016151"; numeri compatti a destra.
 _ITEM_COLS = [40, 50, 24, 11, 17, 12, 36]
-_ITEM_HEADERS = ["Codice", "Descrizione", "Impon.", "IVA", "Sconto", "Quant.", "Totale"]
+_ITEM_HEADERS = ["Codice", "Descrizione", "Impon.", "IVA", "Sc.", "Quant.", "Totale"]
 _ITEM_ALIGN = ["L", "L", "R", "R", "R", "R", "R"]
 _ITEM_ROW_H = 5.0
 _ITEM_FONT_SIZE = 8
@@ -452,7 +456,15 @@ class OrderPDFService(BasePDFService):
             qty = int(detail.product_qty or 0)
             total_qty += qty
             vat_rate = cls._vat_rate(detail, tax_percentages)
-            impon_before, net_after, reduction_pct = cls._line_amounts(detail, vat_rate)
+            impon_before, net_after, reduction_pct, line_discount = cls._line_amounts(
+                detail, vat_rate
+            )
+            discount_label = format_discount_label(
+                reduction_percent=reduction_pct,
+                discount_amount=line_discount,
+                fmt_num=_fmt_num,
+                fmt_pct=_fmt_pct,
+            )
 
             code_text = _fit_cell_text(
                 pdf, str(detail.product_reference or ""), _ITEM_COLS[0]
@@ -467,7 +479,7 @@ class OrderPDFService(BasePDFService):
                 None,  # descrizione disegnata a parte
                 _fit_cell_text(pdf, _fmt_num(impon_before, 2), _ITEM_COLS[2]),
                 _fit_cell_text(pdf, _fmt_num(vat_rate, 0), _ITEM_COLS[3]),
-                _fit_cell_text(pdf, _fmt_pct(reduction_pct), _ITEM_COLS[4]),
+                _fit_cell_text(pdf, discount_label, _ITEM_COLS[4]),
                 _fit_cell_text(pdf, _fmt_qty(qty), _ITEM_COLS[5]),
                 _fit_cell_text(pdf, _fmt_num(net_after, 2), _ITEM_COLS[6]),
             ]
@@ -509,11 +521,21 @@ class OrderPDFService(BasePDFService):
         unit_net = float(detail.unit_price_net or detail.product_price or 0)
         net_after = float(detail.total_price_net or (unit_net * qty))
         reduction_pct = float(detail.reduction_percent or 0)
+        reduction_amount = float(getattr(detail, "reduction_amount", None) or 0)
+        line_discount, _ = resolve_line_discount(
+            qty=qty,
+            unit_net=unit_net,
+            line_net=net_after,
+            reduction_percent=reduction_pct,
+            reduction_amount=reduction_amount,
+        )
         if reduction_pct > 0 and net_after > 0:
             impon_before = net_after / (1 - reduction_pct / 100.0)
+        elif unit_net:
+            impon_before = unit_net * qty
         else:
-            impon_before = unit_net * qty if unit_net else net_after
-        return impon_before, net_after, reduction_pct
+            impon_before = net_after + line_discount
+        return impon_before, net_after, reduction_pct, line_discount
 
     @staticmethod
     def _compute_totals(order, order_details, shipping, tax_percentages):
@@ -535,6 +557,11 @@ class OrderPDFService(BasePDFService):
             total_net = merchandise_net + shipping_net
         total_vat = max(total_gross - total_net, 0.0)
 
+        total_discount = 0.0
+        for d in order_details or []:
+            _, _, _, line_discount = OrderPDFService._line_amounts(d, 0.0)
+            total_discount += line_discount
+
         payment_fee = 0.0
         return {
             "merchandise_net": merchandise_net,
@@ -542,6 +569,7 @@ class OrderPDFService(BasePDFService):
             "payment_fee": payment_fee,
             "total_vat": total_vat,
             "total_gross": total_gross,
+            "total_discount": total_discount,
         }
 
     @staticmethod
@@ -556,7 +584,11 @@ class OrderPDFService(BasePDFService):
             pdf.cell(label_w, 5, _safe(label), 0, 0, "L")
             pdf.cell(value_w, 5, _safe(value), 0, 1, "R")
 
+        discount_abs = float(totals.get("total_discount") or 0)
+        discount_value = -discount_abs if discount_abs > 0 else 0.0
+
         row("Totale merce", _fmt_eur(totals["merchandise_net"]))
+        row("Sconto", _fmt_eur(discount_value))
         row("Spedizione", _fmt_eur(totals["shipping_incl"]))
         row(f"Spese incasso - {payment_name}", _fmt_eur(totals["payment_fee"]))
         row("Totale IVA", _fmt_eur(totals["total_vat"]))

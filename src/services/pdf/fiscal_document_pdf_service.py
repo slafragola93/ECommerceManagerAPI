@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.services.pdf.base_pdf_service import BasePDFService
+from src.services.pdf.discount_display import resolve_line_discount
 from src.services.pdf.fiscal_document_pdf_layout import FiscalDocumentPDFLayout
 from src.services.pdf.i18n.invoice_pdf_labels import (
     DEFAULT_PRE_INVOICE_DISCLAIMER,
@@ -163,7 +164,7 @@ class FiscalDocumentPDFService(BasePDFService):
             vat_rate = self._as_float(d.get("vat_rate"), 0)
             reduction_percent = self._as_float(d.get("reduction_percent"), 0)
             reduction_amount = self._as_float(d.get("reduction_amount"), 0)
-            line_discount, _ = self._resolve_line_discount(
+            line_discount, _ = resolve_line_discount(
                 qty=qty,
                 unit_net=unit_net,
                 line_net=line_net,
@@ -384,7 +385,7 @@ class FiscalDocumentPDFService(BasePDFService):
         for d in details:
             line_discount = self._as_float(d.get("line_discount"), 0)
             if line_discount <= 0:
-                line_discount, _ = self._resolve_line_discount(
+                line_discount, _ = resolve_line_discount(
                     qty=self._as_float(d.get("product_qty"), 0),
                     unit_net=self._as_float(d.get("unit_price_net"), 0),
                     line_net=self._as_float(d.get("total_price_net"), 0),
@@ -408,39 +409,8 @@ class FiscalDocumentPDFService(BasePDFService):
         }
         return totals, vat_summary
 
-    @classmethod
-    def _resolve_line_discount(
-        cls,
-        *,
-        qty: float,
-        unit_net: float,
-        line_net: float,
-        reduction_percent: float,
-        reduction_amount: float,
-    ) -> tuple[float, float]:
-        """
-        Calcola importo sconto riga e % da mostrare in Sc.(%).
-
-        Priorità allineata a snapshot/FatturaPA: % > importo > differenza
-        imponibile unitario×qty − totale riga.
-        """
-        line_base = unit_net * qty if unit_net and qty else 0.0
-        discount = 0.0
-        display_percent = max(0.0, reduction_percent or 0.0)
-
-        if display_percent > 0 and line_base > 0:
-            discount = line_base * (display_percent / 100.0)
-        elif reduction_amount and reduction_amount > 0:
-            discount = float(reduction_amount)
-            if line_base > 0:
-                display_percent = (discount / line_base) * 100.0
-        elif line_base > 0 and line_net >= 0:
-            derived = line_base - line_net
-            if derived > 1e-6:
-                discount = derived
-                display_percent = (discount / line_base) * 100.0
-
-        return max(0.0, discount), display_percent
+    # Retrocompatibilità test / chiamate esterne
+    _resolve_line_discount = staticmethod(resolve_line_discount)
 
     @staticmethod
     def _build_notes_text(

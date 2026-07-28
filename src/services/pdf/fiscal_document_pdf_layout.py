@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import os
 
+from src.services.pdf.discount_display import (
+    format_discount_label,
+    resolve_line_discount,
+)
 from src.services.pdf.order_pdf_service import (
     CONTENT_W,
     CONTENT_X,
@@ -461,19 +465,21 @@ class FiscalDocumentPDFLayout:
                 unit_net = line_net / qty
 
             # Sconto riga: se % → "12,00 %"; se importo → cifra "500,00"
-            discount_label = _fmt_pct(0)
-            if reduction_pct > 0:
-                discount_label = _fmt_pct(reduction_pct)
-            else:
-                line_discount = float(detail.get("line_discount") or 0)
-                if line_discount <= 0:
-                    line_discount = float(detail.get("reduction_amount") or 0)
-                if line_discount <= 0 and unit_net and qty and line_net >= 0:
-                    derived = unit_net * qty - line_net
-                    if derived > 1e-6:
-                        line_discount = derived
-                if line_discount > 0:
-                    discount_label = _fmt_num(line_discount, 2)
+            line_discount = float(detail.get("line_discount") or 0)
+            if line_discount <= 0:
+                line_discount, _ = resolve_line_discount(
+                    qty=qty,
+                    unit_net=unit_net,
+                    line_net=line_net,
+                    reduction_percent=reduction_pct,
+                    reduction_amount=float(detail.get("reduction_amount") or 0),
+                )
+            discount_label = format_discount_label(
+                reduction_percent=reduction_pct,
+                discount_amount=line_discount,
+                fmt_num=_fmt_num,
+                fmt_pct=_fmt_pct,
+            )
 
             code_text = _fit_cell_text(
                 pdf, str(detail.get("product_reference") or ""), _ITEM_COLS[0]

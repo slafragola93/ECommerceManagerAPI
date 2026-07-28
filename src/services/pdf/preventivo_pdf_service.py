@@ -7,6 +7,10 @@ from datetime import datetime
 import os
 
 from src.services.pdf.base_pdf_service import BasePDFService
+from src.services.pdf.discount_display import (
+    format_discount_label,
+    resolve_line_discount,
+)
 
 
 # Palette brand (allineata al logo elettronew)
@@ -82,6 +86,16 @@ def _fmt_qty(value: Optional[float]) -> str:
     if v.is_integer():
         return str(int(v))
     return _fmt_num(v, 2)
+
+
+def _fmt_pct(value: Optional[float]) -> str:
+    if value is None:
+        return "0,00 %"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = 0.0
+    return f"{_fmt_num(v, 2)} %"
 
 
 def _set_fill(pdf, rgb):
@@ -192,6 +206,7 @@ class PreventivoPDFService(BasePDFService):
             total_with_vat_sum = 0.0
             total_quantity = 0
             total_weight = 0.0
+            total_discount = 0.0
             row_index = 0
             vat_rate = 0.0
 
@@ -214,16 +229,20 @@ class PreventivoPDFService(BasePDFService):
                     if unit_price <= 0 and articolo.unit_price_with_tax:
                         unit_price = float(articolo.unit_price_with_tax) / vat_multiplier
 
-                    reduction = 0.0
-                    if articolo.reduction_percent and articolo.reduction_percent > 0:
-                        reduction = float((unit_price * quantity) * (float(articolo.reduction_percent) / 100.0))
-                    elif articolo.reduction_amount and articolo.reduction_amount > 0:
-                        reduction = float(articolo.reduction_amount)
+                    reduction_percent = float(articolo.reduction_percent or 0.0)
+                    reduction_amount = float(articolo.reduction_amount or 0.0)
 
                     total_amount = float(
                         getattr(articolo, 'taxable', None)
                         or articolo.total_price_net
                         or 0.0
+                    )
+                    reduction, _ = resolve_line_discount(
+                        qty=quantity,
+                        unit_net=unit_price,
+                        line_net=total_amount if total_amount > 0 else 0.0,
+                        reduction_percent=reduction_percent,
+                        reduction_amount=reduction_amount,
                     )
                     if total_amount <= 0:
                         total_amount = float((unit_price * quantity) - reduction)
@@ -236,6 +255,13 @@ class PreventivoPDFService(BasePDFService):
                     if total_with_vat <= 0:
                         total_with_vat = float(total_amount * vat_multiplier)
 
+                    discount_label = format_discount_label(
+                        reduction_percent=reduction_percent,
+                        discount_amount=reduction,
+                        fmt_num=_fmt_num,
+                        fmt_pct=_fmt_pct,
+                    )
+
                     self.add_items_table_row(
                         pdf=pdf,
                         code=code,
@@ -244,15 +270,26 @@ class PreventivoPDFService(BasePDFService):
                         unit_price=unit_price,
                         vat_rate=vat_rate,
                         total_with_vat=total_with_vat,
+                        discount_label=discount_label,
                         zebra=(row_index % 2 == 1),
                     )
                     row_index += 1
 
                     subtotal += total_amount
                     total_with_vat_sum += total_with_vat
+                    total_discount += reduction
                     total_quantity += int(quantity)
                     if articolo.product_weight:
                         total_weight += float(articolo.product_weight or 0.0) * quantity
+
+            # Sconto documento (non usare total_discounts_applied: già include le righe)
+            doc_discount = float(getattr(preventivo_data, "total_discount", None) or 0.0)
+            if doc_discount <= 0:
+                doc_discount = float(
+                    getattr(preventivo_data, "total_discounts", None) or 0.0
+                )
+            if doc_discount > 0:
+                total_discount += doc_discount
 
             pdf.ln(SPACING_SECTION)
 
@@ -293,6 +330,7 @@ class PreventivoPDFService(BasePDFService):
                 total_with_vat_sum=total_with_vat_sum,
                 total_vat=total_vat,
                 total_doc=total_doc,
+                total_discount=total_discount,
             )
             pdf.ln(SPACING_SECTION)
 
@@ -457,10 +495,10 @@ class PreventivoPDFService(BasePDFService):
         pdf.ln(SPACING_BLOCK)
         return {'y_end': pdf.get_y()}
 
-    # Colonne tabella articoli
-    _ITEMS_COLS = [28, 78, 14, 28, 14, 28]  # totale = 190
-    _ITEMS_HEADERS = ['Codice', 'Descrizione', 'Qta', 'Prezzo', 'IVA', 'Totale']
-    _ITEMS_ALIGN = ['L', 'L', 'C', 'R', 'C', 'R']
+    # Colonne tabella articoli (totale = 190): + Sc. per % o importo
+    _ITEMS_COLS = [24, 58, 12, 24, 22, 14, 36]
+    _ITEMS_HEADERS = ['Codice', 'Descrizione', 'Qta', 'Prezzo', 'Sc.', 'IVA', 'Totale']
+    _ITEMS_ALIGN = ['L', 'L', 'C', 'R', 'R', 'C', 'R']
 
     @classmethod
     def create_items_table_header(cls, pdf, column_widths: List[float] = None) -> Dict[str, float]:
@@ -484,6 +522,7 @@ class PreventivoPDFService(BasePDFService):
         unit_price: float,
         vat_rate: float,
         total_with_vat: float,
+        discount_label: str = "0,00 %",
         column_widths: List[float] = None,
         zebra: bool = False,
     ) -> Dict[str, float]:
@@ -493,7 +532,7 @@ class PreventivoPDFService(BasePDFService):
         pdf.set_font('Arial', '', 8.5)
         desc = str(description or '')
         # Spezza descrizione lunga su 2 righe approssimando
-        max_chars_per_line = 60
+        max_chars_per_line = 45
         if len(desc) > max_chars_per_line:
             desc_lines = [desc[:max_chars_per_line], desc[max_chars_per_line:max_chars_per_line * 2]]
             if len(desc) > max_chars_per_line * 2:
@@ -533,13 +572,17 @@ class PreventivoPDFService(BasePDFService):
         pdf.set_xy(x, y_row)
         pdf.cell(widths[3], total_h, _fmt_eur(unit_price), 0, 0, 'R')
         x += widths[3]
+        # Sconto (% o importo)
+        pdf.set_xy(x, y_row)
+        pdf.cell(widths[4], total_h, _safe(discount_label), 0, 0, 'R')
+        x += widths[4]
         # IVA
         pdf.set_xy(x, y_row)
-        pdf.cell(widths[4], total_h, f"{_fmt_num(vat_rate, 0)}%" if vat_rate else '-', 0, 0, 'C')
-        x += widths[4]
+        pdf.cell(widths[5], total_h, f"{_fmt_num(vat_rate, 0)}%" if vat_rate else '-', 0, 0, 'C')
+        x += widths[5]
         # Totale con IVA
         pdf.set_xy(x, y_row)
-        pdf.cell(widths[5], total_h, _fmt_eur(total_with_vat), 0, 0, 'R')
+        pdf.cell(widths[6], total_h, _fmt_eur(total_with_vat), 0, 0, 'R')
 
         # Linea separatrice
         pdf.set_y(y_row + total_h)
@@ -627,6 +670,7 @@ class PreventivoPDFService(BasePDFService):
         total_with_vat_sum: float,
         total_vat: float,
         total_doc: float,
+        total_discount: float = 0.0,
     ) -> Dict[str, float]:
         """Blocco totali con due colonne ordinate + box accent per 'Totale documento'."""
         y_start = pdf.get_y()
@@ -637,8 +681,12 @@ class PreventivoPDFService(BasePDFService):
         label_w = 60
         value_w = 30
 
+        discount_abs = float(total_discount or 0)
+        discount_value = -discount_abs if discount_abs > 0 else 0.0
+
         rows_left = [
             ('Imponibile merce', _fmt_eur(subtotal)),
+            ('Sconto', _fmt_eur(discount_value)),
             ('Imponibile spese', _fmt_eur(shipping_cost)),
             ('Totale imponibile', _fmt_eur(subtotal + shipping_cost)),
         ]
@@ -646,6 +694,7 @@ class PreventivoPDFService(BasePDFService):
             ('Totale IVA', _fmt_eur(total_vat)),
             ('Merce lorda', _fmt_eur(total_with_vat_sum)),
             ('Spese varie', _fmt_eur(0.0)),
+            ('', ''),
         ]
 
         pdf.set_font('Arial', '', 9)
@@ -657,10 +706,13 @@ class PreventivoPDFService(BasePDFService):
             pdf.cell(value_w, 5.5, l_val, 0, 0, 'R')
 
             pdf.set_xy(right_x, y_start + i * 5.5)
-            _set_text(pdf, COLOR_TEXT_MUTED)
-            pdf.cell(label_w, 5.5, r_label, 0, 0, 'L')
-            _set_text(pdf, COLOR_TEXT)
-            pdf.cell(value_w, 5.5, r_val, 0, 1, 'R')
+            if r_label:
+                _set_text(pdf, COLOR_TEXT_MUTED)
+                pdf.cell(label_w, 5.5, r_label, 0, 0, 'L')
+                _set_text(pdf, COLOR_TEXT)
+                pdf.cell(value_w, 5.5, r_val, 0, 1, 'R')
+            else:
+                pdf.ln(5.5)
 
         pdf.ln(SPACING_BLOCK)
 
