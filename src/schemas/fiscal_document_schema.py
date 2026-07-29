@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator, validat
 from datetime import date, datetime
 
 from src.models.order import ViesStatus
+from src.schemas.document_quick_status_schema import DocumentQuickStatusSchema
 from src.schemas.ricevuta_schema import (
     RicevutaAddressEmbedSchema,
     RicevutaCustomerEmbedSchema,
@@ -165,7 +166,7 @@ class InvoiceCreateSchema(BaseModel):
         }
 
 
-class InvoiceResponseSchema(BaseModel):
+class InvoiceResponseSchema(DocumentQuickStatusSchema):
     """Schema risposta documento fiscale attivo (fattura TD01 / nota di credito TD04).
 
     Contratto v3 arricchito condiviso: differenziare tramite `document_type`.
@@ -335,28 +336,29 @@ class CreditNoteResponseSchema(InvoiceResponseSchema):
 
 # ==================== SCHEMAS UNIFICATI ====================
 
-class FiscalDocumentResponseSchema(BaseModel):
-    """Schema risposta generico per qualsiasi documento fiscale"""
+class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
+    """Schema risposta generico / lista documenti fiscali (+ stati rapidi)."""
     id_fiscal_document: int
     document_type: str  # 'invoice' o 'credit_note'
-    tipo_documento_fe: Optional[str]
+    tipo_documento_fe: Optional[str] = None
     id_order: int
-    id_fiscal_document_ref: Optional[int]
-    document_number: Optional[str]
-    internal_number: Optional[str]
-    filename: Optional[str]
-    xml_content: Optional[str]
+    id_fiscal_document_ref: Optional[int] = None
+    document_number: Optional[str] = None
+    internal_number: Optional[str] = None
+    filename: Optional[str] = None
+    xml_content: Optional[str] = None
     status: str
     is_electronic: bool
-    upload_result: Optional[str]
-    credit_note_reason: Optional[str]
-    is_partial: bool
+    upload_result: Optional[str] = None
+    credit_note_reason: Optional[str] = None
+    is_partial: bool = False
     total_price_with_tax: Optional[float] = None
     total_price_net: Optional[float] = None
     products_total_price_net: Optional[float] = None
     products_total_price_with_tax: Optional[float] = None
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
+    is_payed: bool = False
 
     @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
     def round_decimal(cls, v):

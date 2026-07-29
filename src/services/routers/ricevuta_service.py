@@ -209,6 +209,8 @@ class RicevutaService(IRicevutaService):
 
         shipping_net, shipping_incl = resolve_shipping_amounts(order, shipping)
 
+        from src.services.documents.quick_status import ricevuta_quick_status_from_entity
+
         return RicevutaResponseSchema(
             id_ricevuta=ricevuta.id_ricevuta,
             numero=ricevuta.numero,
@@ -247,6 +249,7 @@ class RicevutaService(IRicevutaService):
             address_delivery=addresses["address_delivery"],
             address_invoice=addresses["address_invoice"],
             order_details=order_details,
+            **ricevuta_quick_status_from_entity(ricevuta),
         )
 
     def list_ricevute(self, filters: RicevutaFiltersSchema) -> RicevutaListResponseSchema:
@@ -260,6 +263,8 @@ class RicevutaService(IRicevutaService):
             page=filters.page,
             limit=filters.limit,
         )
+
+        from src.services.documents.quick_status import ricevuta_quick_status_from_entity
 
         items: List[RicevutaListItemSchema] = []
         for ricevuta in rows:
@@ -281,6 +286,8 @@ class RicevutaService(IRicevutaService):
                     order_total_with_tax=_to_float(order.total_price_with_tax)
                     if order
                     else None,
+                    is_payed=bool(order.is_payed) if order else False,
+                    **ricevuta_quick_status_from_entity(ricevuta),
                 )
             )
 

@@ -107,3 +107,4 @@ Permesso: `purchase_invoices:create`.
 - Sync automatico: env `FATTURAPA_POOL_SYNC_*` (vedi `env.example` / `docs/FATTURAPA.md` §12)
 - Distinguere in UI TD01 vs TD04 (badge / filtro)
 - `descrizione` riga = prodotto o servizio fornitore (nessun match catalogo interno)
+- Stato rapido: `is_paid`, `mail_status`, `fatturapa_status` (`sent` se c’è `identificativo_sdi`) — vedi [`BE_PROMPT_STATUS_RAPIDO_DOCUMENTI.md`](./BE_PROMPT_STATUS_RAPIDO_DOCUMENTI.md)

@@ -61,6 +61,10 @@ class Ricevuta(Base):
     pdf_hash = Column(String(128), nullable=True)
     pdf_generated_at = Column(DateTime, nullable=True)
 
+    # Invio email documento (stato rapido FE)
+    mail_status = Column(String(20), nullable=True)  # sent|pending|error
+    mail_error_message = Column(String(255), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

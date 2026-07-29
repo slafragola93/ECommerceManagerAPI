@@ -515,7 +515,9 @@ async def get_fiscal_document(
             id_fiscal_document
         )
 
-    return doc
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
+    return serialize_fiscal_documents(db, [doc])[0]
 
 
 @router.get("/", response_model=FiscalDocumentListResponseSchema)
@@ -590,8 +592,10 @@ async def get_fiscal_documents(
         date_add_to=date_to,
     )
 
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
     return FiscalDocumentListResponseSchema(
-        documents=documents,
+        documents=serialize_fiscal_documents(db, documents),
         total=total,
         page=filters.page,
         limit=filters.limit,
@@ -712,8 +716,10 @@ async def generate_xml(
     
     if not doc:
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-    
-    return doc
+
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
+    return serialize_fiscal_documents(db, [doc])[0]
 
 
 @router.patch("/{id_fiscal_document}/status", response_model=FiscalDocumentResponseSchema)
@@ -734,8 +740,10 @@ async def update_status(
     
     if not doc:
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
-    
-    return doc
+
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
+    return serialize_fiscal_documents(db, [doc])[0]
 
 @router.post("/{id_fiscal_document}/send-to-sdi", response_model=FiscalDocumentResponseSchema)
 async def send_to_sdi(
@@ -815,9 +823,11 @@ async def send_to_sdi(
         status=final_status,
         upload_result=json.dumps(stop_result) if stop_result else None
     )
-    
-    return doc
-        
+
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
+    return serialize_fiscal_documents(db, [doc])[0]
+
 
 # ==================== GENERAZIONE PDF ====================
 

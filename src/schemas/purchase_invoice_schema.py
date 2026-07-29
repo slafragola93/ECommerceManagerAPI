@@ -4,6 +4,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.schemas.document_quick_status_schema import DocumentQuickStatusSchema
+
 
 class PurchaseInvoiceDetailSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -20,11 +22,11 @@ class PurchaseInvoiceDetailSchema(BaseModel):
     natura: Optional[str] = None
 
 
-class PurchaseInvoiceListItemSchema(BaseModel):
+class PurchaseInvoiceListItemSchema(DocumentQuickStatusSchema):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    identificativo_sdi: str
+    identificativo_sdi: Optional[str] = None
     nome_file: str
     tipo_documento: Optional[str] = None
     numero_documento: Optional[str] = None

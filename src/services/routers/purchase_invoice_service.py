@@ -16,6 +16,7 @@ from src.schemas.purchase_invoice_schema import (
 from src.services.interfaces.purchase_invoice_service_interface import (
     IPurchaseInvoiceService,
 )
+from src.services.documents.quick_status import purchase_quick_status_from_invoice
 from src.services.sync.fatturapa_pool_sync_service import FatturaPAPoolSyncService
 
 
@@ -34,9 +35,9 @@ class PurchaseInvoiceService(IPurchaseInvoiceService):
         payment_name = None
         if invoice.payment is not None:
             payment_name = invoice.payment.name
+        qs = purchase_quick_status_from_invoice(invoice)
         return PurchaseInvoiceListItemSchema(
             id=invoice.id,
-            identificativo_sdi=invoice.identificativo_sdi,
             nome_file=invoice.nome_file,
             tipo_documento=invoice.tipo_documento,
             numero_documento=invoice.numero_documento,
@@ -53,6 +54,7 @@ class PurchaseInvoiceService(IPurchaseInvoiceService):
             direzione=invoice.direzione,
             tipo=invoice.tipo,
             created_at=invoice.created_at,
+            **qs,
         )
 
     def _to_detail(

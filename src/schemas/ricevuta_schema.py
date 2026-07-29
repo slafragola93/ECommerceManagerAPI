@@ -7,6 +7,7 @@ from typing import List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
 from src.models.order import ViesStatus
+from src.schemas.document_quick_status_schema import DocumentQuickStatusSchema
 from src.services.ricevute.date_utils import parse_emission_input
 
 
@@ -135,7 +136,7 @@ class RicevutaShippingEmbedSchema(BaseModel):
     shipping_message: Optional[str] = None
 
 
-class RicevutaListItemSchema(BaseModel):
+class RicevutaListItemSchema(DocumentQuickStatusSchema):
     id_ricevuta: int
     numero: int
     anno: int
@@ -147,10 +148,11 @@ class RicevutaListItemSchema(BaseModel):
     id_order: int
     order_reference: Optional[str] = None
     order_total_with_tax: Optional[float] = None
+    is_payed: bool = False
     customer: Optional[RicevutaCustomerEmbedSchema] = None
 
 
-class RicevutaResponseSchema(BaseModel):
+class RicevutaResponseSchema(DocumentQuickStatusSchema):
     """
     Dettaglio ricevuta — contratto v3.
 

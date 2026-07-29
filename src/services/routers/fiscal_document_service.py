@@ -57,6 +57,7 @@ from src.services.ricevute.order_embed_formatters import (
     map_ricevuta_payment_from_model,
     map_ricevuta_shipping_embed,
 )
+from src.services.documents.quick_status import fiscal_quick_status_from_doc
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
     load_product_weights,
@@ -872,6 +873,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             order_details=self._build_invoice_order_details(
                 doc, order, shipping, order_detail_map, product_weights
             ),
+            **fiscal_quick_status_from_doc(doc),
         )
 
     def _row_to_invoice_response_schema(self, row) -> Optional[InvoiceResponseSchema]:

@@ -39,6 +39,10 @@ class FiscalDocument(Base):
     status = Column(String(50), nullable=False, default="pending")  # pending, processed, cancelled, generated, uploaded, sent, issued, error
     is_electronic = Column(Boolean, default=False, nullable=False)  # True se FatturaPA elettronica
     upload_result = Column(Text, nullable=True)  # JSON result from upload
+
+    # Invio email documento (stato rapido FE)
+    mail_status = Column(String(20), nullable=True)  # sent|pending|error
+    mail_error_message = Column(String(255), nullable=True)
     
     # Dati specifici note di credito
     credit_note_reason = Column(Text, nullable=True)  # Motivo nota di credito

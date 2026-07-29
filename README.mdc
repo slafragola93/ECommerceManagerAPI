@@ -9,6 +9,26 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 - Update fattura + sync ordine: [`.cursor/tasks_claude/fatturazione/prompt_BE_update_invoice_sync_order_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_BE_update_invoice_sync_order_2026-07-28.md)
 - Download PDF reso: [`.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md)
 - Fatture/NC acquisto (ciclo passivo): [`docs/FE_HANDOFF_PURCHASE_INVOICES.md`](docs/FE_HANDOFF_PURCHASE_INVOICES.md)
+- Stati rapidi documenti (`fatturapa_status`): [`.cursor/tasks_claude/fatturazione/prompt_FE_status_rapido_documenti.md`](.cursor/tasks_claude/fatturazione/prompt_FE_status_rapido_documenti.md)
+
+---
+
+## Ultime modifiche (2026-07-29) — Stati rapidi documenti (mail / FatturaPA)
+
+Campi comuni in lista+dettaglio su `fiscal_documents`, `ricevute`, `purchase-invoices`:
+
+- `mail_status`, `mail_error_message`
+- `fatturapa_status` (`uploaded|sent|error|null`), `fatturapa_error_message`
+- `identificativo_sdi`
+- Lista fiscal/ricevute: anche `is_payed`
+
+Naming esito = intermediario **FatturaPA.com** (non `sdi_status` / accepted|rejected).  
+Doc: [`docs/BE_PROMPT_STATUS_RAPIDO_DOCUMENTI.md`](docs/BE_PROMPT_STATUS_RAPIDO_DOCUMENTI.md).
+
+```powershell
+python scripts/migrations/add_document_mail_quick_status.py
+pytest tests/unit/services/documents/test_quick_status.py -v
+```
 
 ---
 

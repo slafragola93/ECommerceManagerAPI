@@ -59,6 +59,10 @@ class PurchaseInvoiceSync(Base):
     paid_at = Column(DateTime, nullable=True)
     note = Column(Text, nullable=True)
 
+    # Invio email documento (stato rapido FE)
+    mail_status = Column(String(20), nullable=True)  # sent|pending|error
+    mail_error_message = Column(String(255), nullable=True)
+
     created_at = Column(DateTime, default=func.now(), nullable=False)
     date_add = Column(DateTime, default=func.now())
     date_upd = Column(DateTime, default=func.now(), onupdate=func.now())

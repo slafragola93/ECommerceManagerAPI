@@ -1,0 +1,82 @@
+import json
+
+from src.services.documents.quick_status import (
+    extract_identificativo_sdi,
+    fiscal_quick_status_from_doc,
+    map_fiscal_fatturapa_status,
+    map_purchase_fatturapa_status,
+    map_ricevuta_fatturapa_status,
+    ricevuta_quick_status_from_entity,
+)
+
+
+class _Doc:
+    def __init__(self, **kwargs):
+        self.is_electronic = kwargs.get("is_electronic", True)
+        self.status = kwargs.get("status", "pending")
+        self.upload_result = kwargs.get("upload_result")
+        self.mail_status = kwargs.get("mail_status")
+        self.mail_error_message = kwargs.get("mail_error_message")
+
+
+def test_fiscal_pending_is_null():
+    status, err, sdi = map_fiscal_fatturapa_status(
+        is_electronic=True, status="pending"
+    )
+    assert status is None
+    assert err is None
+    assert sdi is None
+
+
+def test_fiscal_uploaded_and_sent():
+    assert map_fiscal_fatturapa_status(is_electronic=True, status="uploaded")[0] == (
+        "uploaded"
+    )
+    assert map_fiscal_fatturapa_status(is_electronic=True, status="sent")[0] == "sent"
+
+
+def test_fiscal_error_with_message():
+    payload = json.dumps({"status": "error", "message": "CAP non valido"})
+    status, err, _ = map_fiscal_fatturapa_status(
+        is_electronic=True, status="error", upload_result=payload
+    )
+    assert status == "error"
+    assert "CAP" in (err or "")
+
+
+def test_fiscal_non_electronic_null():
+    status, err, _ = map_fiscal_fatturapa_status(
+        is_electronic=False, status="issued"
+    )
+    assert status is None
+    assert err is None
+
+
+def test_extract_identificativo_sdi():
+    payload = json.dumps({"sdi_id": "ABC123"})
+    assert extract_identificativo_sdi(payload) == "ABC123"
+
+
+def test_purchase_with_sdi_is_sent():
+    status, err, sdi = map_purchase_fatturapa_status("SDI-99")
+    assert status == "sent"
+    assert err is None
+    assert sdi == "SDI-99"
+
+
+def test_purchase_without_sdi_null():
+    assert map_purchase_fatturapa_status(None)[0] is None
+
+
+def test_ricevuta_always_null_fatturapa():
+    assert map_ricevuta_fatturapa_status() == (None, None, None)
+    qs = ricevuta_quick_status_from_entity(None)
+    assert qs["fatturapa_status"] is None
+    assert qs["identificativo_sdi"] is None
+    assert qs["mail_status"] is None
+
+
+def test_fiscal_quick_status_from_doc_includes_mail_null():
+    qs = fiscal_quick_status_from_doc(_Doc(status="uploaded"))
+    assert qs["fatturapa_status"] == "uploaded"
+    assert qs["mail_status"] is None
