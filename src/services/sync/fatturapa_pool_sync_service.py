@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from src.repository.app_configuration_repository import AppConfigurationRepository
 from src.repository.purchase_invoice_sync_repository import PurchaseInvoiceSyncRepository
+from src.services.external.fatturapa_inbound_parser import parse_fatturapa_inbound
 
 logger = logging.getLogger(__name__)
 
@@ -171,19 +172,22 @@ class FatturaPAPoolSyncService:
                         entry['xml_content'] = file_content
                         entry['file_path'] = file_path
                     
-                    # Salva nel database
-                    invoice_data = self._prepare_invoice_data(entry)
-                    created_invoice = self.invoice_repo.create(invoice_data)
-                    
+                    # Salva nel database (header + righe da XML)
+                    invoice_data, details = self._prepare_invoice_data(entry)
+                    created_invoice = self.invoice_repo.create(
+                        invoice_data, details=details
+                    )
+
                     if created_invoice:
                         stats['entries_saved'] += 1
                         logger.info(
                             f"Salvata fattura: SDI={created_invoice.identificativo_sdi}, "
-                            f"File={created_invoice.nome_file}"
+                            f"File={created_invoice.nome_file}, "
+                            f"righe={len(details)}"
                         )
                     else:
                         stats['entries_skipped'] += 1
-                    
+
                 except Exception as e:
                     error_msg = f"Errore processamento entry: {e}"
                     logger.error(error_msg)
@@ -433,26 +437,119 @@ class FatturaPAPoolSyncService:
             logger.error(f"Errore generico nel download file {nome_file}: {e}")
             return None, None
     
-    def _prepare_invoice_data(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_invoice_data(
+        self, entry: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
-        Prepara i dati per il salvataggio nel database
-        
-        Args:
-            entry: Dati dell'entry dal feed
-        
+        Prepara header + righe per il salvataggio nel database.
+
         Returns:
-            Dizionario con dati formattati per PurchaseInvoiceSync
+            Tuple (header_dict, details_list)
         """
-        return {
+        parsed = parse_fatturapa_inbound(entry.get('xml_content') or '')
+        details = parsed.pop('details', []) or []
+
+        header = {
             'identificativo_sdi': entry.get('IdentificativoSdI', ''),
             'nome_file': entry.get('NomeFile', ''),
             'direzione': entry.get('Direzione', ''),
             'tipo': entry.get('Tipo', ''),
             'blob_uri': entry.get('URI', ''),
-            'xml_content': entry.get('xml_content'),  # Aggiunto dopo download
-            'file_path': entry.get('file_path'),  # Aggiunto dopo download
+            'xml_content': entry.get('xml_content'),
+            'file_path': entry.get('file_path'),
             'partition_key': entry.get('PartitionKey', ''),
             'row_key': entry.get('RowKey', ''),
             'etag': entry.get('ETag', ''),
+            'tipo_documento': parsed.get('tipo_documento'),
+            'numero_documento': parsed.get('numero_documento'),
+            'data_documento': parsed.get('data_documento'),
+            'fornitore_denominazione': parsed.get('fornitore_denominazione'),
+            'fornitore_piva': parsed.get('fornitore_piva'),
+            'importo_totale': parsed.get('importo_totale'),
+            'fattura_collegata_numero': parsed.get('fattura_collegata_numero'),
+            'fattura_collegata_data': parsed.get('fattura_collegata_data'),
+            'is_paid': False,
         }
+        return header, details
+
+    def backfill_parsed_fields(self, limit: int = 100) -> Dict[str, Any]:
+        """Riempie campi consultazione/righe per record già in DB con xml_content."""
+        stats = {'processed': 0, 'updated': 0, 'errors': []}
+        invoices = self.invoice_repo.list_needing_backfill(limit=limit)
+        for invoice in invoices:
+            stats['processed'] += 1
+            try:
+                parsed = parse_fatturapa_inbound(invoice.xml_content or '')
+                details = parsed.pop('details', []) or []
+                self.invoice_repo.update(
+                    invoice,
+                    {
+                        'tipo_documento': parsed.get('tipo_documento'),
+                        'numero_documento': parsed.get('numero_documento'),
+                        'data_documento': parsed.get('data_documento'),
+                        'fornitore_denominazione': parsed.get('fornitore_denominazione'),
+                        'fornitore_piva': parsed.get('fornitore_piva'),
+                        'importo_totale': parsed.get('importo_totale'),
+                        'fattura_collegata_numero': parsed.get(
+                            'fattura_collegata_numero'
+                        ),
+                        'fattura_collegata_data': parsed.get('fattura_collegata_data'),
+                    },
+                )
+                self.invoice_repo.replace_details(invoice, details)
+                stats['updated'] += 1
+            except Exception as exc:
+                stats['errors'].append(str(exc))
+        return stats
+
+
+async def sync_fatturapa_pool_periodic() -> Dict[str, Any]:
+    """Esegue un ciclo di sync con sessione DB fresca."""
+    from src.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        service = FatturaPAPoolSyncService(db)
+        return await service.sync_pool()
+    except ValueError as exc:
+        # API key mancante: non crashare lo scheduler
+        logger.warning("Sync POOL saltato: %s", exc)
+        return {'status': 'skipped', 'errors': [str(exc)]}
+    except Exception as exc:
+        logger.error("Errore sync POOL periodico: %s", exc, exc_info=True)
+        return {'status': 'error', 'errors': [str(exc)]}
+    finally:
+        db.close()
+
+
+async def run_fatturapa_pool_sync_task(_db: Session = None):
+    """
+    Task periodica: sync POOL fatture acquisto.
+    Intervallo da FATTURAPA_POOL_SYNC_INTERVAL_SECONDS (default 900).
+    Prima esecuzione dopo breve delay post-startup.
+    """
+    import asyncio
+
+    interval = int(os.getenv("FATTURAPA_POOL_SYNC_INTERVAL_SECONDS", "900"))
+    initial_delay = int(os.getenv("FATTURAPA_POOL_SYNC_INITIAL_DELAY_SECONDS", "45"))
+    logger.info(
+        "Starting FatturaPA POOL sync task (initial_delay=%ss, interval=%ss)",
+        initial_delay,
+        interval,
+    )
+
+    try:
+        await asyncio.sleep(max(0, initial_delay))
+        await sync_fatturapa_pool_periodic()
+    except Exception as exc:
+        logger.error("Errore primo sync POOL: %s", exc, exc_info=True)
+
+    while True:
+        try:
+            await asyncio.sleep(max(60, interval))
+            await sync_fatturapa_pool_periodic()
+        except Exception as exc:
+            logger.error("Errore in FatturaPA POOL sync task: %s", exc, exc_info=True)
+            await asyncio.sleep(300)
+
 

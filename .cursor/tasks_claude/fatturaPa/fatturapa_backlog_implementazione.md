@@ -336,24 +336,24 @@ Raggruppamento righe per `(AliquotaIVA, Natura)` con N blocchi `DatiRiepilogo`. 
 
 ### BE-PA-P2-01 — Esposizione API ciclo passivo
 
-**Stato:** ✅ Parziale (`FatturaPAPoolSyncService` senza router)  
+**Stato:** ✅ Completato (2026-07-29)  
 **Scope:** Backend  
-**File:** `src/services/sync/fatturapa_pool_sync_service.py`, nuovo router
+**File:** `src/routers/purchase_invoices.py`, `purchase_invoice_service.py`, `fatturapa_inbound_parser.py`, sync + scheduler in `main.py`
 
-**Task:**
-- `POST /api/v1/fatturapa/sync-pool` (manuale o protetto admin).
-- `GET /api/v1/purchase-invoices` — lista da `fatture_acquisto_sync`.
-- `GET /api/v1/purchase-invoices/{id}/xml` — download XML ricevuto.
-- Job schedulato (APScheduler / task sync) ogni N minuti.
+**Delivered:**
+- `GET/PATCH/POST /api/v1/purchase-invoices` (lista, dettaglio+righe, XML, payment, sync)
+- Parser header + `DettaglioLinee`; tabella `fatture_acquisto_sync_details`
+- Flag `is_paid` + `id_payment`; scheduler ogni 15 min (`FATTURAPA_POOL_SYNC_*`)
+- Handoff: `docs/FE_HANDOFF_PURCHASE_INVOICES.md`
 
 ---
 
 ### BE-PA-P2-02 — UI consultazione fatture passive
 
-**Stato:** ❌ Assente  
+**Stato:** ❌ Assente (BE pronto)  
 **Scope:** Frontend (repo Angular, PC webmarke26)
 
-**Task:** lista con filtri data/fornitore/tipo; dettaglio XML; link download.
+**Task:** lista con filtri data/fornitore/tipo/pagato; dettaglio con righe; XML; mark paid + metodo pagamento. Vedi handoff BE.
 
 ---
 

@@ -1,4 +1,17 @@
-from sqlalchemy import Integer, Column, String, Text, DateTime, func, Index
+from sqlalchemy import (
+    Integer,
+    Column,
+    String,
+    Text,
+    DateTime,
+    Date,
+    Boolean,
+    Numeric,
+    ForeignKey,
+    func,
+    Index,
+)
+from sqlalchemy.orm import relationship
 
 from src.database import Base
 
@@ -6,27 +19,11 @@ from src.database import Base
 class PurchaseInvoiceSync(Base):
     """
     Modello SQLAlchemy per la tabella 'fatture_acquisto_sync'.
-    
-    Memorizza i documenti di acquisto sincronizzati dal POOL FatturaPA.
-    Ogni riga rappresenta un documento di acquisto (fattura o nota di credito) 
-    ricevuto dal Sistema di Interscambio (SdI).
-    
-    Attributes:
-        id (Column): Chiave primaria autoincrementale.
-        identificativo_sdi (Column): Identificativo univoco assegnato dal SdI.
-        nome_file (Column): Nome del file XML originale.
-        direzione (Column): Direzione del documento (es. 'Acquisto' o 'Vendita').
-        tipo (Column): Tipo di documento (es. 'Ricezione', 'Notifica', etc.).
-        blob_uri (Column): URI del blob storage Azure dove è memorizzato il file.
-        xml_content (Column): Contenuto XML completo del documento (opzionale).
-        file_path (Column): Path locale dove è salvato il file (alternativo a xml_content).
-        partition_key (Column): Chiave di partizione Azure Table Storage.
-        row_key (Column): Chiave di riga Azure Table Storage.
-        etag (Column): ETag per gestire concorrenza Azure Table Storage.
-        created_at (Column): Timestamp di creazione del record.
-        date_add (Column): Data di aggiunta al sistema.
-        date_upd (Column): Data di ultimo aggiornamento.
+
+    Memorizza i documenti di acquisto sincronizzati dal POOL FatturaPA
+    (fatture TD01 e note di credito TD04 ricevute dai fornitori via SdI).
     """
+
     __tablename__ = "fatture_acquisto_sync"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
@@ -35,20 +32,51 @@ class PurchaseInvoiceSync(Base):
     direzione = Column(String(50), nullable=True, index=True)
     tipo = Column(String(50), nullable=True, index=True)
     blob_uri = Column(String(1000), nullable=True)
-    xml_content = Column(Text, nullable=True)  # Contenuto XML completo
-    file_path = Column(String(500), nullable=True)  # Path locale alternativo
+    xml_content = Column(Text, nullable=True)
+    file_path = Column(String(500), nullable=True)
     partition_key = Column(String(100), nullable=True)
     row_key = Column(String(100), nullable=True)
     etag = Column(String(100), nullable=True)
+
+    # Consultazione da XML
+    tipo_documento = Column(String(10), nullable=True, index=True)
+    numero_documento = Column(String(100), nullable=True, index=True)
+    data_documento = Column(Date, nullable=True, index=True)
+    fornitore_denominazione = Column(String(255), nullable=True)
+    fornitore_piva = Column(String(30), nullable=True, index=True)
+    importo_totale = Column(Numeric(15, 2), nullable=True)
+    fattura_collegata_numero = Column(String(100), nullable=True)
+    fattura_collegata_data = Column(Date, nullable=True)
+
+    # Operativi FE
+    is_paid = Column(Boolean, nullable=False, default=False, index=True)
+    id_payment = Column(
+        Integer,
+        ForeignKey("payments.id_payment"),
+        nullable=True,
+        index=True,
+    )
+    paid_at = Column(DateTime, nullable=True)
+    note = Column(Text, nullable=True)
+
     created_at = Column(DateTime, default=func.now(), nullable=False)
     date_add = Column(DateTime, default=func.now())
     date_upd = Column(DateTime, default=func.now(), onupdate=func.now())
-    
-    # Indice composto per garantire unicità su identificativo_sdi + nome_file
-    __table_args__ = (
-        Index('idx_sdi_nomefile', 'identificativo_sdi', 'nome_file', unique=True),
-    )
-    
-    def __repr__(self):
-        return f"<PurchaseInvoiceSync(id={self.id}, sdi={self.identificativo_sdi}, file={self.nome_file})>"
 
+    __table_args__ = (
+        Index("idx_sdi_nomefile", "identificativo_sdi", "nome_file", unique=True),
+    )
+
+    details = relationship(
+        "PurchaseInvoiceSyncDetail",
+        back_populates="purchase_invoice",
+        cascade="all, delete-orphan",
+        order_by="PurchaseInvoiceSyncDetail.numero_linea",
+    )
+    payment = relationship("Payment", foreign_keys=[id_payment])
+
+    def __repr__(self):
+        return (
+            f"<PurchaseInvoiceSync(id={self.id}, sdi={self.identificativo_sdi}, "
+            f"file={self.nome_file})>"
+        )

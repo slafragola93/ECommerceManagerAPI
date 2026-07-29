@@ -29,6 +29,7 @@ from .fiscal_document import FiscalDocument
 from .fiscal_document_detail import FiscalDocumentDetail
 from .ricevuta import Ricevuta
 from .purchase_invoice_sync import PurchaseInvoiceSync
+from .purchase_invoice_sync_detail import PurchaseInvoiceSyncDetail
 from .brt_configuration import BrtConfiguration
 from .dhl_configuration import DhlConfiguration
 from .fedex_configuration import FedexConfiguration

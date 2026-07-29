@@ -17,7 +17,7 @@ Documenti correlati:
 | [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-07-28
+**Aggiornato:** 2026-07-29
 
 ---
 
@@ -536,27 +536,48 @@ Comportamento **atteso** se l'ordine è stato modificato **dopo** l'emissione se
 
 ---
 
-## 12. Ciclo passivo (fatture di acquisto)
+## 12. Ciclo passivo (fatture / NC di acquisto)
 
-Il backend include un servizio per scaricare fatture passive dal **POOL** FatturaPA.com (fatture ricevute da fornitori via SDI).
+Documenti **ricevuti dai fornitori** via SDI/POOL (TD01 e TD04). Prefisso API: `/api/v1/purchase-invoices`.  
+RBAC modulo: `purchase_invoices` (`read` / `update` / `create` per sync).  
+Handoff FE: [`docs/FE_HANDOFF_PURCHASE_INVOICES.md`](./FE_HANDOFF_PURCHASE_INVOICES.md).
 
 | Componente | Path | Stato |
 |------------|------|-------|
-| Sync POOL | `src/services/sync/fatturapa_pool_sync_service.py` | Implementato |
+| Sync POOL | `src/services/sync/fatturapa_pool_sync_service.py` | Implementato + scheduler |
+| Parser inbound | `src/services/external/fatturapa_inbound_parser.py` | Implementato |
 | Repository | `src/repository/purchase_invoice_sync_repository.py` | Implementato |
-| API REST esposta | — | **Non ancora** (backlog P2-01) |
+| Service / Router | `purchase_invoice_service.py` / `purchase_invoices.py` | Implementato |
+| Tabelle | `fatture_acquisto_sync` + `fatture_acquisto_sync_details` | Implementato |
 
-**Flusso interno del servizio:**
+**Flusso sync:**
 
 1. Legge `fatturapa.api_key` da `app_configurations`
-2. Chiama feed POOL REST dell'intermediario (formato ATOM/XML)
-3. Filtra documenti di tipo ricezione / acquisto
-4. Scarica XML (o P7M) in `fatture_download/` (default)
-5. Persiste in tabella sync con idempotenza
+2. Chiama feed POOL REST (ATOM/XML)
+3. Filtra `Direzione=Acquisto` + tipi ricezione
+4. Scarica XML, parse header + `DettaglioLinee`
+5. Persiste con idempotenza su `(identificativo_sdi, nome_file)`
 
-**Scheduler:** intervallo cache configurabile in `settings.py` → `fatturapa_pool` (60 s). Job periodico automatico **non ancora collegato** a un router pubblico.
+**Scheduler (lifespan `main.py`):**
 
-Per attivazione manuale oggi: istanziare `FatturaPAPoolSyncService(db)` da script o test interni. Endpoint previsti: `POST /api/v1/fatturapa/sync-pool`, `GET /api/v1/purchase-invoices` (P2-01).
+| Env | Default | Descrizione |
+|-----|---------|-------------|
+| `FATTURAPA_POOL_SYNC_ENABLED` | `true` | Abilita task background |
+| `FATTURAPA_POOL_SYNC_INTERVAL_SECONDS` | `900` | Intervallo (15 min) |
+| `FATTURAPA_POOL_SYNC_INITIAL_DELAY_SECONDS` | `45` | Delay primo sync dopo startup |
+
+**API:**
+
+| Metodo | Path | Perm | Descrizione |
+|--------|------|------|-------------|
+| GET | `/api/v1/purchase-invoices/` | read | Lista (senza righe) + filtri |
+| GET | `/api/v1/purchase-invoices/{id}` | read | Dettaglio + `details[]` |
+| GET | `/api/v1/purchase-invoices/{id}/xml` | read | Download XML |
+| PATCH | `/api/v1/purchase-invoices/{id}/payment` | update | `{ is_paid, id_payment? }` |
+| POST | `/api/v1/purchase-invoices/sync` | create | Sync manuale |
+
+Migration: `python scripts/migrations/alter_fatture_acquisto_sync_consultation_payment.py`  
+Modulo auth: `python scripts/init_auth_data.py` (inserisce `purchase_invoices` se assente).
 
 ---
 
@@ -578,6 +599,7 @@ Per attivazione manuale oggi: istanziare `FatturaPAPoolSyncService(db)` da scrip
 | Modello ORM | `src/models/fiscal_document.py` |
 | VIES ordini | `src/services/vies/`, `src/vies/tax_resolution.py` |
 | Sync fatture passive (POOL) | `src/services/sync/fatturapa_pool_sync_service.py` |
+| Parser inbound + API acquisti | `fatturapa_inbound_parser.py`, `routers/purchase_invoices.py` |
 
 ---
 

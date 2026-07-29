@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, ricevute, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
+    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, ricevute, purchase_invoices, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
 from src.database import Base, engine
 
 # Import new cache system
@@ -77,7 +77,8 @@ EVENT_CONFIG_PATH = Path("config/event_handlers.yaml")
 # Global task tracker per evitare duplicati
 _background_tasks = {
     "order_states_sync": None,
-    "tracking_polling": None
+    "tracking_polling": None,
+    "fatturapa_pool_sync": None,
 }
 
 
@@ -241,6 +242,25 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     except Exception as e:
         print(f"⚠ Tracking polling warning: {e}")
+
+    # Task: FatturaPA POOL sync (fatture/NC acquisto)
+    pool_sync_enabled = (
+        os.getenv("FATTURAPA_POOL_SYNC_ENABLED", "true").lower() == "true"
+    )
+    try:
+        from src.services.sync.fatturapa_pool_sync_service import (
+            run_fatturapa_pool_sync_task,
+        )
+
+        db = SessionLocal()
+        await start_background_task(
+            "fatturapa_pool_sync",
+            run_fatturapa_pool_sync_task,
+            db,
+            enabled=pool_sync_enabled,
+        )
+    except Exception as e:
+        print(f"⚠ FatturaPA POOL sync warning: {e}")
     
     try:
         from src.core.diagnostics.order_state_audit import setup_order_state_audit
@@ -638,6 +658,7 @@ app.include_router(ddt.router)
 app.include_router(fiscal_documents.router)
 app.include_router(corrispettivi.router)
 app.include_router(ricevute.router)
+app.include_router(purchase_invoices.router)
 app.include_router(platform_state_trigger.router)
 app.include_router(init.router)
 app.include_router(carriers_configuration.router)

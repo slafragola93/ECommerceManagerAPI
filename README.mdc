@@ -8,6 +8,29 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 - Allineamento BE 2026-07-27 (`is_partial`+`items`, XML TD04): [`.cursor/tasks_claude/fatturazione/prompt_FE_allineamento_nc_be_2026-07-27.md`](.cursor/tasks_claude/fatturazione/prompt_FE_allineamento_nc_be_2026-07-27.md)
 - Update fattura + sync ordine: [`.cursor/tasks_claude/fatturazione/prompt_BE_update_invoice_sync_order_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_BE_update_invoice_sync_order_2026-07-28.md)
 - Download PDF reso: [`.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md)
+- Fatture/NC acquisto (ciclo passivo): [`docs/FE_HANDOFF_PURCHASE_INVOICES.md`](docs/FE_HANDOFF_PURCHASE_INVOICES.md)
+
+---
+
+## Ultime modifiche (2026-07-29) — Ciclo passivo: fatture/NC di acquisto
+
+Consultazione documenti **ricevuti dai fornitori** via POOL FatturaPA (TD01 + TD04), con sync schedulato, righe prodotto/servizio, flag pagato e metodo di pagamento.
+
+| Pezzo | Dettaglio |
+|-------|-----------|
+| API | `/api/v1/purchase-invoices` — lista, dettaglio+`details`, XML, `PATCH .../payment`, `POST .../sync` |
+| RBAC | modulo `purchase_invoices` |
+| Scheduler | `FATTURAPA_POOL_SYNC_ENABLED` / `INTERVAL_SECONDS=900` (lifespan `main.py`) |
+| DB | colonne consultazione/pagamento su `fatture_acquisto_sync` + tabella `fatture_acquisto_sync_details` |
+| Migration | `python scripts/migrations/alter_fatture_acquisto_sync_consultation_payment.py` |
+| Auth module | `python scripts/init_auth_data.py` |
+| Doc | [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §12, [`docs/FE_HANDOFF_PURCHASE_INVOICES.md`](docs/FE_HANDOFF_PURCHASE_INVOICES.md) |
+
+```powershell
+pytest tests/unit/services/external/test_fatturapa_inbound_parser.py tests/unit/services/test_purchase_invoice_service.py -v
+```
+
+**Env** (vedi `env.example`): `FATTURAPA_POOL_SYNC_ENABLED`, `FATTURAPA_POOL_SYNC_INTERVAL_SECONDS`, `FATTURAPA_POOL_SYNC_INITIAL_DELAY_SECONDS`.
 
 ---
 
