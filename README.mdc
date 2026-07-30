@@ -10,6 +10,45 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 - Download PDF reso: [`.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md`](.cursor/tasks_claude/fatturazione/prompt_FE_download_pdf_reso_2026-07-28.md)
 - Fatture/NC acquisto (ciclo passivo): [`docs/FE_HANDOFF_PURCHASE_INVOICES.md`](docs/FE_HANDOFF_PURCHASE_INVOICES.md)
 - Stati rapidi documenti (`fatturapa_status`): [`.cursor/tasks_claude/fatturazione/prompt_FE_status_rapido_documenti.md`](.cursor/tasks_claude/fatturazione/prompt_FE_status_rapido_documenti.md)
+- Pagamenti multipli ordine: [`.cursor/tasks_claude/fatturazione/prompt_FE_pagamenti_multipli_ordine_2026-07-30.md`](.cursor/tasks_claude/fatturazione/prompt_FE_pagamenti_multipli_ordine_2026-07-30.md)
+
+---
+
+## Ultime modifiche (2026-07-30) — Pagamenti multipli per ordine
+
+Più pagamenti/incassi sullo stesso ordine (senza rate), tipicamente dopo modifica ordine (nuovo articolo).
+
+**Prompt FE (incolla in chat Angular):** [`.cursor/tasks_claude/fatturazione/prompt_FE_pagamenti_multipli_ordine_2026-07-30.md`](.cursor/tasks_claude/fatturazione/prompt_FE_pagamenti_multipli_ordine_2026-07-30.md)
+
+### Tabella `order_payments`
+
+| Campo | Note |
+|-------|------|
+| `id_order`, `id_payment` | FK ordine + metodo catalogo |
+| `amount` | Importo > 0 |
+| `is_paid`, `payment_date` | Stato singola riga |
+| `note`, `date_add` | Opzionale / audit |
+
+### API nested
+
+| Metodo | Path |
+|--------|------|
+| GET | `/api/v1/orders/{id}/payments` |
+| POST | `/api/v1/orders/{id}/payments` |
+| PUT | `/api/v1/orders/{id}/payments/{id_order_payment}` |
+| PATCH | `/api/v1/orders/{id}/payments/{id_order_payment}` (`is_paid`) |
+| DELETE | `/api/v1/orders/{id}/payments/{id_order_payment}` |
+
+`GET /orders/{id}` (dettaglio) espone anche `order_payments[]` e `payment_summary` (`total_scheduled`, `total_paid`, `remaining_amount`).
+
+Campi legacy (`id_payment`, `is_payed`, `payment_date`, `payment_due_date`) restano; `PATCH /orders/{id}/payment` marca manualmente `is_payed=true`. Auto: `is_payed=false` se si aggiunge un pagamento non saldato o una riga che aumenta il totale.
+
+```powershell
+python scripts/migrations/create_order_payments_table.py
+pytest tests/unit/repository/test_order_payment_repository.py tests/unit/services/test_order_payment_service.py tests/unit/services/test_order_service_payment_sync.py -v
+```
+
+**Fix 500 DI (2026-07-30):** rimosso `from __future__ import annotations` da `OrderPaymentService` — il container DI non risolve annotazioni stringa e andava in 500 su `GET/POST .../orders/{id}/payments`.
 
 ---
 
@@ -742,6 +781,10 @@ Non va nell'oggetto annidato `payment` (catalogo metodi). Esposto in create/upda
 Helper: `resolve_payment_due_date` in `src/services/external/fatturapa_service.py`.
 
 Test: `tests/unit/schemas/test_order_payment_due_date.py`, `tests/unit/services/external/test_fatturapa_payment_due_date.py`.
+
+### Pagamenti multipli (`order_payments`)
+
+Distinti dal catalogo `/api/v1/payments` (metodi). Lista incassi per ordine via nested CRUD sotto `/api/v1/orders/{id}/payments`. Vedi sezione «Ultime modifiche (2026-07-30)».
 
 ---
 

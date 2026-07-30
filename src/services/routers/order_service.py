@@ -44,6 +44,7 @@ from src.services.core.price_persistence import (
 )
 from src.services.routers.order_document_service import OrderDocumentService
 from src.schemas.order_detail_schema import OrderDetailCreateSchema, OrderDetailUpdateSchema
+from src.services.orders.payment_status import mark_order_unpaid_if_total_increased
 import logging
 
 
@@ -448,6 +449,9 @@ class OrderService(IOrderService):
         order = self._order_repository.get_by_id(_id=order_id)
         if not order:
             raise ValueError(f"Ordine {order_id} non trovato")
+
+        previous_total = float(order.total_price_with_tax or 0)
+        was_payed = bool(order.is_payed)
         
         session = self._order_repository.session
 
@@ -486,6 +490,12 @@ class OrderService(IOrderService):
         
         # Ricalcola i totali dell'ordine
         self.recalculate_totals_for_order(order_id)
+
+        if was_payed:
+            order = self._order_repository.get_by_id(_id=order_id)
+            mark_order_unpaid_if_total_increased(
+                session, order, previous_total, commit=True
+            )
         
         # Aggiorna il peso della spedizione
         order_doc_service = OrderDocumentService(session)
@@ -520,6 +530,9 @@ class OrderService(IOrderService):
         order = self._order_repository.get_by_id(_id=order_id)
         if not order:
             raise ValueError(f"Ordine {order_id} non trovato")
+
+        previous_total = float(order.total_price_with_tax or 0)
+        was_payed = bool(order.is_payed)
         
         session = self._order_repository.session
         
@@ -608,6 +621,11 @@ class OrderService(IOrderService):
         
         if needs_recalculation:
             self.recalculate_totals_for_order(order_id)
+            if was_payed:
+                order = self._order_repository.get_by_id(_id=order_id)
+                mark_order_unpaid_if_total_increased(
+                    session, order, previous_total, commit=True
+                )
         
         # Aggiorna il peso della spedizione se product_weight o product_qty sono stati modificati
         if 'product_weight' in update_data or 'product_qty' in update_data:
@@ -1519,3 +1537,39 @@ class OrderService(IOrderService):
             tax_percentages=tax_percentages,
             logo_path=logo_path if logo_path and os.path.exists(logo_path) else None,
         )
+
+    async def update_order_payment_status(
+        self,
+        order_id: int,
+        is_payed: Optional[bool] = None,
+        payment_due_date=None,
+    ) -> Dict[str, Any]:
+        """Aggiorna is_payed e/o payment_due_date sull'ordine (campi legacy)."""
+        if is_payed is None and payment_due_date is None:
+            raise ValueError("Specificare almeno uno tra is_payed e payment_due_date")
+
+        order = self._order_repository.get_by_id(_id=order_id)
+        if order is None:
+            raise NotFoundException("Order", order_id)
+
+        session = self._order_repository.session
+
+        if is_payed is not None:
+            order.is_payed = is_payed
+            if is_payed:
+                order.payment_date = datetime.now()
+
+        if payment_due_date is not None:
+            order.payment_due_date = payment_due_date
+
+        session.add(order)
+        session.commit()
+        session.refresh(order)
+
+        return {
+            "message": "Stato pagamento aggiornato con successo",
+            "order_id": order_id,
+            "is_payed": order.is_payed,
+            "payment_due_date": order.payment_due_date,
+        }
+

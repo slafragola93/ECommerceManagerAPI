@@ -363,6 +363,21 @@ def setup_orders_payment_due_date_column(db):
     print("  ✅ Colonna payment_due_date aggiunta.")
 
 
+def setup_order_payments_table(db):
+    """Crea tabella order_payments se assente (idempotente)."""
+    print("\n📦 Tabella order_payments...")
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if inspector.has_table("order_payments"):
+        print("  ℹ️  Tabella order_payments già presente.")
+        return
+    from src.database import Base
+    import src.models  # noqa: F401
+
+    Base.metadata.tables["order_payments"].create(bind=bind, checkfirst=True)
+    print("  ✅ Tabella order_payments creata.")
+
+
 def setup_taxes_percentage_decimal_column(db):
     """Migra taxes.percentage a DECIMAL(5,2) se ancora INTEGER (idempotente)."""
     print("\n💶 Colonna taxes.percentage → DECIMAL(5,2)...")
@@ -465,6 +480,7 @@ def main():
         setup_company_fiscal_info(db)
         setup_orders_vies_status_column(db)
         setup_orders_payment_due_date_column(db)
+        setup_order_payments_table(db)
         setup_taxes_percentage_decimal_column(db)
         setup_taxes_electronic_code_length(db)
 
@@ -484,6 +500,7 @@ def main():
         print("  - CompanyFiscalInfo Elettronew")
         print("  - orders.vies_status (se assente)")
         print("  - orders.payment_due_date (se assente)")
+        print("  - order_payments (se assente)")
         print("  - taxes.electronic_code VARCHAR(255) (se ancora VARCHAR(10))")
         print(
             "  - Tax UE: solo se SEED_EU_VAT_TAXES=1 "

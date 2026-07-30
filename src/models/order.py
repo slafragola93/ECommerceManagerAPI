@@ -77,4 +77,9 @@ class Order(Base):
     fiscal_documents = relationship("FiscalDocument", back_populates="order")
     ricevute = relationship("Ricevuta", back_populates="order")
     order_packages = relationship("OrderPackage", back_populates="order")
+    order_payments = relationship(
+        "OrderPayment",
+        back_populates="order",
+        cascade="all, delete-orphan",
+    )
     ecommerce_order_state = relationship("EcommerceOrderState", back_populates="orders")

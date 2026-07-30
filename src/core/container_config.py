@@ -108,6 +108,12 @@ def configure_container():
     container.register_transient(ISectionalRepository, SectionalRepository)
     container.register_transient(IMessageRepository, MessageRepository)
     container.register_transient(IPaymentRepository, PaymentRepository)
+    from src.repository.interfaces.order_payment_repository_interface import IOrderPaymentRepository
+    from src.repository.order_payment_repository import OrderPaymentRepository
+    from src.services.interfaces.order_payment_service_interface import IOrderPaymentService
+    from src.services.routers.order_payment_service import OrderPaymentService
+
+    container.register_transient(IOrderPaymentRepository, OrderPaymentRepository)
     container.register_transient(ITaxRepository, TaxRepository)
     container.register_transient(IOrderStateRepository, OrderStateRepository)
     container.register_transient(IShippingRepository, ShippingRepository)
@@ -180,6 +186,7 @@ def configure_container():
     container.register_transient(ISectionalService, SectionalService)
     container.register_transient(IMessageService, MessageService)
     container.register_transient(IPaymentService, PaymentService)
+    container.register_transient(IOrderPaymentService, OrderPaymentService)
     container.register_transient(ITaxService, TaxService)
     container.register_transient(IOrderStateService, OrderStateService)
     container.register_transient(IShippingService, ShippingService)

@@ -15,17 +15,26 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette import status
 
-from src.core.exceptions import BusinessRuleException, NotFoundException
+from src.core.exceptions import BusinessRuleException, NotFoundException, ValidationException
 from src.database import get_db
 from src.repository.order_detail_repository import OrderDetailRepository
 from src.repository.product_repository import ProductRepository
 from src.routers.dependencies import get_fiscal_document_service
+from src.routers.dependencies import get_order_payment_service
 from src.schemas.address_schema import AddressResponseSchema
 from src.schemas.customer_schema import CustomerResponseSchema, CustomerResponseWithoutAddressSchema
 from src.schemas.payment_schema import PaymentResponseSchema
+from src.schemas.order_payment_schema import (
+    OrderPaymentCreateSchema,
+    OrderPaymentPaidStatusSchema,
+    OrderPaymentResponseSchema,
+    OrderPaymentUpdateSchema,
+    OrderPaymentsListResponseSchema,
+)
 from src.schemas.shipping_schema import ShippingResponseSchema
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
+from src.services.interfaces.order_payment_service_interface import IOrderPaymentService
 from src.services.routers.auth_service import authorize, get_current_user, require_permission
 from src.services.routers.product_service import ProductService
 
@@ -631,7 +640,7 @@ async def update_order_payment(order_id: int = Path(gt=0),
                               is_payed: Optional[bool] = Query(None),
                               payment_due_date: Optional[date] = Query(None),
                               user: dict = Depends(get_current_user),
-                              or_repo: OrderRepository = Depends(get_repository),
+                              order_service: IOrderService = Depends(get_order_service),
                               _: None = Depends(require_permission("orders", "update"))):
     """
     Aggiorna lo stato di pagamento e/o la scadenza pagamento di un ordine.
@@ -640,35 +649,129 @@ async def update_order_payment(order_id: int = Path(gt=0),
     - `is_payed`: Nuovo stato di pagamento (true/false).
     - `payment_due_date`: Data prevista di scadenza pagamento (YYYY-MM-DD).
     """
-    if is_payed is None and payment_due_date is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Specificare almeno uno tra is_payed e payment_due_date",
+    try:
+        return await order_service.update_order_payment_status(
+            order_id,
+            is_payed=is_payed,
+            payment_due_date=payment_due_date,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e.message) if hasattr(e, "message") else str(e))
 
-    order = or_repo.get_by_id(_id=order_id)
 
-    if order is None:
-        raise HTTPException(status_code=404, detail="Ordine non trovato")
+# ==================== ENDPOINT PAGAMENTI ORDINE ====================
 
-    if is_payed is not None:
-        order.is_payed = is_payed
-        if is_payed:
-            from datetime import datetime
-            order.payment_date = datetime.now()
+@router.get(
+    "/{order_id}/payments",
+    status_code=status.HTTP_200_OK,
+    response_model=OrderPaymentsListResponseSchema,
+    summary="Lista pagamenti ordine",
+    description="Restituisce i pagamenti registrati sull'ordine con summary di copertura.",
+)
+@check_authentication
+async def list_order_payments(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine"),
+    user: dict = Depends(get_current_user),
+    order_payment_service: IOrderPaymentService = Depends(get_order_payment_service),
+    _: None = Depends(require_permission("orders", "read")),
+):
+    try:
+        return await order_payment_service.list_order_payments(order_id)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e.message) if hasattr(e, "message") else str(e))
 
-    if payment_due_date is not None:
-        order.payment_due_date = payment_due_date
-    
-    or_repo.session.add(order)
-    or_repo.session.commit()
 
-    return {
-        "message": "Stato pagamento aggiornato con successo",
-        "order_id": order_id,
-        "is_payed": order.is_payed,
-        "payment_due_date": order.payment_due_date,
-    }
+@router.post(
+    "/{order_id}/payments",
+    status_code=status.HTTP_201_CREATED,
+    response_model=OrderPaymentResponseSchema,
+    summary="Aggiungi pagamento all'ordine",
+    description=(
+        "Crea un nuovo pagamento sull'ordine (es. dopo aggiunta di un articolo). "
+        "Se `is_paid=false`, l'ordine non resta più marcato come pagato."
+    ),
+)
+@check_authentication
+async def create_order_payment(
+    order_id: int = Path(..., gt=0, description="ID dell'ordine"),
+    body: OrderPaymentCreateSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    order_payment_service: IOrderPaymentService = Depends(get_order_payment_service),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    try:
+        payment = await order_payment_service.create_order_payment(order_id, body)
+        return order_payment_service.format_order_payment(payment)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e.message) if hasattr(e, "message") else str(e))
+    except ValidationException as e:
+        raise HTTPException(status_code=400, detail=str(e.message) if hasattr(e, "message") else str(e))
+
+
+@router.put(
+    "/{order_id}/payments/{id_order_payment}",
+    status_code=status.HTTP_200_OK,
+    response_model=OrderPaymentResponseSchema,
+    summary="Modifica pagamento ordine",
+)
+@check_authentication
+async def update_order_payment_item(
+    order_id: int = Path(..., gt=0),
+    id_order_payment: int = Path(..., gt=0),
+    body: OrderPaymentUpdateSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    order_payment_service: IOrderPaymentService = Depends(get_order_payment_service),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    try:
+        payment = await order_payment_service.update_order_payment(order_id, id_order_payment, body)
+        return order_payment_service.format_order_payment(payment)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e.message) if hasattr(e, "message") else str(e))
+
+
+@router.patch(
+    "/{order_id}/payments/{id_order_payment}",
+    status_code=status.HTTP_200_OK,
+    response_model=OrderPaymentResponseSchema,
+    summary="Segna pagamento come pagato/non pagato",
+)
+@check_authentication
+async def patch_order_payment_paid_status(
+    order_id: int = Path(..., gt=0),
+    id_order_payment: int = Path(..., gt=0),
+    body: OrderPaymentPaidStatusSchema = Body(...),
+    user: dict = Depends(get_current_user),
+    order_payment_service: IOrderPaymentService = Depends(get_order_payment_service),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    try:
+        payment = await order_payment_service.update_paid_status(order_id, id_order_payment, body)
+        return order_payment_service.format_order_payment(payment)
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e.message) if hasattr(e, "message") else str(e))
+
+
+@router.delete(
+    "/{order_id}/payments/{id_order_payment}",
+    status_code=status.HTTP_200_OK,
+    summary="Elimina pagamento ordine",
+)
+@check_authentication
+async def delete_order_payment(
+    order_id: int = Path(..., gt=0),
+    id_order_payment: int = Path(..., gt=0),
+    user: dict = Depends(get_current_user),
+    order_payment_service: IOrderPaymentService = Depends(get_order_payment_service),
+    _: None = Depends(require_permission("orders", "update")),
+):
+    try:
+        await order_payment_service.delete_order_payment(order_id, id_order_payment)
+        return {"message": "Pagamento eliminato", "id_order_payment": id_order_payment, "order_id": order_id}
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e.message) if hasattr(e, "message") else str(e))
 
 
 # ==================== ENDPOINT PER I RESI ====================

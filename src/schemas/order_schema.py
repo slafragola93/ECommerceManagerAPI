@@ -258,6 +258,8 @@ class OrderIdSchema(BaseModel):
     order_state: Optional[OrderStateResponseSchema] = None
     order_details: Optional[list] = None 
     order_packages: Optional[list] = None
+    order_payments: Optional[list] = None
+    payment_summary: Optional[dict] = None
     order_history: Optional[list] = None
     is_multishipping: int = 0
     multishippings: Optional[List[OrderMultishippingItemSchema]] = None  # Solo se is_multishipping=1

@@ -121,3 +121,13 @@ class IOrderService(IBaseService):
             BusinessRuleException: Se ordine senza id_store o id_platform == 0
         """
         pass
+
+    @abstractmethod
+    async def update_order_payment_status(
+        self,
+        order_id: int,
+        is_payed: Optional[bool] = None,
+        payment_due_date=None,
+    ) -> Dict[str, Any]:
+        """Aggiorna is_payed e/o payment_due_date sull'ordine (campi legacy)."""
+        pass

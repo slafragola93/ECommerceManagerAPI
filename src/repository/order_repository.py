@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 # Local application imports - Core
 from src.core.base_repository import BaseRepository
 from src.models.order_package import OrderPackage
+from src.models.order_payment import OrderPayment
 from src.models.tax import Tax
 from src.services.core.tool import (
     calculate_order_totals,
@@ -21,6 +22,7 @@ from src.services.core.tool import (
 )
 from src.services import QueryUtils
 from src.services.routers.order_document_service import OrderDocumentService
+from src.services.orders.payment_status import compute_payment_summary
 
 from src.models.order_package import OrderPackage
 # Local application imports - Models
@@ -1538,6 +1540,37 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
                 "value": float(pkg.value) if pkg.value else None
             } for pkg in all_packages]
         
+        # Helper per formattare i pagamenti multipli dell'ordine
+        def format_order_payments(order_id):
+            if not order_id:
+                return [], {"total_scheduled": 0.0, "total_paid": 0.0, "remaining_amount": 0.0}
+            payments = (
+                self.session.query(OrderPayment)
+                .filter(OrderPayment.id_order == order_id)
+                .order_by(OrderPayment.id_order_payment.asc())
+                .all()
+            )
+            formatted = []
+            for op in payments:
+                method = None
+                if op.id_payment:
+                    pm = self.payment_repository.get_by_id(op.id_payment)
+                    if pm:
+                        method = {"id_payment": pm.id_payment, "name": pm.name}
+                formatted.append({
+                    "id_order_payment": op.id_order_payment,
+                    "id_order": op.id_order,
+                    "id_payment": op.id_payment,
+                    "amount": float(op.amount) if op.amount is not None else 0.0,
+                    "is_paid": bool(op.is_paid),
+                    "payment_date": op.payment_date,
+                    "note": op.note,
+                    "date_add": op.date_add,
+                    "payment": method,
+                })
+            summary = compute_payment_summary(order, payments)
+            return formatted, summary
+        
         # Helper per formattare lo stato e-commerce
         def format_ecommerce_order_state(order):
             """Formatta lo stato e-commerce usando la relationship già caricata"""
@@ -1605,6 +1638,12 @@ class OrderRepository(BaseRepository[Order, int], IOrderRepository):
         
         # Aggiungi order_packages anche per la lista ordini
         response["order_packages"] = format_order_packages(order.id_order)
+
+        # Pagamenti multipli: solo nel dettaglio ordine (show_details)
+        if show_details:
+            order_payments, payment_summary = format_order_payments(order.id_order)
+            response["order_payments"] = order_payments
+            response["payment_summary"] = payment_summary
         
         # Aggiungi order_history solo se richiesto
         if include_order_history:

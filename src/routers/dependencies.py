@@ -32,6 +32,13 @@ def get_ricevuta_service(db: Session = Depends(get_db)) -> IRicevutaService:
     return container.resolve_with_session(IRicevutaService, db)
 
 
+def get_order_payment_service(db: Session = Depends(get_db)):
+    """Dependency per ottenere il servizio pagamenti ordine."""
+    from src.services.interfaces.order_payment_service_interface import IOrderPaymentService
+
+    return container.resolve_with_session(IOrderPaymentService, db)
+
+
 def get_ecommerce_service(store_id: int, db: Session, new_elements: bool = None, **kwargs):
     """
     Seleziona il service e-commerce corretto per lo store specificato.

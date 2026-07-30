@@ -23,6 +23,7 @@ from .order_state import OrderState
 from .shipping import Shipping
 from .order import Order
 from .order_package import OrderPackage
+from .order_payment import OrderPayment
 from .order_detail import OrderDetail
 from .order_document import OrderDocument
 from .fiscal_document import FiscalDocument
