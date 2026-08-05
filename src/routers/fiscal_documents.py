@@ -112,12 +112,12 @@ async def get_invoices_by_order(
 @router.get(
     "/invoices/export",
     status_code=status.HTTP_200_OK,
-    summary="Export massivo lista fatture (Excel / ZIP XML)",
+    summary="Export massivo lista fatture (CSV legacy / Excel / ZIP XML)",
 )
 async def export_invoices(
     fmt: InvoiceExportFormatSchema = Query(
         InvoiceExportFormatSchema.XLSX,
-        description="xlsx o xml (ZIP FatturaPA)",
+        description="csv (legacy contabilità), xlsx o xml (ZIP FatturaPA)",
     ),
     document_type: str = Query(
         "invoice",
@@ -142,8 +142,9 @@ async def export_invoices(
     """
     Export massivo fatture o note di credito.
 
-    - **xlsx**: tabella riepilogativa (max 5000 righe). Filtri opzionali: status,
-      is_electronic, id_order, id_customer, delivery_country_iso, date_add_from/to.
+    - **csv** / **xlsx**: formato legacy contabilità (EXPORT-nc), una riga per articolo,
+      colonne italiane (Documento, Numero, Data, …, Riferimento). Max 5000 documenti.
+      Filtri: status, is_electronic, id_order, id_customer, delivery_country_iso, date_add_from/to.
     - **xml**: ZIP FatturaPA (max 5000). **Solo filtri** `date_add_from`, `date_add_to`,
       `delivery_country_iso` (paese consegna). Status ed altri filtri query sono **ignorati**.
       Se l'XML non esiste viene generato automaticamente (stesso motore di `POST /{id}/generate-xml`).

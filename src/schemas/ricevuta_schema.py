@@ -103,7 +103,9 @@ class RicevutaAddressEmbedSchema(BaseModel):
     postcode: Optional[str] = None
     state: Optional[str] = None
     phone: Optional[str] = None
+    mobile_phone: Optional[str] = None
     vat: Optional[str] = None
+    dni: Optional[str] = None
     country: Optional[RicevutaCountryEmbedSchema] = None
 
 

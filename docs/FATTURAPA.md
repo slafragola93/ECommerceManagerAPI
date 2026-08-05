@@ -247,6 +247,7 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 | Generare XML FatturaPA (**singolo** doc, workflow SDI) | `POST` | `/{id}/generate-xml` | Aggiorna `status=generated`, errori **422** strutturati |
 | Caricare / inviare a SDI | `POST` | `/{id}/send-to-sdi` | Richiede XML già generato |
 | PDF di cortesia (**singolo** doc) | `GET` | `/{id}/pdf` | Layout elettronew; **non** c’è export PDF bulk |
+| Export **bulk** CSV legacy | `GET` | `/invoices/export?fmt=csv&document_type=invoice\|credit_note` | Max 5000 doc; formato EXPORT-nc (righe articolo) |
 | Export **bulk** Excel lista | `GET` | `/invoices/export?fmt=xlsx&document_type=invoice\|credit_note` | Max 5000 righe; colonna `document_type` |
 | Export **bulk** XML (ZIP) | `GET` | `/invoices/export?fmt=xml&document_type=invoice\|credit_note` | Max 5000; soft: ZIP parziale + `export-scarti.json` |
 | Leggere XML già in DB (debug/admin) | `GET` | `/{id}` | Campo `xml_content` nel JSON dettaglio fattura |
@@ -376,7 +377,7 @@ Guida FE: [FE_VIES_APPLY_EXEMPTION_BUTTON.md](./FE_VIES_APPLY_EXEMPTION_BUTTON.m
 
 | Comportamento | Dettaglio |
 |---------------|-----------|
-| `vies_status=eligible` su righe **prodotto** | `AliquotaIVA=0.00` + `Natura=N3.2` (+ `RiferimentoNormativo`) |
+| `vies_status=eligible` su righe **prodotto** | `AliquotaIVA=0.00` + `Natura=N3.2` (+ `RiferimentoNormativo`); **senza** `EsigibilitaIVA` |
 | Tax per riga | Da `order_detail.id_tax` → `Tax.electronic_code` / `Tax.note` |
 | Spedizione | Aliquota propria (`shipping_id_tax`); **non** forzata a N3.2 |
 | `DatiRiepilogo` | Un blocco per coppia `(AliquotaIVA, Natura)` — es. prodotti 0% + spedizione 22% |

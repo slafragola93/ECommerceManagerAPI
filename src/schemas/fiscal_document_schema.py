@@ -237,7 +237,6 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         "total_price_net",
         "products_total_price_net",
         "products_total_price_with_tax",
-        "total_weight",
         "shipping_total_price_with_tax",
         "shipping_total_price_net",
         "total_discounts",
@@ -248,6 +247,12 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         if v is None:
             return None
         return round(float(v), 2)
+
+    @validator("total_weight", pre=True, allow_reuse=True)
+    def round_weight(cls, v):
+        if v is None:
+            return None
+        return round(float(v), 5)
 
 
 # ==================== SCHEMAS PER NOTE DI CREDITO ====================
@@ -417,6 +422,7 @@ class FiscalDocumentListFiltersSchema(BaseModel):
 class InvoiceExportFormatSchema(str, Enum):
     XLSX = "xlsx"
     XML = "xml"
+    CSV = "csv"
 
 
 class InvoiceExportFiltersSchema(BaseModel):

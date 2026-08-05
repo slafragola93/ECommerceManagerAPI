@@ -2,6 +2,51 @@
 
 API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-commerce (PrestaShop).
 
+---
+
+## Ultime modifiche (2026-08-05) — Export bulk XML NC allineato a legacy
+
+**Scope:** confronto con `bulk_xml_nc.zip` (47 TD04). Allineati i punti utili; **non** copiati i difetti legacy (`ITIT…`, assenza `DatiFattureCollegate`).
+
+| Area | Comportamento |
+|------|----------------|
+| Filename ZIP | `IT08632861210_{ProgressivoInvio}.xml` (no doppio `IT`) |
+| `DatiFattureCollegate` | Sempre presente su TD04 (numero+data fattura) |
+| `EsigibilitaIVA` | Solo se **non** c’è `Natura` (N3.2 VIES senza Esigibilita) |
+| `CodiceArticolo` | EAN se disponibile, altrimenti `SKU` da `product_reference` |
+| `PrezzoUnitario` | fino a 8 decimali (come legacy 0.434426) |
+| SPESE / Arrotondamento / no scadenza TD04 | invariati |
+
+**File:** `fatturapa_service.py`, test `test_fatturapa_nc_xml.py`
+
+```powershell
+pytest tests/unit/services/external/test_fatturapa_nc_xml.py -v
+```
+
+---
+
+## Ultime modifiche (2026-08-05) — Export legacy note di credito (CSV + XLSX)
+
+**Scope:** l’export massivo documenti fiscali (`fmt=csv` **e** `fmt=xlsx`) usa il formato legacy contabilità (`EXPORT-nc.csv`): una riga per articolo, colonne italiane complete. Il FE oggi chiama `fmt=xlsx` — ora riceve le stesse colonne del CSV legacy.
+
+| Area | Dettaglio |
+|------|-----------|
+| Endpoint | `GET /api/v1/fiscal_documents/invoices/export?fmt=xlsx\|csv&document_type=credit_note` |
+| Colonne | `Documento;Numero;Data;Ragione sociale;…;SKU;SKU Parent;Riferimento` (37 campi) |
+| Righe | header documento ripetuto + riga prodotto; spedizione in `Spese trasporto` |
+| Riferimento NC | `FATTURA n° {numero} del {dd/mm/yyyy}` da `id_fiscal_document_ref` |
+| Formati | importi con virgola; date `dd/mm/yyyy`; aliquota `22.00` |
+| Embed | `address.dni`, `address.mobile_phone` per C.F. e Tel 2 |
+| EAN / Colli | lasciati vuoti (non in catalogo / non mappati) |
+
+**File:** `fiscal_document_export_service.py`, `fiscal_document_service.py`, `fiscal_documents.py`, `ricevuta_schema.py`, `order_embed_formatters.py`
+
+```powershell
+pytest tests/unit/services/export/test_fiscal_document_export_service.py -v
+```
+
+---
+
 **Prompt FE (incolla in chat Angular):**
 
 - Contratto NC v3 / export: [`.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md`](.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md)

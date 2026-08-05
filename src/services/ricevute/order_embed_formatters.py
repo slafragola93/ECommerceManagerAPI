@@ -60,7 +60,9 @@ def map_ricevuta_address_embed(address) -> Optional[RicevutaAddressEmbedSchema]:
         postcode=address.postcode,
         state=address.state,
         phone=address.phone,
+        mobile_phone=getattr(address, "mobile_phone", None),
         vat=address.vat,
+        dni=getattr(address, "dni", None),
         country=country,
     )
 

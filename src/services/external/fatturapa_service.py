@@ -307,6 +307,41 @@ class FatturaPAService:
         if line_tax.natura:
             self._create_element(dettaglio_linea, "Natura", line_tax.natura)
 
+    @staticmethod
+    def _fmt_prezzo_unitario(value: float) -> str:
+        """PrezzoUnitario FatturaPA (Amount8DecimalType), min 2 decimali come legacy."""
+        quantized = Decimal(str(value)).quantize(
+            Decimal("0.00000001"), rounding=ROUND_HALF_UP
+        )
+        text = f"{quantized:.8f}".rstrip("0")
+        if "." not in text:
+            return f"{text}.00"
+        decimals = len(text.split(".")[1])
+        if decimals < 2:
+            text += "0" * (2 - decimals)
+        return text
+
+    def _append_codice_articolo(
+        self, dettaglio_linea: ET.Element, detail: Dict[str, Any]
+    ) -> None:
+        """CodiceArticolo legacy: EAN se presente, altrimenti SKU/reference."""
+        ean = (detail.get("product_ean") or detail.get("ean") or "").strip()
+        sku = (
+            detail.get("product_reference")
+            or detail.get("product_sku")
+            or detail.get("sku")
+            or ""
+        ).strip()
+        if ean:
+            codice_tipo, codice_valore = "EAN", ean[:35]
+        elif sku:
+            codice_tipo, codice_valore = "SKU", sku[:35]
+        else:
+            return
+        codice_articolo = self._create_element(dettaglio_linea, "CodiceArticolo")
+        self._create_element(codice_articolo, "CodiceTipo", codice_tipo)
+        self._create_element(codice_articolo, "CodiceValore", codice_valore)
+
     def _line_tax_for_riepilogo(
         self, line_tax: FatturaPALineTax, net_total: Decimal
     ) -> Dict[str, Any]:
@@ -571,6 +606,7 @@ class FatturaPAService:
             line_tax = self._fattura_pa_line_tax_from_enriched(detail)
             dettaglio_linea = self._create_element(dati_beni_servizi, "DettaglioLinee")
             self._create_element(dettaglio_linea, "NumeroLinea", str(line_num))
+            self._append_codice_articolo(dettaglio_linea, detail)
             self._create_element(dettaglio_linea, "Descrizione", detail.get('product_name', 'Prodotto'))
 
             product_qty_raw = detail.get('product_qty')
@@ -579,7 +615,11 @@ class FatturaPAService:
 
             product_price_raw = detail.get('product_price', 0)
             prezzo_unitario_netto = float(product_price_raw)
-            self._create_element(dettaglio_linea, "PrezzoUnitario", f"{prezzo_unitario_netto:.2f}")
+            self._create_element(
+                dettaglio_linea,
+                "PrezzoUnitario",
+                self._fmt_prezzo_unitario(prezzo_unitario_netto),
+            )
 
             reduction_percent_raw = detail.get('reduction_percent', 0)
             reduction_amount_raw = detail.get('reduction_amount', 0)
@@ -679,7 +719,9 @@ class FatturaPAService:
                 dati_riepilogo, "ImponibileImporto", f"{group['ImponibileImporto']:.2f}"
             )
             self._create_element(dati_riepilogo, "Imposta", f"{group['Imposta']:.2f}")
-            self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
+            # Con Natura (es. N3.2 VIES) omettere EsigibilitaIVA — allineato a EXPORT-nc legacy
+            if not group.get("Natura"):
+                self._create_element(dati_riepilogo, "EsigibilitaIVA", "I")
             if group.get("RiferimentoNormativo"):
                 self._create_element(
                     dati_riepilogo, "RiferimentoNormativo", group["RiferimentoNormativo"]
@@ -1138,45 +1180,46 @@ class FatturaPAService:
             if not od:
                 continue
             
-            # Calcola reduction dal confronto tra total_price_with_tax e prezzo base
-            prezzo_base = fdd.unit_price * fdd.product_qty
-            sconto = prezzo_base - fdd.total_price_with_tax
-            
-            # Determina se è percentuale o importo
+            unit_net = float(fdd.unit_price_net or 0)
+            qty = float(fdd.product_qty or 0)
+            total_net = float(fdd.total_price_net or 0)
+            prezzo_base = unit_net * qty
+            sconto = prezzo_base - total_net
+
+            # Determina se è percentuale o importo (preferisci dati order_detail)
             reduction_percent = 0.0
             reduction_amount = 0.0
-            
-            if sconto > 0:
-                if od.reduction_percent and od.reduction_percent > 0:
-                    reduction_percent = od.reduction_percent
-                else:
-                    reduction_amount = sconto
-            
-            # Se id_tax non è specificato, usa quello del paese di consegna
-            tax_id = od.id_tax
+            if od.reduction_percent and float(od.reduction_percent) > 0:
+                reduction_percent = float(od.reduction_percent)
+            elif od.reduction_amount and float(od.reduction_amount) > 0:
+                reduction_amount = float(od.reduction_amount)
+            elif sconto > 0.00001:
+                reduction_amount = sconto
+
+            # Preferisci id_tax snapshot su fiscal_document_detail
+            tax_id = fdd.id_tax or od.id_tax
             if not tax_id or tax_id == 0:
-                # Recupera l'id_tax basandosi sul paese dell'indirizzo di consegna
                 delivery_address = self.db.query(Address).join(Order).filter(
                     Order.id_order == fiscal_doc.id_order,
                     Order.id_address_delivery == Address.id_address
                 ).first()
-                
+
                 if delivery_address and delivery_address.id_country:
                     tax = self.db.query(Tax).filter(
                         Tax.id_country == delivery_address.id_country
                     ).first()
-                    tax_id = tax.id_tax
+                    tax_id = tax.id_tax if tax else 1
                 else:
-                    # Fallback alla tassa di default
                     tax_id = 1
-            
+
             details.append({
                 'product_name': od.product_name,
-                'product_qty': fdd.product_qty,  
-                'product_price': fdd.unit_price,
+                'product_reference': od.product_reference,
+                'product_qty': fdd.product_qty,
+                'product_price': unit_net,
                 'reduction_percent': reduction_percent,
                 'reduction_amount': reduction_amount,
-                'id_tax': tax_id
+                'id_tax': tax_id,
             })
-        
+
         return details

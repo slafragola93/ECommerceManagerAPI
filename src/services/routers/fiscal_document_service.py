@@ -15,6 +15,7 @@ from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.models.order_detail import OrderDetail
 from src.models.shipping import Shipping
+from src.models.tax import Tax
 from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 from src.schemas.fiscal_document_schema import (
     CreditNoteEligibleLinesResponseSchema,
@@ -68,6 +69,7 @@ from src.services.ricevute.order_lines import (
 
 EXPORT_XLSX_MAX_LIMIT = 5000
 EXPORT_XML_MAX_LIMIT = 5000
+EXPORT_CSV_MAX_LIMIT = 5000
 
 logger = logging.getLogger(__name__)
 
@@ -1225,8 +1227,9 @@ class FiscalDocumentService(IFiscalDocumentService):
             return InvoiceExportFormatSchema(normalized)
         except ValueError as exc:
             raise ValidationException(
-                "Formato export non valido: usare xlsx o xml (il PDF è solo singolo: GET /{id}/pdf)",
-                details={"fmt": fmt, "allowed": ["xlsx", "xml"]},
+                "Formato export non valido: usare csv, xlsx o xml "
+                "(il PDF è solo singolo: GET /{id}/pdf)",
+                details={"fmt": fmt, "allowed": ["csv", "xlsx", "xml"]},
             ) from exc
 
     @staticmethod
@@ -1248,6 +1251,8 @@ class FiscalDocumentService(IFiscalDocumentService):
     def _export_max_limit(self, export_fmt: InvoiceExportFormatSchema) -> int:
         if export_fmt == InvoiceExportFormatSchema.XML:
             return EXPORT_XML_MAX_LIMIT
+        if export_fmt == InvoiceExportFormatSchema.CSV:
+            return EXPORT_CSV_MAX_LIMIT
         return EXPORT_XLSX_MAX_LIMIT
 
     @staticmethod
@@ -1370,11 +1375,60 @@ class FiscalDocumentService(IFiscalDocumentService):
             buckets[key]["id_fiscal_documents"].append(item.get("id_fiscal_document"))
         return list(buckets.values())
 
+    def _collect_tax_ids_from_documents(
+        self, documents: List[InvoiceResponseSchema]
+    ) -> List[int]:
+        tax_ids: set[int] = set()
+        for doc in documents:
+            for line in doc.order_details or []:
+                if line.id_tax:
+                    tax_ids.add(line.id_tax)
+        return sorted(tax_ids)
+
+    def _load_taxes_by_id(self, tax_ids: List[int]) -> Dict[int, Tax]:
+        if not tax_ids:
+            return {}
+        rows = self._session.query(Tax).filter(Tax.id_tax.in_(tax_ids)).all()
+        return {row.id_tax: row for row in rows}
+
+    def _load_referenced_invoices(
+        self, documents: List[InvoiceResponseSchema]
+    ) -> Dict[int, InvoiceResponseSchema]:
+        ref_ids = sorted(
+            {
+                doc.id_fiscal_document_ref
+                for doc in documents
+                if doc.document_type == "credit_note" and doc.id_fiscal_document_ref
+            }
+        )
+        referenced: Dict[int, InvoiceResponseSchema] = {}
+        for ref_id in ref_ids:
+            row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(
+                ref_id
+            )
+            schema = self._row_to_fiscal_document_detail_schema(row)
+            if schema:
+                referenced[ref_id] = schema
+        return referenced
+
+    def _load_documents_for_legacy_csv(
+        self, items: List[InvoiceListExportItemSchema]
+    ) -> List[InvoiceResponseSchema]:
+        documents: List[InvoiceResponseSchema] = []
+        for item in items:
+            row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(
+                item.id_fiscal_document
+            )
+            schema = self._row_to_fiscal_document_detail_schema(row)
+            if schema:
+                documents.append(schema)
+        return documents
+
     async def export_invoices(
         self, filters: InvoiceExportFiltersSchema, fmt: str
     ) -> Tuple[bytes, str, str, Dict[str, str]]:
         """
-        Export massivo fatture o note di credito in Excel o ZIP XML.
+        Export massivo fatture o note di credito in CSV legacy, Excel o ZIP XML.
 
         Returns:
             (content, media_type, filename, extra_headers)
@@ -1415,10 +1469,32 @@ class FiscalDocumentService(IFiscalDocumentService):
             export_filters if export_fmt == InvoiceExportFormatSchema.XML else filters
         )
 
-        if export_fmt == InvoiceExportFormatSchema.XLSX:
-            content = self._export_service.build_list_xlsx(
-                items,
-                sheet_title=self._export_sheet_title(export_filters.document_type),
+        if export_fmt in (
+            InvoiceExportFormatSchema.CSV,
+            InvoiceExportFormatSchema.XLSX,
+        ):
+            documents = self._load_documents_for_legacy_csv(items)
+            taxes_by_id = self._load_taxes_by_id(
+                self._collect_tax_ids_from_documents(documents)
+            )
+            referenced_by_id = self._load_referenced_invoices(documents)
+            sheet_title = self._export_sheet_title(export_filters.document_type)
+
+            if export_fmt == InvoiceExportFormatSchema.CSV:
+                content = self._export_service.build_legacy_csv(
+                    documents,
+                    taxes_by_id=taxes_by_id,
+                    referenced_by_id=referenced_by_id,
+                )
+                media_type = "text/csv; charset=utf-8"
+                filename = f"{label_prefix}-export{suffix}.csv"
+                return content, media_type, filename, {}
+
+            content = self._export_service.build_legacy_xlsx(
+                documents,
+                taxes_by_id=taxes_by_id,
+                referenced_by_id=referenced_by_id,
+                sheet_title=sheet_title,
             )
             media_type = (
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

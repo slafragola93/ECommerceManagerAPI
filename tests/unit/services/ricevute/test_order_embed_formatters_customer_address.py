@@ -38,10 +38,14 @@ class TestOrderEmbedFormattersCustomerAddress:
                 "postcode": "20100",
                 "state": "MI",
                 "phone": "021234567",
+                "mobile_phone": "3331234567",
                 "vat": "IT12345678901",
+                "dni": "RSSMRA80A01H501U",
                 "country": country,
             },
         )()
         result = map_ricevuta_address_embed(address)
         assert result.id_address == 10
         assert result.country.iso_code == "IT"
+        assert result.mobile_phone == "3331234567"
+        assert result.dni == "RSSMRA80A01H501U"

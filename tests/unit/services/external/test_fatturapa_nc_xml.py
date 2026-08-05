@@ -228,3 +228,131 @@ class TestNcXmlTotalDiscounts:
         )
         descriptions = [el.text for el in ET.fromstring(xml).iter("Descrizione")]
         assert "Buoni Sconto" in descriptions
+
+
+def _line_vies_n32(**overrides):
+    data = enrich_line_item_tax_fields(
+        {
+            "product_name": "Prodotto VIES",
+            "product_reference": "KIT CEBU",
+            "product_qty": 1,
+            "product_price": 1598.09,
+            "reduction_percent": 0,
+            "reduction_amount": 0,
+            "id_tax": 1,
+        },
+        resolve_line_tax(
+            Tax(percentage=0, electronic_code="N3.2", note="operazione non imponibile ai sensi dell'art. 41 D.L. 331/1993"),
+            vies_eligible=True,
+            is_product_line=True,
+        ),
+    )
+    data.update(overrides)
+    return data
+
+
+class TestNcXmlLegacyBulkAlignment:
+    """Allineamento a bulk_xml_nc.zip (senza copiare ITIT / assenza Collegate)."""
+
+    def test_natura_omits_esigibilita_iva(self, fatturapa_service):
+        order = _base_order(
+            tipo_documento_fe="TD04",
+            country_iso="DE",
+            invoice_vat="DE367377805",
+            invoice_sdi="0000000",
+            total_price=1598.09,
+            linked_invoice_number="100",
+            linked_invoice_date="2026-04-01",
+            vies_status="valid",
+        )
+        xml = fatturapa_service._generate_xml(
+            order, [_line_vies_n32()], "000157", include_shipping=False
+        )
+        root = ET.fromstring(xml)
+        riepilogo = root.find(".//DatiRiepilogo")
+        assert riepilogo is not None
+        assert riepilogo.find("Natura").text == "N3.2"
+        assert riepilogo.find("EsigibilitaIVA") is None
+        assert riepilogo.find("RiferimentoNormativo") is not None
+
+    def test_ordinary_iva_keeps_esigibilita(self, fatturapa_service):
+        order = _base_order(
+            tipo_documento_fe="TD04",
+            linked_invoice_number="100",
+            linked_invoice_date="2026-04-01",
+        )
+        xml = fatturapa_service._generate_xml(
+            order, [_line_22()], "000156", include_shipping=False
+        )
+        assert ET.fromstring(xml).find(".//DatiRiepilogo/EsigibilitaIVA").text == "I"
+
+    def test_codice_articolo_from_sku(self, fatturapa_service):
+        line = enrich_line_item_tax_fields(
+            {
+                "product_name": "Prodotto",
+                "product_reference": "PAF ZA91104R",
+                "product_qty": 1,
+                "product_price": 9.61,
+                "reduction_percent": 0,
+                "reduction_amount": 0,
+                "id_tax": 1,
+            },
+            resolve_line_tax(
+                Tax(percentage=22, electronic_code="", note=""),
+                vies_eligible=False,
+                is_product_line=True,
+            ),
+        )
+        order = _base_order(
+            tipo_documento_fe="TD04",
+            linked_invoice_number="100",
+            linked_invoice_date="2026-04-01",
+            total_price=11.72,
+        )
+        xml = fatturapa_service._generate_xml(
+            order, [line], "000200", include_shipping=False
+        )
+        root = ET.fromstring(xml)
+        assert root.find(".//CodiceArticolo/CodiceTipo").text == "SKU"
+        assert root.find(".//CodiceArticolo/CodiceValore").text == "PAF ZA91104R"
+
+    def test_prezzo_unitario_keeps_high_precision(self, fatturapa_service):
+        line = enrich_line_item_tax_fields(
+            {
+                "product_name": "Prodotto",
+                "product_qty": 8,
+                "product_price": 0.434426,
+                "reduction_percent": 0,
+                "reduction_amount": 0,
+                "id_tax": 1,
+            },
+            resolve_line_tax(
+                Tax(percentage=22, electronic_code="", note=""),
+                vies_eligible=False,
+                is_product_line=True,
+            ),
+        )
+        order = _base_order(
+            tipo_documento_fe="TD04",
+            linked_invoice_number="100",
+            linked_invoice_date="2026-04-01",
+            total_price=4.24,
+        )
+        xml = fatturapa_service._generate_xml(
+            order, [line], "000201", include_shipping=False
+        )
+        assert ET.fromstring(xml).find(".//PrezzoUnitario").text == "0.434426"
+
+    def test_dati_fatture_collegate_still_required(self, fatturapa_service):
+        """Legacy ZIP omette Collegate — noi le teniamo (AdE / art.26)."""
+        order = _base_order(
+            tipo_documento_fe="TD04",
+            linked_invoice_number="0005326",
+            linked_invoice_date="2026-04-27",
+        )
+        xml = fatturapa_service._generate_xml(
+            order, [_line_22()], "000203", include_shipping=False
+        )
+        root = ET.fromstring(xml)
+        assert root.find(".//DatiFattureCollegate/IdDocumento").text == "5326"
+        assert root.find(".//DatiFattureCollegate/Data").text == "2026-04-27"
