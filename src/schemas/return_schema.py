@@ -3,7 +3,7 @@ Schemi per la gestione dei resi
 """
 from decimal import Decimal
 from typing import List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator, validator
 from datetime import datetime
 
 from src.schemas.address_schema import AddressResponseSchema
@@ -158,8 +158,25 @@ class ReturnWithDetailsResponseSchema(ReturnResponseSchema):
 
 
 class AllReturnsResponseSchema(BaseModel):
-    """Schema di risposta per la lista di tutti i resi"""
-    returns: List[ReturnResponseSchema]
+    """Schema di risposta per la lista di tutti i resi (envelope ``items`` + alias ``returns``)."""
+
+    items: List[ReturnResponseSchema] = Field(
+        default_factory=list,
+        description="Lista resi (contratto stabile)",
+    )
+    returns: List[ReturnResponseSchema] = Field(
+        default_factory=list,
+        deprecated=True,
+        description="Alias legacy di ``items`` (deprecated)",
+    )
     total: int
     page: int
     limit: int
+
+    @model_validator(mode="after")
+    def _sync_items_and_returns(self):
+        if self.items and not self.returns:
+            object.__setattr__(self, "returns", list(self.items))
+        elif self.returns and not self.items:
+            object.__setattr__(self, "items", list(self.returns))
+        return self

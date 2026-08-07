@@ -884,11 +884,13 @@ class FiscalDocumentService(IFiscalDocumentService):
             return None
         return schema
 
-    async def get_invoices_by_order_response(self, id_order: int) -> List[InvoiceResponseSchema]:
+    async def get_invoices_by_order_response(
+        self, id_order: int, page: int = 1, limit: int = 100
+    ) -> List[InvoiceResponseSchema]:
         """Fatture ordine arricchite (contratto allineato a ricevuta v3)."""
         try:
             rows = self._fiscal_document_repository.get_by_order_id(
-                id_order, page=1, limit=100, document_type="invoice"
+                id_order, page=page, limit=limit, document_type="invoice"
             )
             schemas = [self._row_to_invoice_response_schema(r) for r in rows]
             return [s for s in schemas if s is not None]

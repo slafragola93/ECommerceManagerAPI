@@ -4,6 +4,42 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-08-07) — Documenti nested sull’ordine (returns / invoices / ricevute)
+
+**Scope:** unificare il list-by-order di resi, fatture e ricevute sotto path nested coerenti, con envelope comune e empty state sempre `200` (mai `404` “nessun documento”). Prompt: [`docs/BE_PROMPT_ORDER_ATTACHED_DOCUMENTS.md`](docs/BE_PROMPT_ORDER_ATTACHED_DOCUMENTS.md).
+
+### Endpoint to-be
+
+| Metodo | Path | Empty | Note |
+|--------|------|-------|------|
+| GET | `/api/v1/orders/{id_order}/returns` | `200` + `items: []` | allineato (check ordine + envelope) |
+| GET | `/api/v1/orders/{id_order}/invoices` | `200` + `items: []` | **nuovo** |
+| GET | `/api/v1/orders/{id_order}/ricevute` | `200` + `items: []` | **nuovo** |
+
+- Ordine inesistente → `404` su tutte e tre.
+- Envelope: `{ items, total, page, limit }` + alias legacy deprecati (`returns` / `invoices` / `ricevute`).
+- Query: `?page=1&limit=…` (default da `LIMIT_DEFAULT`).
+
+### Legacy
+
+| Legacy | Comportamento |
+|--------|----------------|
+| `GET /api/v1/fiscal_documents/invoices/order/{id}` | `deprecated=True`; empty → `200` + `[]` (non più 404) |
+| `GET /api/v1/ricevute/?id_order=` | resta valido (lista globale); preferire nested per tab ordine |
+
+### File
+
+- `src/schemas/order_attached_documents_schema.py`
+- `src/routers/order.py`, `fiscal_documents.py`, `ricevute.py`
+- `src/schemas/return_schema.py` (`AllReturnsResponseSchema` + `items`)
+- `tests/integration/api/v1/test_order_attached_documents.py`
+
+```powershell
+pytest tests/integration/api/v1/test_order_attached_documents.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-08-05) — Export bulk XML NC allineato a legacy
 
 **Scope:** confronto con `bulk_xml_nc.zip` (47 TD04). Allineati i punti utili; **non** copiati i difetti legacy (`ITIT…`, assenza `DatiFattureCollegate`).

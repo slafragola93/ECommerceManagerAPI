@@ -73,6 +73,10 @@ async def create_ricevuta(
     response_model=RicevutaListResponseSchema,
     status_code=status.HTTP_200_OK,
     summary="Lista ricevute con filtri",
+    description=(
+        "Lista globale ricevute (pagina Ricevute). "
+        "Per il tab ordine preferire ``GET /api/v1/orders/{id_order}/ricevute``."
+    ),
 )
 @router.get(
     "/",

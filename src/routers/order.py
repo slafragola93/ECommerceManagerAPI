@@ -21,9 +21,15 @@ from src.repository.order_detail_repository import OrderDetailRepository
 from src.repository.product_repository import ProductRepository
 from src.routers.dependencies import get_fiscal_document_service
 from src.routers.dependencies import get_order_payment_service
+from src.routers.dependencies import get_ricevuta_service
 from src.schemas.address_schema import AddressResponseSchema
 from src.schemas.customer_schema import CustomerResponseSchema, CustomerResponseWithoutAddressSchema
 from src.schemas.payment_schema import PaymentResponseSchema
+from src.schemas.order_attached_documents_schema import (
+    OrderInvoicesListResponseSchema,
+    OrderReturnsListResponseSchema,
+    OrderRicevuteListResponseSchema,
+)
 from src.schemas.order_payment_schema import (
     OrderPaymentCreateSchema,
     OrderPaymentPaidStatusSchema,
@@ -31,10 +37,12 @@ from src.schemas.order_payment_schema import (
     OrderPaymentUpdateSchema,
     OrderPaymentsListResponseSchema,
 )
+from src.schemas.ricevuta_schema import RicevutaFiltersSchema
 from src.schemas.shipping_schema import ShippingResponseSchema
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.fiscal_document_service_interface import IFiscalDocumentService
 from src.services.interfaces.order_payment_service_interface import IOrderPaymentService
+from src.services.interfaces.ricevuta_service_interface import IRicevutaService
 from src.services.routers.auth_service import authorize, get_current_user, require_permission
 from src.services.routers.product_service import ProductService
 
@@ -93,6 +101,14 @@ router = APIRouter(
 def get_repository(db: Session = Depends(get_db)) -> OrderRepository:
     """Dependency injection per Order Repository."""
     return OrderRepository(db)
+
+
+def _ensure_order_exists(or_repo: OrderRepository, id_order: int) -> Order:
+    """404 se l'ordine non esiste (padre delle collection nested)."""
+    order = or_repo.get_by_id(_id=id_order)
+    if not order:
+        raise HTTPException(status_code=404, detail=f"Ordine {id_order} non trovato")
+    return order
 
 
 def get_order_detail_repository(db: Session = Depends(get_db)) -> OrderDetailRepository:
@@ -820,31 +836,125 @@ async def create_return(
 
 
 
-@router.get("/{id_order}/returns", 
-           status_code=status.HTTP_200_OK,
-           summary="Recupera i resi di un ordine",
-           description="Recupera tutti i documenti di reso per un ordine specifico",
-           response_description="Lista dei resi dell'ordine")
+@router.get(
+    "/{id_order}/returns",
+    status_code=status.HTTP_200_OK,
+    response_model=OrderReturnsListResponseSchema,
+    summary="Recupera i resi di un ordine",
+    description=(
+        "Lista nested dei resi dell'ordine. "
+        "Empty state: 200 + items=[]. 404 solo se l'ordine non esiste."
+    ),
+    response_description="Lista dei resi dell'ordine (envelope items/total)",
+)
 @check_authentication
 async def get_order_returns(
     id_order: int = Path(..., description="ID dell'ordine"),
     page: int = Query(1, gt=0, description="Numero di pagina"),
-    limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT, description=f"Numero di elementi per pagina (max {MAX_LIMIT})"),
+    limit: int = Query(
+        LIMIT_DEFAULT,
+        gt=0,
+        le=MAX_LIMIT,
+        description=f"Numero di elementi per pagina (max {MAX_LIMIT})",
+    ),
     user: dict = Depends(get_current_user),
+    or_repo: OrderRepository = Depends(get_repository),
     fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("returns", "read")),
-)-> AllReturnsResponseSchema:
-    """
-    Recupera tutti i documenti di reso per un ordine specifico.
-    """
-    returns = await fiscal_document_service.get_fiscal_documents_by_order(id_order, page, limit, 'return')
-    total_count = len(returns)
-    
-    return AllReturnsResponseSchema(
+) -> OrderReturnsListResponseSchema:
+    """Recupera tutti i documenti di reso per un ordine specifico."""
+    _ensure_order_exists(or_repo, id_order)
+    returns = await fiscal_document_service.get_fiscal_documents_by_order(
+        id_order, page, limit, "return"
+    )
+    return OrderReturnsListResponseSchema(
+        items=returns,
         returns=returns,
-        total=total_count,
+        total=len(returns),
         page=page,
-        limit=limit
+        limit=limit,
+    )
+
+
+@router.get(
+    "/{id_order}/invoices",
+    status_code=status.HTTP_200_OK,
+    response_model=OrderInvoicesListResponseSchema,
+    summary="Recupera le fatture di un ordine",
+    description=(
+        "Lista nested delle fatture dell'ordine. "
+        "Empty state: 200 + items=[]. 404 solo se l'ordine non esiste. "
+        "Sostituisce GET /fiscal_documents/invoices/order/{id_order}."
+    ),
+    response_description="Lista delle fatture dell'ordine (envelope items/total)",
+)
+@check_authentication
+async def get_order_invoices(
+    id_order: int = Path(..., gt=0, description="ID dell'ordine"),
+    page: int = Query(1, gt=0, description="Numero di pagina"),
+    limit: int = Query(
+        LIMIT_DEFAULT,
+        gt=0,
+        le=MAX_LIMIT,
+        description=f"Numero di elementi per pagina (max {MAX_LIMIT})",
+    ),
+    user: dict = Depends(get_current_user),
+    or_repo: OrderRepository = Depends(get_repository),
+    fiscal_document_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
+) -> OrderInvoicesListResponseSchema:
+    """Recupera tutte le fatture collegate a un ordine."""
+    _ensure_order_exists(or_repo, id_order)
+    invoices = await fiscal_document_service.get_invoices_by_order_response(
+        id_order, page=page, limit=limit
+    )
+    return OrderInvoicesListResponseSchema(
+        items=invoices,
+        invoices=invoices,
+        total=len(invoices),
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/{id_order}/ricevute",
+    status_code=status.HTTP_200_OK,
+    response_model=OrderRicevuteListResponseSchema,
+    summary="Recupera le ricevute di un ordine",
+    description=(
+        "Lista nested delle ricevute dell'ordine. "
+        "Empty state: 200 + items=[]. 404 solo se l'ordine non esiste. "
+        "Preferire a GET /ricevute/?id_order= per il tab ordine."
+    ),
+    response_description="Lista delle ricevute dell'ordine (envelope items/total)",
+)
+@check_authentication
+async def get_order_ricevute(
+    id_order: int = Path(..., gt=0, description="ID dell'ordine"),
+    page: int = Query(1, gt=0, description="Numero di pagina"),
+    limit: int = Query(
+        LIMIT_DEFAULT,
+        gt=0,
+        le=MAX_LIMIT,
+        description=f"Numero di elementi per pagina (max {MAX_LIMIT})",
+    ),
+    user: dict = Depends(get_current_user),
+    or_repo: OrderRepository = Depends(get_repository),
+    ricevuta_service: IRicevutaService = Depends(get_ricevuta_service),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
+) -> OrderRicevuteListResponseSchema:
+    """Recupera tutte le ricevute collegate a un ordine."""
+    _ensure_order_exists(or_repo, id_order)
+    listed = ricevuta_service.list_ricevute(
+        RicevutaFiltersSchema(id_order=id_order, page=page, limit=limit)
+    )
+    return OrderRicevuteListResponseSchema(
+        items=listed.ricevute,
+        ricevute=listed.ricevute,
+        total=listed.total,
+        page=listed.page,
+        limit=listed.limit,
     )
 
 @router.get("/returns/get-return-by-id/{id_fiscal_document}",
@@ -1036,12 +1146,14 @@ async def get_all_returns(
     """
     returns = await fiscal_document_service.get_fiscal_documents_by_type('return', page, limit)
     total_count = await fiscal_document_service.get_fiscal_document_count_by_type('return')
-    
+    items = [ReturnResponseSchema.from_orm(return_doc) for return_doc in returns]
+
     return AllReturnsResponseSchema(
-        returns=[ReturnResponseSchema.from_orm(return_doc) for return_doc in returns],
+        items=items,
+        returns=items,
         total=total_count,
         page=page,
-        limit=limit
+        limit=limit,
     )
 
 

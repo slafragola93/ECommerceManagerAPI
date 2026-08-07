@@ -89,7 +89,16 @@ async def create_invoice(
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
 
-@router.get("/invoices/order/{id_order}", response_model=List[InvoiceResponseSchema])
+@router.get(
+    "/invoices/order/{id_order}",
+    response_model=List[InvoiceResponseSchema],
+    deprecated=True,
+    summary="[Deprecated] Fatture per ordine",
+    description=(
+        "Deprecated: usare ``GET /api/v1/orders/{id_order}/invoices``. "
+        "Empty state allineato: 200 + lista vuota (non più 404)."
+    ),
+)
 async def get_invoices_by_order(
     id_order: int = Path(..., gt=0, description="ID dell'ordine"),
     user: dict = user_dependency,
@@ -97,16 +106,12 @@ async def get_invoices_by_order(
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
-    Recupera tutte le fatture di un ordine
-    
+    Recupera tutte le fatture di un ordine (legacy).
+
     Un ordine può avere multiple fatture (es. re-emissione, integrazioni).
+    Se non ci sono fatture restituisce ``[]`` con HTTP 200.
     """
-    invoices = await fiscal_service.get_invoices_by_order_response(id_order)
-
-    if not invoices:
-        raise HTTPException(status_code=404, detail=f"Nessuna fattura trovata per ordine {id_order}")
-
-    return invoices
+    return await fiscal_service.get_invoices_by_order_response(id_order)
 
 
 @router.get(
