@@ -49,5 +49,6 @@ from .app_modules import AppModule
 from .user_module_permission import UserModulePermission
 from .mfa_pending_session import MFAPendingSession
 from .auth_log import AuthLog
+from .audit_log import AuditLog
 
 from .relations import *

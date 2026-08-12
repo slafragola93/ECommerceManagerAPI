@@ -58,6 +58,17 @@ class EventType(str, Enum):
     ORDER_IMPORTED = "order_imported"
     CUSTOMER_IMPORTED = "customer_imported"
 
+    # ===== AUTH / SECURITY =====
+    AUTH_LOGIN_SUCCESS = "auth_login_success"
+    AUTH_LOGIN_FAILED = "auth_login_failed"
+    AUTH_LOGOUT = "auth_logout"
+    USER_ROLES_UPDATED = "user_roles_updated"
+
+    # ===== FISCAL / DOCUMENTS (audit-sensitive) =====
+    FISCAL_DOCUMENT_SENT_TO_SDI = "fiscal_document_sent_to_sdi"
+    DOCUMENT_PDF_GENERATED = "document_pdf_generated"
+    DOCUMENT_EXPORTED = "document_exported"
+
     # ===== PLUGIN LIFECYCLE =====
     PLUGIN_INSTALLED = "plugin_installed"
     PLUGIN_UNINSTALLED = "plugin_uninstalled"

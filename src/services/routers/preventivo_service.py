@@ -16,7 +16,8 @@ from src.services.routers.product_service import ProductService
 from src.repository.product_repository import ProductRepository
 from src.core.exceptions import NotFoundException, AlreadyExistsError, ValidationException, ErrorCode
 from src.events.decorators import emit_event_on_success
-from src.events.core.event import EventType
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
 from src.events.extractors import (
     extract_preventivo_created_data,
     extract_preventivo_updated_data,
@@ -1504,7 +1505,7 @@ class PreventivoService:
                 order_doc_service=self.order_doc_service
             )
             
-            return pdf_service.generate_pdf(
+            pdf_bytes = pdf_service.generate_pdf(
                 preventivo_data=preventivo_data,
                 order_document=order_document,
                 customer_data=customer_data,
@@ -1514,6 +1515,17 @@ class PreventivoService:
                 sender_config=sender_config,
                 logo_path=logo_path
             )
+            emit_event(
+                Event(
+                    event_type=EventType.DOCUMENT_PDF_GENERATED.value,
+                    data={
+                        "id_order_document": id_order_document,
+                        "document_type": "preventivo",
+                    },
+                    metadata={},
+                )
+            )
+            return pdf_bytes
             
         except ImportError:
             raise Exception("Libreria fpdf2 non installata. Installare con: pip install fpdf2")

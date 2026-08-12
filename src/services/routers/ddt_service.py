@@ -273,6 +273,8 @@ class DDTService:
         Returns:
             bytes: Contenuto del PDF
         """
+        from src.events.core.event import Event, EventType
+        from src.events.runtime import emit_event
         from src.services.pdf.ddt_pdf_service import DDTPDFService
 
         ddt_data = self.get_ddt_complete(id_order_document)
@@ -280,7 +282,18 @@ class DDTService:
             raise ValueError("DDT non trovato")
 
         pdf_service = DDTPDFService(tax_repo=self.tax_repo)
-        return pdf_service.generate_pdf(ddt_data=ddt_data)
+        pdf_bytes = pdf_service.generate_pdf(ddt_data=ddt_data)
+        emit_event(
+            Event(
+                event_type=EventType.DOCUMENT_PDF_GENERATED.value,
+                data={
+                    "id_order_document": id_order_document,
+                    "document_type": "ddt",
+                },
+                metadata={},
+            )
+        )
+        return pdf_bytes
     
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_UPDATED,

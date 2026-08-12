@@ -128,7 +128,11 @@ class UserService(IUserService):
 
     async def set_user_roles(self, user_id: int, role_ids: List[int]) -> User:
         """Sostituisce i ruoli dell'utente con quelli corrispondenti agli id forniti."""
+        from src.events.core.event import Event, EventType
+        from src.events.runtime import emit_event
+
         user = self._user_repository.get_by_id_or_raise(user_id)
+        before_roles = [r.id_role for r in (user.roles or [])]
         if not role_ids:
             user.roles = []
         else:
@@ -138,7 +142,19 @@ class UserService(IUserService):
                     "Uno o più id_role non esistono; verificare la lista role_ids."
                 )
             user.roles = roles
-        return self._user_repository.update(user)
+        updated = self._user_repository.update(user)
+        emit_event(
+            Event(
+                event_type=EventType.USER_ROLES_UPDATED.value,
+                data={
+                    "id_user": user_id,
+                    "before": {"role_ids": before_roles},
+                    "after": {"role_ids": list(role_ids or [])},
+                },
+                metadata={},
+            )
+        )
+        return updated
 
     async def get_users(self, page: int = 1, limit: int = 10, **filters) -> List[User]:
         """Ottiene la lista degli utenti con filtri"""

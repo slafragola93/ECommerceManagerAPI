@@ -44,7 +44,8 @@ from src.core.exceptions import (
 )
 from src.services.routers.order_document_service import OrderDocumentService
 from src.events.decorators import emit_event_on_success
-from src.events.core.event import EventType
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
 from src.events.extractors import (
     extract_invoice_created_data,
     extract_credit_note_created_data
@@ -1426,6 +1427,25 @@ class FiscalDocumentService(IFiscalDocumentService):
                 documents.append(schema)
         return documents
 
+    def _emit_document_exported(
+        self,
+        *,
+        export_fmt: str,
+        document_type: str,
+        total: int,
+    ) -> None:
+        emit_event(
+            Event(
+                event_type=EventType.DOCUMENT_EXPORTED.value,
+                data={
+                    "fmt": export_fmt,
+                    "document_type": document_type,
+                    "total": total,
+                },
+                metadata={},
+            )
+        )
+
     async def export_invoices(
         self, filters: InvoiceExportFiltersSchema, fmt: str
     ) -> Tuple[bytes, str, str, Dict[str, str]]:
@@ -1490,6 +1510,11 @@ class FiscalDocumentService(IFiscalDocumentService):
                 )
                 media_type = "text/csv; charset=utf-8"
                 filename = f"{label_prefix}-export{suffix}.csv"
+                self._emit_document_exported(
+                    export_fmt=export_fmt.value,
+                    document_type=export_filters.document_type,
+                    total=total,
+                )
                 return content, media_type, filename, {}
 
             content = self._export_service.build_legacy_xlsx(
@@ -1502,6 +1527,11 @@ class FiscalDocumentService(IFiscalDocumentService):
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             filename = f"{label_prefix}-export{suffix}.xlsx"
+            self._emit_document_exported(
+                export_fmt=export_fmt.value,
+                document_type=export_filters.document_type,
+                total=total,
+            )
             return content, media_type, filename, {}
 
         document_ids = [item.id_fiscal_document for item in items]
@@ -1564,5 +1594,10 @@ class FiscalDocumentService(IFiscalDocumentService):
             "X-Export-Total-Candidates": str(len(document_ids)),
             "X-Export-Partial": "true" if xml_failures else "false",
         }
+        self._emit_document_exported(
+            export_fmt="xml",
+            document_type=export_filters.document_type,
+            total=len(ready_ids),
+        )
         return content, media_type, filename, extra_headers
     

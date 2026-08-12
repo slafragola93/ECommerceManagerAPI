@@ -22,7 +22,7 @@ if sys.platform == 'win32':
 
 from src.routers import customer, auth, category, brand, shipping_state, product, country, address, carrier, \
     api_carrier, carrier_assignment, platform, store, shipping, lang, sectional, message, role, app_configuration, payment, tax, user, \
-    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, ricevute, purchase_invoices, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv
+    order_state, order, order_package, sync, preventivi, fiscal_documents, corrispettivi, ricevute, purchase_invoices, init, carriers_configuration, shipments, events, csv_import, platform_state_trigger, ddt, bordero, settings, fastldv, audit_log
 from src.database import Base, engine
 
 # Import new cache system
@@ -160,6 +160,7 @@ def initialize_event_system() -> None:
         set_plugin_manager(plugin_manager)
         set_config_loader(config_loader)
         set_marketplace_client(marketplace_client)
+        # Audit handlers: registered in lifespan (await) — core subscriber, not a plugin
         
         return plugin_manager
         
@@ -204,11 +205,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         plugin_manager = initialize_event_system()
         await plugin_manager.initialise()
         from src.events.sse import SseFanoutService, attach_sse_fanout
+        from src.services.audit import register_audit_handlers
+
+        # Ensure audit handlers are subscribed (awaited) even if init used create_task
+        await register_audit_handlers(get_event_bus())
 
         sse_fanout = SseFanoutService()
         set_sse_fanout(sse_fanout)
         await attach_sse_fanout(get_event_bus(), sse_fanout)
         print("✓ Event system initialized with all plugins")
+        print("✓ Audit log EventBus subscriber registered")
         print("✓ SSE fan-out bridge attached")
     except Exception as e:
         print(f"⚠ Event system warning: {e}")
@@ -629,6 +635,7 @@ except Exception as e:
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(role.router)
+app.include_router(audit_log.router)
 app.include_router(app_configuration.router)
 app.include_router(lang.router)
 app.include_router(customer.router)

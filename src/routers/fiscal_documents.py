@@ -830,6 +830,21 @@ async def send_to_sdi(
         upload_result=json.dumps(stop_result) if stop_result else None
     )
 
+    if send_to_sdi:
+        from src.events.core.event import Event, EventType
+        from src.events.runtime import emit_event
+
+        emit_event(
+            Event(
+                event_type=EventType.FISCAL_DOCUMENT_SENT_TO_SDI.value,
+                data={
+                    "id_fiscal_document": id_fiscal_document,
+                    "status": final_status,
+                },
+                metadata={},
+            )
+        )
+
     from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
 
     return serialize_fiscal_documents(db, [doc])[0]
@@ -862,6 +877,20 @@ async def generate_fiscal_document_pdf(
     - Se non ci sono dettagli → 404
     """
     pdf_buffer, filename = build_fiscal_document_pdf_buffer(db, id_fiscal_document)
+
+    from src.events.core.event import Event, EventType
+    from src.events.runtime import emit_event
+
+    emit_event(
+        Event(
+            event_type=EventType.DOCUMENT_PDF_GENERATED.value,
+            data={
+                "id_fiscal_document": id_fiscal_document,
+                "document_type": "fiscal_document",
+            },
+            metadata={},
+        )
+    )
 
     return StreamingResponse(
         pdf_buffer,

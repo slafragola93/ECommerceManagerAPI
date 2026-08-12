@@ -14,6 +14,9 @@ from src.core.exceptions import (
     ValidationException,
     AuthenticationException
 )
+from src.events.core.event import Event, EventType
+from src.events.runtime import emit_event
+from src.core.request_context import get_ip_address, get_request_id, set_actor
 
 load_dotenv()
 
@@ -63,12 +66,31 @@ async def get_token(
 
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
+        emit_event(
+            Event(
+                event_type=EventType.AUTH_LOGIN_FAILED.value,
+                data={
+                    "username": form_data.username,
+                    "status": "failure",
+                },
+                metadata={
+                    "actor_id": None,
+                    "actor_username": form_data.username,
+                    "actor_role": "",
+                    "status": "failure",
+                    "ip_address": get_ip_address(),
+                    "request_id": get_request_id(),
+                },
+            )
+        )
         raise AuthenticationException("Credenziali non valide")
 
     # Prende il ruolo principale dell'utente
     role = user.roles[0] if user.roles else None
     role_name = role.name if role else "USER"
     role_type = role.permission_type.value if role else PermissionType.custom.value
+
+    set_actor(actor_id=user.id_user, username=user.username, role=role_name)
 
     # Access token — 30 minuti
     access_token = create_access_token(
@@ -84,10 +106,25 @@ async def get_token(
         user_id     = user.id_user,
         db          = db,
         device_info = None,
-        ip_address  = None
+        ip_address  = get_ip_address()
     )
 
     expires_at = datetime.now() + timedelta(minutes=30)
+
+    emit_event(
+        Event(
+            event_type=EventType.AUTH_LOGIN_SUCCESS.value,
+            data={
+                "id_user": user.id_user,
+                "username": user.username,
+            },
+            metadata={
+                "actor_id": user.id_user,
+                "actor_username": user.username,
+                "actor_role": role_name,
+            },
+        )
+    )
 
     return {
         "access_token":  access_token,
@@ -168,6 +205,13 @@ async def logout(
         )
 
     revoke_refresh_token(raw_token, db)
+    emit_event(
+        Event(
+            event_type=EventType.AUTH_LOGOUT.value,
+            data={"scope": "single"},
+            metadata={},
+        )
+    )
 
     return {"message": "Logout effettuato con successo"}
 
@@ -185,4 +229,15 @@ async def logout_all(
     """
     user_id = user["id"]
     count = revoke_all_user_tokens(user_id, db)
+    emit_event(
+        Event(
+            event_type=EventType.AUTH_LOGOUT.value,
+            data={
+                "id_user": user_id,
+                "scope": "all",
+                "tokens_revoked": count,
+            },
+            metadata={},
+        )
+    )
     return {"message": f"Logout effettuato da tutti i dispositivi", "tokens_revoked": count}

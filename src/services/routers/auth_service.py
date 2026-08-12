@@ -105,6 +105,7 @@ def create_access_token(
 async def get_current_user(token: token_dependency) -> dict:
     """
     Dependency FastAPI: decodifica il JWT e restituisce i dati utente.
+    Popola anche il ContextVar attore per l'audit trail (EventBus metadata).
     """
     try:
         payload = jwt.decode(
@@ -122,6 +123,17 @@ async def get_current_user(token: token_dependency) -> dict:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Credenziali non valide"
             )
+
+        try:
+            from src.core.request_context import set_actor
+
+            set_actor(
+                actor_id=user_id,
+                username=username or "system",
+                role=role or "",
+            )
+        except Exception:
+            pass
 
         return {
             "username":  username,

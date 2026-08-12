@@ -4,6 +4,52 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-08-12) — Audit Log backend
+
+**Scope:** persistenza append-only `audit_logs` alimentata da un subscriber **core** dell’EventBus (non plugin), API di sola lettura protetta dal modulo RBAC `audit`.
+
+### Dipendenze
+
+Nessuna nuova libreria. Usa stack esistente (FastAPI, SQLAlchemy, EventBus, `require_permission`).
+
+### Setup
+
+```powershell
+# Migrazione tabella
+.\venv\Scripts\alembic.exe upgrade head
+
+# Seed modulo RBAC (idempotente)
+.\venv\Scripts\python.exe scripts\init_auth_data.py
+```
+
+Assegnare `can_read=true` sul modulo `audit` al ruolo admin (o usare `role_type=full_crud`).  
+`can_create` / `can_update` / `can_delete` sul modulo audit **non sono usati** (entità immutabile).
+
+### Endpoint
+
+| Metodo | Path | Permesso |
+|--------|------|----------|
+| GET | `/api/v1/audit-logs/` | `require_permission("audit", "read")` |
+| GET | `/api/v1/audit-logs/{id_audit_log}` | stesso |
+
+Visibilità **all-or-nothing**: con `can_read` si vedono tutte le azioni di tutti gli utenti e tutte le colonne (`ip_address`, `request_id`, `changes`). Senza → 403.
+
+Query: `page`, `limit`, `actor_id`, `resource_type`, `resource_id`, `action`, `level`, `date_from`, `date_to`.
+
+### Architettura
+
+- Scrittura: `src/services/audit/` sottoscritto in `lifespan` (no circuit breaker plugin)
+- Attore: `ContextVar` in `src/core/request_context.py` (middleware UUID `X-Request-ID` + `get_current_user`)
+- Metadata eventi arricchiti in `@emit_event_on_success` e `emit_event`
+- Nuovi `EventType`: `AUTH_*`, `USER_ROLES_UPDATED`, `FISCAL_DOCUMENT_SENT_TO_SDI`, `DOCUMENT_PDF_GENERATED`, `DOCUMENT_EXPORTED`
+- Cache: non applicata agli audit log
+
+```powershell
+pytest tests/unit/services/audit/test_audit_log_handler.py tests/integration/api/v1/test_audit_logs.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-08-07) — Documenti nested sull’ordine (returns / invoices / ricevute)
 
 **Scope:** unificare il list-by-order di resi, fatture e ricevute sotto path nested coerenti, con envelope comune e empty state sempre `200` (mai `404` “nessun documento”). Prompt: [`docs/BE_PROMPT_ORDER_ATTACHED_DOCUMENTS.md`](docs/BE_PROMPT_ORDER_ATTACHED_DOCUMENTS.md).

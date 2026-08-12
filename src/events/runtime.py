@@ -56,6 +56,20 @@ def get_sse_fanout() -> "SseFanoutService":
 
 def emit_event(event: Event) -> None:
     """Publish an event using the currently configured EventBus."""
+    try:
+        from src.core.request_context import get_audit_metadata
+
+        ctx = get_audit_metadata()
+        updates = {
+            key: value
+            for key, value in ctx.items()
+            if key not in event.metadata or event.metadata.get(key) in (None, "")
+        }
+        if updates:
+            event = event.with_metadata(**updates)
+    except Exception:
+        pass
+
     event_bus = get_event_bus()
     try:
         loop = asyncio.get_running_loop()

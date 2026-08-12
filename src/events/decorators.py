@@ -107,6 +107,9 @@ def emit_event_on_success(
                 metadata = _extract_default_metadata(
                     func, *args, result=result, source=source, **kwargs
                 )
+
+            # Enrich with request/actor ContextVar (transparent for all emitters)
+            metadata = _enrich_metadata_from_request_context(metadata or {})
             
             # Create and emit event
             event = Event(
@@ -189,4 +192,24 @@ def _extract_default_metadata(
         metadata["id_order"] = order_id
     
     return metadata
+
+
+def _enrich_metadata_from_request_context(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Merge actor/request ContextVar into event metadata.
+
+    Existing non-empty keys from metadata_extractor win (no overwrite).
+    """
+    try:
+        from src.core.request_context import get_audit_metadata
+
+        ctx = get_audit_metadata()
+    except Exception:
+        return metadata
+
+    enriched = dict(metadata)
+    for key, value in ctx.items():
+        if key not in enriched or enriched[key] in (None, ""):
+            enriched[key] = value
+    return enriched
 

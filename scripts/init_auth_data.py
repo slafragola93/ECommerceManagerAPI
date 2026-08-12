@@ -89,6 +89,9 @@ def init_modules():
         ('settings',         'Impostazioni',    14),
         ('users',            'Utenti',          15),
         ('admin',            'Amministrazione', 16),
+        # Audit: unico flag effettivo = can_read (accesso completo all-or-nothing).
+        # can_create/can_update/can_delete non usati (entità append-only).
+        ('audit',            'Audit Log',       17),
     ]
 
     db = next(get_db())

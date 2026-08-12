@@ -285,6 +285,15 @@ def configure_container():
     container.register_transient(IPermissionRepository, PermissionRepository)
     container.register_transient(IPermissionService, PermissionService)
 
+    # Audit Log (read-only API; writes via EventBus core handler)
+    from src.repository.interfaces.audit_log_repository_interface import IAuditLogRepository
+    from src.repository.audit_log_repository import AuditLogRepository
+    from src.services.interfaces.audit_log_service_interface import IAuditLogService
+    from src.services.routers.audit_log_service import AuditLogService
+
+    container.register_transient(IAuditLogRepository, AuditLogRepository)
+    container.register_transient(IAuditLogService, AuditLogService)
+
 def get_configured_container():
     """Ottiene il container configurato"""
     if not container.is_registered(ICustomerRepository):

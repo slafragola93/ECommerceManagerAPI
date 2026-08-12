@@ -4,10 +4,18 @@ Middleware per il logging centralizzato degli errori
 import logging
 import time
 import traceback
+import uuid
 from typing import Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response as StarletteResponse
+
+from src.core.request_context import (
+    reset_ip_address,
+    reset_request_id,
+    set_ip_address,
+    set_request_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +34,10 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
         
         # Log della richiesta in arrivo
         start_time = time.time()
-        request_id = id(request)
+        request_id = str(uuid.uuid4())
+        client_ip = request.client.host if request.client else None
+        rid_token = set_request_id(request_id)
+        ip_token = set_ip_address(client_ip)
         
         if self.log_requests:
             logger.info(
@@ -36,7 +47,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
                     "method": request.method,
                     "path": request.url.path,
                     "query_params": str(request.query_params),
-                    "client_ip": request.client.host if request.client else None,
+                    "client_ip": client_ip,
                     "user_agent": request.headers.get("user-agent"),
                 }
             )
@@ -63,7 +74,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             
             # Aggiungi header con tempo di processamento
             response.headers["X-Process-Time"] = str(process_time)
-            response.headers["X-Request-ID"] = str(request_id)
+            response.headers["X-Request-ID"] = request_id
             
             return response
             
@@ -88,6 +99,9 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             
             # Rilancia l'eccezione per essere gestita dagli exception handler
             raise exc
+        finally:
+            reset_request_id(rid_token)
+            reset_ip_address(ip_token)
 
 class PerformanceLoggingMiddleware(BaseHTTPMiddleware):
     """
