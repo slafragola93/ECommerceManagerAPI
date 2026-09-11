@@ -884,6 +884,7 @@ class FiscalDocumentService(IFiscalDocumentService):
                 doc, order, shipping, order_detail_map, product_weights
             ),
             **fiscal_quick_status_from_doc(doc),
+            sdi_status=getattr(doc, "sdi_status", None) if doc.is_electronic else None,
         )
 
     def _row_to_invoice_response_schema(self, row) -> Optional[InvoiceResponseSchema]:

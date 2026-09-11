@@ -4,6 +4,24 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-11) — Lista fiscal_documents per FE
+
+`GET /api/v1/fiscal_documents/` espone su ogni riga (batch, no N+1):
+
+- `order_payment_name` / `id_order_payment` = metodo catalogo dell’ordine (`orders.id_payment`). Se assente: ultimo `order_payments` con `is_paid=true`.
+- `sdi_status` + `identificativo_sdi` persistiti (stesso enum del dettaglio). Non elettronico → `null`.
+- P1: `id_customer`, `customer_name` (ragione sociale indirizzo fattura o Cognome Nome), `is_payed`, `order_shipped` (`orders.id_shipping` valorizzato), `mail_status` (writer cortesia ancora assente → di solito `null`).
+
+`fatturapa_status` e `status` workflow invariati. Body `send-to-sdi` invariato.
+
+### Test
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/documents/test_fiscal_list_serializer.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-10) — Invio SDI automatico via API
 
 Il gestionale genera l’XML e lo **trasmette a FatturaPA.com** (`UploadStop`). Regole AdE/13/E invariate. Nessun upload manuale sul portale.

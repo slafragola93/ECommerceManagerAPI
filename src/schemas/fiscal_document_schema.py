@@ -204,6 +204,13 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
     products_total_price_with_tax: Optional[float] = None
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
+    sdi_status: Optional[str] = Field(
+        None,
+        description=(
+            "Esito AdE persistito: consegnata|scartata|mancata_consegna|"
+            "accettata|rifiutata|decorrenza_termini|null"
+        ),
+    )
 
     order_reference: Optional[str] = None
     id_order_state: Optional[int] = None
@@ -370,6 +377,31 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
     is_payed: bool = False
+    sdi_status: Optional[str] = Field(
+        None,
+        description=(
+            "Esito AdE persistito: consegnata|scartata|mancata_consegna|"
+            "accettata|rifiutata|decorrenza_termini|null. "
+            "Non elettronico → null. Non allarga fatturapa_status."
+        ),
+    )
+    order_payment_name: Optional[str] = Field(
+        None,
+        description="Label metodo pagamento dell'ordine (orders.id_payment → payments.name)",
+    )
+    id_order_payment: Optional[int] = Field(
+        None,
+        description="id_payment del catalogo (orders.id_payment), non lo snapshot fiscale",
+    )
+    id_customer: Optional[int] = Field(None, description="Cliente dell'ordine collegato")
+    customer_name: Optional[str] = Field(
+        None,
+        description="Ragione sociale indirizzo fattura, altrimenti Cognome Nome",
+    )
+    order_shipped: bool = Field(
+        False,
+        description="True se orders.id_shipping è valorizzato (spedizione collegata)",
+    )
 
     @validator('total_price_with_tax', 'total_price_net', 'products_total_price_net', 'products_total_price_with_tax', pre=True, allow_reuse=True)
     def round_decimal(cls, v):
@@ -379,6 +411,25 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     
     class Config:
         from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id_fiscal_document": 123,
+                "document_type": "invoice",
+                "id_order": 456,
+                "status": "sent",
+                "is_electronic": True,
+                "fatturapa_status": "sent",
+                "sdi_status": None,
+                "identificativo_sdi": None,
+                "order_payment_name": "Bonifico",
+                "id_order_payment": 3,
+                "id_customer": 89,
+                "customer_name": "Rossi Mario",
+                "is_payed": True,
+                "order_shipped": False,
+                "mail_status": None,
+            }
+        }
 
 
 class FiscalDocumentListResponseSchema(BaseModel):

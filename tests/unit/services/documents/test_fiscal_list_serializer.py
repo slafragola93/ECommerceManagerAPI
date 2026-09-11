@@ -1,0 +1,145 @@
+"""Lista fiscal_documents: pagamento ordine + sdi_status senza N+1."""
+from datetime import date, datetime
+from decimal import Decimal
+
+from src.models.fiscal_document import FiscalDocument
+from src.models.order_payment import OrderPayment
+from src.models.payment import Payment
+from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+from tests.helpers.fiscal_test_helpers import seed_paid_order, seed_tax
+
+
+def _invoice(db_session, order, *, status="sent", sdi_status=None, is_electronic=True):
+    doc = FiscalDocument(
+        document_type="invoice",
+        tipo_documento_fe="TD01" if is_electronic else None,
+        id_order=order.id_order,
+        status=status,
+        is_electronic=is_electronic,
+        includes_shipping=False,
+        document_number="1",
+        sdi_status=sdi_status,
+        identificativo_sdi="111" if sdi_status == "scartata" else None,
+        products_total_price_net=Decimal("100.00"),
+        products_total_price_with_tax=Decimal("122.00"),
+        total_price_net=Decimal("100.00"),
+        total_price_with_tax=Decimal("122.00"),
+    )
+    db_session.add(doc)
+    db_session.commit()
+    db_session.refresh(doc)
+    return doc
+
+
+def test_list_uses_order_catalog_payment_not_missing(db_session):
+    tax = seed_tax(db_session)
+    bonifico = Payment(name="Bonifico")
+    paypal = Payment(name="PayPal")
+    db_session.add_all([bonifico, paypal])
+    db_session.commit()
+    db_session.refresh(bonifico)
+    db_session.refresh(paypal)
+
+    order_b, _ = seed_paid_order(
+        db_session, tax, reference="PAY-BON", order_date=datetime(2026, 9, 1)
+    )
+    order_b.id_payment = bonifico.id_payment
+    order_p, _ = seed_paid_order(
+        db_session, tax, reference="PAY-PP", order_date=datetime(2026, 9, 2)
+    )
+    order_p.id_payment = paypal.id_payment
+    db_session.commit()
+
+    docs = [
+        _invoice(db_session, order_b, status="sent", sdi_status=None),
+        _invoice(db_session, order_p, status="generated", sdi_status="scartata"),
+    ]
+    rows = serialize_fiscal_documents(db_session, docs)
+    by_order = {r.id_order: r for r in rows}
+
+    waiting = by_order[order_b.id_order]
+    assert waiting.order_payment_name == "Bonifico"
+    assert waiting.id_order_payment == bonifico.id_payment
+    assert waiting.sdi_status is None
+    assert waiting.status == "sent"
+    assert waiting.customer_name == "Rossi Mario"
+    assert waiting.id_customer == order_b.id_customer
+    assert waiting.is_payed is True
+
+    scartata = by_order[order_p.id_order]
+    assert scartata.order_payment_name == "PayPal"
+    assert scartata.id_order_payment == paypal.id_payment
+    assert scartata.sdi_status == "scartata"
+    assert scartata.identificativo_sdi == "111"
+    assert scartata.fatturapa_status == "error"
+
+
+def test_list_fallback_last_paid_order_payment(db_session):
+    tax = seed_tax(db_session)
+    carta = Payment(name="Carta")
+    db_session.add(carta)
+    db_session.commit()
+    db_session.refresh(carta)
+
+    order, _ = seed_paid_order(
+        db_session, tax, reference="PAY-FALL", order_date=datetime(2026, 9, 3)
+    )
+    order.id_payment = None
+    db_session.commit()
+
+    older = OrderPayment(
+        id_order=order.id_order,
+        id_payment=carta.id_payment,
+        amount=Decimal("10.00"),
+        is_paid=True,
+        payment_date=date(2026, 8, 1),
+    )
+    newer = OrderPayment(
+        id_order=order.id_order,
+        id_payment=carta.id_payment,
+        amount=Decimal("20.00"),
+        is_paid=True,
+        payment_date=date(2026, 9, 1),
+    )
+    db_session.add_all([older, newer])
+    db_session.commit()
+
+    doc = _invoice(db_session, order)
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    assert row.order_payment_name == "Carta"
+    assert row.id_order_payment == carta.id_payment
+
+
+def test_non_electronic_sdi_fields_null(db_session):
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="NO-FE", order_date=datetime(2026, 9, 4)
+    )
+    doc = _invoice(
+        db_session,
+        order,
+        status="issued",
+        sdi_status="consegnata",
+        is_electronic=False,
+    )
+    doc.identificativo_sdi = "999"
+    db_session.commit()
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    assert row.sdi_status is None
+    assert row.identificativo_sdi is None
+
+
+def test_order_shipped_from_id_shipping(db_session):
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session,
+        tax,
+        reference="SHIP",
+        order_date=datetime(2026, 9, 5),
+        with_shipping=True,
+    )
+    doc = _invoice(db_session, order, status="pending")
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    assert row.order_shipped is True
+    assert row.sdi_status is None
+    assert row.mail_status is None

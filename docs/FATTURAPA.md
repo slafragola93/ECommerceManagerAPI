@@ -240,9 +240,53 @@ Aggiorna una fattura in stato **`pending`** (header commerciale + righe snapshot
 | GET | `/credit-notes/invoice/{id_invoice}` | `InvoiceResponseSchema[]` | Note di credito di una fattura (v3 arricchito) |
 | GET | `/{id_fiscal_document}` | `InvoiceResponseSchema` se `invoice` o `credit_note` | Dettaglio arricchito v3 |
 | GET | `/{id_fiscal_document}/details-with-products` | `CreditNoteEligibleLinesResponseSchema` | Modale NC parziale (qty residue, spedizione) |
-| GET | `/` | `FiscalDocumentListResponseSchema` | Lista **minimal** (senza embed) |
+| GET | `/` | `FiscalDocumentListResponseSchema` | Lista **minimal** (senza embed). Include `sdi_status`, `order_payment_name` |
 
 Query lista: `page`, `limit`, `document_type`, `is_electronic`, `status`.
+
+Campi lista per badge FE (batch, no N+1): `order_payment_name` / `id_order_payment` da `orders.id_payment` (fallback ultimo `order_payments` pagato); `sdi_status` + `identificativo_sdi` dal documento; `id_customer`, `customer_name`, `is_payed`, `order_shipped` (`id_shipping` valorizzato), `mail_status` (oggi quasi sempre `null`).
+
+Esempio 2 righe (`status=sent`, una in attesa AdE e una NS):
+
+```json
+{
+  "documents": [
+    {
+      "id_fiscal_document": 10,
+      "id_order": 456,
+      "status": "sent",
+      "fatturapa_status": "sent",
+      "sdi_status": null,
+      "identificativo_sdi": null,
+      "order_payment_name": "Bonifico",
+      "id_order_payment": 3,
+      "id_customer": 89,
+      "customer_name": "Rossi Mario",
+      "is_payed": true,
+      "order_shipped": false,
+      "mail_status": null
+    },
+    {
+      "id_fiscal_document": 11,
+      "id_order": 457,
+      "status": "sent",
+      "fatturapa_status": "error",
+      "sdi_status": "scartata",
+      "identificativo_sdi": "1234567890",
+      "order_payment_name": "PayPal",
+      "id_order_payment": 5,
+      "id_customer": 90,
+      "customer_name": "Bianchi Srl",
+      "is_payed": true,
+      "order_shipped": true,
+      "mail_status": null
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "limit": 25
+}
+```
 
 Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_invoice_filter.md](./has_invoice_filter.md).
 

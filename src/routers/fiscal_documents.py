@@ -679,7 +679,11 @@ async def get_fiscal_documents(
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
     """
-    Recupera lista documenti fiscali con filtri
+    Recupera lista documenti fiscali con filtri.
+
+    Ogni riga include `sdi_status` (esito AdE persistito, asincrono),
+    `order_payment_name` / `id_order_payment` (metodo dell'ordine, non snapshot),
+    `customer_name`, `is_payed`, `order_shipped`. Nessun N+1.
 
     ## Filtri disponibili:
     - `document_type`: 'invoice' o 'credit_note'

@@ -5,7 +5,8 @@ Incolla questo intero messaggio in chat sul **repo Angular del gestionale**.
 **Flusso operativo attuale (obbligatorio):** XML nel gestionale, invio via API (`send-to-sdi` / `retry-send`), esiti da `GET .../sdi-status`.  
 Mostrare **Invia a SDI** e **Reinvia dopo scarto**.  
 Dopo NS: PATCH (stesso numero/data) + `POST .../retry-send`. `POST .../reset-xml` elimina l’XML e torna `pending`.  
-`fatturapa_status` in lista: `sent` se RC/MC/NE/DT; `error` se NS.
+`fatturapa_status` in lista: `sent` se RC/MC/NE/DT; `error` se NS.  
+Lista: usare anche `sdi_status` e `order_payment_name` sullo stesso GET (niente N GET).
 
 ---
 

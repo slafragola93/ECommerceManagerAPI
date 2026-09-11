@@ -109,3 +109,4 @@ pytest tests/unit/services/documents/test_quick_status.py -v
 - Colonna rapida: binding `fatturapa_status` (non `sdi_status` grezzo).
 - Icona esito: `uploaded` / `sent` = ok/in corso; `error` = KO (anche scarto SdI); `null` = grigio/N/A.
 - Dettaglio timeline: `GET /api/v1/fiscal_documents/{id}/sdi-status` — non allargare l'enum `fatturapa_status`.
+- Lista: `sdi_status` e `order_payment_name` sono sullo stesso GET lista (niente N GET). `sdi_status` null dopo invio è corretto finché non arriva RC/NS.
