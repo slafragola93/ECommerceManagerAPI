@@ -182,6 +182,9 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         None, description="ID fattura di riferimento (solo credit_note)"
     )
     document_number: Optional[str] = None
+    progressivo_invio: Optional[str] = Field(
+        None, description="ProgressivoInvio SDI (serie unica fatture/NC)"
+    )
     internal_number: Optional[str] = None
     filename: Optional[str] = None
     xml_content: Optional[str] = None
@@ -349,6 +352,9 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     id_order: int
     id_fiscal_document_ref: Optional[int] = None
     document_number: Optional[str] = None
+    progressivo_invio: Optional[str] = Field(
+        None, description="ProgressivoInvio SDI (serie unica fatture/NC)"
+    )
     internal_number: Optional[str] = None
     filename: Optional[str] = None
     xml_content: Optional[str] = None
@@ -622,6 +628,51 @@ class InvoicePatchResponseSchema(InvoiceResponseSchema):
     """Risposta PATCH: stesso contratto GET v3 + metadato sync ordine."""
 
     sync_order_result: Optional[SyncOrderResultSchema] = None
+
+
+class SendToSdiSchema(BaseModel):
+    """Body POST /{id}/send-to-sdi — contratto oggetto (doc ufficiale)."""
+
+    send_to_sdi: bool = Field(
+        False,
+        description="True = UploadStop (invio SDI); False = UploadStop1 (solo upload)",
+    )
+
+
+def resolve_send_to_sdi_flag(payload: SendToSdiSchema | bool | None) -> bool:
+    """Accetta {send_to_sdi: bool} oppure boolean grezzo (retrocompat)."""
+    if payload is None:
+        return False
+    if isinstance(payload, bool):
+        return payload
+    return bool(payload.send_to_sdi)
+
+
+class SdiNotificationItemSchema(BaseModel):
+    notification_type: str
+    identificativo_sdi: Optional[str] = None
+    nome_file: Optional[str] = None
+    message: Optional[str] = None
+    notified_at: Optional[datetime] = None
+    date_add: Optional[datetime] = None
+
+
+class FiscalDocumentSdiStatusSchema(BaseModel):
+    id_fiscal_document: int
+    sdi_status: Optional[str] = None
+    identificativo_sdi: Optional[str] = None
+    notifications: List[SdiNotificationItemSchema] = Field(default_factory=list)
+
+
+class SdiEventsSyncResultSchema(BaseModel):
+    status: str
+    entries_found: int = 0
+    entries_processed: int = 0
+    entries_saved: int = 0
+    entries_skipped: int = 0
+    errors: List[str] = Field(default_factory=list)
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
 
 
 class FiscalDocumentUpdateStatusSchema(BaseModel):

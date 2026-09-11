@@ -194,8 +194,29 @@ class TestUpdateInvoice:
         assert detail.product_name == original_name
 
     @pytest.mark.asyncio
-    async def test_generated_status_conflict(self, db_session, fiscal_service, tax):
+    async def test_generated_without_sdi_is_editable_and_clears_xml(
+        self, db_session, fiscal_service, tax
+    ):
         _, _, invoice, _, _ = _seed_pending_invoice(db_session, tax, status="generated")
+        invoice.xml_content = "<xml/>"
+        invoice.filename = "IT02046570426_000001.xml"
+        db_session.commit()
+
+        result = await fiscal_service.update_invoice(
+            invoice.id_fiscal_document,
+            InvoiceUpdateSchema(note="x"),
+        )
+        db_session.refresh(invoice)
+        assert invoice.status == "pending"
+        assert invoice.xml_content is None
+        assert invoice.filename is None
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_consegnata_status_conflict(self, db_session, fiscal_service, tax):
+        _, _, invoice, _, _ = _seed_pending_invoice(db_session, tax, status="generated")
+        invoice.sdi_status = "consegnata"
+        db_session.commit()
 
         with pytest.raises(BusinessRuleException) as exc:
             await fiscal_service.update_invoice(
@@ -203,7 +224,7 @@ class TestUpdateInvoice:
                 InvoiceUpdateSchema(note="x"),
             )
         assert exc.value.status_code == 409
-        assert "pending" in exc.value.message.lower()
+        assert "evaso" in exc.value.message.lower()
 
     @pytest.mark.asyncio
     async def test_credit_note_linked_conflict(self, db_session, fiscal_service, tax):

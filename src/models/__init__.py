@@ -28,6 +28,7 @@ from .order_detail import OrderDetail
 from .order_document import OrderDocument
 from .fiscal_document import FiscalDocument
 from .fiscal_document_detail import FiscalDocumentDetail
+from .fiscal_document_sdi_notification import FiscalDocumentSdiNotification
 from .ricevuta import Ricevuta
 from .purchase_invoice_sync import PurchaseInvoiceSync
 from .purchase_invoice_sync_detail import PurchaseInvoiceSyncDetail

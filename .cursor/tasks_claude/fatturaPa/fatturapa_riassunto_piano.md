@@ -1,7 +1,9 @@
 # FatturaPA – Riassunto Tecnico e Piano di Implementazione
-**Progetto:** Elettronew | **Aggiornato:** Giugno 2026
+**Progetto:** Elettronew | **Aggiornato:** 2026-09-10
 
 **Guida operativa API:** [`docs/FATTURAPA.md`](../../docs/FATTURAPA.md)
+
+**Operativo 2026-09-10:** XML in gestionale, invio via API FatturaPA.com (`send-to-sdi` / `retry-send`), esiti da polling/`sdi-status`. Dopo NS: stesso numero/data, nuovo `progressivo_invio` (13/E). Handoff FE: [`prompt_FE_flusso_portale_fatturapa.md`](../fatturazione/prompt_FE_flusso_portale_fatturapa.md).
 
 ---
 
@@ -103,11 +105,11 @@ Il gestionale:
 
 | ID | Task | Stack |
 |---|---|---|
-| BE-PA-2.1 | Implementare `FatturapaService` con metodo `send_invoice(xml: str)` | `httpx` async |
-| BE-PA-2.2 | Gestire risposta asincrona: salvataggio `protocollo_sdi` e stato iniziale | DB update |
-| BE-PA-2.3 | Endpoint webhook per ricezione notifiche SDI (NS/RC/NE/MC) | `POST /api/fatturapa/webhook` |
-| BE-PA-2.4 | Aggiornare stato fattura nel DB a ogni notifica ricevuta | Stato: `bozza → inviata → consegnata → scartata` |
-| BE-PA-2.5 | Endpoint `GET /api/fatture/{id}/stato` per consultazione stato | Usato dal FE |
+| BE-PA-2.1 | Implementare `FatturapaService` con metodo `send_invoice(xml: str)` | ✅ `upload_stop` / `UploadStop` vs `UploadStop1` |
+| BE-PA-2.2 | Gestire risposta asincrona: salvataggio ID SDI e stato iniziale | ✅ `identificativo_sdi` + `sdi_status` (workflow `status` invariato) |
+| BE-PA-2.3 | Endpoint webhook per ricezione notifiche SDI (NS/RC/NE/MC) | ✅ Polling Pool Vendita (FatturaPA.com non ha webhook) |
+| BE-PA-2.4 | Aggiornare stato fattura nel DB a ogni notifica ricevuta | ✅ Storico `fiscal_document_sdi_notifications` |
+| BE-PA-2.5 | Endpoint `GET .../sdi-status` per consultazione stato | ✅ `GET /api/v1/fiscal_documents/{id}/sdi-status` + `POST .../retry-send` |
 
 ### FASE 3 — Frontend — Visualizzazione e Azioni (2–3 gg)
 
@@ -145,7 +147,7 @@ Il gestionale:
 | Rischio | Mitigazione |
 |---|---|
 | File XML scartato da SDI | Validare sempre con XSD ufficiale prima dell'invio (fase BE-PA-1.5) |
-| Notifiche SDI perse | Implementare anche polling periodico oltre al webhook |
+| Notifiche SDI perse | Polling Pool Vendita (job `fatturapa_sdi_events_sync`) — intermediario senza webhook |
 | Dati anagrafici errati (P.IVA non valida) | Riusare la logica VIES già presente in Elettronew |
 | Aggiornamenti specifiche tecniche | Iscriversi alla newsletter AdE; monitorare fatturapa.gov.it |
 | Cambio intermediario in futuro | Isolare l'integrazione in un service dedicato (`FatturapaService`) |

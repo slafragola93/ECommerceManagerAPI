@@ -28,7 +28,8 @@ class FiscalDocument(Base):
     id_fiscal_document_ref = Column(Integer, ForeignKey("fiscal_documents.id_fiscal_document"), nullable=True, index=True)  # Per note di credito -> fattura
     
     # Numerazione
-    document_number = Column(String(10), nullable=True, index=True)  # Numero sequenziale elettronico (solo se is_electronic=True)
+    document_number = Column(String(10), nullable=True, index=True)  # Numero commerciale (serie per tipo)
+    progressivo_invio = Column(String(10), nullable=True, unique=True, index=True)  # ProgressivoInvio SDI (serie unica)
     internal_number = Column(String(50), nullable=True, index=True)  # Numero interno alternativo
     
     # Dati documento
@@ -39,6 +40,8 @@ class FiscalDocument(Base):
     status = Column(String(50), nullable=False, default="pending")  # pending, processed, cancelled, generated, uploaded, sent, issued, error
     is_electronic = Column(Boolean, default=False, nullable=False)  # True se FatturaPA elettronica
     upload_result = Column(Text, nullable=True)  # JSON result from upload
+    identificativo_sdi = Column(String(50), nullable=True, index=True)
+    sdi_status = Column(String(30), nullable=True, index=True)  # esito SDI, distinto da status
 
     # Invio email documento (stato rapido FE)
     mail_status = Column(String(20), nullable=True)  # sent|pending|error
@@ -65,3 +68,8 @@ class FiscalDocument(Base):
     referenced_document = relationship("FiscalDocument", remote_side=[id_fiscal_document], foreign_keys=[id_fiscal_document_ref])
     credit_notes = relationship("FiscalDocument", back_populates="referenced_document", foreign_keys=[id_fiscal_document_ref])
     details = relationship("FiscalDocumentDetail", back_populates="fiscal_document", cascade="all, delete-orphan")
+    sdi_notifications = relationship(
+        "FiscalDocumentSdiNotification",
+        back_populates="fiscal_document",
+        cascade="all, delete-orphan",
+    )

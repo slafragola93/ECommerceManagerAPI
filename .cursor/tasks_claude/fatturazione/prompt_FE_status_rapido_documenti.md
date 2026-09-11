@@ -1,6 +1,11 @@
-# Prompt FE — Stati rapidi documenti (allineamento BE 2026-07-29)
+# Prompt FE — Stati rapidi documenti (allineamento BE 2026-09-10)
 
 Incolla questo intero messaggio in chat sul **repo Angular del gestionale**.
+
+**Flusso operativo attuale (obbligatorio):** XML nel gestionale, invio via API (`send-to-sdi` / `retry-send`), esiti da `GET .../sdi-status`.  
+Mostrare **Invia a SDI** e **Reinvia dopo scarto**.  
+Dopo NS: PATCH (stesso numero/data) + `POST .../retry-send`. `POST .../reset-xml` elimina l’XML e torna `pending`.  
+`fatturapa_status` in lista: `sent` se RC/MC/NE/DT; `error` se NS.
 
 ---
 
@@ -29,7 +34,7 @@ Doc BE: `docs/BE_PROMPT_STATUS_RAPIDO_DOCUMENTI.md` (repo API).
 | Enum `accepted \| pending \| rejected` | Enum **`uploaded \| sent \| error \| null`** |
 | Euristiche su `status` grezzo | Usare solo i campi sotto |
 
-Motivo naming: l’esito oggi arriva da **FatturaPA.com** (upload/invio), non da notifiche SDI (RC/NS) ancora non integrate.
+Motivo naming: l’enum lista resta `fatturapa_status`. Overlay BE da `sdi_status` persistito (RC/MC/NE/DT → `sent`; NS → `error`). Timeline completa: `GET /api/v1/fiscal_documents/{id}/sdi-status`.
 
 ---
 
@@ -74,8 +79,8 @@ Oggi BE restituisce quasi sempre `null` (invio mail documento non ancora impleme
 |--------|-------------|--------------|
 | `null` | N/A (ricevute; doc non elettronico; non ancora caricato) | grigio / nascosta o “—” |
 | `uploaded` | Su FatturaPA, non inviato a SDI | ok “caricata” / warning soft |
-| `sent` | Inviata a SDI via FatturaPA **oppure** ricevuta da POOL (acquisti) | ok |
-| `error` | Errore FatturaPA | ko + tooltip `fatturapa_error_message` |
+| `sent` | Inviata a SDI (API o notifica RC/MC/NE/DT) **oppure** ricevuta da POOL | ok |
+| `error` | Errore FatturaPA **oppure** scarto SdI (NS) | ko + tooltip `fatturapa_error_message` |
 
 `identificativo_sdi`: mostrare in tooltip/dettaglio se valorizzato; **non** usarlo come unico segnale di stato (usa `fatturapa_status`).
 
@@ -87,7 +92,7 @@ Oggi BE restituisce quasi sempre `null` (invio mail documento non ancora impleme
 
 - Lista: binding su `documents[]` (o nome usato dal FE) con i nuovi campi + `is_payed`.
 - Dettaglio invoice/NC v3: stessi campi quick-status.
-- Mapping tipico BE: `status=uploaded` → `fatturapa_status=uploaded`; `sent` → `sent`; `error` → `error`; `pending`/`generated` → `null`.
+- Mapping tipico BE: `status=uploaded` → `uploaded`; `sent` → `sent`; `error` → `error`. Overlay: `sdi_status` emesso → `sent`; `scartata` → `error`. `pending`/`generated` senza notifica → `null`.
 
 ### Ricevute
 
@@ -110,7 +115,7 @@ Oggi BE restituisce quasi sempre `null` (invio mail documento non ancora impleme
 4. Tooltip errori: `mail_error_message` / `fatturapa_error_message` solo se status = `error`.
 5. Eliminare fallback euristici su `status`, `upload_result`, presenza XML, ecc. per queste icone.
 6. Smoke test:
-   - lista fatture: riga `pending` → esito null; dopo upload → `uploaded`/`sent`/`error`
+   - lista fatture: `pending`/`generated` senza notifica → esito null; NS → `error`; RC/MC → `sent`
    - lista ricevute: esito sempre N/A; pagamento da `is_payed`
    - lista acquisti: con SDI id → esito `sent`
 
@@ -151,7 +156,8 @@ Oggi BE restituisce quasi sempre `null` (invio mail documento non ancora impleme
 ## Fuori scope
 
 - Implementare invio mail documento (BE non espone ancora writer; campi pronti).
-- Notifiche SDI RC/NS (futuro: possibili nuovi valori su `fatturapa_status` o campo dedicato).
+- Timeline notifiche: `GET /fiscal_documents/{id}/sdi-status` (dettaglio). In lista l’overlay è già in `fatturapa_status`.
+- Dopo NS: PATCH + `retry-send`. Mail cortesia fuori scope.
 
 ---
 

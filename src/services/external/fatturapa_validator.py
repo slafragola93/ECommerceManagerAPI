@@ -1640,7 +1640,8 @@ class FatturaPAValidator:
                 'IdPaese': 'IT',
                 'IdCodice': company_data.get('vat_number', '')
             },
-            'ProgressivoInvio': order_data.get('document_number', ''),
+            'ProgressivoInvio': order_data.get('progressivo_invio')
+            or order_data.get('document_number', ''),
             'FormatoTrasmissione': 'FPR12',  # Default, potrebbe essere FPA12
             'CodiceDestinatario': resolve_codice_destinatario(country_iso, customer_sdi),
             'PECDestinatario': customer_pec,

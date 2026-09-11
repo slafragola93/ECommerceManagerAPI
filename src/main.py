@@ -79,6 +79,7 @@ _background_tasks = {
     "order_states_sync": None,
     "tracking_polling": None,
     "fatturapa_pool_sync": None,
+    "fatturapa_sdi_events_sync": None,
 }
 
 
@@ -267,6 +268,24 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     except Exception as e:
         print(f"⚠ FatturaPA POOL sync warning: {e}")
+
+    sdi_events_enabled = (
+        os.getenv("FATTURAPA_SDI_EVENTS_SYNC_ENABLED", "true").lower() == "true"
+    )
+    try:
+        from src.services.sync.fatturapa_sdi_events_sync_service import (
+            run_fatturapa_sdi_events_sync_task,
+        )
+
+        db = SessionLocal()
+        await start_background_task(
+            "fatturapa_sdi_events_sync",
+            run_fatturapa_sdi_events_sync_task,
+            db,
+            enabled=sdi_events_enabled,
+        )
+    except Exception as e:
+        print(f"⚠ FatturaPA SDI events sync warning: {e}")
     
     try:
         from src.core.diagnostics.order_state_audit import setup_order_state_audit

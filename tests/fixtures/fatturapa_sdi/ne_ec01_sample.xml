@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NotificaEsito>
+  <IdentificativoSdI>4444444444</IdentificativoSdI>
+  <NomeFile>IT08632861210_000004.xml</NomeFile>
+  <EsitoCommittente>
+    <Esito>EC01</Esito>
+  </EsitoCommittente>
+</NotificaEsito>

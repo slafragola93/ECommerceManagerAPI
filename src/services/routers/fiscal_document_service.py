@@ -60,6 +60,7 @@ from src.services.ricevute.order_embed_formatters import (
     map_ricevuta_shipping_embed,
 )
 from src.services.documents.quick_status import fiscal_quick_status_from_doc
+from src.services.external.fatturapa_sdi_resend import invoice_edit_block_reason
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
     load_product_weights,
@@ -224,13 +225,14 @@ class FiscalDocumentService(IFiscalDocumentService):
                 status_code=409,
             )
 
-        if doc.status != "pending":
+        edit_block = invoice_edit_block_reason(doc)
+        if edit_block:
             raise BusinessRuleException(
-                f"Fattura non aggiornabile nello stato '{doc.status}'. "
-                "Consentito solo status=pending",
+                edit_block,
                 details={
                     "id_fiscal_document": id_fiscal_document,
                     "status": doc.status,
+                    "sdi_status": getattr(doc, "sdi_status", None),
                 },
                 status_code=409,
             )
@@ -350,6 +352,10 @@ class FiscalDocumentService(IFiscalDocumentService):
                 )
 
             doc.date_upd = datetime.utcnow()
+            if doc.xml_content or doc.filename:
+                doc.xml_content = None
+                doc.filename = None
+                doc.status = "pending"
             session.commit()
         except (NotFoundException, ValidationException, BusinessRuleException):
             session.rollback()
@@ -840,6 +846,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             id_order=doc.id_order,
             id_fiscal_document_ref=doc.id_fiscal_document_ref if is_credit_note else None,
             document_number=doc.document_number,
+            progressivo_invio=getattr(doc, "progressivo_invio", None),
             internal_number=doc.internal_number,
             filename=doc.filename,
             xml_content=doc.xml_content,

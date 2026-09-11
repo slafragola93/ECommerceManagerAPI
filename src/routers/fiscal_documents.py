@@ -27,8 +27,22 @@ from src.schemas.fiscal_document_schema import (
     FiscalDocumentDetailResponseSchema,
     InvoiceExportFormatSchema,
     InvoiceExportFiltersSchema,
+    SendToSdiSchema,
+    resolve_send_to_sdi_flag,
+    FiscalDocumentSdiStatusSchema,
+    SdiEventsSyncResultSchema,
+    SdiNotificationItemSchema,
 )
 from src.services.pdf.fiscal_document_pdf_builder import build_fiscal_document_pdf_buffer
+from src.services.external.fatturapa_pec_gate import pec_gate_error
+from src.services.external.fatturapa_sdi_resend import (
+    api_sdi_send_disabled_reason,
+    generate_xml_block_reason,
+    is_sdi_api_send_enabled,
+    reset_xml_block_reason,
+    retry_send_block_reason,
+    send_to_sdi_block_reason,
+)
 
 router = APIRouter(prefix="/api/v1/fiscal_documents", tags=["Fiscal Documents"])
 
@@ -41,6 +55,97 @@ def get_fatturapa_service(db: Session = Depends(get_db)) -> FatturaPAService:
 
 user_dependency = Depends(get_current_user)
 db_dependency = Depends(get_db)
+
+
+def _fatturapa_validation_response(result: dict):
+    """HTTP 422 strutturato (generate-xml / retry-send / PEC gate)."""
+    from src.core.exceptions import BaseApplicationException, ErrorCode
+    from fastapi.responses import JSONResponse
+
+    errors = result.get("errors") or []
+    errors_by_field = {}
+    for err in errors:
+        field = err.get("field", "Campo sconosciuto")
+        errors_by_field.setdefault(field, []).append(
+            {
+                "message": err.get("message", "Errore di validazione"),
+                "rule": err.get("rule", "unknown"),
+                "value": err.get("value"),
+            }
+        )
+
+    formatted_errors = []
+    for field, field_errors in errors_by_field.items():
+        for field_err in field_errors:
+            formatted_errors.append(
+                {
+                    "field": field,
+                    "message": field_err["message"],
+                    "rule": field_err["rule"],
+                    "value": field_err["value"],
+                }
+            )
+
+    exc = BaseApplicationException(
+        message=result.get(
+            "message",
+            f"Validazione XML FatturaPA fallita: {len(errors)} errore/i trovato/i",
+        ),
+        error_code=ErrorCode.VALIDATION_ERROR,
+        details={"error_count": len(errors), "errors": formatted_errors},
+        status_code=422,
+    )
+    return JSONResponse(status_code=422, content=exc.to_dict())
+
+
+def _pec_gate_response(error: dict):
+    return _fatturapa_validation_response(
+        {
+            "message": error.get("message", "Invio SDI bloccato: PEC mancante o non valida"),
+            "errors": [error],
+        }
+    )
+
+
+def _finalize_fatturapa_upload(repo, db, id_fiscal_document, stop_result, send_to_sdi: bool):
+    import json
+
+    if stop_result.get("status") == "error":
+        repo.update_fiscal_document_status(
+            id_fiscal_document=id_fiscal_document,
+            status="error",
+            upload_result=json.dumps(stop_result) if stop_result else None,
+        )
+        error_message = stop_result.get("message", "Upload Stop fallito")
+        raise HTTPException(
+            status_code=500, detail=f"Errore upload a FatturaPA: {error_message}"
+        )
+
+    final_status = "sent" if send_to_sdi else "uploaded"
+    doc = repo.update_fiscal_document_status(
+        id_fiscal_document=id_fiscal_document,
+        status=final_status,
+        upload_result=json.dumps(stop_result) if stop_result else None,
+    )
+
+    if send_to_sdi:
+        from src.events.core.event import Event, EventType
+        from src.events.runtime import emit_event
+
+        emit_event(
+            Event(
+                event_type=EventType.FISCAL_DOCUMENT_SENT_TO_SDI.value,
+                data={
+                    "id_fiscal_document": id_fiscal_document,
+                    "status": final_status,
+                },
+                metadata={},
+            )
+        )
+
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
+    return serialize_fiscal_documents(db, [doc])[0]
 
 
 # ==================== FATTURE ====================
@@ -186,6 +291,34 @@ async def export_invoices(
         headers=headers,
     )
 
+
+
+@router.post(
+    "/sdi-events/sync",
+    response_model=SdiEventsSyncResultSchema,
+    status_code=status.HTTP_200_OK,
+)
+async def sync_sdi_events(
+    user: dict = user_dependency,
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
+):
+    """Trigger manuale polling notifiche SDI (ciclo attivo, Pool Vendita)."""
+    from src.services.sync.fatturapa_sdi_events_sync_service import (
+        FatturaPASdiEventsSyncService,
+    )
+
+    stats = await FatturaPASdiEventsSyncService(db).sync_events()
+    return SdiEventsSyncResultSchema(
+        status=stats.get("status", "success"),
+        entries_found=stats.get("entries_found", 0),
+        entries_processed=stats.get("entries_processed", 0),
+        entries_saved=stats.get("entries_saved", 0),
+        entries_skipped=stats.get("entries_skipped", 0),
+        errors=stats.get("errors") or [],
+        start_time=stats.get("start_time"),
+        end_time=stats.get("end_time"),
+    )
 
 
 # ==================== NOTE DI CREDITO ====================
@@ -635,6 +768,47 @@ async def delete_fiscal_document(
     return None
 
 
+@router.get(
+    "/{id_fiscal_document}/sdi-status",
+    response_model=FiscalDocumentSdiStatusSchema,
+)
+async def get_sdi_status(
+    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
+    user: dict = user_dependency,
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "read")),
+):
+    """Esito SDI e storico notifiche (RC/MC/NS/NE/DT), distinto da status workflow."""
+    from src.repository.fiscal_document_sdi_notification_repository import (
+        FiscalDocumentSdiNotificationRepository,
+    )
+
+    repo = get_fiscal_repository(db)
+    doc = repo.get_fiscal_document_by_id(id_fiscal_document)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+
+    notifications = FiscalDocumentSdiNotificationRepository(db).list_by_document(
+        id_fiscal_document
+    )
+    return FiscalDocumentSdiStatusSchema(
+        id_fiscal_document=id_fiscal_document,
+        sdi_status=getattr(doc, "sdi_status", None),
+        identificativo_sdi=getattr(doc, "identificativo_sdi", None),
+        notifications=[
+            SdiNotificationItemSchema(
+                notification_type=row.notification_type,
+                identificativo_sdi=row.identificativo_sdi,
+                nome_file=row.nome_file,
+                message=row.message,
+                notified_at=row.notified_at,
+                date_add=row.date_add,
+            )
+            for row in notifications
+        ],
+    )
+
+
 # ==================== GENERA XML ====================
 
 @router.post("/{id_fiscal_document}/generate-xml", response_model=FiscalDocumentResponseSchema)
@@ -656,73 +830,74 @@ async def generate_xml(
     """
     fatturapa_service = get_fatturapa_service(db)
     repo = get_fiscal_repository(db)
+
+    existing = repo.get_fiscal_document_by_id(id_fiscal_document)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    generate_block = generate_xml_block_reason(existing)
+    if generate_block:
+        raise HTTPException(status_code=400, detail=generate_block)
+
+    # Invio manuale sul portale: dopo NS serve un nuovo ProgressivoInvio senza UploadStop.
+    rotate_after_scarto = (
+        getattr(existing, "sdi_status", None) == "scartata"
+        and not is_sdi_api_send_enabled()
+    )
+    if rotate_after_scarto:
+        repo.assign_next_progressivo_invio(existing)
+        db.flush()
     
     # Genera XML
     result = fatturapa_service.generate_xml_from_fiscal_document(id_fiscal_document)
     
     if result['status'] == 'validation_error':
-        # Restituisce errori di validazione dettagliati
-        errors = result.get('errors', [])
-        
-        # Raggruppa errori per campo per evitare duplicati
-        errors_by_field = {}
-        for err in errors:
-            field = err.get('field', 'Campo sconosciuto')
-            if field not in errors_by_field:
-                errors_by_field[field] = []
-            errors_by_field[field].append({
-                "message": err.get('message', 'Errore di validazione'),
-                "rule": err.get('rule', 'unknown'),
-                "value": err.get('value')
-            })
-        
-        # Crea messaggio principale
-        error_count = len(errors)
-        main_message = f"Validazione XML FatturaPA fallita: {error_count} errore/i trovato/i"
-        
-        # Formatta errori in modo leggibile
-        formatted_errors = []
-        for field, field_errors in errors_by_field.items():
-            for field_err in field_errors:
-                formatted_errors.append({
-                    "field": field,
-                    "message": field_err["message"],
-                    "rule": field_err["rule"],
-                    "value": field_err["value"]
-                })
-        
-        # Usa BaseApplicationException per formattare correttamente la risposta
-        from src.core.exceptions import BaseApplicationException, ErrorCode
-        from fastapi.responses import JSONResponse
-        
-        exc = BaseApplicationException(
-            message=main_message,
-            error_code=ErrorCode.VALIDATION_ERROR,
-            details={
-                "error_count": error_count,
-                "errors": formatted_errors
-            },
-            status_code=422
-        )
-        
-        return JSONResponse(
-            status_code=422,
-            content=exc.to_dict()
-        )
+        if rotate_after_scarto:
+            db.rollback()
+        return _fatturapa_validation_response(result)
     
     if result['status'] == 'error':
+        if rotate_after_scarto:
+            db.rollback()
         raise HTTPException(status_code=400, detail=result.get('message', 'Errore generazione XML'))
     
     # Aggiorna documento con XML
-    doc = repo.update_fiscal_document_xml(
-        id_fiscal_document=id_fiscal_document,
-        filename=result['filename'],
-        xml_content=result['xml_content']
-    )
+    if rotate_after_scarto:
+        doc = repo.apply_sdi_resend_xml(
+            id_fiscal_document=id_fiscal_document,
+            filename=result["filename"],
+            xml_content=result["xml_content"],
+        )
+    else:
+        doc = repo.update_fiscal_document_xml(
+            id_fiscal_document=id_fiscal_document,
+            filename=result['filename'],
+            xml_content=result['xml_content']
+        )
     
     if not doc:
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
 
+    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+
+    return serialize_fiscal_documents(db, [doc])[0]
+
+
+@router.post("/{id_fiscal_document}/reset-xml", response_model=FiscalDocumentResponseSchema)
+async def reset_xml(
+    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
+    user: dict = user_dependency,
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
+):
+    """Elimina XML e torna pending (loop KO prima dello SdI o dopo NS). Non tocca progressivo_invio."""
+    repo = get_fiscal_repository(db)
+    doc = repo.get_fiscal_document_by_id(id_fiscal_document)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+    reset_block = reset_xml_block_reason(doc)
+    if reset_block:
+        raise HTTPException(status_code=400, detail=reset_block)
+    doc = repo.reset_fiscal_document_xml(id_fiscal_document)
     from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
 
     return serialize_fiscal_documents(db, [doc])[0]
@@ -754,7 +929,10 @@ async def update_status(
 @router.post("/{id_fiscal_document}/send-to-sdi", response_model=FiscalDocumentResponseSchema)
 async def send_to_sdi(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
-    send_to_sdi: bool = Body(False, description="Se True, invia a Sistema di Interscambio (default: False = solo upload)"),
+    payload: Union[SendToSdiSchema, bool] = Body(
+        default_factory=SendToSdiSchema,
+        description='Oggetto { "send_to_sdi": bool } oppure boolean grezzo (retrocompat)',
+    ),
     user: dict = user_dependency,
     db: Session = db_dependency,
     _: None = Depends(require_permission("fiscal_documents", "update")),
@@ -777,8 +955,14 @@ async def send_to_sdi(
     ## Note:
     - Richiede XML già generato (chiamare prima /generate-xml)
     - Solo per documenti elettronici (is_electronic=True)
+    - `send_to_sdi=true` con CodiceDestinatario=XXXXXXX richiede PECDestinatario (422)
+    - Dopo scarto NS usare `POST /{id}/retry-send`
+    - Invio SDI via API acceso di default (`FATTURAPA_SDI_API_SEND_ENABLED=true`)
     """
-    import json
+    send_to_sdi = resolve_send_to_sdi_flag(payload)
+    api_send_off = api_sdi_send_disabled_reason(send_to_sdi)
+    if api_send_off:
+        raise HTTPException(status_code=400, detail=api_send_off)
     
     repo = get_fiscal_repository(db)
     fatturapa_service = get_fatturapa_service(db)
@@ -795,59 +979,78 @@ async def send_to_sdi(
     # Verifica che XML sia stato generato
     if not doc.xml_content or not doc.filename:
         raise HTTPException(status_code=400, detail="XML non ancora generato. Chiamare prima /generate-xml")
-    
-    # 1. Upload Start
-    name, complete_url = await fatturapa_service.upload_start(doc.filename)
-    if not name or not complete_url:
-        raise HTTPException(status_code=500, detail="UploadStart fallito")
-    
-    # 2. Upload XML
-    upload_success = await fatturapa_service.upload_xml(complete_url, doc.xml_content)
-    if not upload_success:
-        raise HTTPException(status_code=500, detail="Upload XML fallito")
-    
-    # 3. Upload Stop
-    stop_result = await fatturapa_service.upload_stop(name, send_to_sdi=send_to_sdi)
-    
-    # 4. Verifica risultato e aggiorna status
-    if stop_result.get("status") == "error":
-        # Aggiorna con status error
-        repo.update_fiscal_document_status(
-            id_fiscal_document=id_fiscal_document,
-            status="error",
-            upload_result=json.dumps(stop_result) if stop_result else None
-        )
-        # Lancia eccezione con dettagli errore
-        error_message = stop_result.get("message", "Upload Stop fallito")
-        raise HTTPException(status_code=500, detail=f"Errore upload a FatturaPA: {error_message}")
-    
-    # Success - aggiorna status
-    final_status = "sent" if send_to_sdi else "uploaded"
-    
-    doc = repo.update_fiscal_document_status(
-        id_fiscal_document=id_fiscal_document,
-        status=final_status,
-        upload_result=json.dumps(stop_result) if stop_result else None
-    )
+
+    send_block = send_to_sdi_block_reason(doc)
+    if send_block:
+        raise HTTPException(status_code=400, detail=send_block)
 
     if send_to_sdi:
-        from src.events.core.event import Event, EventType
-        from src.events.runtime import emit_event
+        pec_error = pec_gate_error(doc.xml_content)
+        if pec_error:
+            return _pec_gate_response(pec_error)
 
-        emit_event(
-            Event(
-                event_type=EventType.FISCAL_DOCUMENT_SENT_TO_SDI.value,
-                data={
-                    "id_fiscal_document": id_fiscal_document,
-                    "status": final_status,
-                },
-                metadata={},
-            )
+    stop_result = await fatturapa_service.upload_fiscal_xml(
+        doc.filename, doc.xml_content, send_to_sdi=send_to_sdi
+    )
+    return _finalize_fatturapa_upload(
+        repo, db, id_fiscal_document, stop_result, send_to_sdi
+    )
+
+
+@router.post("/{id_fiscal_document}/retry-send", response_model=FiscalDocumentResponseSchema)
+async def retry_send_to_sdi(
+    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
+    user: dict = user_dependency,
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
+):
+    """
+    Reinvio dopo scarto SDI (NS).
+
+    Assegna un nuovo ProgressivoInvio, rigenera l'XML e chiama UploadStop.
+    Lo storico notifiche non viene cancellato.
+    """
+    repo = get_fiscal_repository(db)
+    fatturapa_service = get_fatturapa_service(db)
+
+    doc = repo.get_fiscal_document_by_id(id_fiscal_document)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
+
+    retry_block = retry_send_block_reason(doc)
+    if retry_block:
+        raise HTTPException(status_code=400, detail=retry_block)
+
+    repo.assign_next_progressivo_invio(doc)
+    db.flush()
+
+    result = fatturapa_service.generate_xml_from_fiscal_document(id_fiscal_document)
+    if result.get("status") == "validation_error":
+        db.rollback()
+        return _fatturapa_validation_response(result)
+    if result.get("status") != "success":
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("message", "Errore generazione XML"),
         )
 
-    from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
+    doc = repo.apply_sdi_resend_xml(
+        id_fiscal_document=id_fiscal_document,
+        filename=result["filename"],
+        xml_content=result["xml_content"],
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
 
-    return serialize_fiscal_documents(db, [doc])[0]
+    pec_error = pec_gate_error(doc.xml_content)
+    if pec_error:
+        return _pec_gate_response(pec_error)
+
+    stop_result = await fatturapa_service.upload_fiscal_xml(
+        doc.filename, doc.xml_content, send_to_sdi=True
+    )
+    return _finalize_fatturapa_upload(repo, db, id_fiscal_document, stop_result, True)
 
 
 # ==================== GENERAZIONE PDF ====================

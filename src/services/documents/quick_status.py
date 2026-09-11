@@ -1,4 +1,4 @@
-"""Mapping stati rapidi: mail + esito FatturaPA (non notifiche SDI RC/NS)."""
+"""Mapping stati rapidi: mail + esito FatturaPA, con overlay notifiche SDI."""
 from __future__ import annotations
 
 import json
@@ -65,14 +65,20 @@ def map_mail_status(
     return status, error
 
 
+_SDI_ISSUED = frozenset(
+    {"consegnata", "accettata", "rifiutata", "decorrenza_termini", "mancata_consegna"}
+)
+
+
 def map_fiscal_fatturapa_status(
     *,
     is_electronic: bool,
     status: Optional[str],
     upload_result: Optional[str] = None,
+    sdi_status: Optional[str] = None,
 ) -> Tuple[FatturapaStatus, Optional[str], Optional[str]]:
     """
-    Deriva esito intermediario FatturaPA da workflow interno.
+    Deriva esito intermediario / SdI: workflow interno, poi overlay notifiche.
 
     Returns:
         (fatturapa_status, fatturapa_error_message, identificativo_sdi)
@@ -84,6 +90,12 @@ def map_fiscal_fatturapa_status(
     st = (status or "").strip().lower()
     parsed = _parse_upload_result(upload_result)
     raw_msg = parsed.get("message") or parsed.get("error") or parsed.get("Error")
+    sdi = (sdi_status or "").strip().lower() or None
+
+    if sdi == "scartata":
+        return "error", "Scartata da SDI", sdi_id
+    if sdi in _SDI_ISSUED:
+        return "sent", None, sdi_id
 
     if st == "error" or (
         isinstance(parsed.get("status"), str)
@@ -96,7 +108,7 @@ def map_fiscal_fatturapa_status(
     if st == "sent":
         return "sent", None, sdi_id
 
-    # pending / generated / issued / altro → non ancora su FatturaPA
+    # pending / generated / issued / altro → non ancora su FatturaPA / SdI
     return None, None, sdi_id
 
 
@@ -145,7 +157,11 @@ def fiscal_quick_status_from_doc(doc: Any) -> Dict[str, Optional[str]]:
         is_electronic=bool(getattr(doc, "is_electronic", False)),
         status=getattr(doc, "status", None),
         upload_result=getattr(doc, "upload_result", None),
+        sdi_status=getattr(doc, "sdi_status", None),
     )
+    persisted_sdi = getattr(doc, "identificativo_sdi", None)
+    if persisted_sdi:
+        sdi_id = str(persisted_sdi).strip() or sdi_id
     mail_s, mail_err = map_mail_status(
         getattr(doc, "mail_status", None),
         getattr(doc, "mail_error_message", None),

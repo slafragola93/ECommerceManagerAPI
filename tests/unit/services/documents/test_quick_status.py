@@ -17,6 +17,8 @@ class _Doc:
         self.upload_result = kwargs.get("upload_result")
         self.mail_status = kwargs.get("mail_status")
         self.mail_error_message = kwargs.get("mail_error_message")
+        self.sdi_status = kwargs.get("sdi_status")
+        self.identificativo_sdi = kwargs.get("identificativo_sdi")
 
 
 def test_fiscal_pending_is_null():
@@ -74,6 +76,22 @@ def test_ricevuta_always_null_fatturapa():
     assert qs["fatturapa_status"] is None
     assert qs["identificativo_sdi"] is None
     assert qs["mail_status"] is None
+
+
+def test_fiscal_generated_with_rc_is_sent():
+    status, err, _ = map_fiscal_fatturapa_status(
+        is_electronic=True, status="generated", sdi_status="consegnata"
+    )
+    assert status == "sent"
+    assert err is None
+
+
+def test_fiscal_scartata_is_error():
+    status, err, _ = map_fiscal_fatturapa_status(
+        is_electronic=True, status="generated", sdi_status="scartata"
+    )
+    assert status == "error"
+    assert "Scartata" in (err or "")
 
 
 def test_fiscal_quick_status_from_doc_includes_mail_null():

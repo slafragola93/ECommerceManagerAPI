@@ -22,6 +22,7 @@ from src.services.core.tool import (
     calculate_price_with_tax,
     resolve_return_unit_prices,
 )
+from src.services.external.fatturapa_progressivo import next_progressivo_from_values
 from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.repository.tax_repository import TaxRepository
@@ -63,6 +64,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
 
         self._get_required_invoice_address(order)
         document_number = self._get_next_electronic_number('invoice')
+        progressivo_invio = self._get_next_progressivo_invio()
 
         invoice = FiscalDocument(
             document_type='invoice',
@@ -70,6 +72,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             id_order=id_order,
             id_store=order.id_store,  # Porta id_store dall'ordine
             document_number=document_number,
+            progressivo_invio=progressivo_invio,
             is_electronic=True,
             status='pending',
             includes_shipping=True,  # Le fatture includono sempre le spese di spedizione
@@ -312,6 +315,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         self._validate_credit_note_creation(invoice, invoice_details, is_partial, items, include_shipping)
 
         document_number = self._get_next_electronic_number('credit_note')
+        progressivo_invio = self._get_next_progressivo_invio()
         tipo_documento_fe = 'TD04'
         
         # Prepara i dettagli della nota di credito PRIMA di calcolare il totale
@@ -496,6 +500,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             id_store=invoice.id_store,  # Porta id_store dalla fattura di riferimento
             id_fiscal_document_ref=id_invoice,
             document_number=document_number,
+            progressivo_invio=progressivo_invio,
             is_electronic=True,
             status='pending',
             credit_note_reason=reason,
@@ -746,6 +751,46 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             next_number = 1
         
         return f"{next_number:06d}"
+
+    def _get_next_progressivo_invio(self) -> str:
+        """Serie unica SDI per invoice + credit_note elettronici."""
+        rows = (
+            self._session.query(FiscalDocument.progressivo_invio)
+            .filter(
+                and_(
+                    FiscalDocument.is_electronic == True,  # noqa: E712
+                    FiscalDocument.document_type.in_(("invoice", "credit_note")),
+                    FiscalDocument.progressivo_invio.isnot(None),
+                )
+            )
+            .all()
+        )
+        return next_progressivo_from_values(raw for (raw,) in rows)
+
+    def assign_next_progressivo_invio(self, doc: FiscalDocument) -> str:
+        """Nuovo ProgressivoInvio (max+1). Non committa: il caller gestisce flush/rollback."""
+        next_value = self._get_next_progressivo_invio()
+        doc.progressivo_invio = next_value
+        return next_value
+
+    def apply_sdi_resend_xml(
+        self,
+        id_fiscal_document: int,
+        filename: str,
+        xml_content: str,
+    ) -> Optional[FiscalDocument]:
+        """Persiste XML post-scarto: status generated, azzera esito SDI corrente."""
+        doc = self.get_fiscal_document_by_id(id_fiscal_document)
+        if not doc:
+            return None
+        doc.filename = filename
+        doc.xml_content = xml_content
+        doc.status = "generated"
+        doc.sdi_status = None
+        doc.identificativo_sdi = None
+        self._session.commit()
+        self._session.refresh(doc)
+        return doc
     
     def get_fiscal_document_by_id(self, id_fiscal_document: int) -> Optional[FiscalDocument]:
         """Recupera documento fiscale per ID"""
@@ -1022,6 +1067,20 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         self._session.commit()
         self._session.refresh(doc)
         
+        return doc
+
+    def reset_fiscal_document_xml(
+        self, id_fiscal_document: int
+    ) -> Optional[FiscalDocument]:
+        """Elimina XML e torna pending. Conserva progressivo_invio e sdi_status."""
+        doc = self.get_fiscal_document_by_id(id_fiscal_document)
+        if not doc:
+            return None
+        doc.filename = None
+        doc.xml_content = None
+        doc.status = "pending"
+        self._session.commit()
+        self._session.refresh(doc)
         return doc
     
     def delete_fiscal_document(self, id_fiscal_document: int) -> bool:

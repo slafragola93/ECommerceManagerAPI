@@ -2,6 +2,8 @@
 
 Incolla questo intero messaggio in chat sul **repo Angular del gestionale**.
 
+**Operativo 2026-09-10:** mostrare Invia a SDI / Reinvia dopo scarto. XML + `send-to-sdi` / `retry-send`. Esiti: `GET .../sdi-status`. Dopo NS: PATCH + `retry-send`. Dettaglio: [`prompt_FE_flusso_portale_fatturapa.md`](./prompt_FE_flusso_portale_fatturapa.md).
+
 ---
 
 ## Contesto

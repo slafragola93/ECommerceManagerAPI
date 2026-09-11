@@ -17,19 +17,24 @@ Documenti correlati:
 | [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-07-29
+**Aggiornato:** 2026-09-10
 
 ---
 
 ## Quick start
 
 ```text
-1. Configurare company_info + electronic_invoicing + fatturapa in app_configurations (o .env)
-2. POST /api/v1/fiscal_documents/invoices          { "id_order": 123, "is_electronic": true }
-3. POST /api/v1/fiscal_documents/{id}/generate-xml
-4. POST /api/v1/fiscal_documents/{id}/send-to-sdi   { "send_to_sdi": false }  ← upload sandbox
-5. GET  /api/v1/fiscal_documents/{id}/pdf          ← PDF di cortesia
+1. Configurare company_info + electronic_invoicing + fatturapa in app_configurations
+2. POST /api/v1/fiscal_documents/invoices            → pending
+3. POST /api/v1/fiscal_documents/{id}/generate-xml    → generated (o 422: correggere in pending)
+4. POST /api/v1/fiscal_documents/{id}/send-to-sdi     → { "send_to_sdi": true } (UploadStop)
+5. GET  /api/v1/fiscal_documents/{id}/sdi-status      ← ricevute SdI (RC/NS/MC/…)
+6. KO intermediario (sdi_status null): PATCH e/o reset-xml, generate-xml (stesso progressivo), send-to-sdi
+   NS AdE: PATCH (stesso numero/data) + POST /{id}/retry-send (nuovo progressivo + UploadStop, 13/E)
+7. GET  /api/v1/fiscal_documents/{id}/pdf             ← PDF di cortesia
 ```
+
+Invio SDI via API (`send-to-sdi=true`, `retry-send`) è **acceso** (`FATTURAPA_SDI_API_SEND_ENABLED=true`).
 
 Per ordini intra-UE B2B con esenzione VIES, applicare **prima** `PATCH /api/v1/orders/{id}/apply-vies-exemption`.
 
@@ -37,7 +42,7 @@ Per ordini intra-UE B2B con esenzione VIES, applicare **prima** `PATCH /api/v1/o
 
 ## 1. Panoramica
 
-Elettronew genera fatture elettroniche **FatturaPA** (formato **FPR12**, B2B/B2C) a partire dagli ordini, le valida, produce XML e le carica su **FatturaPA.com** (intermediario REST). L'invio allo **SDI** e le notifiche di esito sono parzialmente implementati — vedi [§10 Gap noti](#10-gap-noti-e-backlog).
+Elettronew genera fatture elettroniche **FatturaPA** (formato **FPR12**, B2B/B2C) a partire dagli ordini, valida l'XML e lo **trasmette via API a FatturaPA.com** (`UploadStop`), che inoltra allo SdI. Le ricevute (RC/MC/NS/NE/DT) arrivano via polling Pool Vendita — vedi [§6](#6-api--xml-pdf-export-e-invio-sdi) e [§9](#9-macchina-a-stati-documento).
 
 ### Differenza rispetto ad altri documenti fiscali
 
@@ -48,21 +53,24 @@ Elettronew genera fatture elettroniche **FatturaPA** (formato **FPR12**, B2B/B2C
 | **Ricevuta estero** | No | No (live ordine) | `/api/v1/ricevute` |
 | **Corrispettivi** | No | No (report live) | `/api/v1/corrispettivi` |
 
-Un ordine **fatturato** esce dai corrispettivi vendite (`has_invoice=true`). La fattura è uno **snapshot** in `fiscal_document_details`; con `PATCH /{id}` (solo `pending`) si può aggiornare lo snapshot e, con `sync_order=true`, riallineare l'ordine collegato in modo atomico.
+Un ordine **fatturato** esce dai corrispettivi vendite (`has_invoice=true`). La fattura è uno **snapshot** in `fiscal_document_details`; con `PATCH /{id}` si aggiorna lo snapshot se lo SdI non ha ancora accettato il file (`sdi_status` null o `scartata`). Un PATCH su fattura con XML azzera il file e torna `pending`. `POST /{id}/reset-xml` elimina solo l'XML. `sync_order=true` riallinea l'ordine collegato.
 
 ### Flusso operativo
 
 ```mermaid
 flowchart TD
-  order[Ordine con address_invoice IT] --> create["POST /invoices\nid_order + is_electronic"]
+  order[Ordine] --> create["POST /invoices"]
   create --> pending["status: pending"]
   pending --> genXml["POST /{id}/generate-xml"]
-  genXml --> generated["status: generated\nxml_content salvato"]
-  generated --> upload["POST /{id}/send-to-sdi\nsend_to_sdi: bool"]
-  upload --> uploaded["status: uploaded o sent"]
-  uploaded --> pdf["GET /{id}/pdf"]
-  genXml -->|422| validationErr[Errori FatturaPAValidator]
-  upload -->|500| uploadErr[Errore FatturaPA.com]
+  genXml -->|422| pending
+  genXml --> generated["status: generated"]
+  generated --> send["POST /{id}/send-to-sdi"]
+  send -->|KO intermediario| reset["PATCH e/o reset-xml"]
+  reset --> genXml
+  send --> poll[Job Pool Vendita]
+  poll -->|NS| nsFix["PATCH + retry-send\nnuovo progressivo"]
+  nsFix --> poll
+  poll -->|RC o MC| done[sdi_status emessa]
 ```
 
 ---
@@ -86,6 +94,10 @@ Variabili env di fallback (se non in DB) — vedi anche `env.example`:
 |-----------|-------------|---------|
 | `FATTURAPA_API_KEY` | API key intermediario FatturaPA.com | — |
 | `FATTURAPA_BASE_URL` | Base URL REST intermediario | `https://api.fatturapa.com/ws/V10.svc/rest` |
+| `FATTURAPA_SDI_EVENTS_SYNC_ENABLED` | Job polling notifiche SDI ciclo attivo | `true` |
+| `FATTURAPA_SDI_EVENTS_SYNC_INTERVAL_SECONDS` | Intervallo polling (min 60s) | `300` |
+| `FATTURAPA_SDI_EVENTS_SYNC_INITIAL_DELAY_SECONDS` | Delay primo sync | `60` |
+| `FATTURAPA_SDI_API_SEND_ENABLED` | `true` = Invia a SDI via API (`UploadStop`) | `true` |
 | `COMPANY_VAT_NUMBER` | P.IVA cedente (se assente in DB) | — |
 
 Le chiavi in `app_configurations` hanno priorità sulle variabili env.
@@ -244,8 +256,12 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 
 | Obiettivo | Metodo | Path | Note |
 |-----------|--------|------|------|
-| Generare XML FatturaPA (**singolo** doc, workflow SDI) | `POST` | `/{id}/generate-xml` | Aggiorna `status=generated`, errori **422** strutturati |
-| Caricare / inviare a SDI | `POST` | `/{id}/send-to-sdi` | Richiede XML già generato |
+| Generare XML FatturaPA (**singolo** doc) | `POST` | `/{id}/generate-xml` | `status=generated`, errori **422**. Dopo NS usare `retry-send` |
+| Eliminare XML (loop KO) | `POST` | `/{id}/reset-xml` | Torna `pending`; vieta se SdI già evaso |
+| Caricare / inviare a SDI via API | `POST` | `/{id}/send-to-sdi` | `{ "send_to_sdi": true }` = upload + SdI (`UploadStop`) |
+| Reinvio API dopo NS | `POST` | `/{id}/retry-send` | Nuovo `progressivo_invio` + XML + `UploadStop` |
+| Esito SDI + storico notifiche | `GET` | `/{id}/sdi-status` | RC/MC/NS/NE/DT — distinto da `status` workflow |
+| Sync manuale notifiche SDI | `POST` | `/sdi-events/sync` | Oltre al job di polling |
 | PDF di cortesia (**singolo** doc) | `GET` | `/{id}/pdf` | Layout elettronew; **non** c’è export PDF bulk |
 | Export **bulk** CSV legacy | `GET` | `/invoices/export?fmt=csv&document_type=invoice\|credit_note` | Max 5000 doc; formato EXPORT-nc (righe articolo) |
 | Export **bulk** Excel lista | `GET` | `/invoices/export?fmt=xlsx&document_type=invoice\|credit_note` | Max 5000 righe; colonna `document_type` |
@@ -266,7 +282,9 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 5. Salva `filename`, `xml_content` in DB
 6. Imposta `status=generated`
 
-**Errori validazione (business o XSD):** HTTP **422** con elenco strutturato `{ field, message, rule, value }`.
+**Errori validazione (business o XSD):** HTTP **422** con elenco strutturato `{ field, message, rule, value }`.  
+Se `sdi_status` è evaso (RC/MC/NE/DT) → **400**.  
+Se `sdi_status=scartata` → **400**: usare `POST /{id}/retry-send` (nuovo progressivo + invio). Numero e data fattura restano.
 
 Campi XML principali generati:
 
@@ -286,7 +304,8 @@ Campi XML principali generati:
 ### POST `/{id_fiscal_document}/send-to-sdi`
 
 **Permesso:** `fiscal_documents:update`  
-**Prerequisito:** XML generato (`status=generated`, `xml_content` presente)
+**Prerequisito:** XML generato (`status` in `generated|uploaded|error`, `xml_content` presente).  
+Non consentito se `sdi_status=scartata` (usare `retry-send`) o se il documento è già evaso/in attesa SDI.
 
 #### Body
 
@@ -294,14 +313,63 @@ Campi XML principali generati:
 |-------|--------------|---------|-------------|
 | `send_to_sdi` | No | `false` | `false` = solo upload su FatturaPA.com; `true` = upload + invio SDI |
 
-Processo: `UploadStart1` → upload blob Azure → `UploadStop1`.
+Processo: `UploadStart1` → upload blob Azure → **`UploadStop1`** (`send_to_sdi=false`) oppure **`UploadStop`** (`send_to_sdi=true`, invio SDI).
 
-| `send_to_sdi` | Status atteso | Note |
-|---------------|---------------|------|
-| `false` | `uploaded` | Documento caricato su intermediario |
-| `true` | `sent` | **Bug aperto P0-01:** `upload_stop()` ignora ancora il flag e chiama sempre `UploadStop1` senza variante SDI dedicata |
+| `send_to_sdi` | Endpoint intermediario | Status atteso |
+|---------------|------------------------|---------------|
+| `false` | `UploadStop1` | `uploaded` — solo upload |
+| `true` | `UploadStop` | `sent` — upload + trasmissione SDI |
 
+Body: oggetto `{ "send_to_sdi": true }` (contratto ufficiale) oppure boolean grezzo `true`/`false` (retrocompat).  
 Risposta intermediario salvata in `upload_result` (JSON string).
+
+`ProgressivoInvio` XML e filename usano `fiscal_documents.progressivo_invio` (serie unica SDI). `Numero` commerciale resta `document_number` (serie separate fattura/NC).
+
+Con `send_to_sdi=true`, gate PEC: `CodiceDestinatario=XXXXXXX` senza `PECDestinatario` valida → **422**. B2C `0000000` senza PEC è consentito.  
+Le chiamate HTTP verso FatturaPA.com ritentano fino a 3 volte su timeout/rete/429/5xx.
+
+**Operativo attuale:** `FATTURAPA_SDI_API_SEND_ENABLED=true` (default).  
+`send_to_sdi=true` chiama `UploadStop` (FatturaPA.com inoltra allo SdI). `send_to_sdi=false` = solo deposito (`UploadStop1`).  
+Per spegnere l’invio API: `FATTURAPA_SDI_API_SEND_ENABLED=false`.
+
+### POST `/{id_fiscal_document}/retry-send`
+
+**Permesso:** `fiscal_documents:update`  
+**Prerequisito:** `sdi_status=scartata` (notifica NS). Body assente.  
+Con `FATTURAPA_SDI_API_SEND_ENABLED=false` → **400**.
+
+1. Assegna un nuovo `progressivo_invio` (il precedente resta nello storico notifiche, non viene riusato)
+2. Rigenera e valida XML
+3. Azzera `sdi_status` e `identificativo_sdi` sul documento (lo storico `fiscal_document_sdi_notifications` resta)
+4. Gate PEC + `UploadStop` (invio SDI)
+
+Risposta: stesso `FiscalDocumentResponseSchema` di `send-to-sdi`.  
+MC / consegnata / NE **non** si reinviano (sarebbe una seconda fattura).
+
+### GET `/{id_fiscal_document}/sdi-status`
+
+**Permesso:** `fiscal_documents:read`
+
+```json
+{
+  "id_fiscal_document": 123,
+  "sdi_status": "consegnata|scartata|mancata_consegna|accettata|rifiutata|decorrenza_termini|null",
+  "identificativo_sdi": "string|null",
+  "notifications": [
+    {
+      "notification_type": "RC|MC|NS|NE|DT",
+      "identificativo_sdi": "string|null",
+      "nome_file": "string|null",
+      "message": "string|null",
+      "notified_at": "datetime|null",
+      "date_add": "datetime|null"
+    }
+  ]
+}
+```
+
+Fonte: polling Pool FatturaPA.com (`Direzione != Acquisto`). Job `fatturapa_sdi_events_sync` + `POST /sdi-events/sync`.  
+`status` workflow **non** viene sovrascritto. `fatturapa_status` in lista resta esito upload intermediario.
 
 ### GET `/{id_fiscal_document}/pdf`
 
@@ -453,8 +521,10 @@ Config correlate (`app_configurations` / categoria `electronic_invoicing`):
 ## 9. Macchina a stati documento
 
 ```
-pending → generated → uploaded → sent
-                              ↘ error
+pending → generate-xml → generated → send-to-sdi → sent → sdi_status
+                              ↘ 422 / reset-xml / PATCH → pending
+sdi_status=scartata → PATCH (stesso numero/data) + retry-send (nuovo progressivo)
+sdi_status=consegnata|mancata_consegna → emessa (non reinviare)
 ```
 
 | Status | Significato |
@@ -463,11 +533,12 @@ pending → generated → uploaded → sent
 | `issued` | Fattura non elettronica emessa |
 | `generated` | XML salvato in DB |
 | `uploaded` | Caricata su FatturaPA.com (senza invio SDI) |
-| `sent` | Marcata come inviata a SDI (verificare bug P0-01) |
+| `sent` | Inviata a SDI via `UploadStop` |
 | `error` | Errore upload/invio |
 | `cancelled` | Annullata |
 
-Stati SDI avanzati (`consegnata`, `scartata`, `protocollo_sdi`, storico notifiche) — **non ancora implementati** (P0-03, P0-04).
+Esito SDI (colonna `sdi_status`, distinto dal workflow): `consegnata` (RC), `scartata` (NS), `mancata_consegna` (MC), `accettata`/`rifiutata` (NE EC01/EC02), `decorrenza_termini` (DT/AT). Storico in `fiscal_document_sdi_notifications`. Consultazione: `GET /{id}/sdi-status`.  
+Dopo NS: `PATCH` (stesso numero/data) + `POST /{id}/retry-send` (nuovo progressivo + UploadStop). MC/consegnata/NE/DT non si reinviano.
 
 Eliminazione: solo se `status=pending` (fatture/NC); non eliminabile se esistono NC collegate.
 
@@ -475,20 +546,20 @@ Eliminazione: solo se `status=pending` (fatture/NC); non eliminabile se esistono
 
 ## 10. Gap noti e backlog
 
-Stato al **2026-07-27**. Dettaglio completo: [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
+Stato al **2026-09-10**. Dettaglio completo: [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md)
 
 | ID | Area | Stato |
 |----|------|-------|
-| P0-01 | Fix propagazione `send_to_sdi` fino a HTTP intermediario | Parziale (bug) |
+| P0-01 | Fix propagazione `send_to_sdi` fino a HTTP intermediario | Completato (`UploadStop` / `UploadStop1`) |
 | P0-02 | Validazione XSD ufficiale pre-invio | Completato |
-| P0-03 | Webhook / polling notifiche SDI | Assente |
-| P0-04 | Campi `protocollo_sdi`, storico notifiche | Assente |
+| P0-03 | Polling notifiche SDI (Pool Vendita) | Completato (FatturaPA.com non ha webhook) |
+| P0-04 | Storico notifiche + `sdi_status` / `identificativo_sdi` | Completato |
 | P0-05 | VIES eligible → N3.2 in XML + natura per riga | Completato |
 | P0-06 | `DatiFattureCollegate` per NC TD04 | Completato |
 | P0-07 | Test suite generazione XML completa | Parziale |
 | P0-08 | NC: `is_partial=true` richiede `items` non vuoti | Completato |
 | P0-09 | NC XML: non riusare `order.total_discounts` su TD04 | Completato |
-| P1-01 | `GET .../sdi-status` dedicato | Assente |
+| P1-01 | `GET .../sdi-status` + `POST .../retry-send` | Completato |
 | P1-02 | `GET .../xml` download attachment singolo | Opzionale — oggi: `POST .../generate-xml`, `GET .../export?fmt=xml`, o `xml_content` in `GET /{id}` |
 | P1-05 | `DatiRiepilogo` multi-aliquota | Completato |
 | P1-09 | Modellare voucher carrello come detail fiscale (TD01/NC proporzionale) | Aperto (TD04 ora skippa i buoni ordine) |
@@ -600,6 +671,10 @@ Modulo auth: `python scripts/init_auth_data.py` (inserisce `purchase_invoices` s
 | Modello ORM | `src/models/fiscal_document.py` |
 | VIES ordini | `src/services/vies/`, `src/vies/tax_resolution.py` |
 | Sync fatture passive (POOL) | `src/services/sync/fatturapa_pool_sync_service.py` |
+| Sync notifiche SDI ciclo attivo | `src/services/sync/fatturapa_sdi_events_sync_service.py` |
+| Parser notifiche SDI | `src/services/external/fatturapa_sdi_notification_parser.py` |
+| ProgressivoInvio unico | `src/services/external/fatturapa_progressivo.py` |
+| Gate PEC / regole reinvio / retry HTTP | `fatturapa_pec_gate.py`, `fatturapa_sdi_resend.py`, `fatturapa_http_retry.py` |
 | Parser inbound + API acquisti | `fatturapa_inbound_parser.py`, `routers/purchase_invoices.py` |
 
 ---
@@ -615,6 +690,15 @@ pytest tests/unit/services/external/test_fatturapa_natura.py tests/unit/services
 
 # Data scadenza pagamento / NC XML
 pytest tests/unit/services/external/test_fatturapa_payment_due_date.py tests/unit/services/external/test_fatturapa_nc_xml.py -v
+
+# P0 ciclo attivo: UploadStop, ProgressivoInvio, notifiche SDI
+pytest tests/unit/services/external/test_fatturapa_upload_stop.py tests/unit/schemas/test_send_to_sdi_schema.py tests/unit/services/external/test_fatturapa_progressivo.py tests/unit/repository/test_fiscal_document_progressivo_invio.py tests/unit/services/external/test_fatturapa_sdi_notification_parser.py tests/unit/services/sync/test_fatturapa_sdi_events_sync.py -v
+
+# P1: PEC gate, retry-send, retry HTTP
+pytest tests/unit/services/external/test_fatturapa_pec_gate.py tests/unit/services/external/test_fatturapa_sdi_resend.py tests/unit/services/external/test_fatturapa_http_retry.py -v
+
+# 2026-09-10: PATCH/reset-xml + overlay lista da sdi_status
+pytest tests/unit/services/test_fiscal_document_update_invoice.py tests/unit/services/documents/test_quick_status.py -v
 ```
 
 Suite generazione XML end-to-end: **da implementare** (P0-07).

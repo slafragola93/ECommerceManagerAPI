@@ -4,6 +4,96 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-10) — Invio SDI automatico via API
+
+Il gestionale genera l’XML e lo **trasmette a FatturaPA.com** (`UploadStop`). Regole AdE/13/E invariate. Nessun upload manuale sul portale.
+
+### Comportamento
+
+- `FATTURAPA_SDI_API_SEND_ENABLED=true` (default in codice e `env.example`).
+- `POST .../send-to-sdi` con `{ "send_to_sdi": true }` → upload + inoltro SdI.
+- Dopo NS: `POST .../retry-send` (stesso numero/data, nuovo `progressivo_invio` + XML + UploadStop).
+- KO solo intermediario (`sdi_status` null): stesso progressivo; `PATCH` / `reset-xml` + `generate-xml` + `send-to-sdi`.
+- `PATCH` consentito se `sdi_status` è null o `scartata`. RC/MC/NE/DT → 409.
+- Lista: `fatturapa_status=sent` se notifica emessa; `error` se `scartata`.
+- FE: mostrare **Invia a SDI** e **Reinvia dopo scarto**. Prompt: [`.cursor/tasks_claude/fatturazione/prompt_FE_flusso_portale_fatturapa.md`](.cursor/tasks_claude/fatturazione/prompt_FE_flusso_portale_fatturapa.md).
+
+### Test
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/test_fiscal_document_update_invoice.py tests/unit/services/external/test_fatturapa_sdi_resend.py tests/unit/services/documents/test_quick_status.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-10) — Rimosso export nomenclatura
+
+Rimosso l’endpoint `GET /api/v1/orders/export/nomenclatura` (e relative note FE). Non esporre più quel download dalla lista ordini.
+
+---
+
+## Ultime modifiche (2026-08-21) — FatturaPA P1 (senza mail cortesia)
+
+Affidabilità ciclo **attivo**. Mail di cortesia al cliente **non** implementata (rimandata). Ciclo passivo POOL **non modificato**. Nessuna nuova migration.
+
+### Cosa è stato fatto
+
+- **Resend dopo NS:** `POST /api/v1/fiscal_documents/{id}/retry-send` — nuovo `progressivo_invio`, XML rigenerato, `UploadStop`. Consentito solo se `sdi_status=scartata`. Storico notifiche conservato; `sdi_status` / `identificativo_sdi` azzerati sul documento.
+- **Gate PEC:** con `send_to_sdi=true`, `CodiceDestinatario=XXXXXXX` senza PEC valida → **422**. B2C `0000000` senza PEC resta consentito.
+- **Retry HTTP:** 3 tentativi su timeout/rete/429/5xx verso FatturaPA.com; nessun retry sui 4xx.
+- `send-to-sdi` / `generate-xml` dopo NS reindirizzano a `retry-send`. Non si reinvia un documento già evaso (RC/MC/NE/DT).
+
+### Dipendenze
+
+Nessuna nuova libreria.
+
+### Test
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/external/test_fatturapa_pec_gate.py tests/unit/services/external/test_fatturapa_sdi_resend.py tests/unit/services/external/test_fatturapa_http_retry.py tests/unit/services/external/test_fatturapa_upload_stop.py tests/unit/repository/test_fiscal_document_progressivo_invio.py -v
+```
+
+Doc operativa: [`docs/FATTURAPA.md`](docs/FATTURAPA.md).
+
+---
+
+## Ultime modifiche (2026-08-21) — FatturaPA ciclo attivo P0
+
+Chiusura go-live ciclo **attivo** (fatture/NC vendita). Ciclo passivo POOL **non modificato**.
+
+### Cosa è stato fatto
+
+- **P0-01** `send_to_sdi`: `UploadStop1` (solo upload) vs `UploadStop` (upload + SDI). Body `{ "send_to_sdi": bool }` o boolean grezzo.
+- **ProgressivoInvio** unico (`fiscal_documents.progressivo_invio` UNIQUE). `Numero` resta `document_number`.
+- **P0-03/P0-04/P1-01** notifiche SDI via polling Pool Vendita: tabella `fiscal_document_sdi_notifications`, colonne `identificativo_sdi` + `sdi_status` (non sovrascrive `status` workflow).
+- `GET /api/v1/fiscal_documents/{id}/sdi-status` e `POST /api/v1/fiscal_documents/sdi-events/sync`.
+- Job `fatturapa_sdi_events_sync` (env `FATTURAPA_SDI_EVENTS_SYNC_*`).
+- `fatturapa_status` in lista resta esito upload (`uploaded|sent|error|null`).
+
+### Dipendenze
+
+Nessuna nuova libreria. Stack esistente (FastAPI, SQLAlchemy, job background, FatturaPA.com Pool).
+
+### Setup
+
+```powershell
+.\venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Revisioni: `20260821_0001` (`progressivo_invio`), `20260821_0002` (notifiche SDI).
+
+Env (vedi `env.example`): `FATTURAPA_SDI_EVENTS_SYNC_ENABLED`, `_INTERVAL_SECONDS` (300), `_INITIAL_DELAY_SECONDS` (60).
+
+### Test
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/external/test_fatturapa_upload_stop.py tests/unit/schemas/test_send_to_sdi_schema.py tests/unit/services/external/test_fatturapa_progressivo.py tests/unit/repository/test_fiscal_document_progressivo_invio.py tests/unit/services/external/test_fatturapa_sdi_notification_parser.py tests/unit/services/sync/test_fatturapa_sdi_events_sync.py -v
+```
+
+Doc operativa: [`docs/FATTURAPA.md`](docs/FATTURAPA.md).
+
+---
+
 ## Ultime modifiche (2026-08-12) — Audit Log backend
 
 **Scope:** persistenza append-only `audit_logs` alimentata da un subscriber **core** dell’EventBus (non plugin), API di sola lettura protetta dal modulo RBAC `audit`.

@@ -36,6 +36,7 @@ def serialize_fiscal_document(
         id_order=doc.id_order,
         id_fiscal_document_ref=doc.id_fiscal_document_ref,
         document_number=doc.document_number,
+        progressivo_invio=getattr(doc, "progressivo_invio", None),
         internal_number=doc.internal_number,
         filename=doc.filename,
         xml_content=doc.xml_content,

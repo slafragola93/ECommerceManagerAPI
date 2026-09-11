@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NotificaScarto>
+  <IdentificativoSdI>2222222222</IdentificativoSdI>
+  <NomeFile>IT08632861210_000002.xml</NomeFile>
+  <ListaErrori>
+    <Errore>
+      <Descrizione>00300 - File non conforme</Descrizione>
+    </Errore>
+  </ListaErrori>
+</NotificaScarto>

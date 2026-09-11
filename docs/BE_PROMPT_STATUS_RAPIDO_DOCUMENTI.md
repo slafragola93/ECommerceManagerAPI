@@ -1,7 +1,7 @@
 # Stati rapidi documenti fiscali / ricevute / acquisti
 
-**Stato BE:** implementato (2026-07-29)  
-**Contratto FE:** campi sotto — **non** usare più `sdi_status` / `accepted|rejected` del draft iniziale.
+**Stato BE:** implementato (2026-07-29; overlay SdI 2026-09-10)  
+**Contratto FE colonna rapida:** `fatturapa_status` resta `uploaded|sent|error|null`. Overlay da `sdi_status` persistito: RC/MC/NE/DT → `sent`; NS → `error` (“Scartata da SDI”). Dettaglio timeline: `GET /api/v1/fiscal_documents/{id}/sdi-status`.
 
 ---
 
@@ -17,7 +17,7 @@ Icone:
 
 1. **Pagamento** → `is_payed` (fiscal/ricevute) o `is_paid` (purchase)
 2. **Invio mail** → `mail_status`
-3. **Esito FatturaPA** → `fatturapa_status` (esito intermediario, non notifiche SDI RC/NS)
+3. **Esito FatturaPA / SdI** → `fatturapa_status` (workflow upload **oppure** overlay notifiche se `sdi_status` valorizzato)
 
 ---
 
@@ -35,18 +35,18 @@ Icone:
 
 ### Semantica `fatturapa_status`
 
-Fonte: workflow interno + risposta **FatturaPA.com** (`status` / `upload_result`).  
-Non è ancora il flusso completo notifiche SdI (backlog P0-03).
+Fonte: workflow interno + `upload_result`, **poi** overlay `fiscal_documents.sdi_status` se presente.  
+Timeline completa: `GET /{id}/sdi-status`. Enum lista invariato: `uploaded|sent|error|null`.
 
 | Valore | Significato |
 |--------|-------------|
-| `null` | Non applicabile / non ancora caricato (ricevuta; doc non elettronico; `pending`/`generated`) |
-| `uploaded` | Caricato su FatturaPA, senza invio SDI |
-| `sent` | Inoltrato a SDI via FatturaPA (ciclo attivo) **oppure** ricevuto via POOL (acquisti con ID SDI) |
+| `null` | Non applicabile / XML non ancora allo SdI (`pending`/`generated` senza notifica) |
+| `uploaded` | Caricato su FatturaPA via API, senza invio SDI |
+| `sent` | `status=sent` **oppure** `sdi_status` in consegnata/accettata/rifiutata/MC/DT **oppure** acquisto POOL |
 | `error` | Errore FatturaPA / upload / validazione |
 
 `fatturapa_error_message`: solo se `error`.  
-`identificativo_sdi`: ID se noto (POOL acquisti o parse `upload_result`).
+`identificativo_sdi`: ID se noto (colonna persistita sul documento, POOL acquisti, o parse `upload_result`).
 
 ### Semantica `mail_status`
 
@@ -103,6 +103,9 @@ pytest tests/unit/services/documents/test_quick_status.py -v
 
 ## Note FE
 
-- Rinominare binding da `sdi_status` → `fatturapa_status`.
-- Icona esito: `uploaded` / `sent` = ok/in corso a seconda UX; `error` = KO; `null` = grigio/N/A.
-- Estensione futura (notifiche RC/NS): possibili nuovi valori enum senza rompere i tre attuali.
+- Mostrare «Invia a SDI» (`send-to-sdi`) e «Reinvia dopo scarto» (`retry-send`).
+- Tenere genera/scarica XML, PDF, `GET .../sdi-status`.
+- Dopo NS: PATCH (stesso numero/data) + `retry-send`. Oppure `POST .../reset-xml` poi `retry-send`.
+- Colonna rapida: binding `fatturapa_status` (non `sdi_status` grezzo).
+- Icona esito: `uploaded` / `sent` = ok/in corso; `error` = KO (anche scarto SdI); `null` = grigio/N/A.
+- Dettaglio timeline: `GET /api/v1/fiscal_documents/{id}/sdi-status` — non allargare l'enum `fatturapa_status`.

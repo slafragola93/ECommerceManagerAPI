@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import json
 import xml.etree.ElementTree as ET
@@ -30,6 +31,12 @@ from src.services.external.fatturapa_customer_address import (
     normalize_customer_vat,
     resolve_codice_destinatario,
     resolve_invoice_state,
+)
+from src.services.external.fatturapa_http_retry import (
+    MAX_ATTEMPTS,
+    is_retryable_exception,
+    retry_delay_seconds,
+    should_retry_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -446,7 +453,10 @@ class FatturaPAService:
         self._create_element(id_trasmittente, "IdPaese", "IT")
         self._create_element(id_trasmittente, "IdCodice", normalize_id_codice(self.vat_number))
         
-        self._create_element(dati_trasmissione, "ProgressivoInvio", document_number)
+        progressivo_invio = (
+            order_data.get("progressivo_invio") or document_number
+        )
+        self._create_element(dati_trasmissione, "ProgressivoInvio", progressivo_invio)
         self._create_element(dati_trasmissione, "FormatoTrasmissione", "FPR12")
 
         codice_destinatario = resolve_codice_destinatario(country_iso, customer_sdi)
@@ -781,19 +791,56 @@ class FatturaPAService:
         return xml_str
     
     async def _http_request(self, method: str, url: str, **kwargs) -> Tuple[int, str, str]:
-        """Esegue una richiesta HTTP"""
-        headers = kwargs.get('headers', {})
-        headers['User-Agent'] = self.user_agent
-        
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            if method.upper() == 'GET':
-                response = await client.get(url, headers=headers)
-            elif method.upper() == 'PUT':
-                response = await client.put(url, headers=headers, content=kwargs.get('content'))
-            else:
-                raise ValueError(f"Metodo HTTP non supportato: {method}")
-            
-            return response.status_code, response.headers.get('content-type', ''), response.text
+        """Esegue una richiesta HTTP con retry su timeout/rete/429/5xx."""
+        headers = dict(kwargs.get("headers") or {})
+        headers["User-Agent"] = self.user_agent
+        method_upper = method.upper()
+        if method_upper not in {"GET", "PUT"}:
+            raise ValueError(f"Metodo HTTP non supportato: {method}")
+
+        last_exc: Optional[BaseException] = None
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    if method_upper == "GET":
+                        response = await client.get(url, headers=headers)
+                    else:
+                        response = await client.put(
+                            url, headers=headers, content=kwargs.get("content")
+                        )
+                if should_retry_status(response.status_code, attempt):
+                    logger.warning(
+                        "FatturaPA HTTP %s %s → %s, retry %s/%s",
+                        method_upper,
+                        url,
+                        response.status_code,
+                        attempt + 2,
+                        MAX_ATTEMPTS,
+                    )
+                    await asyncio.sleep(retry_delay_seconds(attempt))
+                    continue
+                return (
+                    response.status_code,
+                    response.headers.get("content-type", ""),
+                    response.text,
+                )
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_exc = exc
+                if not is_retryable_exception(exc) or attempt >= MAX_ATTEMPTS - 1:
+                    raise
+                logger.warning(
+                    "FatturaPA HTTP %s %s rete/timeout (%s), retry %s/%s",
+                    method_upper,
+                    url,
+                    exc,
+                    attempt + 2,
+                    MAX_ATTEMPTS,
+                )
+                await asyncio.sleep(retry_delay_seconds(attempt))
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("FatturaPA HTTP: retry esauriti senza risposta")
     
     async def verify_api(self) -> bool:
         """Verifica la connessione API"""
@@ -864,28 +911,47 @@ class FatturaPAService:
             logger.error(f"Errore nell'upload XML: {e}")
             return False
     
+    @staticmethod
+    def upload_stop_endpoint(send_to_sdi: bool = False) -> str:
+        """Endpoint FatturaPA.com: UploadStop invia a SDI, UploadStop1 solo upload."""
+        return "UploadStop" if send_to_sdi else "UploadStop1"
+
     async def upload_stop(self, name: str, send_to_sdi: bool = False) -> Dict[str, Any]:
-        """Completa il processo di upload"""
+        """Completa l'upload: UploadStop1 = solo controlli; UploadStop = controlli + invio SDI."""
         try:
-            endpoint = "UploadStop1"
+            endpoint = self.upload_stop_endpoint(send_to_sdi)
             url = f"{self.base_url}/{endpoint}/{self.api_key}/{name}"
-            
+
             status_code, _, body = await self._http_request('GET', url)
-            
+
             if status_code == 200:
                 try:
                     result = json.loads(body)
-                    logger.info("UploadStop completato: %s", endpoint)
+                    logger.info("UploadStop completato: %s send_to_sdi=%s", endpoint, send_to_sdi)
                     return result
                 except json.JSONDecodeError:
                     return {"status": "success", "message": body}
             else:
-                logger.error(f"UploadStop fallito: {status_code} - {body}")
+                logger.error(f"UploadStop fallito ({endpoint}): {status_code} - {body}")
                 return {"status": "error", "message": body}
-                
+
         except Exception as e:
             logger.error(f"Errore in upload_stop: {e}")
             return {"status": "error", "message": str(e)}
+
+    async def upload_fiscal_xml(
+        self, filename: str, xml_content: str, send_to_sdi: bool = False
+    ) -> Dict[str, Any]:
+        """UploadStart1 → blob XML → UploadStop / UploadStop1."""
+        name, complete_url = await self.upload_start(filename)
+        if not name or not complete_url:
+            return {"status": "error", "message": "UploadStart fallito"}
+
+        uploaded = await self.upload_xml(complete_url, xml_content)
+        if not uploaded:
+            return {"status": "error", "message": "Upload XML fallito"}
+
+        return await self.upload_stop(name, send_to_sdi=send_to_sdi)
     
     async def get_events(self) -> Dict[str, Any]:
         """Recupera gli eventi dal pool"""
@@ -930,6 +996,25 @@ class FatturaPAService:
             
             if not fiscal_doc.is_electronic:
                 raise ValueError("Il documento non è elettronico, non è possibile generare XML")
+
+            if not fiscal_doc.progressivo_invio:
+                from src.services.external.fatturapa_progressivo import (
+                    next_progressivo_from_values,
+                )
+
+                existing = (
+                    self.db.query(FiscalDocument.progressivo_invio)
+                    .filter(
+                        FiscalDocument.is_electronic.is_(True),
+                        FiscalDocument.document_type.in_(("invoice", "credit_note")),
+                        FiscalDocument.progressivo_invio.isnot(None),
+                    )
+                    .all()
+                )
+                fiscal_doc.progressivo_invio = next_progressivo_from_values(
+                    raw for (raw,) in existing
+                )
+                self.db.flush()
             
             # Recupera ordine
             order = self.db.query(Order).filter(Order.id_order == fiscal_doc.id_order).first()
@@ -982,6 +1067,11 @@ class FatturaPAService:
                 }
             
             # Genera XML
+            progressivo_invio = (
+                fiscal_doc.progressivo_invio or fiscal_doc.document_number
+            )
+            order_data["document_number"] = fiscal_doc.document_number
+            order_data["progressivo_invio"] = progressivo_invio
             xml_content = self._generate_xml(order_data, line_items, fiscal_doc.document_number, include_shipping=include_shipping)
 
             # Validazione XSD ufficiale (BE-PA-P0-02)
@@ -998,7 +1088,7 @@ class FatturaPAService:
                 }
             
             # Genera filename
-            filename = self._generate_filename(fiscal_doc.document_number)
+            filename = self._generate_filename(progressivo_invio)
             
             return {
                 "status": "success",
@@ -1093,6 +1183,8 @@ class FatturaPAService:
         return {
             'id_order': order.id_order,
             'tipo_documento_fe': fiscal_doc.tipo_documento_fe,  # TD01 o TD04
+            'document_number': fiscal_doc.document_number,
+            'progressivo_invio': fiscal_doc.progressivo_invio or fiscal_doc.document_number,
             'id_fiscal_document_ref': fiscal_doc.id_fiscal_document_ref,
             'linked_invoice_number': linked_invoice_number,
             'linked_invoice_date': linked_invoice_date,
