@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?><ns3:RicevutaScarto xmlns:ns3="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fattura/messaggi/v1.0" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#" versione="1.0">
+    <IdentificativoSdI>18178292327</IdentificativoSdI>
+    <NomeFile>IT01558670780_PFG74.xml.p7m</NomeFile>
+    <Hash>800756fb9b4cf92552dc7656f4f11d01ebd267f0639f893b4ad833b5dd8426d8</Hash>
+    <DataOraRicezione>2026-09-11T16:43:03.000+02:00</DataOraRicezione>
+    <ListaErrori>
+        <Errore>
+            <Codice>00305</Codice>
+            <Descrizione>1.4.1.1.2 &lt;IdCodice&gt; non valido : 01234567897</Descrizione>
+            <Suggerimento>Verificare che il campo IdFiscaleIVA/IdCodice del "CessionarioCommittente" sia valido</Suggerimento>
+        </Errore>
+    </ListaErrori>
+    <MessageId>43623535269</MessageId>
+<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="Signature1"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference Id="reference-document" URI=""><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2002/06/xmldsig-filter2"><XPath xmlns="http://www.w3.org/2002/06/xmldsig-filter2" Filter="subtract">/descendant::ds:Signature</XPath></ds:Transform></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>ugAoHA/zktlQN0y+X8TXR+7W8FXl/No7MuxBypenepk=</ds:DigestValue></ds:Reference><ds:Reference Id="reference-signedpropeties" Type="http://uri.etsi.org/01903#SignedProperties" URI="#SignedProperties_1"><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>ppP5mdW8zMZwTLiNZ/9lCOrXNW+7pGWR4Ree64bTi8I=</ds:DigestValue></ds:Reference><ds:Reference Id="reference-keyinfo" URI="#KeyInfoId"><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>bWOj3hseWTrmKQHXXknW4dr6gt3hdi70lNjmePGAn+A=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue Id="SignatureValue1">YO93wwSeewho8CaSNyTf4I1Lr6UQsI4UPw1GGc9QSfQZjaIDyutuv3LAK2EDmUBKOqHiPu2nMpzF
+Ap2mp4x9NMHk1RYrSvCFp2yMC6c+a0TsPQ3Vm2Ql1Z1YlaWWVTAtL/lBS2wKT+bL/Stfq7u8Nbxy
+2ZteUS02fxDXQhjGvlcvvfnhGegdO8bpBls55dGrBlR4m4dm+KYr7TYPdMTZNtk7uigFKEGifyAf
+rCwmH7iNFBCcCZaxMtB744Exeb/KE1QABWgYUxF4E0ydSKQ8ep77s+8wUseT2nlZjg6EMcJgg46t
+14UnOAItetyJGox3z6Z1J2kXrgqWyXZ4M77AwA==</ds:SignatureValue><ds:KeyInfo Id="KeyInfoId"><ds:X509Data><ds:X509Certificate>MIIFLDCCAxSgAwIBAgIIdz45j5iEOfMwDQYJKoZIhvcNAQELBQAwUDELMAkGA1UEBhMCSVQxHjAc
+BgNVBAoMFUFnZW56aWEgZGVsbGUgRW50cmF0ZTEhMB8GA1UEAwwYQ0EgQWdlbnppYSBkZWxsZSBF
+bnRyYXRlMB4XDTI0MDQxOTEzMjEwNloXDTI3MDQyMDEzMjEwNVowdDELMAkGA1UEBhMCSVQxHjAc
+BgNVBAoMFUFnZW56aWEgZGVsbGUgRW50cmF0ZTEbMBkGA1UECwwSU2Vydml6aSBUZWxlbWF0aWNp
+MSgwJgYDVQQDDB9TaXN0ZW1hIEludGVyc2NhbWJpbyBGYXR0dXJhIFBBMIIBIjANBgkqhkiG9w0B
+AQEFAAOCAQ8AMIIBCgKCAQEArM+0SYe2SU+j/k6E2ewOxnmolcYbMKBOw1Hno/79zMB7pcwvOyhz
+kYIIm29blvCFF62GmUGFYbCROiIyvo645xGYGdpKiC7lxH4HXpIKtoqQyykqxe/KFywpExzu113a
+raqrr21zfYsbQFlm65lNxNx8tsVEmor0+9IYjT1U+cDZkRWPGRbtwfuCiO8pK8ZM2J5NfGgJxRaW
+fYfrPYO1MctOI6zgycPGnO6+vChl2vJB8umfqWdAm6Sm0gwr/+Xiat80SPVZ4BjqMF+i7kEogdVO
+GAlMnVIQt8blErWoWj3ISvpVNSOvc2CX53cWxZfCLEgP1xpEMxJCbsmLLZx0bwIDAQABo4HlMIHi
+MB8GA1UdIwQYMBaAFK7FXVSI2gAMJTydaoKU1+wiW3e9MIGPBgNVHR8EgYcwgYQwgYGgf6B9hnts
+ZGFwOi8vY2Fkcy5lbnRyYXRlLmZpbmFuemUuaXQvQ049Q0ElMjBBZ2VuemlhJTIwZGVsbGUlMjBF
+bnRyYXRlLE89QWdlbnppYSUyMGRlbGxlJTIwRW50cmF0ZSxDPUlUP2NlcnRpZmljYXRlUmV2b2Nh
+dGlvbkxpc3QwHQYDVR0OBBYEFMB7BDNtTIzn6oPbdYBlcxTJqsNlMA4GA1UdDwEB/wQEAwIGQDAN
+BgkqhkiG9w0BAQsFAAOCAgEATTD3a8SYFjy6fzMNi6VXWnCeRRaDlfKf3H8ZCzNW5OmwWbFF1Lom
+w6Z/L8DcpexHBzeWZeep3fnKfSJxEn14DI8YRMqWM3sPqGvPzAFtMQTyteC4hM6aJumhx5RJ9mYF
+YtZ4s7d1HKLt0tE+7g7cbrsIf+meMxHUCK1G6um8rI646tuB4Dw62Vhbx7m/6h9yPUA4j3pyriZM
+i6QTnrDOlaqjr8Vwwk6bY2bxJ9YWs+2Gxb8snRIHNalE6VFIK1MvrwF4MyuCC3gUXGrDlQh8ULCp
+GVcY7inYQ0b1vYxaM7YKL6W0h6m/UsUVdj8jxzQgIzJzBiQ5eQnutSlJF0HX7WJqXfPok0xrlkfJ
+gXjoKOWlBcQ/eCARafU0FKPUDcDp5m2x9p+Ehhd0dsOtYpuTFhYOJSC+i1RnLkKwv5m9Phmnd8sN
+OJywUAkh6XlYmCYjuMNJkoLkLIIBER1aX/aLMa9YxeH4zYNTJxcUT14cJ+kmPJsHVin71n738QCc
+oVS/BRvND6hVSy12XOZ3wORPJ/gxDJwRlundkDD0KliqkhyXBleOpEV3y7WX4gh5kR0Jshug46t3
+CnY+fKeq4eRJiAqCNpUxEhiHy3hMWLdmlWU9ev8T6BoU+1BVrCI4i0W4HnpD1MQyx6Ew19BuzE6m
+7hV/bvAJQoacvI5Eh40T1WI=</ds:X509Certificate></ds:X509Data></ds:KeyInfo><ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Target="#Signature1"><xades:SignedProperties Id="SignedProperties_1"><xades:SignedSignatureProperties><xades:SigningTime>2026-09-11T14:43:40Z</xades:SigningTime></xades:SignedSignatureProperties></xades:SignedProperties></xades:QualifyingProperties></ds:Object></ds:Signature></ns3:RicevutaScarto>

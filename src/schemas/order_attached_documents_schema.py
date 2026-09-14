@@ -1,7 +1,7 @@
-"""Envelope comune per liste nested documenti collegati all'ordine.
+"""Envelope per liste nested documenti collegati all'ordine.
 
-Contratto target: ``{ items, total }`` (+ ``page``/``limit`` se paginato).
-In transizione restano alias legacy (``returns`` / ``invoices`` / ``ricevute``).
+Resi e ricevute: ``{ items, total }`` + alias legacy (``returns`` / ``ricevute``).
+Fatture: sola chiave ``invoices`` (niente ``items``).
 """
 from typing import List
 
@@ -12,13 +12,18 @@ from src.schemas.return_schema import ReturnResponseSchema
 from src.schemas.ricevuta_schema import RicevutaListItemSchema
 
 
-class OrderNestedDocumentsListSchema(BaseModel):
-    """Base envelope ``items`` + ``total`` con paginazione opzionale."""
+class OrderNestedListMetaSchema(BaseModel):
+    """Paginazione comune (senza chiave collection)."""
 
-    items: List = Field(default_factory=list, description="Elementi della collection")
     total: int = Field(..., ge=0, description="Totale elementi (anche senza paginazione)")
     page: int = Field(1, ge=1, description="Pagina corrente")
     limit: int = Field(10, ge=1, description="Elementi per pagina")
+
+
+class OrderNestedDocumentsListSchema(OrderNestedListMetaSchema):
+    """Base envelope ``items`` + ``total`` con paginazione opzionale."""
+
+    items: List = Field(default_factory=list, description="Elementi della collection")
 
 
 class OrderReturnsListResponseSchema(OrderNestedDocumentsListSchema):
@@ -40,23 +45,16 @@ class OrderReturnsListResponseSchema(OrderNestedDocumentsListSchema):
         return self
 
 
-class OrderInvoicesListResponseSchema(OrderNestedDocumentsListSchema):
-    """Lista fatture nested: ``GET /orders/{id}/invoices``."""
+class OrderInvoicesListResponseSchema(OrderNestedListMetaSchema):
+    """Lista fatture nested: ``GET /orders/{id}/invoices``.
 
-    items: List[InvoiceResponseSchema] = Field(default_factory=list)
+    Una sola chiave collection: ``invoices`` (niente ``items``).
+    """
+
     invoices: List[InvoiceResponseSchema] = Field(
         default_factory=list,
-        deprecated=True,
-        description="Alias legacy di ``items`` (deprecated)",
+        description="Fatture dell'ordine",
     )
-
-    @model_validator(mode="after")
-    def _sync_alias(self):
-        if self.items and not self.invoices:
-            object.__setattr__(self, "invoices", list(self.items))
-        elif self.invoices and not self.items:
-            object.__setattr__(self, "items", list(self.invoices))
-        return self
 
 
 class OrderRicevuteListResponseSchema(OrderNestedDocumentsListSchema):

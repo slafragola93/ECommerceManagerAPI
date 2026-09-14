@@ -4,6 +4,26 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-14) — Step 1 ottimizzazione FiscalDocument (wrapper lista fatture)
+
+`GET /api/v1/orders/{id_order}/invoices` restituisce **una sola** chiave collection: `invoices`. Rimossa la duplicazione `items` + `invoices`.
+
+Empty state: `200` + `{ "invoices": [], "total": 0, "page", "limit" }`.  
+Resi e ricevute nested restano `{ items, total }` + alias legacy.
+
+### File
+
+- `src/schemas/order_attached_documents_schema.py`
+- `src/routers/order.py`
+- `tests/unit/schemas/test_order_attached_documents_schema.py`
+- `tests/integration/api/v1/test_order_attached_documents.py`
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/schemas/test_order_attached_documents_schema.py tests/integration/api/v1/test_order_attached_documents.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-11) — Lista fiscal_documents per FE
 
 `GET /api/v1/fiscal_documents/` espone su ogni riga (batch, no N+1):
@@ -167,11 +187,12 @@ pytest tests/unit/services/audit/test_audit_log_handler.py tests/integration/api
 | Metodo | Path | Empty | Note |
 |--------|------|-------|------|
 | GET | `/api/v1/orders/{id_order}/returns` | `200` + `items: []` | allineato (check ordine + envelope) |
-| GET | `/api/v1/orders/{id_order}/invoices` | `200` + `items: []` | **nuovo** |
+| GET | `/api/v1/orders/{id_order}/invoices` | `200` + `invoices: []` | sola chiave `invoices` |
 | GET | `/api/v1/orders/{id_order}/ricevute` | `200` + `items: []` | **nuovo** |
 
 - Ordine inesistente → `404` su tutte e tre.
-- Envelope: `{ items, total, page, limit }` + alias legacy deprecati (`returns` / `invoices` / `ricevute`).
+- Envelope resi/ricevute: `{ items, total, page, limit }` + alias legacy (`returns` / `ricevute`).
+- Envelope fatture: `{ invoices, total, page, limit }` (niente `items`).
 - Query: `?page=1&limit=…` (default da `LIMIT_DEFAULT`).
 
 ### Legacy

@@ -47,7 +47,7 @@ class TestOrderAttachedDocumentsAPI:
             order_date=datetime(2026, 8, 1, 10, 0, 0),
         )
 
-        for path in ("returns", "invoices", "ricevute"):
+        for path in ("returns", "ricevute"):
             resp = fiscal_admin_client.get(
                 f"/api/v1/orders/{order.id_order}/{path}"
             )
@@ -57,6 +57,15 @@ class TestOrderAttachedDocumentsAPI:
             assert body["total"] == 0
             assert path in body
             assert body[path] == []
+
+        invoices_resp = fiscal_admin_client.get(
+            f"/api/v1/orders/{order.id_order}/invoices"
+        )
+        assert invoices_resp.status_code == status.HTTP_200_OK
+        invoices_body = invoices_resp.json()
+        assert invoices_body["invoices"] == []
+        assert invoices_body["total"] == 0
+        assert "items" not in invoices_body
 
     def test_missing_order_returns_404(self, fiscal_admin_client):
         for path in ("returns", "invoices", "ricevute"):
@@ -101,11 +110,11 @@ class TestOrderAttachedDocumentsAPI:
         assert invoices_resp.status_code == status.HTTP_200_OK
         invoices_body = invoices_resp.json()
         assert invoices_body["total"] >= 1
+        assert "items" not in invoices_body
         assert any(
             i["id_fiscal_document"] == invoice.id_fiscal_document
-            for i in invoices_body["items"]
+            for i in invoices_body["invoices"]
         )
-        assert invoices_body["items"] == invoices_body["invoices"]
 
     def test_nested_ricevute_for_order(
         self, fiscal_admin_client, db_session, tax, company_info

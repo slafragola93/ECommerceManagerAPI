@@ -883,10 +883,10 @@ async def get_order_returns(
     summary="Recupera le fatture di un ordine",
     description=(
         "Lista nested delle fatture dell'ordine. "
-        "Empty state: 200 + items=[]. 404 solo se l'ordine non esiste. "
+        "Empty state: 200 + invoices=[]. 404 solo se l'ordine non esiste. "
         "Sostituisce GET /fiscal_documents/invoices/order/{id_order}."
     ),
-    response_description="Lista delle fatture dell'ordine (envelope items/total)",
+    response_description="Lista delle fatture dell'ordine (envelope invoices/total)",
 )
 @check_authentication
 async def get_order_invoices(
@@ -909,7 +909,6 @@ async def get_order_invoices(
         id_order, page=page, limit=limit
     )
     return OrderInvoicesListResponseSchema(
-        items=invoices,
         invoices=invoices,
         total=len(invoices),
         page=page,
