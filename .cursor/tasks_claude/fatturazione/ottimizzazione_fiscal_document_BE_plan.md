@@ -49,6 +49,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 ## Step 7 — Rendere condizionali i campi solo-NC
 - `credit_note_reason` e `is_partial` esclusi dalla risposta quando `document_type == "invoice"`.
 - Valutare due modelli Pydantic distinti (`InvoiceOut` / `CreditNoteOut`, discriminated union) invece di un modello unico con tutto opzionale.
+- **Fatto (2026-09-14):** chiavi `credit_note_reason`, `is_partial`, `id_fiscal_document_ref` omesse dal JSON invoice (lista + dettaglio). Union distinta rimandata: un solo schema, FE discrimina su `document_type`.
 
 ## Step 8 — Aggiungere indicatore di storno sulla fattura
 - Nuovo campo calcolato (non persistito, stesso pattern dei corrispettivi) `stato_storno` su `InvoiceOut`: `non_stornata` / `parziale` / `totale`, calcolato sommando le NC collegate via `id_fiscal_document_ref`.

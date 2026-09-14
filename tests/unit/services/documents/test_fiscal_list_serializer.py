@@ -225,3 +225,53 @@ def test_list_omits_upload_result_and_keeps_error_message(db_session):
     assert row.lifecycle.status == "error"
     assert row.lifecycle.fatturapa.status == "error"
     assert row.lifecycle.fatturapa.error_message == row.fatturapa_error_message
+
+
+_NC_ONLY_KEYS = ("credit_note_reason", "is_partial", "id_fiscal_document_ref")
+
+
+def test_list_invoice_omits_nc_only_fields(db_session):
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="INV-NO-NC", order_date=datetime(2026, 9, 10)
+    )
+    doc = _invoice(db_session, order)
+    doc.credit_note_reason = "should not leak"
+    doc.is_partial = True
+    db_session.commit()
+
+    dumped = serialize_fiscal_documents(db_session, [doc])[0].model_dump()
+    for key in _NC_ONLY_KEYS:
+        assert key not in dumped
+
+
+def test_list_credit_note_keeps_nc_only_fields(db_session):
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="CN-KEEP", order_date=datetime(2026, 9, 11)
+    )
+    invoice = _invoice(db_session, order)
+    credit_note = FiscalDocument(
+        document_type="credit_note",
+        tipo_documento_fe="TD04",
+        id_order=order.id_order,
+        id_fiscal_document_ref=invoice.id_fiscal_document,
+        status="pending",
+        is_electronic=True,
+        includes_shipping=False,
+        is_partial=True,
+        credit_note_reason="Reso parziale",
+        document_number="1",
+        products_total_price_net=Decimal("100.00"),
+        products_total_price_with_tax=Decimal("122.00"),
+        total_price_net=Decimal("100.00"),
+        total_price_with_tax=Decimal("122.00"),
+    )
+    db_session.add(credit_note)
+    db_session.commit()
+    db_session.refresh(credit_note)
+
+    dumped = serialize_fiscal_documents(db_session, [credit_note])[0].model_dump()
+    assert dumped["id_fiscal_document_ref"] == invoice.id_fiscal_document
+    assert dumped["credit_note_reason"] == "Reso parziale"
+    assert dumped["is_partial"] is True

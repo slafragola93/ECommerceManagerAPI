@@ -13,6 +13,20 @@ from src.schemas.ricevuta_schema import (
     RicevutaShippingEmbedSchema,
 )
 
+_NC_ONLY_RESPONSE_KEYS = (
+    "credit_note_reason",
+    "is_partial",
+    "id_fiscal_document_ref",
+)
+
+
+def omit_invoice_nc_only_fields(data):
+    """Rimuove i campi solo-NC dal JSON delle fatture (lista e dettaglio)."""
+    if isinstance(data, dict) and data.get("document_type") != "credit_note":
+        for key in _NC_ONLY_RESPONSE_KEYS:
+            data.pop(key, None)
+    return data
+
 
 # ==================== SCHEMAS PER DETTAGLI ====================
 
@@ -171,7 +185,7 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
 
     Contratto v3 arricchito condiviso: differenziare tramite `document_type`.
     Campi NC-specifici (`id_fiscal_document_ref`, `credit_note_reason`, `is_partial`)
-    sono valorizzati solo se `document_type=credit_note`.
+    sono omessi dal JSON se `document_type=invoice`.
     """
 
     id_fiscal_document: int
@@ -179,7 +193,7 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
     tipo_documento_fe: Optional[str] = None
     id_order: int
     id_fiscal_document_ref: Optional[int] = Field(
-        None, description="ID fattura di riferimento (solo credit_note)"
+        None, description="ID fattura di riferimento (solo credit_note; omesso su invoice)"
     )
     document_number: Optional[str] = None
     progressivo_invio: Optional[str] = Field(
@@ -209,10 +223,10 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
     )
     is_electronic: bool
     credit_note_reason: Optional[str] = Field(
-        None, description="Motivo nota di credito (solo credit_note)"
+        None, description="Motivo nota di credito (solo credit_note; omesso su invoice)"
     )
     is_partial: Optional[bool] = Field(
-        None, description="Nota di credito parziale (solo credit_note)"
+        None, description="Nota di credito parziale (solo credit_note; omesso su invoice)"
     )
     includes_shipping: bool
     total_price_with_tax: Optional[float] = None
@@ -286,7 +300,7 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         data = serializer(self)
         if isinstance(data, dict) and data.get("xml_content") is None:
             data.pop("xml_content", None)
-        return data
+        return omit_invoice_nc_only_fields(data)
 
 
 # ==================== SCHEMAS PER NOTE DI CREDITO ====================
@@ -381,7 +395,9 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     document_type: str  # 'invoice' o 'credit_note'
     tipo_documento_fe: Optional[str] = None
     id_order: int
-    id_fiscal_document_ref: Optional[int] = None
+    id_fiscal_document_ref: Optional[int] = Field(
+        None, description="ID fattura di riferimento (solo credit_note; omesso su invoice)"
+    )
     document_number: Optional[str] = None
     progressivo_invio: Optional[str] = Field(
         None, description="ProgressivoInvio SDI (serie unica fatture/NC)"
@@ -409,8 +425,12 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
         ),
     )
     is_electronic: bool
-    credit_note_reason: Optional[str] = None
-    is_partial: bool = False
+    credit_note_reason: Optional[str] = Field(
+        None, description="Motivo nota di credito (solo credit_note; omesso su invoice)"
+    )
+    is_partial: Optional[bool] = Field(
+        None, description="Nota di credito parziale (solo credit_note; omesso su invoice)"
+    )
     total_price_with_tax: Optional[float] = None
     total_price_net: Optional[float] = None
     products_total_price_net: Optional[float] = None
@@ -455,7 +475,7 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
         data = serializer(self)
         if isinstance(data, dict) and data.get("xml_content") is None:
             data.pop("xml_content", None)
-        return data
+        return omit_invoice_nc_only_fields(data)
     
     class Config:
         from_attributes = True

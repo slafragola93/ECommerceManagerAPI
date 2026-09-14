@@ -143,6 +143,37 @@ class TestInvoiceResponseSchema:
         assert payload.order_details[0].id_order_detail == detail.id_order_detail
         assert payload.shipping_total_price_with_tax is None
 
+    @pytest.mark.asyncio
+    async def test_invoice_json_omits_nc_only_fields(
+        self, db_session, fiscal_service, tax
+    ):
+        order, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="INV-NO-NC",
+            order_date=datetime(2026, 9, 14, 13, 0, 0),
+        )
+        invoice = FiscalDocument(
+            document_type="invoice",
+            id_order=order.id_order,
+            status="generated",
+            is_electronic=True,
+            includes_shipping=False,
+            credit_note_reason="should not leak",
+            is_partial=True,
+        )
+        db_session.add(invoice)
+        db_session.commit()
+        db_session.refresh(invoice)
+
+        payload = await fiscal_service.get_fiscal_document_detail_response_by_id(
+            invoice.id_fiscal_document
+        )
+        dumped = payload.model_dump()
+        assert "credit_note_reason" not in dumped
+        assert "is_partial" not in dumped
+        assert "id_fiscal_document_ref" not in dumped
+
 
 class TestCreditNoteDetailResponseSchema:
     @pytest.mark.asyncio
@@ -260,6 +291,10 @@ class TestCreditNoteDetailResponseSchema:
         assert payload.id_fiscal_document_ref == invoice.id_fiscal_document
         assert payload.credit_note_reason == "Reso parziale"
         assert payload.is_partial is True
+        dumped = payload.model_dump()
+        assert dumped["id_fiscal_document_ref"] == invoice.id_fiscal_document
+        assert dumped["credit_note_reason"] == "Reso parziale"
+        assert dumped["is_partial"] is True
         assert payload.customer is not None
         assert payload.customer.email == "nc-detail@example.com"
         assert payload.address_invoice is not None

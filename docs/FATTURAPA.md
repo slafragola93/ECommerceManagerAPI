@@ -17,7 +17,7 @@ Documenti correlati:
 | [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-09-10
+**Aggiornato:** 2026-09-14
 
 ---
 
@@ -169,6 +169,8 @@ Crea uno snapshot fiscale dell'ordine. **Non genera XML** né invia allo SDI.
 #### Response
 
 `InvoiceResponseSchema` **v3 arricchito** (stesso shape del GET dettaglio): documento fiscale + embed ordine (`customer`, `address_invoice`, `payment`, `shipping`, `order_details[]` snapshot). **Non refetchare l'ordine** dopo il POST.
+
+Campi solo-NC (`credit_note_reason`, `is_partial`, `id_fiscal_document_ref`) sono **omessi** dal JSON delle fatture.
 
 Handoff FE: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md)
 
@@ -526,7 +528,7 @@ Response: **`InvoiceResponseSchema` v3 arricchito** — stesso contratto delle f
 | `credit_note_reason` | Motivo NC |
 | `is_partial` | Storno parziale |
 
-`CreditNoteResponseSchema` è alias di `InvoiceResponseSchema` (retrocompatibilità OpenAPI).
+`CreditNoteResponseSchema` è alias di `InvoiceResponseSchema` (retrocompatibilità OpenAPI). Su `document_type=invoice` i tre campi NC sono omessi dal JSON (nessuna union distinta).
 
 **Consultazione NC:**
 

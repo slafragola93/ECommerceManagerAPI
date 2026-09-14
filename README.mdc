@@ -4,6 +4,18 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-14) — Step 7 ottimizzazione FiscalDocument (campi solo-NC)
+
+Su lista e dettaglio, se `document_type=invoice` il JSON **non include** `credit_note_reason`, `is_partial`, `id_fiscal_document_ref`. Sulle note di credito i tre campi restano.
+
+Niente discriminated union `InvoiceOut`/`CreditNoteOut`: un solo schema (`InvoiceResponseSchema` / `FiscalDocumentResponseSchema`), FE già discrimina su `document_type`. Colonne DB invariate.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/documents/test_fiscal_list_serializer.py tests/unit/services/test_fiscal_document_invoice_response.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-14) — Step 6 ottimizzazione FiscalDocument (`lifecycle`)
 
 Lista e dettaglio fatture/NC includono `lifecycle` (solo response, nessuna Alembic). I campi flat restano (deprecati).
@@ -692,7 +704,7 @@ pytest tests/unit/services/pdf/test_fiscal_document_pdf_layout.py -v
 | Area | Dettaglio |
 |------|-----------|
 | GET/POST NC | `InvoiceResponseSchema` arricchito (`order_details[]`, `customer`, indirizzi, totali) |
-| Campi NC | `id_fiscal_document_ref`, `credit_note_reason`, `is_partial` (null su fatture) |
+| Campi NC | `id_fiscal_document_ref`, `credit_note_reason`, `is_partial` (omessi su fatture) |
 | GET `/{id}` | Fattura **e** NC → stesso shape v3 |
 | Export bulk | `GET /invoices/export?document_type=credit_note&fmt=xlsx\|xml` |
 | Alias schema | `CreditNoteResponseSchema` = alias di `InvoiceResponseSchema` |

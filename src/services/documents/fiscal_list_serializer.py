@@ -171,6 +171,7 @@ def serialize_fiscal_document(
 ) -> FiscalDocumentResponseSchema:
     qs = fiscal_quick_status_from_doc(doc)
     electronic = bool(doc.is_electronic)
+    is_credit_note = doc.document_type == "credit_note"
     if not electronic:
         qs["identificativo_sdi"] = None
     return FiscalDocumentResponseSchema(
@@ -178,7 +179,7 @@ def serialize_fiscal_document(
         document_type=doc.document_type,
         tipo_documento_fe=doc.tipo_documento_fe,
         id_order=doc.id_order,
-        id_fiscal_document_ref=doc.id_fiscal_document_ref,
+        id_fiscal_document_ref=doc.id_fiscal_document_ref if is_credit_note else None,
         document_number=doc.document_number,
         progressivo_invio=getattr(doc, "progressivo_invio", None),
         internal_number=doc.internal_number,
@@ -190,8 +191,8 @@ def serialize_fiscal_document(
         xml_content=doc.xml_content if include_xml else None,
         status=doc.status,
         is_electronic=electronic,
-        credit_note_reason=doc.credit_note_reason,
-        is_partial=bool(doc.is_partial) if doc.is_partial is not None else False,
+        credit_note_reason=doc.credit_note_reason if is_credit_note else None,
+        is_partial=bool(doc.is_partial) if is_credit_note else None,
         total_price_with_tax=doc.total_price_with_tax,
         total_price_net=doc.total_price_net,
         products_total_price_net=doc.products_total_price_net,
