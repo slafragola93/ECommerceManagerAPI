@@ -10,7 +10,15 @@ from src.services.documents.fiscal_list_serializer import serialize_fiscal_docum
 from tests.helpers.fiscal_test_helpers import seed_paid_order, seed_tax
 
 
-def _invoice(db_session, order, *, status="sent", sdi_status=None, is_electronic=True):
+def _invoice(
+    db_session,
+    order,
+    *,
+    status="sent",
+    sdi_status=None,
+    is_electronic=True,
+    upload_result=None,
+):
     doc = FiscalDocument(
         document_type="invoice",
         tipo_documento_fe="TD01" if is_electronic else None,
@@ -21,6 +29,7 @@ def _invoice(db_session, order, *, status="sent", sdi_status=None, is_electronic
         document_number="1",
         sdi_status=sdi_status,
         identificativo_sdi="111" if sdi_status == "scartata" else None,
+        upload_result=upload_result,
         products_total_price_net=Decimal("100.00"),
         products_total_price_with_tax=Decimal("122.00"),
         total_price_net=Decimal("100.00"),
@@ -194,3 +203,21 @@ def test_list_filename_falls_back_to_stored_column(db_session):
 
     row = serialize_fiscal_documents(db_session, [doc])[0]
     assert row.filename == "IT01558670780_OLD.xml"
+
+
+def test_list_omits_upload_result_and_keeps_error_message(db_session):
+    import json
+
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="UR-ERR", order_date=datetime(2026, 9, 9)
+    )
+    payload = json.dumps({"status": "error", "message": "CAP non valido"})
+    doc = _invoice(
+        db_session, order, status="error", upload_result=payload
+    )
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    dumped = row.model_dump()
+    assert "upload_result" not in dumped
+    assert row.fatturapa_status == "error"
+    assert "CAP" in (row.fatturapa_error_message or "")

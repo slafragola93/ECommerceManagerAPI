@@ -365,7 +365,7 @@ Processo: `UploadStart1` → upload blob Azure → **`UploadStop1`** (`send_to_s
 | `true` | `UploadStop` | `sent` — upload + trasmissione SDI |
 
 Body: oggetto `{ "send_to_sdi": true }` (contratto ufficiale) oppure boolean grezzo `true`/`false` (retrocompat).  
-Risposta intermediario salvata in `upload_result` (JSON string).
+Risposta intermediario salvata in `upload_result` (JSON string, **non** esposta in lista/dettaglio; errori in `fatturapa_error_message`).
 
 `ProgressivoInvio` XML e filename usano `fiscal_documents.progressivo_invio` (serie unica SDI). `Numero` commerciale resta `document_number` (serie separate fattura/NC).
 
@@ -637,7 +637,7 @@ Chiamare `POST /{id}/generate-xml` prima di `send-to-sdi`.
 
 ### HTTP 500 — Upload Stop fallito
 
-Verificare `fatturapa.api_key`, connettività, formato XML. Controllare `upload_result` sul documento e log `FatturaPAService`.
+Verificare `fatturapa.api_key`, connettività, formato XML. Controllare `fatturapa_error_message` in API, colonna `upload_result` in DB e log `FatturaPAService`.
 
 ### Totali fattura ≠ totali ordine live
 

@@ -868,7 +868,6 @@ class FiscalDocumentService(IFiscalDocumentService):
             xml_content=doc.xml_content if include_xml else None,
             status=doc.status,
             is_electronic=bool(doc.is_electronic),
-            upload_result=doc.upload_result,
             credit_note_reason=doc.credit_note_reason if is_credit_note else None,
             is_partial=bool(doc.is_partial) if is_credit_note else None,
             includes_shipping=bool(doc.includes_shipping),

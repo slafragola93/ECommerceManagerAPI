@@ -23,6 +23,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 ## Step 4 — Ripulire `upload_result`
 - Eliminare il campo dalla risposta, o assorbire l'eventuale `message` extra dentro `fatturapa_error_message`.
 - Verificare che nessun job/servizio interno dipenda dal parsing di quella stringa.
+- **Fatto (2026-09-14):** rimosso da lista/dettaglio; parse interno `quick_status` invariato; colonna e PATCH status restano.
 
 ## Step 5 — Chiarire `status` vs `fatturapa_status`
 - Verificare nel codice se `status` è sempre copiato da `fatturapa_status` o rappresenta un concetto diverso.

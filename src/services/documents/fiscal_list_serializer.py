@@ -187,7 +187,6 @@ def serialize_fiscal_document(
         xml_content=doc.xml_content if include_xml else None,
         status=doc.status,
         is_electronic=electronic,
-        upload_result=doc.upload_result,
         credit_note_reason=doc.credit_note_reason,
         is_partial=bool(doc.is_partial) if doc.is_partial is not None else False,
         total_price_with_tax=doc.total_price_with_tax,

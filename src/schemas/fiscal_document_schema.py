@@ -202,7 +202,6 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
     )
     status: str
     is_electronic: bool
-    upload_result: Optional[str] = None
     credit_note_reason: Optional[str] = Field(
         None, description="Motivo nota di credito (solo credit_note)"
     )
@@ -398,7 +397,6 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     )
     status: str
     is_electronic: bool
-    upload_result: Optional[str] = None
     credit_note_reason: Optional[str] = None
     is_partial: bool = False
     total_price_with_tax: Optional[float] = None
