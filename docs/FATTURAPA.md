@@ -310,8 +310,8 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 | Export **bulk** CSV legacy | `GET` | `/invoices/export?fmt=csv&document_type=invoice\|credit_note` | Max 5000 doc; formato EXPORT-nc (righe articolo) |
 | Export **bulk** Excel lista | `GET` | `/invoices/export?fmt=xlsx&document_type=invoice\|credit_note` | Max 5000 righe; colonna `document_type` |
 | Export **bulk** XML (ZIP) | `GET` | `/invoices/export?fmt=xml&document_type=invoice\|credit_note` | Max 5000; soft: ZIP parziale + `export-scarti.json` |
-| Leggere XML già in DB (debug/admin) | `GET` | `/{id}` | Campo `xml_content` nel JSON dettaglio fattura |
-| Download XML singolo come file | — | `/{id}/xml` | **Non implementato** (backlog P1-02, opzionale) |
+| Leggere XML già in DB (debug/admin) | `GET` | `/{id}?include_xml=true` | Transitorio: `xml_content` nel JSON. Default: campo omesso |
+| Download XML singolo come file | `GET` | `/{id}/xml` | Attachment `application/xml` (P1-02) |
 
 **Non confondere:** `POST /{id}/generate-xml` (passo esplicito del ciclo SDI) e `GET /invoices/export?fmt=xml` (export contabilità multi-documento) usano lo stesso generatore ma **contesti diversi** — vedi sotto.
 
@@ -604,7 +604,7 @@ Stato al **2026-09-10**. Dettaglio completo: [fatturapa_backlog_implementazione.
 | P0-08 | NC: `is_partial=true` richiede `items` non vuoti | Completato |
 | P0-09 | NC XML: non riusare `order.total_discounts` su TD04 | Completato |
 | P1-01 | `GET .../sdi-status` + `POST .../retry-send` | Completato |
-| P1-02 | `GET .../xml` download attachment singolo | Opzionale — oggi: `POST .../generate-xml`, `GET .../export?fmt=xml`, o `xml_content` in `GET /{id}` |
+| P1-02 | `GET .../xml` download attachment singolo | Completato — `GET /{id}/xml`; lista/dettaglio omettono `xml_content` (`?include_xml=true` transitorio) |
 | P1-05 | `DatiRiepilogo` multi-aliquota | Completato |
 | P1-09 | Modellare voucher carrello come detail fiscale (TD01/NC proporzionale) | Aperto (TD04 ora skippa i buoni ordine) |
 

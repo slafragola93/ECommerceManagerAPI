@@ -4,6 +4,20 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-14) — Step 2 ottimizzazione FiscalDocument (`xml_content` on-demand)
+
+`xml_content` non è più nel payload di default di lista e dettaglio fiscal-documents.
+
+- Download: `GET /api/v1/fiscal_documents/{id}/xml` (`application/xml` + `Content-Disposition`).
+- Transitorio FE: `GET /api/v1/fiscal_documents/{id}?include_xml=true`.
+- Colonna DB e flussi generate-xml / send-to-sdi invariati.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/documents/test_fiscal_list_serializer.py tests/unit/services/test_fiscal_document_invoice_response.py tests/integration/api/v1/test_fiscal_document_xml.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-14) — Step 1 ottimizzazione FiscalDocument (wrapper lista fatture)
 
 `GET /api/v1/orders/{id_order}/invoices` restituisce **una sola** chiave collection: `invoices`. Rimossa la duplicazione `items` + `invoices`.
@@ -1121,7 +1135,7 @@ Dopo deploy: eseguire `python scripts/setup_initial.py` (o inserire manualmente 
 
 ### Response `InvoiceResponseSchema`
 
-- **Documento (invariati/aggiunti):** `id_fiscal_document`, `document_type`, `tipo_documento_fe`, numeri, `filename`, `xml_content`, `status`, `is_electronic`, `upload_result`, `includes_shipping`, totali **documento** (`total_price_*`, `products_total_*`), `date_add`, `date_upd`
+- **Documento (invariati/aggiunti):** `id_fiscal_document`, `document_type`, `tipo_documento_fe`, numeri, `filename`, `status`, `is_electronic`, `upload_result`, `includes_shipping`, totali **documento** (`total_price_*`, `products_total_*`), `date_add`, `date_upd`. `xml_content` omesso di default (vedi `GET /{id}/xml`).
 - **Contesto ordine (come ricevuta v3):** `order_reference`, `id_order_state`, `total_weight`, `vies_status`, `is_payed`, `payment_due_date`, `payment`, `shipping`, `shipping_total_price_*`, `total_discounts`, `customer`, `address_delivery`, `address_invoice`
 - **Righe:** `order_details[]` — snapshot `fiscal_document_details` arricchito con dati prodotto + riga spedizione se `includes_shipping=true` (`is_shipping=true`)
 

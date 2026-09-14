@@ -12,6 +12,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 - Aggiungere `GET /fiscal-documents/{id}/xml` (o endpoint di download) che lo restituisce on-demand.
 - Se serve un periodo di transizione, mantenere temporaneamente un query param (`?include_xml=true`), da rimuovere a fine migrazione FE.
 - Test-gate: confronto dimensione payload di lista prima/dopo; test sul nuovo endpoint.
+- **Fatto (2026-09-14):** `GET /api/v1/fiscal_documents/{id}/xml`; lista/dettaglio omettono `xml_content`; `?include_xml=true` solo sul dettaglio.
 
 ## Step 3 — Rendere `filename` un campo calcolato, non spedito come dato fisso
 - Verificare se oggi è colonna DB o già calcolato in serializzazione.

@@ -1,7 +1,7 @@
 from typing import List, Optional, Union
 from datetime import date, datetime, time
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from io import BytesIO
 
@@ -637,12 +637,22 @@ async def update_invoice(
 )
 async def get_fiscal_document(
     id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
+    include_xml: bool = Query(
+        False,
+        description=(
+            "Transitorio: se true include xml_content nel JSON. "
+            "Preferire GET /{id}/xml. Da rimuovere a fine migrazione FE."
+        ),
+    ),
     user: dict = user_dependency,
     db: Session = db_dependency,
     fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "read")),
 ):
-    """Recupera documento fiscale per ID (fattura/NC arricchiti v3, altri tipi generici)"""
+    """Recupera documento fiscale per ID (fattura/NC arricchiti v3, altri tipi generici).
+
+    `xml_content` è omesso di default. Usare `GET /{id}/xml` o `?include_xml=true`.
+    """
     repo = get_fiscal_repository(db)
     doc = repo.get_fiscal_document_by_id(id_fiscal_document)
 
@@ -651,12 +661,12 @@ async def get_fiscal_document(
 
     if doc.document_type in ("invoice", "credit_note"):
         return await fiscal_service.get_fiscal_document_detail_response_by_id(
-            id_fiscal_document
+            id_fiscal_document, include_xml=include_xml
         )
 
     from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
 
-    return serialize_fiscal_documents(db, [doc])[0]
+    return serialize_fiscal_documents(db, [doc], include_xml=include_xml)[0]
 
 
 @router.get("/", response_model=FiscalDocumentListResponseSchema)
@@ -770,6 +780,24 @@ async def delete_fiscal_document(
         raise HTTPException(status_code=404, detail=f"Documento {id_fiscal_document} non trovato")
     
     return None
+
+
+@router.get("/{id_fiscal_document}/xml", status_code=status.HTTP_200_OK)
+async def download_fiscal_document_xml(
+    id_fiscal_document: int = Path(..., gt=0, description="ID del documento fiscale"),
+    user: dict = user_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "read")),
+):
+    """Download XML FatturaPA già generato (attachment on-demand)."""
+    content, filename = fiscal_service.get_fiscal_document_xml_download(
+        id_fiscal_document
+    )
+    return Response(
+        content=content,
+        media_type="application/xml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get(

@@ -265,3 +265,101 @@ class TestCreditNoteDetailResponseSchema:
         assert len(payload.order_details) == 1
         assert payload.order_details[0].product_name == "Prodotto CN-DETAIL"
         assert payload.shipping_total_price_net is None
+
+
+SAMPLE_FATTURA_XML = (
+    '<?xml version="1.0"?>'
+    '<p:FatturaElettronica xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2">'
+    "<DatiTrasmissione><IdTrasmittente>"
+    "<IdPaese>IT</IdPaese><IdCodice>01558670780</IdCodice>"
+    "</IdTrasmittente><ProgressivoInvio>ABC12</ProgressivoInvio>"
+    "</DatiTrasmissione></p:FatturaElettronica>"
+)
+
+
+class TestFiscalDocumentXmlOnDemand:
+    @pytest.mark.asyncio
+    async def test_detail_omits_xml_unless_include_flag(
+        self, db_session, fiscal_service, tax
+    ):
+        order, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="INV-XML",
+            order_date=datetime(2026, 9, 14, 10, 0, 0),
+        )
+        invoice = FiscalDocument(
+            document_type="invoice",
+            id_order=order.id_order,
+            status="generated",
+            is_electronic=True,
+            includes_shipping=False,
+            xml_content=SAMPLE_FATTURA_XML,
+            filename="old-name.xml",
+        )
+        db_session.add(invoice)
+        db_session.commit()
+        db_session.refresh(invoice)
+
+        default = await fiscal_service.get_fiscal_document_detail_response_by_id(
+            invoice.id_fiscal_document
+        )
+        assert "xml_content" not in default.model_dump()
+
+        with_xml = await fiscal_service.get_fiscal_document_detail_response_by_id(
+            invoice.id_fiscal_document, include_xml=True
+        )
+        assert with_xml.xml_content == SAMPLE_FATTURA_XML
+
+    @pytest.mark.asyncio
+    async def test_xml_download_returns_bytes_and_sdi_filename(
+        self, db_session, fiscal_service, tax
+    ):
+        order, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="INV-XML-DL",
+            order_date=datetime(2026, 9, 14, 11, 0, 0),
+        )
+        invoice = FiscalDocument(
+            document_type="invoice",
+            id_order=order.id_order,
+            status="generated",
+            is_electronic=True,
+            includes_shipping=False,
+            xml_content=SAMPLE_FATTURA_XML,
+            filename="old-name.xml",
+        )
+        db_session.add(invoice)
+        db_session.commit()
+        db_session.refresh(invoice)
+
+        content, filename = fiscal_service.get_fiscal_document_xml_download(
+            invoice.id_fiscal_document
+        )
+        assert filename == "IT01558670780_ABC12.xml"
+        assert content.startswith(b"<?xml")
+
+    @pytest.mark.asyncio
+    async def test_xml_download_missing_xml_raises(self, db_session, fiscal_service, tax):
+        from src.core.exceptions import ValidationException
+
+        order, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="INV-NO-XML",
+            order_date=datetime(2026, 9, 14, 12, 0, 0),
+        )
+        invoice = FiscalDocument(
+            document_type="invoice",
+            id_order=order.id_order,
+            status="pending",
+            is_electronic=True,
+            includes_shipping=False,
+        )
+        db_session.add(invoice)
+        db_session.commit()
+        db_session.refresh(invoice)
+
+        with pytest.raises(ValidationException):
+            fiscal_service.get_fiscal_document_xml_download(invoice.id_fiscal_document)

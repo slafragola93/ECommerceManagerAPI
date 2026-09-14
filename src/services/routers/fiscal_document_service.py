@@ -808,7 +808,9 @@ class FiscalDocumentService(IFiscalDocumentService):
                 order_details.append(RicevutaOrderDetailEmbedSchema(**shipping_line))
         return order_details
 
-    def _row_to_fiscal_document_detail_schema(self, row) -> Optional[InvoiceResponseSchema]:
+    def _row_to_fiscal_document_detail_schema(
+        self, row, *, include_xml: bool = False
+    ) -> Optional[InvoiceResponseSchema]:
         """Converte (doc, addr_del, addr_inv, customer, payment, shipping) in schema v3."""
         if not row:
             return None
@@ -849,7 +851,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             progressivo_invio=getattr(doc, "progressivo_invio", None),
             internal_number=doc.internal_number,
             filename=doc.filename,
-            xml_content=doc.xml_content,
+            xml_content=doc.xml_content if include_xml else None,
             status=doc.status,
             is_electronic=bool(doc.is_electronic),
             upload_result=doc.upload_result,
@@ -914,7 +916,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         return schema
 
     async def get_fiscal_document_detail_response_by_id(
-        self, id_fiscal_document: int
+        self, id_fiscal_document: int, include_xml: bool = False
     ) -> InvoiceResponseSchema:
         """Dettaglio fattura o nota di credito (contratto v3 arricchito)."""
         row = self._fiscal_document_repository.get_fiscal_document_with_relations_by_id(
@@ -922,10 +924,18 @@ class FiscalDocumentService(IFiscalDocumentService):
         )
         if not row:
             raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
-        schema = self._row_to_fiscal_document_detail_schema(row)
+        schema = self._row_to_fiscal_document_detail_schema(
+            row, include_xml=include_xml
+        )
         if not schema:
             raise NotFoundException(f"Documento fiscale {id_fiscal_document} non trovato")
         return schema
+
+    def get_fiscal_document_xml_download(
+        self, id_fiscal_document: int
+    ) -> Tuple[bytes, str]:
+        """XML FatturaPA on-demand: (bytes, filename)."""
+        return self._load_fiscal_document_xml(id_fiscal_document)
 
     async def get_credit_notes_by_invoice_response(
         self, id_invoice: int
@@ -1347,7 +1357,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             id_fiscal_document
         )
         if not doc:
-            raise NotFoundException(f"Documento {id_fiscal_document} non trovato")
+            raise NotFoundException("FiscalDocument", id_fiscal_document)
         if not doc.xml_content:
             raise ValidationException(
                 f"Documento {id_fiscal_document} senza XML generato",

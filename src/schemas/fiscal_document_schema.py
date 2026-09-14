@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel, Field, field_validator, model_validator, validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator, validator
 from datetime import date, datetime
 
 from src.models.order import ViesStatus
@@ -187,7 +187,13 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
     )
     internal_number: Optional[str] = None
     filename: Optional[str] = None
-    xml_content: Optional[str] = None
+    xml_content: Optional[str] = Field(
+        None,
+        description=(
+            "Omesso di default. Presente solo su GET dettaglio con "
+            "`?include_xml=true`. Preferire GET /fiscal_documents/{id}/xml"
+        ),
+    )
     status: str
     is_electronic: bool
     upload_result: Optional[str] = None
@@ -263,6 +269,13 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         if v is None:
             return None
         return round(float(v), 5)
+
+    @model_serializer(mode="wrap")
+    def _omit_xml_content_when_absent(self, serializer):
+        data = serializer(self)
+        if isinstance(data, dict) and data.get("xml_content") is None:
+            data.pop("xml_content", None)
+        return data
 
 
 # ==================== SCHEMAS PER NOTE DI CREDITO ====================
@@ -364,7 +377,13 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     )
     internal_number: Optional[str] = None
     filename: Optional[str] = None
-    xml_content: Optional[str] = None
+    xml_content: Optional[str] = Field(
+        None,
+        description=(
+            "Omesso di default. Presente solo su GET dettaglio con "
+            "`?include_xml=true`. Preferire GET /fiscal_documents/{id}/xml"
+        ),
+    )
     status: str
     is_electronic: bool
     upload_result: Optional[str] = None
@@ -408,6 +427,13 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
         if v is None:
             return None
         return round(float(v), 2)
+
+    @model_serializer(mode="wrap")
+    def _omit_xml_content_when_absent(self, serializer):
+        data = serializer(self)
+        if isinstance(data, dict) and data.get("xml_content") is None:
+            data.pop("xml_content", None)
+        return data
     
     class Config:
         from_attributes = True

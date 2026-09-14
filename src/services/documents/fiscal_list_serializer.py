@@ -149,6 +149,7 @@ def serialize_fiscal_document(
     id_customer: Optional[int] = None,
     customer_name: Optional[str] = None,
     order_shipped: bool = False,
+    include_xml: bool = False,
 ) -> FiscalDocumentResponseSchema:
     qs = fiscal_quick_status_from_doc(doc)
     electronic = bool(doc.is_electronic)
@@ -164,7 +165,7 @@ def serialize_fiscal_document(
         progressivo_invio=getattr(doc, "progressivo_invio", None),
         internal_number=doc.internal_number,
         filename=doc.filename,
-        xml_content=doc.xml_content,
+        xml_content=doc.xml_content if include_xml else None,
         status=doc.status,
         is_electronic=electronic,
         upload_result=doc.upload_result,
@@ -188,7 +189,10 @@ def serialize_fiscal_document(
 
 
 def serialize_fiscal_documents(
-    db: Session, documents: List[FiscalDocument]
+    db: Session,
+    documents: List[FiscalDocument],
+    *,
+    include_xml: bool = False,
 ) -> List[FiscalDocumentResponseSchema]:
     ctx_map = _batch_order_list_context(db, (d.id_order for d in documents))
     empty = _OrderListContext(
@@ -208,6 +212,7 @@ def serialize_fiscal_documents(
             id_customer=ctx_map.get(doc.id_order, empty).id_customer,
             customer_name=ctx_map.get(doc.id_order, empty).customer_name,
             order_shipped=ctx_map.get(doc.id_order, empty).order_shipped,
+            include_xml=include_xml,
         )
         for doc in documents
     ]

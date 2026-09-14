@@ -143,3 +143,20 @@ def test_order_shipped_from_id_shipping(db_session):
     assert row.order_shipped is True
     assert row.sdi_status is None
     assert row.mail_status is None
+
+
+def test_list_omits_xml_content_by_default(db_session):
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="NO-XML", order_date=datetime(2026, 9, 6)
+    )
+    doc = _invoice(db_session, order)
+    doc.xml_content = "<FatturaElettronica/>"
+    db_session.commit()
+
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    dumped = row.model_dump()
+    assert "xml_content" not in dumped
+
+    included = serialize_fiscal_documents(db_session, [doc], include_xml=True)[0]
+    assert included.xml_content == "<FatturaElettronica/>"
