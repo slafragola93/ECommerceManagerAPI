@@ -397,3 +397,6 @@ class TestFiscalDocumentXmlOnDemand:
             invoice.id_fiscal_document
         )
         assert payload.filename == "IT08632861210_101164.xml"
+        assert payload.lifecycle is not None
+        assert payload.lifecycle.status == payload.status
+        assert payload.lifecycle.fatturapa.status == payload.fatturapa_status

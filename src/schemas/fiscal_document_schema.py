@@ -200,7 +200,13 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
             "`?include_xml=true`. Preferire GET /fiscal_documents/{id}/xml"
         ),
     )
-    status: str
+    status: str = Field(
+        ...,
+        description=(
+            "Workflow persistito: pending|generated|uploaded|sent|error "
+            "(filtri lista `?status=`). Non è copia di `fatturapa_status`."
+        ),
+    )
     is_electronic: bool
     credit_note_reason: Optional[str] = Field(
         None, description="Motivo nota di credito (solo credit_note)"
@@ -395,7 +401,13 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
             "`?include_xml=true`. Preferire GET /fiscal_documents/{id}/xml"
         ),
     )
-    status: str
+    status: str = Field(
+        ...,
+        description=(
+            "Workflow persistito: pending|generated|uploaded|sent|error "
+            "(filtri lista `?status=`). Non è copia di `fatturapa_status`."
+        ),
+    )
     is_electronic: bool
     credit_note_reason: Optional[str] = None
     is_partial: bool = False

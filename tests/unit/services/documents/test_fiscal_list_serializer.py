@@ -221,3 +221,7 @@ def test_list_omits_upload_result_and_keeps_error_message(db_session):
     assert "upload_result" not in dumped
     assert row.fatturapa_status == "error"
     assert "CAP" in (row.fatturapa_error_message or "")
+    assert row.lifecycle is not None
+    assert row.lifecycle.status == "error"
+    assert row.lifecycle.fatturapa.status == "error"
+    assert row.lifecycle.fatturapa.error_message == row.fatturapa_error_message

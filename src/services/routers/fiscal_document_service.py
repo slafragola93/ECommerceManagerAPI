@@ -61,7 +61,10 @@ from src.services.ricevute.order_embed_formatters import (
     map_ricevuta_payment_from_model,
     map_ricevuta_shipping_embed,
 )
-from src.services.documents.quick_status import fiscal_quick_status_from_doc
+from src.services.documents.quick_status import (
+    fiscal_lifecycle_from_doc,
+    fiscal_quick_status_from_doc,
+)
 from src.services.external.fatturapa_sdi_resend import invoice_edit_block_reason
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
@@ -850,6 +853,7 @@ class FiscalDocumentService(IFiscalDocumentService):
         )
         ship_net, ship_incl = self._resolve_invoice_shipping_totals(doc, order, shipping)
         is_credit_note = doc.document_type == "credit_note"
+        qs = fiscal_quick_status_from_doc(doc)
 
         return InvoiceResponseSchema(
             id_fiscal_document=doc.id_fiscal_document,
@@ -898,7 +902,8 @@ class FiscalDocumentService(IFiscalDocumentService):
             order_details=self._build_invoice_order_details(
                 doc, order, shipping, order_detail_map, product_weights
             ),
-            **fiscal_quick_status_from_doc(doc),
+            **qs,
+            lifecycle=fiscal_lifecycle_from_doc(doc, qs),
             sdi_status=getattr(doc, "sdi_status", None) if doc.is_electronic else None,
         )
 

@@ -175,6 +175,32 @@ def fiscal_quick_status_from_doc(doc: Any) -> Dict[str, Optional[str]]:
     )
 
 
+def fiscal_lifecycle_from_doc(
+    doc: Any, qs: Optional[Dict[str, Optional[str]]] = None
+) -> Dict[str, Any]:
+    """Raggruppa workflow + FatturaPA + SDI + mail. I flat restano in parallelo."""
+    if qs is None:
+        qs = fiscal_quick_status_from_doc(doc)
+    electronic = bool(getattr(doc, "is_electronic", False))
+    sdi = (getattr(doc, "sdi_status", None) or "").strip().lower() or None
+    if not electronic:
+        sdi = None
+    sdi_err = qs.get("fatturapa_error_message") if sdi == "scartata" else None
+    return {
+        "status": getattr(doc, "status", None) or "pending",
+        "fatturapa": {
+            "status": qs.get("fatturapa_status"),
+            "error_message": qs.get("fatturapa_error_message"),
+            "identificativo_sdi": qs.get("identificativo_sdi") if electronic else None,
+        },
+        "sdi": {"status": sdi, "error_message": sdi_err},
+        "mail": {
+            "status": qs.get("mail_status"),
+            "error_message": qs.get("mail_error_message"),
+        },
+    }
+
+
 def purchase_quick_status_from_invoice(invoice: Any) -> Dict[str, Optional[str]]:
     fp_status, fp_err, sdi_id = map_purchase_fatturapa_status(
         getattr(invoice, "identificativo_sdi", None)

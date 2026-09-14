@@ -29,6 +29,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 - Verificare nel codice se `status` è sempre copiato da `fatturapa_status` o rappresenta un concetto diverso.
 - Se sempre sincronizzati: eliminare uno dei due (valutare impatto su filtri/query che li usano).
 - ⚠️ Se comporta drop di colonna via Alembic: conferma esplicita richiesta prima di procedere.
+- **Fatto (2026-09-14):** concetti diversi — tenuti entrambi, nessuna Alembic. `status` = workflow persistito (filtri); `fatturapa_status` = overlay calcolato (può divergere, es. generated + RC → sent).
 
 ## Step 6 — Raggruppare gli stati per sottosistema (`lifecycle`)
 - Da coordinare con lo Step 3 del piano P0 già approvato (tabella storico SDI notifications + `sdi_status` separato).
@@ -43,6 +44,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
   ```
 - Mantenere i campi flat esistenti in parallelo finché il FE non è aggiornato (deprecare, non rimuovere subito).
 - ⚠️ Eventuale migrazione Alembic: conferma esplicita richiesta prima di procedere.
+- **Fatto (2026-09-14):** `lifecycle` in lista/dettaglio; campi flat deprecati in parallelo; nessuna Alembic.
 
 ## Step 7 — Rendere condizionali i campi solo-NC
 - `credit_note_reason` e `is_partial` esclusi dalla risposta quando `document_type == "invoice"`.

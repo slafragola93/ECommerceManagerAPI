@@ -37,7 +37,7 @@ class FiscalDocument(Base):
     xml_content = Column(Text, nullable=True)
     
     # Status
-    status = Column(String(50), nullable=False, default="pending")  # pending, processed, cancelled, generated, uploaded, sent, issued, error
+    status = Column(String(50), nullable=False, default="pending")  # workflow: pending, generated, uploaded, sent, error (≠ fatturapa_status calcolato)
     is_electronic = Column(Boolean, default=False, nullable=False)  # True se FatturaPA elettronica
     upload_result = Column(Text, nullable=True)  # JSON upload; non esposto in API (quick_status)
     identificativo_sdi = Column(String(50), nullable=True, index=True)

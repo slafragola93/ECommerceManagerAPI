@@ -19,7 +19,10 @@ from src.models.order_payment import OrderPayment
 from src.models.payment import Payment
 from src.models.app_configuration import AppConfiguration
 from src.schemas.fiscal_document_schema import FiscalDocumentResponseSchema
-from src.services.documents.quick_status import fiscal_quick_status_from_doc
+from src.services.documents.quick_status import (
+    fiscal_lifecycle_from_doc,
+    fiscal_quick_status_from_doc,
+)
 from src.services.external.fatturapa_filename import compute_fatturapa_response_filename
 
 
@@ -202,6 +205,7 @@ def serialize_fiscal_document(
         id_customer=id_customer,
         customer_name=customer_name,
         order_shipped=order_shipped,
+        lifecycle=fiscal_lifecycle_from_doc(doc, qs),
         **qs,
     )
 

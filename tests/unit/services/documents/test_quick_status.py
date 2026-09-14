@@ -2,6 +2,7 @@ import json
 
 from src.services.documents.quick_status import (
     extract_identificativo_sdi,
+    fiscal_lifecycle_from_doc,
     fiscal_quick_status_from_doc,
     map_fiscal_fatturapa_status,
     map_purchase_fatturapa_status,
@@ -98,3 +99,36 @@ def test_fiscal_quick_status_from_doc_includes_mail_null():
     qs = fiscal_quick_status_from_doc(_Doc(status="uploaded"))
     assert qs["fatturapa_status"] == "uploaded"
     assert qs["mail_status"] is None
+
+
+def test_status_is_not_a_copy_of_fatturapa_status():
+    """status=generated resta workflow; fatturapa_status può essere sent/error/null."""
+    pending = fiscal_quick_status_from_doc(_Doc(status="pending"))
+    assert pending["fatturapa_status"] is None
+
+    generated = fiscal_quick_status_from_doc(_Doc(status="generated"))
+    assert generated["fatturapa_status"] is None
+
+    after_rc = fiscal_quick_status_from_doc(
+        _Doc(status="generated", sdi_status="consegnata")
+    )
+    assert after_rc["fatturapa_status"] == "sent"
+
+
+def test_lifecycle_matches_flat_fields():
+    doc = _Doc(
+        status="generated",
+        sdi_status="scartata",
+        identificativo_sdi="111",
+        mail_status="error",
+        mail_error_message="SMTP fail",
+    )
+    qs = fiscal_quick_status_from_doc(doc)
+    life = fiscal_lifecycle_from_doc(doc, qs)
+    assert life["status"] == "generated"
+    assert life["fatturapa"]["status"] == qs["fatturapa_status"] == "error"
+    assert life["fatturapa"]["error_message"] == qs["fatturapa_error_message"]
+    assert life["fatturapa"]["identificativo_sdi"] == "111"
+    assert life["sdi"]["status"] == "scartata"
+    assert life["mail"]["status"] == "error"
+    assert life["mail"]["error_message"] == "SMTP fail"

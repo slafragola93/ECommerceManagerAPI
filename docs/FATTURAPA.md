@@ -244,7 +244,7 @@ Aggiorna una fattura in stato **`pending`** (header commerciale + righe snapshot
 
 Query lista: `page`, `limit`, `document_type`, `is_electronic`, `status`.
 
-Campi lista per badge FE (batch, no N+1): `order_payment_name` / `id_order_payment` da `orders.id_payment` (fallback ultimo `order_payments` pagato); `sdi_status` + `identificativo_sdi` dal documento; `id_customer`, `customer_name`, `is_payed`, `order_shipped` (`id_shipping` valorizzato), `mail_status` (oggi quasi sempre `null`).
+Campi lista per badge FE (batch, no N+1): `order_payment_name` / `id_order_payment` da `orders.id_payment` (fallback ultimo `order_payments` pagato); `sdi_status` + `identificativo_sdi` dal documento; `id_customer`, `customer_name`, `is_payed`, `order_shipped` (`id_shipping` valorizzato), `mail_status` (oggi quasi sempre `null`). Preferire `lifecycle` (flat deprecati).
 
 Esempio 2 righe (`status=sent`, una in attesa AdE e una NS):
 
@@ -413,7 +413,7 @@ MC / consegnata / NE **non** si reinviano (sarebbe una seconda fattura).
 ```
 
 Fonte: polling Pool FatturaPA.com (`Direzione != Acquisto`). Job `fatturapa_sdi_events_sync` + `POST /sdi-events/sync`.  
-`status` workflow **non** viene sovrascritto. `fatturapa_status` in lista resta esito upload intermediario.
+`status` workflow **non** viene sovrascritto (non è copia di `fatturapa_status`). `fatturapa_status` è overlay calcolato (`uploaded|sent|error|null`); con notifica RC su XML `generated` può essere `sent` mentre `status` resta `generated`.
 
 ### GET `/{id_fiscal_document}/pdf`
 
