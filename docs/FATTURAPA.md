@@ -458,7 +458,7 @@ File: `src/services/pdf/fiscal_document_pdf_service.py`, `src/services/pdf/fisca
 - Documenti **non validi** (P.IVA/CF/XSD/…) → **lasciati invariati**, elencati in `export-scarti.json` dentro lo ZIP.
 - Header risposta: `X-Export-Success-Count`, `X-Export-Failed-Count`, `X-Export-Total-Candidates`, `X-Export-Partial` (`true`/`false`).
 - Se **nessun** documento del set è esportabile → **400** con `details.failure_summary` (nessun ZIP).
-- Nome file XML: `[IdPaese][IdCodice]_[ProgressivoInvio].xml` (helper `fatturapa_filename.py`).
+- Nome file XML: `[IdPaese][IdCodice]_[ProgressivoInvio].xml` (helper `fatturapa_filename.py`). In lista/dettaglio `filename` è **calcolato** (VAT cedente + `progressivo_invio`); la colonna DB resta fallback.
 - Filename download: `fatture-*` se `document_type=invoice`, `note-credito-*` se `credit_note`.
 
 Handoff FE: [prompt_FE_fatture_export_bulk.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_export_bulk.md).

@@ -28,7 +28,9 @@ from src.schemas.fiscal_document_schema import (
     SyncOrderResultSchema,
 )
 from src.services.export.fiscal_document_export_service import FiscalDocumentExportService
+from src.services.documents.fiscal_list_serializer import load_company_vat_number
 from src.services.external.fatturapa_filename import (
+    compute_fatturapa_response_filename,
     normalize_xml_bytes,
     resolve_fatturapa_filename_from_xml,
 )
@@ -89,10 +91,18 @@ class FiscalDocumentService(IFiscalDocumentService):
         self._order_repository = order_repository
         self._order_detail_repository = order_detail_repository
         self._export_service = FiscalDocumentExportService()
+        self._company_vat_cache: Optional[str] = None
+        self._company_vat_loaded = False
 
     @property
     def _session(self):
         return self._fiscal_document_repository._session
+
+    def _company_vat_number(self) -> Optional[str]:
+        if not self._company_vat_loaded:
+            self._company_vat_cache = load_company_vat_number(self._session)
+            self._company_vat_loaded = True
+        return self._company_vat_cache
     
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_CREATED,
@@ -850,7 +860,11 @@ class FiscalDocumentService(IFiscalDocumentService):
             document_number=doc.document_number,
             progressivo_invio=getattr(doc, "progressivo_invio", None),
             internal_number=doc.internal_number,
-            filename=doc.filename,
+            filename=compute_fatturapa_response_filename(
+                progressivo_invio=getattr(doc, "progressivo_invio", None),
+                vat_number=self._company_vat_number(),
+                stored_filename=doc.filename,
+            ),
             xml_content=doc.xml_content if include_xml else None,
             status=doc.status,
             is_electronic=bool(doc.is_electronic),

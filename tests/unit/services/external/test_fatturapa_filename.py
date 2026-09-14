@@ -8,6 +8,7 @@ import pytest
 
 from src.services.external.fatturapa_filename import (
     build_fatturapa_filename,
+    compute_fatturapa_response_filename,
     extract_dati_trasmissione,
     normalize_id_codice,
     resolve_fatturapa_filename_from_xml,
@@ -67,3 +68,37 @@ class TestFatturapaFilename:
         assert resolved == "IT08632861210_101164.xml"
         paese, codice, progressivo = extract_dati_trasmissione(xml_content)
         assert (paese, codice, progressivo) == ("IT", "08632861210", "101164")
+
+    def test_computed_filename_matches_historical_from_snippet(self):
+        paese, codice, progressivo = extract_dati_trasmissione(REFERENCE_XML_SNIPPET)
+        historical = resolve_fatturapa_filename_from_xml(REFERENCE_XML_SNIPPET)
+        computed = compute_fatturapa_response_filename(
+            progressivo_invio=progressivo,
+            vat_number=codice,
+            stored_filename="legacy-wrong.xml",
+        )
+        assert computed == historical == "IT08632861210_101164.xml"
+
+    def test_computed_filename_falls_back_to_stored_without_progressivo(self):
+        assert (
+            compute_fatturapa_response_filename(
+                progressivo_invio=None,
+                vat_number="08632861210",
+                stored_filename="IT01558670780_OLD.xml",
+            )
+            == "IT01558670780_OLD.xml"
+        )
+
+    def test_computed_filename_from_xml_when_vat_missing(self):
+        assert (
+            compute_fatturapa_response_filename(
+                progressivo_invio="101164",
+                vat_number=None,
+                xml_content=REFERENCE_XML_SNIPPET,
+                stored_filename="legacy.xml",
+            )
+            == "IT08632861210_101164.xml"
+        )
+
+    def test_computed_filename_none_without_inputs(self):
+        assert compute_fatturapa_response_filename() is None

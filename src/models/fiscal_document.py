@@ -33,7 +33,7 @@ class FiscalDocument(Base):
     internal_number = Column(String(50), nullable=True, index=True)  # Numero interno alternativo
     
     # Dati documento
-    filename = Column(String(255), nullable=True)
+    filename = Column(String(255), nullable=True)  # persistito su generate-xml; in API è calcolato (VAT + progressivo_invio)
     xml_content = Column(Text, nullable=True)
     
     # Status

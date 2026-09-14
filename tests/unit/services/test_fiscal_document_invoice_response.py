@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from src.core.container_config import get_configured_container
+from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
 from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.payment import Payment
@@ -363,3 +364,36 @@ class TestFiscalDocumentXmlOnDemand:
 
         with pytest.raises(ValidationException):
             fiscal_service.get_fiscal_document_xml_download(invoice.id_fiscal_document)
+
+    @pytest.mark.asyncio
+    async def test_detail_filename_computed_from_vat_and_progressivo(
+        self, db_session, fiscal_service, tax
+    ):
+        db_session.add(
+            AppConfiguration(
+                category="company_info", name="vat_number", value="08632861210"
+            )
+        )
+        order, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="INV-FN",
+            order_date=datetime(2026, 9, 14, 13, 0, 0),
+        )
+        invoice = FiscalDocument(
+            document_type="invoice",
+            id_order=order.id_order,
+            status="generated",
+            is_electronic=True,
+            includes_shipping=False,
+            progressivo_invio="101164",
+            filename="legacy-stored.xml",
+        )
+        db_session.add(invoice)
+        db_session.commit()
+        db_session.refresh(invoice)
+
+        payload = await fiscal_service.get_fiscal_document_detail_response_by_id(
+            invoice.id_fiscal_document
+        )
+        assert payload.filename == "IT08632861210_101164.xml"

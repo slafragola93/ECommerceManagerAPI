@@ -17,8 +17,10 @@ from src.models.fiscal_document import FiscalDocument
 from src.models.order import Order
 from src.models.order_payment import OrderPayment
 from src.models.payment import Payment
+from src.models.app_configuration import AppConfiguration
 from src.schemas.fiscal_document_schema import FiscalDocumentResponseSchema
 from src.services.documents.quick_status import fiscal_quick_status_from_doc
+from src.services.external.fatturapa_filename import compute_fatturapa_response_filename
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,18 @@ def _batch_order_list_context(
     return ctx
 
 
+def load_company_vat_number(db: Session) -> Optional[str]:
+    row = (
+        db.query(AppConfiguration.value)
+        .filter(
+            AppConfiguration.category == "company_info",
+            AppConfiguration.name == "vat_number",
+        )
+        .first()
+    )
+    return (row[0] or "").strip() or None if row else None
+
+
 def serialize_fiscal_document(
     doc: FiscalDocument,
     *,
@@ -150,6 +164,7 @@ def serialize_fiscal_document(
     customer_name: Optional[str] = None,
     order_shipped: bool = False,
     include_xml: bool = False,
+    vat_number: Optional[str] = None,
 ) -> FiscalDocumentResponseSchema:
     qs = fiscal_quick_status_from_doc(doc)
     electronic = bool(doc.is_electronic)
@@ -164,7 +179,11 @@ def serialize_fiscal_document(
         document_number=doc.document_number,
         progressivo_invio=getattr(doc, "progressivo_invio", None),
         internal_number=doc.internal_number,
-        filename=doc.filename,
+        filename=compute_fatturapa_response_filename(
+            progressivo_invio=getattr(doc, "progressivo_invio", None),
+            vat_number=vat_number,
+            stored_filename=doc.filename,
+        ),
         xml_content=doc.xml_content if include_xml else None,
         status=doc.status,
         is_electronic=electronic,
@@ -195,6 +214,7 @@ def serialize_fiscal_documents(
     include_xml: bool = False,
 ) -> List[FiscalDocumentResponseSchema]:
     ctx_map = _batch_order_list_context(db, (d.id_order for d in documents))
+    vat_number = load_company_vat_number(db)
     empty = _OrderListContext(
         is_payed=False,
         id_order_payment=None,
@@ -213,6 +233,7 @@ def serialize_fiscal_documents(
             customer_name=ctx_map.get(doc.id_order, empty).customer_name,
             order_shipped=ctx_map.get(doc.id_order, empty).order_shipped,
             include_xml=include_xml,
+            vat_number=vat_number,
         )
         for doc in documents
     ]

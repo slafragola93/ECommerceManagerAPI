@@ -113,6 +113,39 @@ def resolve_fatturapa_filename_from_xml(
     raise ValueError("Impossibile derivare il nome file XML FatturaPA")
 
 
+def compute_fatturapa_response_filename(
+    *,
+    progressivo_invio: Optional[str] = None,
+    vat_number: Optional[str] = None,
+    xml_content: Optional[str] = None,
+    stored_filename: Optional[str] = None,
+    id_paese: str = "IT",
+) -> Optional[str]:
+    """Filename in response: VAT cedente + ProgressivoInvio, poi XML, poi colonna DB.
+
+    La colonna ``fiscal_documents.filename`` resta persistita (deprecata in lettura).
+    """
+    if progressivo_invio and vat_number:
+        try:
+            return build_fatturapa_filename(id_paese, vat_number, progressivo_invio)
+        except ValueError:
+            pass
+
+    if xml_content:
+        try:
+            return resolve_fatturapa_filename_from_xml(
+                xml_content,
+                fallback_filename=stored_filename,
+                default_id_codice=vat_number,
+            )
+        except ValueError:
+            pass
+
+    if stored_filename:
+        return stored_filename
+    return None
+
+
 def normalize_xml_bytes(xml_content: str) -> bytes:
     """Serializza l'XML in UTF-8 per export (senza BOM)."""
     return xml_content.encode("utf-8")

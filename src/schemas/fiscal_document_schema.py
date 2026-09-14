@@ -186,7 +186,13 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         None, description="ProgressivoInvio SDI (serie unica fatture/NC)"
     )
     internal_number: Optional[str] = None
-    filename: Optional[str] = None
+    filename: Optional[str] = Field(
+        None,
+        description=(
+            "Calcolato: IdPaese+P.IVA cedente + progressivo_invio. "
+            "Fallback sulla colonna DB deprecata se manca progressivo/VAT"
+        ),
+    )
     xml_content: Optional[str] = Field(
         None,
         description=(
@@ -376,7 +382,13 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
         None, description="ProgressivoInvio SDI (serie unica fatture/NC)"
     )
     internal_number: Optional[str] = None
-    filename: Optional[str] = None
+    filename: Optional[str] = Field(
+        None,
+        description=(
+            "Calcolato: IdPaese+P.IVA cedente + progressivo_invio. "
+            "Fallback sulla colonna DB deprecata se manca progressivo/VAT"
+        ),
+    )
     xml_content: Optional[str] = Field(
         None,
         description=(

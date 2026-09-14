@@ -18,6 +18,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 - Verificare se oggi è colonna DB o già calcolato in serializzazione.
 - Se è colonna DB: non toccare lo storico, aggiungere property calcolata (VAT cedente + `progressivo_invio`) nello schema di risposta; la colonna può restare, deprecata.
 - Test-gate: il filename calcolato coincide con quello storico su un campione di documenti reali.
+- **Fatto (2026-09-14):** `compute_fatturapa_response_filename` in lista/dettaglio; colonna DB invariata come fallback.
 
 ## Step 4 — Ripulire `upload_result`
 - Eliminare il campo dalla risposta, o assorbire l'eventuale `message` extra dentro `fatturapa_error_message`.

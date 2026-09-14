@@ -4,6 +4,19 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-14) — Step 3 ottimizzazione FiscalDocument (`filename` calcolato)
+
+In lista e dettaglio `filename` è calcolato: `IT{P.IVA cedente}_{progressivo_invio}.xml` (`company_info.vat_number` + `progressivo_invio`).
+
+- Colonna DB `fiscal_documents.filename` **non toccata** (scrittura resta su generate-xml; lettura API deprecata come fallback).
+- Senza progressivo/VAT: fallback al valore persistito, altrimenti `null`.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/external/test_fatturapa_filename.py tests/unit/services/documents/test_fiscal_list_serializer.py tests/unit/services/test_fiscal_document_invoice_response.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-14) — Step 2 ottimizzazione FiscalDocument (`xml_content` on-demand)
 
 `xml_content` non è più nel payload di default di lista e dettaglio fiscal-documents.

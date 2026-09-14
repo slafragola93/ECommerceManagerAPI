@@ -2,6 +2,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
+from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
 from src.models.order_payment import OrderPayment
 from src.models.payment import Payment
@@ -160,3 +161,36 @@ def test_list_omits_xml_content_by_default(db_session):
 
     included = serialize_fiscal_documents(db_session, [doc], include_xml=True)[0]
     assert included.xml_content == "<FatturaElettronica/>"
+
+
+def test_list_filename_computed_from_vat_and_progressivo(db_session):
+    tax = seed_tax(db_session)
+    db_session.add(
+        AppConfiguration(
+            category="company_info", name="vat_number", value="IT08632861210"
+        )
+    )
+    db_session.commit()
+    order, _ = seed_paid_order(
+        db_session, tax, reference="FN-CALC", order_date=datetime(2026, 9, 7)
+    )
+    doc = _invoice(db_session, order, status="generated")
+    doc.progressivo_invio = "101164"
+    doc.filename = "legacy-stored.xml"
+    db_session.commit()
+
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    assert row.filename == "IT08632861210_101164.xml"
+
+
+def test_list_filename_falls_back_to_stored_column(db_session):
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="FN-FB", order_date=datetime(2026, 9, 8)
+    )
+    doc = _invoice(db_session, order, status="generated")
+    doc.filename = "IT01558670780_OLD.xml"
+    db_session.commit()
+
+    row = serialize_fiscal_documents(db_session, [doc])[0]
+    assert row.filename == "IT01558670780_OLD.xml"
