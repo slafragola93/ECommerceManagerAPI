@@ -27,6 +27,7 @@ from src.core.base_repository import BaseRepository
 from src.repository.interfaces.fiscal_document_repository_interface import IFiscalDocumentRepository
 from src.repository.tax_repository import TaxRepository
 from src.services.media.image_service import ImageService
+from src.services.documents.stato_storno import residual_stornabile_zero
 
 
 class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocumentRepository):
@@ -215,6 +216,28 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             raise ValueError(
                 f"Esiste già una nota di credito TOTALE per la fattura {invoice.id_fiscal_document}. "
                 "Non è possibile creare altre note di credito."
+            )
+
+        # CONTROLLO 1b: residuo stornabile già zero (parziali che esauriscono qty + spedizione)
+        refunded_for_residual = self._refunded_quantities_for_invoice(
+            [cn.id_fiscal_document for cn in existing_credit_notes]
+        )
+        invoice_qtys = {
+            d.id_order_detail: float(d.product_qty or 0)
+            for d in invoice_details
+            if d.id_order_detail
+        }
+        if residual_stornabile_zero(
+            invoice_includes_shipping=bool(invoice.includes_shipping),
+            shipping_already_refunded=any(
+                cn.includes_shipping for cn in existing_credit_notes
+            ),
+            invoice_qtys=invoice_qtys,
+            refunded_qtys=refunded_for_residual,
+        ):
+            raise ValueError(
+                f"Il residuo stornabile della fattura {invoice.id_fiscal_document} "
+                "è già azzerato. Non è possibile creare altre note di credito."
             )
         
         # CONTROLLO 2: Se ci sono note parziali, verifica articoli già stornati
@@ -595,6 +618,17 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         refunded_quantities = self._refunded_quantities_for_invoice(
             [cn.id_fiscal_document for cn in existing_credit_notes]
         )
+        invoice_qtys = {
+            d.id_order_detail: float(d.product_qty or 0)
+            for d in invoice_details
+            if d.id_order_detail
+        }
+        residual_zero = residual_stornabile_zero(
+            invoice_includes_shipping=bool(invoice.includes_shipping),
+            shipping_already_refunded=shipping_already_refunded,
+            invoice_qtys=invoice_qtys,
+            refunded_qtys=refunded_quantities,
+        )
 
         order_detail_ids = [
             d.id_order_detail for d in invoice_details if d.id_order_detail
@@ -661,7 +695,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             "shipping_already_refunded": shipping_already_refunded,
             "shipping_eligible": shipping_eligible,
             "has_total_credit_note": has_total_credit_note,
-            "can_create_credit_note": not has_total_credit_note,
+            "can_create_credit_note": not has_total_credit_note and not residual_zero,
             "shipping": shipping_payload,
             "details": lines,
         }

@@ -45,6 +45,7 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 - Mantenere i campi flat esistenti in parallelo finché il FE non è aggiornato (deprecare, non rimuovere subito).
 - ⚠️ Eventuale migrazione Alembic: conferma esplicita richiesta prima di procedere.
 - **Fatto (2026-09-14):** `lifecycle` in lista/dettaglio; campi flat deprecati in parallelo; nessuna Alembic.
+- **2026-09-15:** flat `fatturapa_*` / `mail_*` / `identificativo_sdi` omessi dal JSON se `lifecycle` è presente (fine periodo parallelo sul contratto fiscale).
 
 ## Step 7 — Rendere condizionali i campi solo-NC
 - `credit_note_reason` e `is_partial` esclusi dalla risposta quando `document_type == "invoice"`.
@@ -55,14 +56,17 @@ Obiettivo: ridurre payload e ridondanza dei campi negli endpoint fiscal-document
 - Nuovo campo calcolato (non persistito, stesso pattern dei corrispettivi) `stato_storno` su `InvoiceOut`: `non_stornata` / `parziale` / `totale`, calcolato sommando le NC collegate via `id_fiscal_document_ref`.
 - Aggiungere validazione lato creazione NC: bloccare la creazione se il residuo stornabile è già zero.
 - Test-gate: casi per storno parziale, totale, tentativo di storno oltre il residuo.
+- **Fatto (2026-09-14):** `stato_storno` in lista/dettaglio invoice; omesso sulle NC. Create NC e `can_create_credit_note` bloccati se residuo (qty + spedizione) già zero. Batch in lista, nessuna Alembic.
 
 ## Step 9 — Valutare ridondanza dei totali
 - Decidere se mantenere sia i totali aggregati (`total_price_net`/`total_price_with_tax`) sia i parziali (`products_total_*`, `shipping_total_*`), o solo uno dei due gruppi.
 - Se si rimuove un gruppo: verificare tutti i consumer interni (PDF, export, corrispettivi) che potrebbero già leggere quei campi.
+- **Fatto (2026-09-15):** gruppi complementari, non copie — tenuti tutti. Nessuna Alembic, payload invariato. `shipping_total_*` solo sul dettaglio (calcolato); lista ha `total_*` + `products_total_*`.
 
 ## Step 10 — Valutare `includes_shipping`
 - Verificare se esiste un caso reale in cui `shipping` è valorizzato ma il documento non lo deve includere.
 - Se no: rimuovere il campo e derivare dalla presenza di `shipping`.
+- **Fatto (2026-09-15):** caso reale esiste — NC parziale/solo-merce su ordine spedito: `shipping` valorizzato (carrier/peso), `includes_shipping=false`, `shipping_total_*` null. Campo tenuto. Nessuna Alembic.
 
 ---
 Note di processo: aggiornare la documentazione/piano solo a fine step, nessun commit automatico, checkpoint esplicito prima di ogni migrazione Alembic e prima di ogni cambio di contratto di risposta consumato dal FE.

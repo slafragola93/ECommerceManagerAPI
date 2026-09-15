@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
+from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order_payment import OrderPayment
 from src.models.payment import Payment
 from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
@@ -219,12 +220,18 @@ def test_list_omits_upload_result_and_keeps_error_message(db_session):
     row = serialize_fiscal_documents(db_session, [doc])[0]
     dumped = row.model_dump()
     assert "upload_result" not in dumped
+    assert "fatturapa_status" not in dumped
+    assert "fatturapa_error_message" not in dumped
+    assert "mail_status" not in dumped
+    assert "mail_error_message" not in dumped
+    assert "identificativo_sdi" not in dumped
     assert row.fatturapa_status == "error"
     assert "CAP" in (row.fatturapa_error_message or "")
     assert row.lifecycle is not None
     assert row.lifecycle.status == "error"
     assert row.lifecycle.fatturapa.status == "error"
     assert row.lifecycle.fatturapa.error_message == row.fatturapa_error_message
+    assert dumped["lifecycle"]["fatturapa"]["status"] == "error"
 
 
 _NC_ONLY_KEYS = ("credit_note_reason", "is_partial", "id_fiscal_document_ref")
@@ -275,3 +282,132 @@ def test_list_credit_note_keeps_nc_only_fields(db_session):
     assert dumped["id_fiscal_document_ref"] == invoice.id_fiscal_document
     assert dumped["credit_note_reason"] == "Reso parziale"
     assert dumped["is_partial"] is True
+    assert "stato_storno" not in dumped
+
+
+def _return_doc(
+    db_session,
+    order,
+    *,
+    status="issued",
+    is_partial=False,
+    includes_shipping=False,
+    credit_note_reason=None,
+):
+    doc = FiscalDocument(
+        document_type="return",
+        id_order=order.id_order,
+        status=status,
+        is_electronic=False,
+        includes_shipping=includes_shipping,
+        is_partial=is_partial,
+        credit_note_reason=credit_note_reason,
+        document_number="1",
+        total_price_with_tax=Decimal("50.00"),
+    )
+    db_session.add(doc)
+    db_session.commit()
+    db_session.refresh(doc)
+    return doc
+
+
+def test_list_return_keeps_note_and_partial_fields(db_session):
+    """I resi condividono le colonne credit_note_reason/is_partial con le NC:
+    devono essere valorizzate (non azzerate) nel payload generico, a differenza
+    delle fatture. id_fiscal_document_ref e stato_storno restano omessi (non
+    pertinenti al tipo return)."""
+    tax = seed_tax(db_session)
+    order, _ = seed_paid_order(
+        db_session, tax, reference="RET-KEEP", order_date=datetime(2026, 9, 15)
+    )
+    doc = _return_doc(
+        db_session,
+        order,
+        is_partial=True,
+        includes_shipping=True,
+        credit_note_reason="Prodotto difettoso",
+    )
+
+    dumped = serialize_fiscal_documents(db_session, [doc])[0].model_dump()
+    assert dumped["credit_note_reason"] == "Prodotto difettoso"
+    assert dumped["is_partial"] is True
+    assert dumped["includes_shipping"] is True
+    assert "id_fiscal_document_ref" not in dumped
+    assert "stato_storno" not in dumped
+
+
+def test_list_invoice_stato_storno_non_parziale_totale(db_session):
+    tax = seed_tax(db_session)
+    order_a, _ = seed_paid_order(
+        db_session, tax, reference="ST-A", order_date=datetime(2026, 9, 12)
+    )
+    order_b, detail_b = seed_paid_order(
+        db_session, tax, reference="ST-B", order_date=datetime(2026, 9, 13)
+    )
+    order_c, _ = seed_paid_order(
+        db_session, tax, reference="ST-C", order_date=datetime(2026, 9, 14)
+    )
+    inv_none = _invoice(db_session, order_a)
+    inv_partial = _invoice(db_session, order_b)
+    inv_total = _invoice(db_session, order_c)
+    db_session.add(
+        FiscalDocumentDetail(
+            id_fiscal_document=inv_partial.id_fiscal_document,
+            id_order_detail=detail_b.id_order_detail,
+            product_qty=2,
+            unit_price_net=Decimal("100.00"),
+            unit_price_with_tax=Decimal("122.00"),
+            total_price_net=Decimal("200.00"),
+            total_price_with_tax=Decimal("244.00"),
+        )
+    )
+    db_session.commit()
+
+    partial_cn = FiscalDocument(
+        document_type="credit_note",
+        tipo_documento_fe="TD04",
+        id_order=order_b.id_order,
+        id_fiscal_document_ref=inv_partial.id_fiscal_document,
+        status="pending",
+        is_electronic=True,
+        includes_shipping=False,
+        is_partial=True,
+        credit_note_reason="Parziale",
+        document_number="2",
+    )
+    total_cn = FiscalDocument(
+        document_type="credit_note",
+        tipo_documento_fe="TD04",
+        id_order=order_c.id_order,
+        id_fiscal_document_ref=inv_total.id_fiscal_document,
+        status="pending",
+        is_electronic=True,
+        includes_shipping=True,
+        is_partial=False,
+        credit_note_reason="Totale",
+        document_number="3",
+    )
+    db_session.add_all([partial_cn, total_cn])
+    db_session.commit()
+    db_session.refresh(partial_cn)
+    db_session.add(
+        FiscalDocumentDetail(
+            id_fiscal_document=partial_cn.id_fiscal_document,
+            id_order_detail=detail_b.id_order_detail,
+            product_qty=1,
+            unit_price_net=Decimal("100.00"),
+            unit_price_with_tax=Decimal("122.00"),
+            total_price_net=Decimal("100.00"),
+            total_price_with_tax=Decimal("122.00"),
+        )
+    )
+    db_session.commit()
+
+    rows = serialize_fiscal_documents(
+        db_session, [inv_none, inv_partial, inv_total]
+    )
+    by_id = {r.id_fiscal_document: r for r in rows}
+    assert by_id[inv_none.id_fiscal_document].stato_storno == "non_stornata"
+    assert by_id[inv_partial.id_fiscal_document].stato_storno == "parziale"
+    assert by_id[inv_total.id_fiscal_document].stato_storno == "totale"
+    assert by_id[inv_none.id_fiscal_document].model_dump()["stato_storno"] == "non_stornata"

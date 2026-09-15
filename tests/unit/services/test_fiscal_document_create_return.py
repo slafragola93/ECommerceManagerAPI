@@ -69,6 +69,11 @@ class TestFiscalDocumentCreateReturn:
                 includes_shipping=False,
             ),
         )
+        # create_return timbra date_add con "adesso" (corretto: un reso vale
+        # dalla data in cui avviene, non dalla data ordine). Per verificare il
+        # bucketing nei corrispettivi lo riportiamo nel mese dell'ordine seedato.
+        return_doc.date_add = order.date_add
+        db_session.commit()
 
         assert return_doc.document_type == "return"
         assert return_doc.status == "issued"
@@ -96,6 +101,10 @@ class TestFiscalDocumentCreateReturn:
                 includes_shipping=True,
             ),
         )
+        # Vedi commento in test_create_partial_return: riporta date_add nel
+        # mese dell'ordine seedato per il bucketing dei corrispettivi.
+        return_doc.date_add = order.date_add
+        db_session.commit()
 
         assert return_doc.document_type == "return"
         assert return_doc.includes_shipping is True
@@ -166,7 +175,7 @@ class TestFiscalDocumentCreateReturn:
             with_shipping=True,
         )
 
-        await fiscal_service.create_return(
+        return_doc = await fiscal_service.create_return(
             order,
             ReturnCreateSchema(
                 order_details=[
@@ -179,6 +188,10 @@ class TestFiscalDocumentCreateReturn:
                 includes_shipping=True,
             ),
         )
+        # Vedi commento in test_create_partial_return: riporta date_add nel
+        # mese dell'ordine seedato per il bucketing dei corrispettivi.
+        return_doc.date_add = order.date_add
+        db_session.commit()
 
         movements = repo.fetch_movements(2026, 7)
         shipping_returns = [m for m in movements if m.is_shipping and m.returns_amount]

@@ -59,6 +59,7 @@ class TestExportInvoicesSoftXml:
         service._load_fiscal_document_xml = MagicMock(
             return_value=(b"<xml>ok</xml>", "IT08632861210_00071.xml")
         )
+        service._emit_document_exported = MagicMock()
 
         content, media_type, filename, headers = await service.export_invoices(
             InvoiceExportFiltersSchema(

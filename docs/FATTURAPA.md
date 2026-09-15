@@ -172,6 +172,12 @@ Crea uno snapshot fiscale dell'ordine. **Non genera XML** né invia allo SDI.
 
 Campi solo-NC (`credit_note_reason`, `is_partial`, `id_fiscal_document_ref`) sono **omessi** dal JSON delle fatture.
 
+`stato_storno` (solo invoice, calcolato): `non_stornata` | `parziale` | `totale` dalle NC con `id_fiscal_document_ref`. Omesso sulle NC.
+
+Totali: `total_price_*` (documento), `products_total_*` (merce), `shipping_total_*` (solo dettaglio). Non sono ridondanti: restano tutti e tre.
+
+`includes_shipping` resta: non è sostituibile da `shipping` (logistica ordine). NC senza spedizione su ordine spedito → embed `shipping` presente, flag `false`.
+
 Handoff FE: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md)
 
 ---
@@ -246,7 +252,7 @@ Aggiorna una fattura in stato **`pending`** (header commerciale + righe snapshot
 
 Query lista: `page`, `limit`, `document_type`, `is_electronic`, `status`.
 
-Campi lista per badge FE (batch, no N+1): `order_payment_name` / `id_order_payment` da `orders.id_payment` (fallback ultimo `order_payments` pagato); `sdi_status` + `identificativo_sdi` dal documento; `id_customer`, `customer_name`, `is_payed`, `order_shipped` (`id_shipping` valorizzato), `mail_status` (oggi quasi sempre `null`). Preferire `lifecycle` (flat deprecati).
+Campi lista per badge FE (batch, no N+1): `order_payment_name` / `id_order_payment` da `orders.id_payment` (fallback ultimo `order_payments` pagato); `sdi_status` dal documento; `id_customer`, `customer_name`, `is_payed`, `order_shipped` (`id_shipping` valorizzato). Stati FatturaPA/mail/SDI overlay: solo `lifecycle` (`fatturapa_*`, `mail_*`, `identificativo_sdi` flat omessi).
 
 Esempio 2 righe (`status=sent`, una in attesa AdE e una NS):
 
@@ -257,31 +263,37 @@ Esempio 2 righe (`status=sent`, una in attesa AdE e una NS):
       "id_fiscal_document": 10,
       "id_order": 456,
       "status": "sent",
-      "fatturapa_status": "sent",
       "sdi_status": null,
-      "identificativo_sdi": null,
       "order_payment_name": "Bonifico",
       "id_order_payment": 3,
       "id_customer": 89,
       "customer_name": "Rossi Mario",
       "is_payed": true,
       "order_shipped": false,
-      "mail_status": null
+      "lifecycle": {
+        "status": "sent",
+        "fatturapa": {"status": "sent", "error_message": null, "identificativo_sdi": null},
+        "sdi": {"status": null, "error_message": null},
+        "mail": {"status": null, "error_message": null}
+      }
     },
     {
       "id_fiscal_document": 11,
       "id_order": 457,
       "status": "sent",
-      "fatturapa_status": "error",
       "sdi_status": "scartata",
-      "identificativo_sdi": "1234567890",
       "order_payment_name": "PayPal",
       "id_order_payment": 5,
       "id_customer": 90,
       "customer_name": "Bianchi Srl",
       "is_payed": true,
       "order_shipped": true,
-      "mail_status": null
+      "lifecycle": {
+        "status": "sent",
+        "fatturapa": {"status": "error", "error_message": "Scartata da SDI", "identificativo_sdi": "1234567890"},
+        "sdi": {"status": "scartata", "error_message": "Scartata da SDI"},
+        "mail": {"status": null, "error_message": null}
+      }
     }
   ],
   "total": 2,
@@ -528,7 +540,7 @@ Response: **`InvoiceResponseSchema` v3 arricchito** — stesso contratto delle f
 | `credit_note_reason` | Motivo NC |
 | `is_partial` | Storno parziale |
 
-`CreditNoteResponseSchema` è alias di `InvoiceResponseSchema` (retrocompatibilità OpenAPI). Su `document_type=invoice` i tre campi NC sono omessi dal JSON (nessuna union distinta).
+`CreditNoteResponseSchema` è alias di `InvoiceResponseSchema` (retrocompatibilità OpenAPI). Su `document_type=invoice` i tre campi NC sono omessi dal JSON (nessuna union distinta). `POST /credit-notes` è rifiutato se il residuo stornabile è già zero (NC totale, oppure qty + spedizione già esaurite).
 
 **Consultazione NC:**
 
@@ -543,7 +555,7 @@ Response: **`InvoiceResponseSchema` v3 arricchito** — stesso contratto delle f
 GET /api/v1/fiscal_documents/{id_invoice}/details-with-products
 ```
 
-Response `CreditNoteEligibleLinesResponseSchema`: righe prodotto con `refunded_qty`, `remaining_qty`, `is_fully_refunded`; metadati `shipping_already_refunded`, `shipping_eligible`, `can_create_credit_note`. Alternativa payload completo: `GET /{id_invoice}` → `order_details[]`.
+Response `CreditNoteEligibleLinesResponseSchema`: righe prodotto con `refunded_qty`, `remaining_qty`, `is_fully_refunded`; metadati `shipping_already_refunded`, `shipping_eligible`, `can_create_credit_note` (false se NC totale o residuo già zero). Alternativa payload completo: `GET /{id_invoice}` → `order_details[]`.
 
 **Test BE:** `pytest tests/unit/repository/test_fiscal_document_credit_note_eligible_lines.py tests/unit/repository/test_fiscal_document_create_credit_note.py -v`
 

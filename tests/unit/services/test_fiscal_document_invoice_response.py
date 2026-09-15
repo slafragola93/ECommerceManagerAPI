@@ -142,6 +142,8 @@ class TestInvoiceResponseSchema:
         assert payload.status == "pending"
         assert payload.order_details[0].id_order_detail == detail.id_order_detail
         assert payload.shipping_total_price_with_tax is None
+        assert payload.stato_storno == "non_stornata"
+        assert payload.model_dump()["stato_storno"] == "non_stornata"
 
     @pytest.mark.asyncio
     async def test_invoice_json_omits_nc_only_fields(
@@ -295,6 +297,7 @@ class TestCreditNoteDetailResponseSchema:
         assert dumped["id_fiscal_document_ref"] == invoice.id_fiscal_document
         assert dumped["credit_note_reason"] == "Reso parziale"
         assert dumped["is_partial"] is True
+        assert "stato_storno" not in dumped
         assert payload.customer is not None
         assert payload.customer.email == "nc-detail@example.com"
         assert payload.address_invoice is not None
@@ -435,3 +438,10 @@ class TestFiscalDocumentXmlOnDemand:
         assert payload.lifecycle is not None
         assert payload.lifecycle.status == payload.status
         assert payload.lifecycle.fatturapa.status == payload.fatturapa_status
+        dumped = payload.model_dump()
+        assert "fatturapa_status" not in dumped
+        assert "fatturapa_error_message" not in dumped
+        assert "mail_status" not in dumped
+        assert "mail_error_message" not in dumped
+        assert "identificativo_sdi" not in dumped
+        assert dumped["lifecycle"]["status"] == payload.status

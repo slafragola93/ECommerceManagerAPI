@@ -586,7 +586,7 @@ async def get_credit_note_eligible_lines(
 
     Metadati NC:
     - `shipping_already_refunded` / `shipping_eligible` — toggle `include_shipping`
-    - `has_total_credit_note` / `can_create_credit_note` — blocco se esiste NC totale
+    - `has_total_credit_note` / `can_create_credit_note` — blocco se NC totale o residuo già zero
     - `shipping` — importi spedizione fatturati (se eleggibile)
 
     Il `unit_price` per il POST NC parziale resta quello della fattura (non serve inviarlo).

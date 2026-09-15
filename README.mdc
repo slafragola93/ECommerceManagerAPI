@@ -4,6 +4,60 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-15) — Step 10 ottimizzazione FiscalDocument (`includes_shipping`)
+
+`includes_shipping` **non** è derivabile da `shipping`. Si tiene. Nessuna Alembic, JSON invariato.
+
+| Campo | Ruolo |
+|-------|--------|
+| `shipping` | Embed logistica dell'ordine (carrier, tax, peso). Presente se l'ordine ha una spedizione. |
+| `includes_shipping` | Flag persistito: il documento include gli **importi** spedizione (totali, riga `is_shipping`, XML/PDF). |
+| `shipping_total_*` | Importi; `null` se `includes_shipping=false`. |
+
+Caso reale: NC parziale senza spedizione su ordine già spedito → `shipping` valorizzato, `includes_shipping=false`. Fatture: alla creazione è sempre `true`.
+
+---
+
+## Ultime modifiche (2026-09-15) — Step 9 ottimizzazione FiscalDocument (totali)
+
+I tre gruppi di importi **non sono ridondanti** e restano tutti. Nessuna Alembic, JSON invariato.
+
+| Gruppo | Significato | Dove |
+|--------|-------------|------|
+| `total_price_net` / `total_price_with_tax` | Totale documento (merce + spedizione se `includes_shipping`) | lista + dettaglio, colonne DB |
+| `products_total_*` | Solo merce | lista + dettaglio, colonne DB |
+| `shipping_total_*` | Solo spedizione | solo dettaglio, calcolato (`totale − prodotti`, fallback ordine) |
+
+FE footer, PATCH (`shipping_total_*` → `Shipping`), PDF ed export li usano già. NC senza spedizione: `products_*` = `total_*`, `shipping_total_*` = null. NC solo spedizione: merce ~ 0, totale = spedizione.
+
+---
+
+## Ultime modifiche (2026-09-15) — FiscalDocument: niente duplicati flat/`lifecycle`
+
+Su lista e dettaglio fatture/NC, se c'è `lifecycle` il JSON **non include** più `fatturapa_status`, `fatturapa_error_message`, `identificativo_sdi`, `mail_status`, `mail_error_message`. Leggere `lifecycle.fatturapa` e `lifecycle.mail`.
+
+Restano in root: `status` (workflow), `sdi_status` (esito AdE persistito). Ricevute e fatture acquisto invariate (senza `lifecycle`).
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/documents/test_fiscal_list_serializer.py tests/unit/services/test_fiscal_document_invoice_response.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-14) — Step 8 ottimizzazione FiscalDocument (`stato_storno`)
+
+Sulle fatture (lista e dettaglio) il JSON include `stato_storno` calcolato dalle NC collegate (`id_fiscal_document_ref`), non persistito: `non_stornata` | `parziale` | `totale`. Omesso sulle note di credito.
+
+- `totale` se esiste una NC con `is_partial=false`, oppure se qty residue e spedizione stornabile sono già a zero.
+- `POST /credit-notes` è bloccato se il residuo è già azzerato (stesso criterio di `can_create_credit_note` sul modale).
+- Lista: una query batch sulle NC + dettagli, senza N+1. Nessuna Alembic.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/documents/test_stato_storno.py tests/unit/services/documents/test_fiscal_list_serializer.py tests/unit/services/test_fiscal_document_invoice_response.py tests/unit/repository/test_fiscal_document_create_credit_note.py tests/unit/repository/test_fiscal_document_credit_note_eligible_lines.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-14) — Step 7 ottimizzazione FiscalDocument (campi solo-NC)
 
 Su lista e dettaglio, se `document_type=invoice` il JSON **non include** `credit_note_reason`, `is_partial`, `id_fiscal_document_ref`. Sulle note di credito i tre campi restano.
@@ -18,7 +72,7 @@ Niente discriminated union `InvoiceOut`/`CreditNoteOut`: un solo schema (`Invoic
 
 ## Ultime modifiche (2026-09-14) — Step 6 ottimizzazione FiscalDocument (`lifecycle`)
 
-Lista e dettaglio fatture/NC includono `lifecycle` (solo response, nessuna Alembic). I campi flat restano (deprecati).
+Lista e dettaglio fatture/NC includono `lifecycle` (solo response, nessuna Alembic). Dal 2026-09-15 i campi flat duplicati sono omessi dal JSON.
 
 ```json
 "lifecycle": {
@@ -401,7 +455,7 @@ pytest tests/unit/repository/test_order_payment_repository.py tests/unit/service
 
 ## Ultime modifiche (2026-07-29) — Stati rapidi documenti (mail / FatturaPA)
 
-Campi comuni in lista+dettaglio su `fiscal_documents`, `ricevute`, `purchase-invoices`:
+Campi comuni in lista+dettaglio su `ricevute`, `purchase-invoices` (su `fiscal_documents` dal 2026-09-15 solo `lifecycle`):
 
 - `mail_status`, `mail_error_message`
 - `fatturapa_status` (`uploaded|sent|error|null`), `fatturapa_error_message`
@@ -745,7 +799,7 @@ pytest tests/unit/repository/test_fiscal_document_create_credit_note.py -v
 |----------------|-------------|
 | `details[].remaining_qty` / `refunded_qty` | Quantità residua vs già stornata |
 | `shipping_already_refunded` / `shipping_eligible` | Stato toggle `include_shipping` |
-| `can_create_credit_note` | `false` se esiste NC totale |
+| `can_create_credit_note` | `false` se NC totale o residuo stornabile già zero |
 
 **File:** `src/repository/fiscal_document_repository.py`, `src/services/routers/fiscal_document_service.py`, `src/routers/fiscal_documents.py`, `src/schemas/fiscal_document_schema.py`  
 **Test:** `pytest tests/unit/repository/test_fiscal_document_credit_note_eligible_lines.py -v`  

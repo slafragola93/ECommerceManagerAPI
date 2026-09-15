@@ -23,6 +23,7 @@ from src.services.documents.quick_status import (
     fiscal_lifecycle_from_doc,
     fiscal_quick_status_from_doc,
 )
+from src.services.documents.stato_storno import load_stato_storno_map
 from src.services.external.fatturapa_filename import compute_fatturapa_response_filename
 
 
@@ -168,9 +169,11 @@ def serialize_fiscal_document(
     order_shipped: bool = False,
     include_xml: bool = False,
     vat_number: Optional[str] = None,
+    stato_storno: Optional[str] = None,
 ) -> FiscalDocumentResponseSchema:
     qs = fiscal_quick_status_from_doc(doc)
     electronic = bool(doc.is_electronic)
+    is_invoice = doc.document_type == "invoice"
     is_credit_note = doc.document_type == "credit_note"
     if not electronic:
         qs["identificativo_sdi"] = None
@@ -191,8 +194,10 @@ def serialize_fiscal_document(
         xml_content=doc.xml_content if include_xml else None,
         status=doc.status,
         is_electronic=electronic,
-        credit_note_reason=doc.credit_note_reason if is_credit_note else None,
-        is_partial=bool(doc.is_partial) if is_credit_note else None,
+        credit_note_reason=doc.credit_note_reason if not is_invoice else None,
+        is_partial=bool(doc.is_partial) if not is_invoice else None,
+        includes_shipping=bool(doc.includes_shipping),
+        stato_storno=stato_storno if is_invoice else None,
         total_price_with_tax=doc.total_price_with_tax,
         total_price_net=doc.total_price_net,
         products_total_price_net=doc.products_total_price_net,
@@ -218,6 +223,7 @@ def serialize_fiscal_documents(
     include_xml: bool = False,
 ) -> List[FiscalDocumentResponseSchema]:
     ctx_map = _batch_order_list_context(db, (d.id_order for d in documents))
+    stato_map = load_stato_storno_map(db, documents)
     vat_number = load_company_vat_number(db)
     empty = _OrderListContext(
         is_payed=False,
@@ -238,6 +244,7 @@ def serialize_fiscal_documents(
             order_shipped=ctx_map.get(doc.id_order, empty).order_shipped,
             include_xml=include_xml,
             vat_number=vat_number,
+            stato_storno=stato_map.get(doc.id_fiscal_document),
         )
         for doc in documents
     ]

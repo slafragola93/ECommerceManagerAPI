@@ -65,6 +65,7 @@ from src.services.documents.quick_status import (
     fiscal_lifecycle_from_doc,
     fiscal_quick_status_from_doc,
 )
+from src.services.documents.stato_storno import stato_storno_for_invoice
 from src.services.external.fatturapa_sdi_resend import invoice_edit_block_reason
 from src.services.ricevute.order_lines import (
     build_shipping_line_dict,
@@ -875,6 +876,7 @@ class FiscalDocumentService(IFiscalDocumentService):
             credit_note_reason=doc.credit_note_reason if is_credit_note else None,
             is_partial=bool(doc.is_partial) if is_credit_note else None,
             includes_shipping=bool(doc.includes_shipping),
+            stato_storno=stato_storno_for_invoice(self._session, doc),
             total_price_with_tax=self._to_float(doc.total_price_with_tax),
             total_price_net=self._to_float(doc.total_price_net),
             products_total_price_net=self._to_float(doc.products_total_price_net),

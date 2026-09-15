@@ -4,7 +4,10 @@ from pydantic import BaseModel, Field, field_validator, model_serializer, model_
 from datetime import date, datetime
 
 from src.models.order import ViesStatus
-from src.schemas.document_quick_status_schema import DocumentQuickStatusSchema
+from src.schemas.document_quick_status_schema import (
+    DocumentQuickStatusSchema,
+    omit_flat_lifecycle_fields,
+)
 from src.schemas.ricevuta_schema import (
     RicevutaAddressEmbedSchema,
     RicevutaCustomerEmbedSchema,
@@ -13,17 +16,30 @@ from src.schemas.ricevuta_schema import (
     RicevutaShippingEmbedSchema,
 )
 
-_NC_ONLY_RESPONSE_KEYS = (
-    "credit_note_reason",
-    "is_partial",
-    "id_fiscal_document_ref",
-)
+_NON_INVOICE_ONLY_RESPONSE_KEYS = ("credit_note_reason", "is_partial")
+_CREDIT_NOTE_ONLY_RESPONSE_KEYS = ("id_fiscal_document_ref",)
+_INVOICE_ONLY_RESPONSE_KEYS = ("stato_storno",)
 
 
 def omit_invoice_nc_only_fields(data):
-    """Rimuove i campi solo-NC dal JSON delle fatture (lista e dettaglio)."""
-    if isinstance(data, dict) and data.get("document_type") != "credit_note":
-        for key in _NC_ONLY_RESPONSE_KEYS:
+    """Rimuove i campi non pertinenti al `document_type` dal JSON.
+
+    - `credit_note_reason` / `is_partial`: colonne condivise da credit_note e
+      return (motivo/nota, storno o reso parziale). Omesse solo su invoice.
+    - `id_fiscal_document_ref`: significativo solo per credit_note.
+    - `stato_storno`: calcolato solo per invoice, omesso su credit_note e return.
+    """
+    if not isinstance(data, dict):
+        return data
+    document_type = data.get("document_type")
+    if document_type == "invoice":
+        for key in _NON_INVOICE_ONLY_RESPONSE_KEYS:
+            data.pop(key, None)
+    else:
+        for key in _INVOICE_ONLY_RESPONSE_KEYS:
+            data.pop(key, None)
+    if document_type != "credit_note":
+        for key in _CREDIT_NOTE_ONLY_RESPONSE_KEYS:
             data.pop(key, None)
     return data
 
@@ -160,7 +176,10 @@ class CreditNoteEligibleLinesResponseSchema(BaseModel):
         ..., description="True se esiste già una NC totale sulla fattura"
     )
     can_create_credit_note: bool = Field(
-        ..., description="False se has_total_credit_note (nessuna altra NC ammessa)"
+        ...,
+        description=(
+            "False se NC totale o residuo stornabile già zero (qty + spedizione)"
+        ),
     )
     shipping: Optional[CreditNoteEligibleShippingSchema] = None
     details: List[CreditNoteEligibleLineSchema] = Field(default_factory=list)
@@ -223,16 +242,44 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
     )
     is_electronic: bool
     credit_note_reason: Optional[str] = Field(
-        None, description="Motivo nota di credito (solo credit_note; omesso su invoice)"
+        None,
+        description=(
+            "Motivo nota di credito o nota reso (credit_note e return; omesso su invoice)"
+        ),
     )
     is_partial: Optional[bool] = Field(
-        None, description="Nota di credito parziale (solo credit_note; omesso su invoice)"
+        None,
+        description=(
+            "Storno parziale (credit_note) o reso parziale (return); omesso su invoice"
+        ),
     )
-    includes_shipping: bool
-    total_price_with_tax: Optional[float] = None
-    total_price_net: Optional[float] = None
-    products_total_price_net: Optional[float] = None
-    products_total_price_with_tax: Optional[float] = None
+    includes_shipping: bool = Field(
+        ...,
+        description=(
+            "Se il documento include importi spedizione (totali, riga order_details, XML/PDF). "
+            "Non è derivabile da `shipping`: quell'embed è logistica ordine e resta "
+            "valorizzato anche su NC con includes_shipping=false."
+        ),
+    )
+    stato_storno: Optional[str] = Field(
+        None,
+        description=(
+            "Solo invoice, calcolato dalle NC collegate: "
+            "non_stornata|parziale|totale. Omesso su credit_note e return."
+        ),
+    )
+    total_price_with_tax: Optional[float] = Field(
+        None, description="Totale documento (prodotti + spedizione se includes_shipping)"
+    )
+    total_price_net: Optional[float] = Field(
+        None, description="Totale documento netto (prodotti + spedizione se includes_shipping)"
+    )
+    products_total_price_net: Optional[float] = Field(
+        None, description="Solo merce, senza spedizione"
+    )
+    products_total_price_with_tax: Optional[float] = Field(
+        None, description="Solo merce con IVA, senza spedizione"
+    )
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
     sdi_status: Optional[str] = Field(
@@ -255,8 +302,17 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
 
     payment: Optional[RicevutaPaymentEmbedSchema] = None
     shipping: Optional[RicevutaShippingEmbedSchema] = None
-    shipping_total_price_with_tax: Optional[float] = None
-    shipping_total_price_net: Optional[float] = None
+    shipping_total_price_with_tax: Optional[float] = Field(
+        None,
+        description=(
+            "Spedizione con IVA (dettaglio). Null se includes_shipping=false. "
+            "Non è in lista. Non è il blocco embed `shipping` (logistica)."
+        ),
+    )
+    shipping_total_price_net: Optional[float] = Field(
+        None,
+        description="Spedizione netta (dettaglio). Null se includes_shipping=false.",
+    )
     total_discounts: Optional[float] = None
 
     customer: Optional[RicevutaCustomerEmbedSchema] = None
@@ -300,7 +356,7 @@ class InvoiceResponseSchema(DocumentQuickStatusSchema):
         data = serializer(self)
         if isinstance(data, dict) and data.get("xml_content") is None:
             data.pop("xml_content", None)
-        return omit_invoice_nc_only_fields(data)
+        return omit_flat_lifecycle_fields(omit_invoice_nc_only_fields(data))
 
 
 # ==================== SCHEMAS PER NOTE DI CREDITO ====================
@@ -426,15 +482,43 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
     )
     is_electronic: bool
     credit_note_reason: Optional[str] = Field(
-        None, description="Motivo nota di credito (solo credit_note; omesso su invoice)"
+        None,
+        description=(
+            "Motivo nota di credito o nota reso (credit_note e return; omesso su invoice)"
+        ),
     )
     is_partial: Optional[bool] = Field(
-        None, description="Nota di credito parziale (solo credit_note; omesso su invoice)"
+        None,
+        description=(
+            "Storno parziale (credit_note) o reso parziale (return); omesso su invoice"
+        ),
     )
-    total_price_with_tax: Optional[float] = None
-    total_price_net: Optional[float] = None
-    products_total_price_net: Optional[float] = None
-    products_total_price_with_tax: Optional[float] = None
+    includes_shipping: bool = Field(
+        ...,
+        description=(
+            "Se il documento include importi spedizione (totali, riga order_details, XML/PDF). "
+            "Non è derivabile da `shipping`: quell'embed è logistica ordine."
+        ),
+    )
+    stato_storno: Optional[str] = Field(
+        None,
+        description=(
+            "Solo invoice, calcolato dalle NC collegate: "
+            "non_stornata|parziale|totale. Omesso su credit_note e return."
+        ),
+    )
+    total_price_with_tax: Optional[float] = Field(
+        None, description="Totale documento (prodotti + spedizione se includes_shipping)"
+    )
+    total_price_net: Optional[float] = Field(
+        None, description="Totale documento netto (prodotti + spedizione se includes_shipping)"
+    )
+    products_total_price_net: Optional[float] = Field(
+        None, description="Solo merce, senza spedizione"
+    )
+    products_total_price_with_tax: Optional[float] = Field(
+        None, description="Solo merce con IVA, senza spedizione"
+    )
     date_add: Optional[datetime] = None
     date_upd: Optional[datetime] = None
     is_payed: bool = False
@@ -475,7 +559,7 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
         data = serializer(self)
         if isinstance(data, dict) and data.get("xml_content") is None:
             data.pop("xml_content", None)
-        return omit_invoice_nc_only_fields(data)
+        return omit_flat_lifecycle_fields(omit_invoice_nc_only_fields(data))
     
     class Config:
         from_attributes = True
@@ -486,16 +570,23 @@ class FiscalDocumentResponseSchema(DocumentQuickStatusSchema):
                 "id_order": 456,
                 "status": "sent",
                 "is_electronic": True,
-                "fatturapa_status": "sent",
                 "sdi_status": None,
-                "identificativo_sdi": None,
                 "order_payment_name": "Bonifico",
                 "id_order_payment": 3,
                 "id_customer": 89,
                 "customer_name": "Rossi Mario",
                 "is_payed": True,
                 "order_shipped": False,
-                "mail_status": None,
+                "lifecycle": {
+                    "status": "sent",
+                    "fatturapa": {
+                        "status": "sent",
+                        "error_message": None,
+                        "identificativo_sdi": None,
+                    },
+                    "sdi": {"status": None, "error_message": None},
+                    "mail": {"status": None, "error_message": None},
+                },
             }
         }
 

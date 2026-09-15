@@ -169,6 +169,45 @@ class TestCreditNoteEligibleLines:
         assert result["has_total_credit_note"] is True
         assert result["can_create_credit_note"] is False
 
+    def test_exhausted_partials_block_create(self, db_session, repo, tax):
+        invoice, detail, order = _seed_invoice_with_detail(db_session, tax, product_qty=2)
+
+        exhausted = FiscalDocument(
+            document_type="credit_note",
+            tipo_documento_fe="TD04",
+            id_order=order.id_order,
+            id_fiscal_document_ref=invoice.id_fiscal_document,
+            status="generated",
+            is_electronic=True,
+            is_partial=True,
+            includes_shipping=True,
+            document_number="4",
+            credit_note_reason="Qty + spedizione",
+        )
+        db_session.add(exhausted)
+        db_session.commit()
+        db_session.refresh(exhausted)
+        db_session.add(
+            FiscalDocumentDetail(
+                id_fiscal_document=exhausted.id_fiscal_document,
+                id_order_detail=detail.id_order_detail,
+                product_qty=2,
+                id_tax=tax.id_tax,
+                unit_price_net=Decimal("100.00"),
+                unit_price_with_tax=Decimal("122.00"),
+                total_price_net=Decimal("200.00"),
+                total_price_with_tax=Decimal("244.00"),
+            )
+        )
+        db_session.commit()
+
+        result = repo.get_credit_note_eligible_lines(invoice.id_fiscal_document)
+
+        assert result["has_total_credit_note"] is False
+        assert result["can_create_credit_note"] is False
+        assert result["details"][0]["is_fully_refunded"] is True
+        assert result["shipping_already_refunded"] is True
+
     def test_invoice_not_found_raises(self, repo):
         with pytest.raises(ValueError, match="Fattura 99999 non trovata"):
             repo.get_credit_note_eligible_lines(99999)

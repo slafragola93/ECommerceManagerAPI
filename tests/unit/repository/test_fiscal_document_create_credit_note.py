@@ -168,3 +168,42 @@ class TestCreateCreditNote:
         assert float(credit_note.total_price_with_tax or 0) > 0
         # Solo spedizione: products totali a zero
         assert float(credit_note.products_total_price_with_tax or 0) == 0
+
+    def test_blocks_when_residual_already_zero(self, db_session, repo, tax):
+        invoice, detail = _seed_electronic_invoice(db_session, tax)
+
+        repo.create_credit_note(
+            id_invoice=invoice.id_fiscal_document,
+            reason="Esaurisce qty e spedizione",
+            is_partial=True,
+            include_shipping=True,
+            items=[{"id_order_detail": detail.id_order_detail, "quantity": 2.0}],
+        )
+
+        with pytest.raises(ValueError, match="residuo stornabile"):
+            repo.create_credit_note(
+                id_invoice=invoice.id_fiscal_document,
+                reason="Oltre residuo",
+                is_partial=True,
+                include_shipping=False,
+                items=[{"id_order_detail": detail.id_order_detail, "quantity": 1.0}],
+            )
+
+    def test_blocks_second_nc_after_total(self, db_session, repo, tax):
+        invoice, detail = _seed_electronic_invoice(db_session, tax)
+
+        repo.create_credit_note(
+            id_invoice=invoice.id_fiscal_document,
+            reason="Storno totale",
+            is_partial=False,
+            include_shipping=True,
+        )
+
+        with pytest.raises(ValueError, match="nota di credito TOTALE"):
+            repo.create_credit_note(
+                id_invoice=invoice.id_fiscal_document,
+                reason="Seconda NC",
+                is_partial=True,
+                include_shipping=False,
+                items=[{"id_order_detail": detail.id_order_detail, "quantity": 1.0}],
+            )
