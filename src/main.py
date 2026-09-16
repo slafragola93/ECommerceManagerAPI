@@ -8,11 +8,13 @@ from pathlib import Path
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
+
+from src.services.routers.auth_service import require_admin
 
 # Fix for Windows file descriptor limit issue
 if sys.platform == 'win32':
@@ -337,19 +339,6 @@ else:
     async def get_cache():
         return 1
 
-
-# CORS configuration - più permissiva per sviluppo
-origins = [
-    "http://localhost:4200",
-    "http://localhost:63297",
-    "http://localhost:8000",
-    "http://localhost:8082",
-    "http://127.0.0.1:4200",
-    "http://127.0.0.1:8000",
-    "http://127.0.0.1:8082",
-    "http://0.0.0.0:4200",
-    "http://0.0.0.0:8000",
-]
 
 # Add CORS middleware - DEVE essere il primo middleware
 app.add_middleware(
@@ -694,21 +683,6 @@ app.include_router(events.router)
 app.include_router(csv_import.router)
 app.include_router(fastldv.router)
 
-@app.options("/{full_path:path}")
-async def options_handler(request: Request, full_path: str):
-    """Handle CORS preflight requests"""
-    return JSONResponse(
-        content={},
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Max-Age": "86400"
-        }
-    )
-
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
@@ -735,8 +709,8 @@ async def cache_health():
         raise HTTPException(status_code=503, detail=f"Cache unhealthy: {str(e)}")
 
 @app.get("/metrics")
-async def metrics():
-    """Prometheus metrics endpoint"""
+async def metrics(_: dict = Depends(require_admin)):
+    """Prometheus metrics endpoint (Admin only)"""
     try:
         from src.core.observability import get_metrics
         metrics = get_metrics()
@@ -762,7 +736,7 @@ async def metrics():
         raise HTTPException(status_code=500, detail=f"Metrics error: {str(e)}")
 
 @app.delete("/api/v1/cache")
-async def clear_cache_pattern(pattern: str = "*"):
+async def clear_cache_pattern(pattern: str = "*", _: dict = Depends(require_admin)):
     """Clear cache by pattern (Admin only)"""
     try:
         cache_manager = await get_cache_manager()
@@ -772,7 +746,7 @@ async def clear_cache_pattern(pattern: str = "*"):
         raise HTTPException(status_code=500, detail=f"Cache clear error: {str(e)}")
 
 @app.post("/api/v1/cache/reset")
-async def reset_all_cache():
+async def reset_all_cache(_: dict = Depends(require_admin)):
     """Reset all cache (Admin only - use with caution)"""
     try:
         from src.core.invalidation import invalidate_all_cache
@@ -782,7 +756,7 @@ async def reset_all_cache():
         raise HTTPException(status_code=500, detail=f"Cache reset error: {str(e)}")
 
 @app.get("/api/v1/cache/stats")
-async def cache_stats():
+async def cache_stats(_: dict = Depends(require_admin)):
     """Get detailed cache statistics (Admin only)"""
     try:
         from src.core.observability import get_metrics

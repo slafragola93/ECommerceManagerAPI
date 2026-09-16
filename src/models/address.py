@@ -1,4 +1,6 @@
-from sqlalchemy import Integer, Column, String, func, Date, ForeignKey
+from datetime import date
+
+from sqlalchemy import Integer, Column, String, Date, ForeignKey
 from sqlalchemy.orm import relationship
 
 from src.database import Base
@@ -27,7 +29,7 @@ class Address(Base):
     pec = Column(String(128), default=None)
     sdi = Column(String(128), default=None)
     ipa = Column(String(128), default=None)
-    date_add = Column(Date, default=func.now())
+    date_add = Column(Date, default=date.today)
 
     store = relationship("Store", back_populates="addresses")
     customer = relationship("Customer", back_populates="addresses")

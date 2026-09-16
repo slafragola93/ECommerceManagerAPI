@@ -130,7 +130,12 @@ class FakeShipmentService(IShipmentService):
         self.created_shipments: List[int] = []
         self.cancelled_shipments: List[int] = []
     
-    async def create_shipment(self, order_id: int, id_shipping: Optional[int] = None) -> Dict[str, Any]:
+    async def create_shipment(
+        self,
+        order_id: int,
+        id_shipping: Optional[int] = None,
+        id_order_document: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Crea una spedizione fake"""
         self.created_shipments.append(order_id)
         return {
@@ -173,17 +178,28 @@ class FakeCarrierServiceFactory(CarrierServiceFactory):
 def create_test_user(
     username: str = "testuser",
     user_id: int = 1,
-    roles: List[Dict[str, Any]] = None
+    roles: List[Dict[str, Any]] = None,
+    role_type: str = None
 ) -> Dict[str, Any]:
-    """Crea un dict utente per i test"""
+    """Crea un dict utente per i test.
+
+    `role_type="full_crud"` fa bypassare il sistema di permessi granulare
+    basato su DB (`require_permission`/`check_permission` in auth_service.py),
+    che altrimenti fallisce con "module_not_found" perché la sessione di test
+    non seeda `AppModule`/`UserModulePermission` (stesso pattern già usato in
+    `tests/helpers/fiscal_test_helpers.py::admin_full_crud_user`).
+    """
     if roles is None:
         roles = [{"name": "USER", "permissions": ["R"]}]
-    
-    return {
+
+    user = {
         "username": username,
         "id": user_id,
         "roles": roles
     }
+    if role_type is not None:
+        user["role_type"] = role_type
+    return user
 
 
 def override_get_current_user(user: Dict[str, Any] = None):
@@ -241,7 +257,15 @@ def client(test_app) -> TestClient:
 
 @pytest_asyncio.fixture
 async def async_client(test_app) -> AsyncGenerator[AsyncClient, None]:
-    """Client HTTP asincrono"""
+    """Client HTTP asincrono, senza autenticazione.
+
+    `test_app` installa un utente di default su `get_current_user` per ogni
+    test; qui lo rimuoviamo così le richieste senza header Authorization
+    passano dalla vera dependency (`oauth2_bearer`, auto_error=True) e
+    ottengono un 401 reale, invece di essere autenticate come utente di
+    default a propria insaputa.
+    """
+    test_app.dependency_overrides.pop(get_current_user, None)
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
         yield ac
 
@@ -256,7 +280,8 @@ def admin_user() -> Dict[str, Any]:
     return create_test_user(
         username="admin",
         user_id=1,
-        roles=[{"name": "ADMIN", "permissions": ["C", "R", "U", "D"]}]
+        roles=[{"name": "ADMIN", "permissions": ["C", "R", "U", "D"]}],
+        role_type="full_crud"
     )
 
 
@@ -334,11 +359,21 @@ async def user_client_async(test_app, user_user) -> AsyncGenerator[AsyncClient, 
 # ============================================================================
 
 @pytest.fixture
-def fake_carrier_factory(awb: str = "TEST123456789"):
-    """Fixture per creare un fake carrier factory"""
-    def _factory(carrier_repo: IApiCarrierRepository):
-        return FakeCarrierServiceFactory(carrier_repo, awb=awb)
-    return _factory
+def fake_carrier_factory():
+    """Fixture per creare un override fake di get_carrier_service_factory.
+
+    Uso:
+        fake_factory = fake_carrier_factory(awb="TEST123456789")
+        admin_client.app.dependency_overrides[get_carrier_service_factory] = lambda: fake_factory
+
+    Ritorna direttamente un'istanza di FakeCarrierServiceFactory (non un
+    callable che si aspetta un carrier_repo): `get_carrier_service_factory`
+    è la dependency FastAPI da sovrascrivere, e deve risolversi nell'istanza
+    già pronta, non in una funzione che la costruisce.
+    """
+    def _make(awb: str = "TEST123456789") -> FakeCarrierServiceFactory:
+        return FakeCarrierServiceFactory(MagicMock(spec=IApiCarrierRepository), awb=awb)
+    return _make
 
 
 # ============================================================================

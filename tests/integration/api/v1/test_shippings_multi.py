@@ -11,6 +11,11 @@ from tests.helpers.asserts import (
 from tests.factories.shipping_factory import create_simple_multi_shipment_payload
 
 
+pytestmark = pytest.mark.skip(
+    reason="Feature multispedizioni rimandata (2026-09-15): endpoint disabilitato, non implementata ora"
+)
+
+
 @pytest.mark.integration
 class TestShippingsMulti:
     """Test per POST /api/v1/shippings/multi-shipment"""

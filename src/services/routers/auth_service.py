@@ -252,6 +252,24 @@ def revoke_all_user_tokens(user_id: int, db: Session) -> int:
     return count
 
 # ──────────────────────────────────────────────────────────
+# REQUIRE ADMIN — per endpoint infrastrutturali senza modulo di business
+# (cache, metrics): non passano dal sistema granulare a moduli perché non
+# appartengono a nessun modulo, quindi si verifica solo il ruolo ADMIN.
+# ──────────────────────────────────────────────────────────
+
+def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """FastAPI Depends: consente l'accesso solo a utenti con ruolo ADMIN."""
+    from src.models.role import PermissionType
+
+    if current_user.get("role_type") != PermissionType.full_crud.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Riservato agli amministratori",
+        )
+    return current_user
+
+
+# ──────────────────────────────────────────────────────────
 # REQUIRE PERMISSION — nuovo sistema granulare
 # ──────────────────────────────────────────────────────────
 

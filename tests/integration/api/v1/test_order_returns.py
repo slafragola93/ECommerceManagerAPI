@@ -54,6 +54,18 @@ class TestOrderReturnsAPI:
         assert create_resp.status_code == status.HTTP_201_CREATED
         return_id = create_resp.json()["return_id"]
 
+        # create_return timbra date_add con "adesso" (corretto: un reso vale
+        # dalla data in cui avviene, non dalla data ordine). Per verificare il
+        # bucketing nei corrispettivi lo riportiamo nel mese dell'ordine
+        # seedato, stesso fix già applicato ai test unitari equivalenti.
+        from src.models.fiscal_document import FiscalDocument
+
+        return_doc = db_session.query(FiscalDocument).filter(
+            FiscalDocument.id_fiscal_document == return_id
+        ).first()
+        return_doc.date_add = order.date_add
+        db_session.commit()
+
         list_resp = fiscal_admin_client.get("/api/v1/orders/returns/")
         assert list_resp.status_code == status.HTTP_200_OK
         returns = list_resp.json()["returns"]

@@ -2,9 +2,8 @@
 Factory per creare dati Address
 """
 
-from ast import Dict
-import datetime
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 from src.schemas.address_schema import AddressSchema
 

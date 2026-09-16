@@ -382,10 +382,11 @@ async def test_create_category_duplicate_name(
     category_sample_data: dict
 ):
     """❌ POST /categories/ - 400 se nome duplicato (BusinessRuleException)"""
-    # Arrange
+    # Arrange: seeda la prima categoria PRIMA di attivare il controllo duplicati,
+    # altrimenti anche il seed viene rifiutato come "duplicato".
     test_app.dependency_overrides[get_category_service] = lambda: fake_category_service
-    fake_category_service.duplicate_name = category_sample_data["name"]
     await fake_category_service.create_category(CategorySchema(**category_sample_data))
+    fake_category_service.duplicate_name = category_sample_data["name"]
     
     # Act
     response = await admin_client_async.post("/api/v1/categories/", json=category_sample_data)
@@ -529,7 +530,8 @@ async def test_update_category_duplicate_name(
     test_app.dependency_overrides[get_category_service] = lambda: fake_category_service
     category1 = await fake_category_service.create_category(CategorySchema(**category_sample_data))
     category2 = await fake_category_service.create_category(CategorySchema(**category_sample_data_2))
-    
+    fake_category_service.duplicate_name = category_sample_data_2["name"]
+
     # Prova ad aggiornare category1 con il nome di category2
     update_data = {
         "id_origin": category_sample_data["id_origin"],

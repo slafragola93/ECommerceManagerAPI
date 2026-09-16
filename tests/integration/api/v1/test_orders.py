@@ -33,7 +33,13 @@ class TestOrders:
         Act: POST /api/v1/orders/
         Assert: Status 201, id_order presente, internal_reference presente, evento ORDER_CREATED emesso
         """
-        # Arrange
+        # Arrange: id_order_state=1 e' lo stato di default assegnato a ogni
+        # nuovo ordine (order_repository.create), deve esistere in DB.
+        from src.models.order_state import OrderState
+
+        db_session.add(OrderState(id_order_state=1, name="In attesa"))
+        db_session.commit()
+
         payload = create_simple_order_payload()
         
         # Act
@@ -75,25 +81,25 @@ class TestOrders:
     async def test_get_order_by_id_success(self, admin_client, db_session):
         """
         Test: Recupero ordine per ID
-        
+
         Arrange: Ordine esistente nel database
         Act: GET /api/v1/orders/{order_id}
         Assert: Status 200, dati ordine corretti
         """
-        # TODO: Creare ordine nel database prima del test
-        # Per ora questo è uno skeleton
-        
-        order_id = 1  # Sostituire con ID reale
-        
-        response = admin_client.get(f"/api/v1/orders/{order_id}")
-        
+        from src.models.order import Order
+
+        order = Order()
+        db_session.add(order)
+        db_session.commit()
+        db_session.refresh(order)
+
+        response = admin_client.get(f"/api/v1/orders/{order.id_order}")
+
         # Assert
         assert_success_response(response)
         data = response.json()
         assert "id_order" in data
-        assert data["id_order"] == order_id
-        
-        pytest.skip("Richiede setup database con ordine esistente")
+        assert data["id_order"] == order.id_order
     
     @pytest.mark.asyncio
     async def test_get_order_not_found(self, admin_client):
@@ -120,30 +126,35 @@ class TestOrders:
     ):
         """
         Test: Aggiornamento stato ordine
-        
+
         Arrange: Ordine esistente
-        Act: PUT /api/v1/orders/{order_id}/status con nuovo stato
+        Act: PATCH /api/v1/orders/{order_id}/status?new_status_id=... (query param, non body)
         Assert: Status 200, stato aggiornato, evento ORDER_STATUS_CHANGED emesso
         """
-        # TODO: Creare ordine nel database prima del test
-        
-        order_id = 1  # Sostituire con ID reale
+        from src.models.order import Order
+        from src.models.order_state import OrderState
+
+        db_session.add(OrderState(id_order_state=4, name="Spedizione Confermata"))
+        order = Order(id_order_state=1)
+        db_session.add(order)
+        db_session.commit()
+        db_session.refresh(order)
+
+        order_id = order.id_order
         new_status = 4
-        
-        response = admin_client.put(
+
+        response = admin_client.patch(
             f"/api/v1/orders/{order_id}/status",
-            json={"id_order_state": new_status}
+            params={"new_status_id": new_status}
         )
-        
+
         # Assert
         assert_success_response(response)
-        assert_order_status(response, expected_status=new_status)
-        
+        assert_order_status(response, expected_status=new_status, status_field="new_status_id")
+
         # Verifica evento emesso
         assert_event_published(
             event_bus_spy,
             "order_status_changed",
-            check_data={"id_order": order_id, "new_state_id": new_status}
+            check_data={"order_id": order_id, "new_state_id": new_status}
         )
-        
-        pytest.skip("Richiede setup database con ordine esistente")

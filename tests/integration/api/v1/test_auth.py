@@ -16,14 +16,24 @@ class TestAuth:
     async def test_login_success(self, async_client: AsyncClient, db_session):
         """
         Test: Login con credenziali valide
-        
+
         Arrange: Utente esistente nel database
         Act: POST /api/v1/auth/login
         Assert: Status 200, token presente, current_user presente
         """
-        # TODO: Creare utente nel database prima del test
-        # Per ora questo è uno skeleton
-        
+        from src.models.user import User
+        from src.services.routers.auth_service import bcrypt_context
+
+        user = User(
+            username="usertest",
+            email="usertest@example.com",
+            firstname="User",
+            lastname="Test",
+            password=bcrypt_context.hash("passwordtest"),
+        )
+        db_session.add(user)
+        db_session.commit()
+
         login_data = {
             "username": "usertest",
             "password": "passwordtest"

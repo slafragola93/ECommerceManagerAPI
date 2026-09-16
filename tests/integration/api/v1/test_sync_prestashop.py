@@ -24,10 +24,22 @@ class TestSyncPrestashop:
         Act: POST /api/v1/sync/prestashop?store_id=1
         Assert: Status 202, messaggio di avvio, sync_id presente
         """
-        # TODO: Setup completo:
-        # 1. Creare store nel database con configurazione PrestaShop
-        
-        store_id = 1
+        from src.models.platform import Platform
+        from src.models.store import Store
+
+        platform = Platform(name="PrestaShop")
+        db_session.add(platform)
+        db_session.commit()
+
+        store = Store(
+            id_platform=platform.id_platform,
+            name="Store Test",
+            base_url="https://store-test.example.com",
+            api_key="test-api-key",
+        )
+        db_session.add(store)
+        db_session.commit()
+        store_id = store.id_store
         
         # Mock del servizio PrestaShop per evitare chiamate HTTP reali
         with patch('src.services.ecommerce.prestashop_service.PrestaShopService') as mock_service:
@@ -46,8 +58,6 @@ class TestSyncPrestashop:
             assert "message" in data
             assert "sync_id" in data
             assert data["status"] == "accepted"
-        
-        pytest.skip("Richiede setup database con store e mock completo del servizio PrestaShop")
     
     @pytest.mark.asyncio
     async def test_sync_prestashop_store_not_found(self, admin_client):
@@ -98,10 +108,23 @@ class TestSyncPrestashop:
         Act: POST /api/v1/sync/prestashop/full?store_id=1
         Assert: Status 202, sync_type="full"
         """
-        # TODO: Setup completo con store
-        
-        store_id = 1
-        
+        from src.models.platform import Platform
+        from src.models.store import Store
+
+        platform = Platform(name="PrestaShop")
+        db_session.add(platform)
+        db_session.commit()
+
+        store = Store(
+            id_platform=platform.id_platform,
+            name="Store Test",
+            base_url="https://store-test.example.com",
+            api_key="test-api-key",
+        )
+        db_session.add(store)
+        db_session.commit()
+        store_id = store.id_store
+
         with patch('src.services.ecommerce.prestashop_service.PrestaShopService') as mock_service:
             mock_instance = AsyncMock()
             mock_service.return_value.__aenter__.return_value = mock_instance
@@ -115,5 +138,3 @@ class TestSyncPrestashop:
             assert_success_response(response, status_code=status.HTTP_202_ACCEPTED)
             data = response.json()
             assert data["sync_type"] == "full"
-        
-        pytest.skip("Richiede setup database con store e mock completo")

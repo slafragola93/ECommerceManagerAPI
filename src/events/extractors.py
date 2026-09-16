@@ -329,68 +329,91 @@ def extract_ddt_created_data(*args, result=None, **kwargs) -> Optional[Dict[str,
 def extract_ddt_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento DOCUMENT_UPDATED (ddt).
-    
+
+    Condiviso da due metodi con firme diverse (`DDTService.update_ddt_detail`
+    e `DDTService.merge_articolo_to_ddt`): l'indice di `args` in cui si trova
+    `id_order_detail`/`id_order_document` NON è lo stesso nei due casi, quindi
+    i dati vengono ricavati da `result` (sempre presente e stabile) invece che
+    dalla posizione degli argomenti.
+
     Args:
-        result: DDTDetailSchema aggiornato dal service
-        args: Contiene id_order_detail come primo argomento
+        result: DDTMergeResponseSchema (con `.ddt` già idratato) oppure
+            DDTDetailSchema (solo la riga aggiornata, richiede una query per
+            risalire al DDT)
         kwargs: Contiene 'user' per contesto
-    
+
     Returns:
         Dictionary con dati completi del DDT
     """
     try:
         if not result:
             return None
-        
-        # Recupera id_order_detail dagli argomenti
-        id_order_detail = args[0] if args else None
-        if not id_order_detail:
-            return None
-        
-        # Recupera id_order_document dal database
-        from src.database import get_db
-        from sqlalchemy import text
-        
-        db = next(get_db())
-        
-        try:
-            stmt = text("""
-                SELECT id_order_document 
-                FROM order_details 
-                WHERE id_order_detail = :id_order_detail
-            """)
-            result_query = db.execute(stmt, {"id_order_detail": id_order_detail})
-            row = result_query.fetchone()
-            
-            if not row:
-                return None
-            
-            id_order_document = row[0]
-            
-            # Recupera dati DDT
-            stmt_ddt = text("""
-                SELECT id_order_document, document_number, id_customer, total_price_with_tax
-                FROM orders_document
-                WHERE id_order_document = :id_order_document
-            """)
-            result_ddt = db.execute(stmt_ddt, {"id_order_document": id_order_document})
-            ddt_row = result_ddt.fetchone()
-            
-            if not ddt_row:
-                return None
-            
+
+        # merge_articolo_to_ddt: il DDT completo è già stato caricato dal
+        # service, nessuna query aggiuntiva necessaria.
+        ddt = getattr(result, "ddt", None)
+        if ddt is not None:
             return {
-                "id_order_document": ddt_row[0],
+                "id_order_document": ddt.id_order_document,
                 "document_type": "ddt",
                 "document_source": "order_document",
-                "number": ddt_row[1],
-                "id_customer": ddt_row[2],
-                "total": float(ddt_row[3] or 0),
-                "updated_by": kwargs.get('user', {}).get('id')
+                "number": getattr(ddt, "document_number", None),
+                "id_customer": (getattr(ddt, "customer", None) or {}).get("id_customer"),
+                "total": float(getattr(ddt, "total_price_with_tax", 0) or 0),
+                "updated_by": kwargs.get('user', {}).get('id'),
             }
-        finally:
-            db.close()
-            
+
+        # update_ddt_detail: result è la sola riga aggiornata, bisogna
+        # risalire al DDT tramite id_order_detail.
+        id_order_detail = getattr(result, "id_order_detail", None)
+        if not id_order_detail:
+            return None
+
+        # Riusa la sessione del service (args[0].ddt_repo.db) invece di aprire
+        # una connessione DB scollegata dalla transazione/override di get_db
+        # (es. in test con DB isolato).
+        from sqlalchemy import text
+
+        service = args[0] if args else None
+        db = getattr(getattr(service, "ddt_repo", None), "db", None)
+        if db is None:
+            return None
+
+        stmt = text("""
+            SELECT id_order_document
+            FROM order_details
+            WHERE id_order_detail = :id_order_detail
+        """)
+        result_query = db.execute(stmt, {"id_order_detail": id_order_detail})
+        row = result_query.fetchone()
+
+        if not row:
+            return None
+
+        id_order_document = row[0]
+
+        # Recupera dati DDT
+        stmt_ddt = text("""
+            SELECT id_order_document, document_number, id_customer, total_price_with_tax
+            FROM orders_document
+            WHERE id_order_document = :id_order_document
+        """)
+        result_ddt = db.execute(stmt_ddt, {"id_order_document": id_order_document})
+        ddt_row = result_ddt.fetchone()
+
+        if not ddt_row:
+            return None
+
+        return {
+            "id_order_document": ddt_row[0],
+            "document_type": "ddt",
+            "document_source": "order_document",
+            "number": ddt_row[1],
+            "id_customer": ddt_row[2],
+            "total": float(ddt_row[3] or 0),
+            "updated_by": kwargs.get('user', {}).get('id')
+        }
+
     except Exception as e:
         logger.error(f"Errore estrazione dati ddt updated: {e}")
         return None
@@ -399,78 +422,80 @@ def extract_ddt_updated_data(*args, result=None, **kwargs) -> Optional[Dict[str,
 def extract_ddt_deleted_data(*args, result=None, **kwargs) -> Optional[Dict[str, Any]]:
     """
     Estrae dati completi per evento DOCUMENT_DELETED (ddt).
-    
+
     Args:
         result: bool (True se eliminato con successo)
-        args: Contiene id_order_detail come primo argomento
+        args: args[0] è self (DDTService.delete_ddt_detail), args[1] è
+            id_order_detail
         kwargs: Contiene 'user' per contesto
-    
+
     Returns:
         Dictionary con dati del DDT eliminato
     """
     try:
         # result è un bool, quindi recuperiamo id_order_detail da args
-        id_order_detail = args[0] if args else None
+        service = args[0] if args else None
+        id_order_detail = args[1] if len(args) > 1 else kwargs.get("id_order_detail")
         if not id_order_detail:
             return None
-        
-        # Recupera id_order_document dal database (il dettaglio potrebbe essere già eliminato)
-        from src.database import get_db
+
+        # Riusa la sessione del service (args[0].ddt_repo.db) invece di aprire
+        # una connessione DB scollegata dalla transazione/override di get_db
+        # (es. in test con DB isolato).
         from sqlalchemy import text
-        
-        db = next(get_db())
-        
-        try:
-            # Prova a recuperare id_order_document dal dettaglio (potrebbe essere già eliminato)
-            stmt = text("""
-                SELECT id_order_document 
-                FROM order_details 
-                WHERE id_order_detail = :id_order_detail
-            """)
-            result_query = db.execute(stmt, {"id_order_detail": id_order_detail})
-            row = result_query.fetchone()
-            
-            id_order_document = row[0] if row else None
-            
-            # Se il dettaglio è già stato eliminato, non possiamo recuperare id_order_document
-            # In questo caso, restituiamo solo id_order_detail
-            if not id_order_document:
-                return {
-                    "id_order_detail": id_order_detail,
-                    "document_type": "ddt",
-                    "document_source": "order_document",
-                    "deleted_by": kwargs.get('user', {}).get('id')
-                }
-            
-            # Recupera dati DDT
-            stmt_ddt = text("""
-                SELECT id_order_document, document_number, id_customer
-                FROM orders_document
-                WHERE id_order_document = :id_order_document
-            """)
-            result_ddt = db.execute(stmt_ddt, {"id_order_document": id_order_document})
-            ddt_row = result_ddt.fetchone()
-            
-            if not ddt_row:
-                return {
-                    "id_order_detail": id_order_detail,
-                    "id_order_document": id_order_document,
-                    "document_type": "ddt",
-                    "document_source": "order_document",
-                    "deleted_by": kwargs.get('user', {}).get('id')
-                }
-            
+
+        db = getattr(getattr(service, "ddt_repo", None), "db", None)
+        if db is None:
+            return None
+
+        # Prova a recuperare id_order_document dal dettaglio (potrebbe essere già eliminato)
+        stmt = text("""
+            SELECT id_order_document
+            FROM order_details
+            WHERE id_order_detail = :id_order_detail
+        """)
+        result_query = db.execute(stmt, {"id_order_detail": id_order_detail})
+        row = result_query.fetchone()
+
+        id_order_document = row[0] if row else None
+
+        # Se il dettaglio è già stato eliminato, non possiamo recuperare id_order_document
+        # In questo caso, restituiamo solo id_order_detail
+        if not id_order_document:
             return {
-                "id_order_document": ddt_row[0],
+                "id_order_detail": id_order_detail,
                 "document_type": "ddt",
                 "document_source": "order_document",
-                "number": ddt_row[1],
-                "id_customer": ddt_row[2],
                 "deleted_by": kwargs.get('user', {}).get('id')
             }
-        finally:
-            db.close()
-            
+
+        # Recupera dati DDT
+        stmt_ddt = text("""
+            SELECT id_order_document, document_number, id_customer
+            FROM orders_document
+            WHERE id_order_document = :id_order_document
+        """)
+        result_ddt = db.execute(stmt_ddt, {"id_order_document": id_order_document})
+        ddt_row = result_ddt.fetchone()
+
+        if not ddt_row:
+            return {
+                "id_order_detail": id_order_detail,
+                "id_order_document": id_order_document,
+                "document_type": "ddt",
+                "document_source": "order_document",
+                "deleted_by": kwargs.get('user', {}).get('id')
+            }
+
+        return {
+            "id_order_document": ddt_row[0],
+            "document_type": "ddt",
+            "document_source": "order_document",
+            "number": ddt_row[1],
+            "id_customer": ddt_row[2],
+            "deleted_by": kwargs.get('user', {}).get('id')
+        }
+
     except Exception as e:
         logger.error(f"Errore estrazione dati ddt deleted: {e}")
         return None
@@ -711,38 +736,40 @@ def extract_order_created_data(*args, result=None, **kwargs) -> Optional[Dict[st
         
         order = result
         
-        # Query SQL ottimizzata: SOLO campi necessari da order_details
-        from src.database import get_db
+        # Query SQL ottimizzata: SOLO campi necessari da order_details.
+        # Riusa la sessione del service (args[0]) invece di aprire una
+        # connessione DB scollegata dalla transazione/override di get_db
+        # (es. in test con DB isolato).
         from sqlalchemy import text
-        
-        db = next(get_db())
-        
-        try:
-            stmt = text("""
-                SELECT id_order_detail, id_product, product_name, 
-                       product_qty, unit_price_net, unit_price_with_tax,
-                       total_price_net, total_price_with_tax, id_tax
-                FROM order_details 
-                WHERE id_order = :id_order
-            """)
-            result_details = db.execute(stmt, {"id_order": order.id_order})
-            order_details_data = [
-                {
-                    'id_order_detail': row.id_order_detail,
-                    'id_product': row.id_product,
-                    'product_name': row.product_name,
-                    'product_qty': row.product_qty,
-                    'unit_price_net': float(row.unit_price_net or 0),
-                    'unit_price_with_tax': float(row.unit_price_with_tax or 0),
-                    'total_price_net': float(row.total_price_net or 0),
-                    'total_price_with_tax': float(row.total_price_with_tax or 0),
-                    'id_tax': row.id_tax
-                }
-                for row in result_details
-            ]
-        finally:
-            db.close()
-        
+
+        service = args[0] if args else None
+        db = getattr(getattr(service, "_order_repository", None), "session", None)
+        if db is None:
+            return None
+
+        stmt = text("""
+            SELECT id_order_detail, id_product, product_name,
+                   product_qty, unit_price_net, unit_price_with_tax,
+                   total_price_net, total_price_with_tax, id_tax
+            FROM order_details
+            WHERE id_order = :id_order
+        """)
+        result_details = db.execute(stmt, {"id_order": order.id_order})
+        order_details_data = [
+            {
+                'id_order_detail': row.id_order_detail,
+                'id_product': row.id_product,
+                'product_name': row.product_name,
+                'product_qty': row.product_qty,
+                'unit_price_net': float(row.unit_price_net or 0),
+                'unit_price_with_tax': float(row.unit_price_with_tax or 0),
+                'total_price_net': float(row.total_price_net or 0),
+                'total_price_with_tax': float(row.total_price_with_tax or 0),
+                'id_tax': row.id_tax
+            }
+            for row in result_details
+        ]
+
         return {
             "id_order": order.id_order,
             "id_origin": order.id_origin,
@@ -794,31 +821,33 @@ def extract_shipping_status_changed_data(*args, result=None, **kwargs) -> Option
         
         if not id_shipping or not old_state_id or not new_state_id:
             return None
-        
-        # Query SQL ottimizzata: SOLO id_order e id_store
-        from src.database import get_db
+
+        # Query SQL ottimizzata: SOLO id_order e id_store. Riusa la sessione
+        # del service (args[0]._shipping_repository._session) invece di
+        # aprire una connessione DB scollegata dalla transazione/override di
+        # get_db (es. in test con DB isolato).
         from sqlalchemy import text
-        
-        db = next(get_db())
-        
-        try:
-            stmt = text("""
-                SELECT o.id_order, o.id_store
-                FROM orders o
-                WHERE o.id_shipping = :id_shipping
-                LIMIT 1
-            """)
-            result_order = db.execute(stmt, {"id_shipping": id_shipping}).first()
-            
-            if not result_order:
-                logger.warning(f"Nessun ordine trovato per shipping {id_shipping}")
-                return None
-            
-            id_order = result_order.id_order
-            id_store = result_order.id_store
-        finally:
-            db.close()
-        
+
+        service = args[0] if args else None
+        db = getattr(getattr(service, "_shipping_repository", None), "_session", None)
+        if db is None:
+            return None
+
+        stmt = text("""
+            SELECT o.id_order, o.id_store
+            FROM orders o
+            WHERE o.id_shipping = :id_shipping
+            LIMIT 1
+        """)
+        result_order = db.execute(stmt, {"id_shipping": id_shipping}).first()
+
+        if not result_order:
+            logger.warning(f"Nessun ordine trovato per shipping {id_shipping}")
+            return None
+
+        id_order = result_order.id_order
+        id_store = result_order.id_store
+
         return {
             "id_shipping": id_shipping,
             "id_order": id_order,
@@ -861,43 +890,47 @@ def extract_shipping_status_from_order_update(*args, result=None, **kwargs) -> O
         id_shipping = getattr(order_schema, 'id_shipping', None)
         if not id_shipping:
             return None
-        
-        # Recupera shipping e verifica cambio stato
-        from src.database import get_db
+
+        # Recupera shipping e verifica cambio stato. Riusa la sessione del
+        # service (args[0]._order_repository.session, stesso pattern di
+        # _extract_order_status_data) invece di aprire una connessione DB
+        # scollegata dalla transazione/override di get_db (es. in test con
+        # DB isolato). NB: funzione attualmente non agganciata a nessun
+        # decorator (nessun data_extractor= la referenzia).
         from sqlalchemy import text
-        
-        db = next(get_db())
-        
-        try:
-            # Recupera shipping con stato attuale
-            stmt = text("""
-                SELECT s.id_shipping_state, o.id_order, o.id_store
-                FROM shipments s
-                INNER JOIN orders o ON o.id_shipping = s.id_shipping
-                WHERE s.id_shipping = :id_shipping AND o.id_order = :order_id
-                LIMIT 1
-            """)
-            result_shipping = db.execute(stmt, {"id_shipping": id_shipping, "order_id": order_id}).first()
-            
-            if not result_shipping:
-                return None
-            
-            new_state_id = result_shipping.id_shipping_state
-            old_state_id = kwargs.get("old_shipping_state_id")
-            
-            # Se stato non è cambiato, non emettere evento
-            if not old_state_id or old_state_id == new_state_id:
-                return None
-            
-            return {
-                "id_shipping": id_shipping,
-                "id_order": result_shipping.id_order,
-                "old_state_id": old_state_id,
-                "new_state_id": new_state_id,
-                "updated_by": kwargs.get('user', {}).get('id')
-            }
-        finally:
-            db.close()
+
+        service = args[0] if args else None
+        db = getattr(getattr(service, "_order_repository", None), "session", None)
+        if db is None:
+            return None
+
+        # Recupera shipping con stato attuale
+        stmt = text("""
+            SELECT s.id_shipping_state, o.id_order, o.id_store
+            FROM shipments s
+            INNER JOIN orders o ON o.id_shipping = s.id_shipping
+            WHERE s.id_shipping = :id_shipping AND o.id_order = :order_id
+            LIMIT 1
+        """)
+        result_shipping = db.execute(stmt, {"id_shipping": id_shipping, "order_id": order_id}).first()
+
+        if not result_shipping:
+            return None
+
+        new_state_id = result_shipping.id_shipping_state
+        old_state_id = kwargs.get("old_shipping_state_id")
+
+        # Se stato non è cambiato, non emettere evento
+        if not old_state_id or old_state_id == new_state_id:
+            return None
+
+        return {
+            "id_shipping": id_shipping,
+            "id_order": result_shipping.id_order,
+            "old_state_id": old_state_id,
+            "new_state_id": new_state_id,
+            "updated_by": kwargs.get('user', {}).get('id')
+        }
     except Exception as e:
         logger.error(f"Errore estrazione dati shipping status from order update: {e}")
         return None

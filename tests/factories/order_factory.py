@@ -9,6 +9,7 @@ from src.schemas.customer_schema import CustomerSchema
 from src.schemas.address_schema import AddressSchema
 from src.schemas.shipping_schema import ShippingSchema
 from tests.factories.address_factory import create_address_schema
+from tests.factories.customer_factory import create_customer_schema
 
 
 def create_order_detail_data(

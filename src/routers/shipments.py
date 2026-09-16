@@ -20,10 +20,10 @@ from src.models.order_document import OrderDocument
 from src.models.shipping import Shipping
 from sqlalchemy.orm import joinedload, selectinload
 from src.schemas.shipping_schema import (
-    MultiShippingDocumentCreateRequestSchema,
-    MultiShippingDocumentResponseSchema,
+    # MultiShippingDocumentCreateRequestSchema,  # Feature multispedizioni rimandata (2026-09-15)
+    # MultiShippingDocumentResponseSchema,  # Feature multispedizioni rimandata (2026-09-15)
     OrderShipmentStatusResponseSchema,
-    MultiShippingDocumentListResponseSchema
+    # MultiShippingDocumentListResponseSchema,  # Feature multispedizioni rimandata (2026-09-15)
 )
 from src.database import get_db
 from src.repository.shipping_repository import ShippingRepository
@@ -662,30 +662,33 @@ async def cancel_shipment(
     return result
 
 
-@router.post("/create-multi-shipments", response_model=MultiShippingDocumentResponseSchema)
-async def create_multi_shipments(
-    request: MultiShippingDocumentCreateRequestSchema,
-    user: dict = Depends(get_current_user),
-    shipping_repo: IShippingRepository = Depends(get_shipping_repository),
-    shipping_service: IShippingService = Depends(get_shipping_service),
-    db: Session = Depends(get_db),
-    _: None = Depends(require_permission("shipments", "create")),
-):
-    """
-    Crea un documento di spedizione multipla con articoli selezionati.
-    
-    Crea un OrderDocument con type_document="shipping" e un Shipping associato,
-    permettendo di spedire solo alcuni prodotti dell'ordine con un corriere specifico.
-    
-    Args:
-        request: Dati per creare il documento spedizione
-        user: Utente autenticato
-        db: Database session
-        
-    Returns:
-        MultiShippingDocumentResponseSchema con dati idratati
-    """
-    return await shipping_service.create_multi_shipment(request, user.get("id", 0), db)
+# Feature multispedizioni rimandata (2026-09-15): non implementata/testata,
+# rimandata a un rilascio futuro. Endpoint disabilitato, non deregistrato per
+# facilitare il ripristino.
+# @router.post("/create-multi-shipments", response_model=MultiShippingDocumentResponseSchema)
+# async def create_multi_shipments(
+#     request: MultiShippingDocumentCreateRequestSchema,
+#     user: dict = Depends(get_current_user),
+#     shipping_repo: IShippingRepository = Depends(get_shipping_repository),
+#     shipping_service: IShippingService = Depends(get_shipping_service),
+#     db: Session = Depends(get_db),
+#     _: None = Depends(require_permission("shipments", "create")),
+# ):
+#     """
+#     Crea un documento di spedizione multipla con articoli selezionati.
+#
+#     Crea un OrderDocument con type_document="shipping" e un Shipping associato,
+#     permettendo di spedire solo alcuni prodotti dell'ordine con un corriere specifico.
+#
+#     Args:
+#         request: Dati per creare il documento spedizione
+#         user: Utente autenticato
+#         db: Database session
+#
+#     Returns:
+#         MultiShippingDocumentResponseSchema con dati idratati
+#     """
+#     return await shipping_service.create_multi_shipment(request, user.get("id", 0), db)
 
 
 @router.get("/orders/{order_id}/shipment-status", response_model=OrderShipmentStatusResponseSchema)
@@ -716,25 +719,27 @@ async def get_order_shipment_status(
     return await shipping_service.get_order_shipment_status(order_id, db)
 
 
-@router.get("/orders/{order_id}/multi-shipments", response_model=MultiShippingDocumentListResponseSchema)
-async def get_order_multi_shipments(
-    order_id: int = Path(..., description="ID dell'ordine"),
-    user: dict = Depends(get_current_user),
-    shipping_service: IShippingService = Depends(get_shipping_service),
-    db: Session = Depends(get_db),
-    _: None = Depends(require_permission("shipments", "read")),
-):
-    """
-    Recupera lista di spedizioni multiple per un ordine.
-    
-    Restituisce tutti gli OrderDocument con type_document="shipping" per l'ordine specificato.
-    
-    Args:
-        order_id: ID dell'ordine
-        user: Utente autenticato
-        db: Database session
-        
-    Returns:
-        MultiShippingDocumentListResponseSchema con lista spedizioni
-    """
-    return await shipping_service.get_multi_shipments_by_order(order_id, db)
+# Feature multispedizioni rimandata (2026-09-15): vedi nota sopra su
+# create_multi_shipments.
+# @router.get("/orders/{order_id}/multi-shipments", response_model=MultiShippingDocumentListResponseSchema)
+# async def get_order_multi_shipments(
+#     order_id: int = Path(..., description="ID dell'ordine"),
+#     user: dict = Depends(get_current_user),
+#     shipping_service: IShippingService = Depends(get_shipping_service),
+#     db: Session = Depends(get_db),
+#     _: None = Depends(require_permission("shipments", "read")),
+# ):
+#     """
+#     Recupera lista di spedizioni multiple per un ordine.
+#
+#     Restituisce tutti gli OrderDocument con type_document="shipping" per l'ordine specificato.
+#
+#     Args:
+#         order_id: ID dell'ordine
+#         user: Utente autenticato
+#         db: Database session
+#
+#     Returns:
+#         MultiShippingDocumentListResponseSchema con lista spedizioni
+#     """
+#     return await shipping_service.get_multi_shipments_by_order(order_id, db)
