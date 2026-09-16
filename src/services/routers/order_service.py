@@ -16,6 +16,7 @@ from src.models.order_state import OrderState
 from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.models.fiscal_document import FiscalDocument
+from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order, ViesStatus
 from src.events.core.event import Event
 from src.events.runtime import emit_event
@@ -62,31 +63,32 @@ def _extract_order_status_data(*args, result=None, **kwargs):
     
     # Prendi new_state_id da result (può essere "new_status_id" o "new_state_id")
     new_state_id = result.get("new_state_id") or result.get("new_status_id") or kwargs.get("new_status_id")
-    
+
     if not order_id:
         return None
-    
-    # Query SQL ottimizzata: SOLO id_platform
-    from src.database import get_db
+
+    # Riusa la sessione della request (evita una connessione DB scollegata
+    # dalla transazione/override di get_db, es. in test con DB isolato).
     from sqlalchemy import text
-    
-    db = next(get_db())
-    try:
-        stmt = text("""
-            SELECT id_platform
-            FROM orders
-            WHERE id_order = :order_id
-            LIMIT 1
-        """)
-        result_order = db.execute(stmt, {"order_id": order_id}).first()
-        
-        if not result_order:
-            return None
-        
-        id_platform = result_order.id_platform
-    finally:
-        db.close()
-    
+
+    service = args[0] if args else None
+    session = getattr(getattr(service, "_order_repository", None), "session", None)
+    if session is None:
+        return None
+
+    stmt = text("""
+        SELECT id_platform
+        FROM orders
+        WHERE id_order = :order_id
+        LIMIT 1
+    """)
+    result_order = session.execute(stmt, {"order_id": order_id}).first()
+
+    if not result_order:
+        return None
+
+    id_platform = result_order.id_platform
+
     return {
         "order_id": order_id,
         "old_state_id": result.get("old_state_id"),
@@ -111,28 +113,32 @@ def _extract_order_update_status_data(*args, result=None, **kwargs):
     
     if old_state_id is None or new_state_id is None or order_id is None:
         return None
-    
-    # Query SQL ottimizzata: SOLO id_platform
-    from src.database import get_db
+
+    # Query SQL ottimizzata: SOLO id_platform. Riusa la sessione del service
+    # (args[0]._order_repository.session, update_order e' chiamato come
+    # order_service.update_order(order_id, order_schema)) invece di aprire
+    # una connessione DB scollegata dalla transazione/override di get_db
+    # (es. in test con DB isolato).
     from sqlalchemy import text
-    
-    db = next(get_db())
-    try:
-        stmt = text("""
-            SELECT id_platform
-            FROM orders
-            WHERE id_order = :order_id
-            LIMIT 1
-        """)
-        result_order = db.execute(stmt, {"order_id": order_id}).first()
-        
-        if not result_order:
-            return None
-        
-        id_platform = result_order.id_platform
-    finally:
-        db.close()
-        
+
+    service = args[0] if args else None
+    db = getattr(getattr(service, "_order_repository", None), "session", None)
+    if db is None:
+        return None
+
+    stmt = text("""
+        SELECT id_platform
+        FROM orders
+        WHERE id_order = :order_id
+        LIMIT 1
+    """)
+    result_order = db.execute(stmt, {"order_id": order_id}).first()
+
+    if not result_order:
+        return None
+
+    id_platform = result_order.id_platform
+
     return {
         "order_id": order_id,
         "old_state_id": old_state_id,
@@ -167,28 +173,31 @@ def _extract_bulk_order_status_data(*args, result=None, **kwargs):
     
     if old_state_id is None or new_state_id is None or order_id is None:
         return None
-    
-    # Query SQL ottimizzata: SOLO id_platform
-    from src.database import get_db
+
+    # Query SQL ottimizzata: SOLO id_platform. Riusa la sessione passata
+    # esplicitamente (chiamata sempre per kwargs: or_repo=self._order_repository)
+    # invece di aprire una connessione DB scollegata dalla transazione/override
+    # di get_db (es. in test con DB isolato).
     from sqlalchemy import text
-    
-    db = next(get_db())
-    try:
-        stmt = text("""
-            SELECT id_platform
-            FROM orders
-            WHERE id_order = :order_id
-            LIMIT 1
-        """)
-        result_order = db.execute(stmt, {"order_id": order_id}).first()
-        
-        if not result_order:
-            return None
-        
-        id_platform = result_order.id_platform
-    finally:
-        db.close()
-        
+
+    or_repo = kwargs.get("or_repo")
+    db = getattr(or_repo, "session", None)
+    if db is None:
+        return None
+
+    stmt = text("""
+        SELECT id_platform
+        FROM orders
+        WHERE id_order = :order_id
+        LIMIT 1
+    """)
+    result_order = db.execute(stmt, {"order_id": order_id}).first()
+
+    if not result_order:
+        return None
+
+    id_platform = result_order.id_platform
+
     return {
         "order_id": order_id,
         "old_state_id": old_state_id,
@@ -637,32 +646,64 @@ class OrderService(IOrderService):
     async def remove_order_detail(self, order_id: int, order_detail_id: int) -> bool:
         """
         Rimuove un order_detail dall'ordine.
-        
+
         Ricalcola i totali dell'ordine e aggiorna il peso della spedizione dopo la rimozione.
-        
+
         Args:
             order_id: ID dell'ordine
             order_detail_id: ID dell'order_detail da rimuovere
-            
+
         Returns:
             True se rimosso con successo
+
+        Raises:
+            ValueError: ordine o order_detail non trovato (mappata in 404/400)
+            HTTPException 409: l'articolo è già presente in un documento fiscale
+                               (error_code=ORDER_DETAIL_HAS_FISCAL_DOCUMENTS) —
+                               altrimenti la DELETE fallirebbe con un IntegrityError
+                               (FK fiscal_document_details_ibfk_2) mappato a 500.
         """
         # Verifica che l'ordine esista
         order = self._order_repository.get_by_id(_id=order_id)
         if not order:
             raise ValueError(f"Ordine {order_id} non trovato")
-        
+
         session = self._order_repository.session
-        
+
         # Verifica che l'order_detail esista e appartenga all'ordine
         order_detail = session.query(OrderDetail).filter(
             OrderDetail.id_order_detail == order_detail_id,
             OrderDetail.id_order == order_id
         ).first()
-        
+
         if not order_detail:
             raise ValueError(f"OrderDetail {order_detail_id} non trovato per l'ordine {order_id}")
-        
+
+        # Pre-check fiscale: blocco hard 409 con body strutturato (stesso pattern
+        # di delete_order), altrimenti la DELETE sotto fallisce con IntegrityError
+        # 1451 (FK fiscal_document_details_ibfk_2) mappato genericamente a 500.
+        fiscal_doc_ids = [
+            row[0]
+            for row in session.query(FiscalDocumentDetail.id_fiscal_document)
+            .filter(FiscalDocumentDetail.id_order_detail == order_detail_id)
+            .distinct()
+            .all()
+        ]
+        if fiscal_doc_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error_code": "ORDER_DETAIL_HAS_FISCAL_DOCUMENTS",
+                    "message": (
+                        f"Impossibile eliminare l'articolo: è già presente in "
+                        f"{len(fiscal_doc_ids)} documento/i fiscale/i (fattura/DDT/nota)."
+                    ),
+                    "order_id": order_id,
+                    "id_order_detail": order_detail_id,
+                    "fiscal_document_ids": fiscal_doc_ids,
+                },
+            )
+
         # Elimina l'order_detail
         session.delete(order_detail)
         session.commit()
