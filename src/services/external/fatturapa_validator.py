@@ -1892,18 +1892,8 @@ class FatturaPAValidator:
         self._check_dati_fatture_collegate_td04(order_data, xml_data, errors)
         
         # CORREZIONE 3: Deduplica errori per (field + value + ruleCategory)
-        # #region agent log
-        with open(r'c:\Users\webmarke22\Documents\progetti\ECommerceManagerAPI\.cursor\debug.log', 'a', encoding='utf-8') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"fatturapa_validator.py:1745","message":"Before deduplication","data":{"error_count":len(errors),"errors":[{"field":e.get("field"),"rule":e.get("rule"),"value":str(e.get("value")) if e.get("value") is not None else None} for e in errors]},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
         errors = self._deduplicate_errors(errors)
-        # #region agent log
-        with open(r'c:\Users\webmarke22\Documents\progetti\ECommerceManagerAPI\.cursor\debug.log', 'a', encoding='utf-8') as f:
-            import json
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"fatturapa_validator.py:1746","message":"After deduplication","data":{"error_count":len(errors),"errors":[{"field":e.get("field"),"rule":e.get("rule"),"value":str(e.get("value")) if e.get("value") is not None else None} for e in errors]},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
-        
+
         return {
             "valid": len(errors) == 0,
             "errors": errors
