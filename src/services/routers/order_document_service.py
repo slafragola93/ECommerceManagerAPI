@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Any, List
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from datetime import datetime
@@ -9,6 +10,7 @@ from src.models.tax import Tax
 from src.models.shipping import Shipping
 from src.models.app_configuration import AppConfiguration
 from src.models.fiscal_document import FiscalDocument
+from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.models.ricevuta import Ricevuta, RicevutaStato
 from src.schemas.preventivo_schema import ArticoloPreventivoSchema, ArticoloPreventivoUpdateSchema
@@ -685,10 +687,35 @@ class OrderDocumentService:
         if not order_detail:
             return False
         order_id = getattr(order_detail, "id_order", 0)
-        
+
+        # Pre-check fiscale: blocco hard 409 con body strutturato (stesso pattern
+        # di OrderService.remove_order_detail / delete_order), altrimenti la
+        # DELETE sotto fallisce con IntegrityError 1451 (FK
+        # fiscal_document_details_ibfk_2) mappato genericamente a 500.
+        fiscal_doc_ids = [
+            row[0]
+            for row in self.db.query(FiscalDocumentDetail.id_fiscal_document)
+            .filter(FiscalDocumentDetail.id_order_detail == id_order_detail)
+            .distinct()
+            .all()
+        ]
+        if fiscal_doc_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error_code": "ORDER_DETAIL_HAS_FISCAL_DOCUMENTS",
+                    "message": (
+                        f"Impossibile eliminare l'articolo: è già presente in "
+                        f"{len(fiscal_doc_ids)} documento/i fiscale/i (fattura/DDT/nota)."
+                    ),
+                    "id_order_detail": id_order_detail,
+                    "fiscal_document_ids": fiscal_doc_ids,
+                },
+            )
+
         # Salva l'ID del documento per ricalcolare i totali
         id_order_document = order_detail.id_order_document
-        
+
         # Rimuovi l'articolo
         self.db.delete(order_detail)
         self.db.commit()
