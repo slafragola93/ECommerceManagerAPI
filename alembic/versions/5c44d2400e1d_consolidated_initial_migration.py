@@ -24,13 +24,45 @@ def upgrade() -> None:
     conn = context.get_bind()
     inspector = sa.inspect(conn)
     existing_tables = inspector.get_table_names()
-    
+
+    # Create carriers table (struttura storica, senza id_store: viene aggiunto
+    # da c6a9f124459b_add_id_store_to_carriers piu' avanti nella catena)
+    if 'carriers' not in existing_tables:
+        op.create_table('carriers',
+            sa.Column('id_carrier', sa.Integer(), nullable=False),
+            sa.Column('id_origin', sa.Integer(), nullable=True),
+            sa.Column('name', sa.String(200), nullable=True),
+            sa.PrimaryKeyConstraint('id_carrier')
+        )
+        op.create_index(op.f('ix_carriers_id_carrier'), 'carriers', ['id_carrier'])
+        op.create_index(op.f('ix_carriers_id_origin'), 'carriers', ['id_origin'])
+
+    # Create app_configurations table (struttura storica, senza id_store:
+    # viene aggiunto da 930bc8cbac0f_add_id_store_to_app_configurations)
+    if 'app_configurations' not in existing_tables:
+        op.create_table('app_configurations',
+            sa.Column('id_app_configuration', sa.Integer(), nullable=False),
+            sa.Column('id_lang', sa.Integer(), nullable=True),
+            sa.Column('category', sa.String(50), nullable=False),
+            sa.Column('name', sa.String(100), nullable=False),
+            sa.Column('value', sa.String(1000), nullable=True),
+            sa.Column('description', sa.String(255), nullable=True),
+            sa.Column('is_encrypted', sa.Boolean(), nullable=True),
+            sa.Column('date_add', sa.DateTime(), nullable=True),
+            sa.Column('date_upd', sa.DateTime(), nullable=True),
+            sa.PrimaryKeyConstraint('id_app_configuration')
+        )
+        op.create_index(op.f('ix_app_configurations_id_app_configuration'), 'app_configurations', ['id_app_configuration'])
+        op.create_index(op.f('ix_app_configurations_category'), 'app_configurations', ['category'])
+        op.create_index(op.f('ix_app_configurations_name'), 'app_configurations', ['name'])
+
     # Create carrier_api table
     if 'carriers_api' not in existing_tables:
         op.create_table('carriers_api',
             sa.Column('id_carrier_api', sa.Integer(), nullable=False),
             sa.Column('id_carrier', sa.Integer(), nullable=False),
             sa.Column('carrier_type', sa.Enum('BRT', 'DHL', 'FEDEX', name='carriertypeenum'), nullable=False),
+            sa.Column('name', sa.String(200), nullable=True),
             sa.Column('api_username', sa.String(255), nullable=True),
             sa.Column('api_password', sa.String(255), nullable=True),
             sa.Column('api_key', sa.String(500), nullable=True),

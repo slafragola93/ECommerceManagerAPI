@@ -4,6 +4,18 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-17) — Migration Alembic versionate + limite bootstrap da zero
+
+`alembic/versions` e `alembic.ini` erano in `.gitignore` dal commit `f486fc9`: solo 1 migration su 87 era tracciata in git. Un deploy da `git clone` avrebbe perso la catena di revisioni (`alembic upgrade head` → `Can't locate revision`). Versionate tutte, `.gitignore` corretto.
+
+Corretti inoltre 3 bug di disallineamento in `5c44d2400e1d_consolidated_initial_migration.py` e `ae19ac46be2d_modifica_elimina_colonne.py` (tabelle/colonne assunte esistenti ma mai create da nessuna migration precedente — `carriers`, `app_configurations`, colonna `name` su `carriers_api`, drop non guardati su `brt_configurations`/`fedex_configurations`).
+
+**Limite noto, non risolto (a proposito, non serve per il deploy attuale che porta il DB già popolato):** lo schema è sempre nato da `Base.metadata.create_all()` in `src/main.py`, mai da Alembic in sequenza. **29 tabelle "core"** (`orders`, `customers`, `products`, `shipments`, `payments`, `users`, `taxes`, `fiscal_documents`, `addresses`, ecc.) non vengono create da **nessuna** migration esplicita — solo da `create_all()`. Un bootstrap Alembic-only su un DB *completamente vuoto* si blocca appena una migration storica referenzia una di queste tabelle via foreign key (verificato: si rompe già alla 4ª migration della catena).
+
+Se in futuro serve un bootstrap da zero (nuovo ambiente senza copiare il DB esistente), va prima sistemata la catena storica — lavoro non banale, va oltre la correzione di 2-3 file: quasi un terzo delle tabelle del progetto ne sarebbe coinvolto. Fino ad allora, ogni deploy deve portare una copia del DB già popolato, non un bootstrap da zero.
+
+---
+
 ## Ultime modifiche (2026-09-16) — Fix annullo/rigenerazione LDV BRT
 
 L'annullo BRT usava `internal_reference` / `id_order`, la create usa `id_shipping` / `BRT{id_shipping}`. BRT rispondeva `-151` (non trovata). La LDV restava attiva: i retry di create fallivano con `-64 Shipment already done`.
