@@ -85,10 +85,6 @@ coverage.xml
 instance/
 *.db
 
-# SQLAlchemy
-alembic/versions
-alembic.ini
-
 # VS Code
 .vscode/
 
