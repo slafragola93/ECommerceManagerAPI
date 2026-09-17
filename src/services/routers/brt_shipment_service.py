@@ -151,11 +151,32 @@ class BrtShipmentService(IBrtShipmentService):
         )
         print("[BRT create label] JSON inviato a BRT:", json.dumps(create_payload, indent=2, ensure_ascii=False))
         
-        create_response = await self.brt_client.create_shipment(
-            payload=create_payload,
-            credentials=credentials,
-            brt_config=brt_config
-        )
+        try:
+            create_response = await self.brt_client.create_shipment(
+                payload=create_payload,
+                credentials=credentials,
+                brt_config=brt_config
+            )
+        except BusinessRuleException as e:
+            # -64: stessa sender reference già usata (LDV ancora attiva su BRT).
+            # Annullo e ritento una volta, così "Genera LDV" sblocca i retry dopo un annullo fallito.
+            if (e.details or {}).get("carrier_error_code") != -64:
+                raise
+            logger.warning(
+                f"BRT shipment already exists for order {order_id} shipping {shipping_id_to_use}; "
+                "cancelling then retrying create"
+            )
+            await self._delete_brt_shipment(
+                brt_config=brt_config,
+                credentials=credentials,
+                id_shipping=shipping_id_to_use,
+                order_id=order_id,
+            )
+            create_response = await self.brt_client.create_shipment(
+                payload=create_payload,
+                credentials=credentials,
+                brt_config=brt_config
+            )
         
         # 11. Estrazione tracking e label
         tracking = self.brt_mapper.extract_tracking_from_response(create_response)
@@ -428,6 +449,28 @@ class BrtShipmentService(IBrtShipmentService):
         except Exception as e:
             logger.error(f"Errore nel recuperare il percorso del file per AWB {awb}: {str(e)}")
             return None
+
+    async def _delete_brt_shipment(
+        self,
+        brt_config,
+        credentials,
+        id_shipping: int,
+        order_id: int,
+    ) -> Dict[str, Any]:
+        """Cancella la spedizione BRT lato carrier (stessi ref della create). Non tocca lo stato locale."""
+        delete_payload = self.brt_mapper.build_delete_request(
+            brt_config=brt_config,
+            id_shipping=id_shipping,
+        )
+        logger.info(
+            f"BRT delete for order {order_id} shipping {id_shipping} "
+            f"refs={self.brt_mapper.sender_references(id_shipping)}"
+        )
+        return await self.brt_client.cancel_shipment(
+            payload=delete_payload,
+            credentials=credentials,
+            brt_config=brt_config,
+        )
     
     async def cancel_shipment(self, order_id: int) -> Dict[str, Any]:
         """
@@ -453,39 +496,24 @@ class BrtShipmentService(IBrtShipmentService):
         
         # 4. Recupero credenziali
         credentials = self.carrier_api_repository.get_auth_credentials(carrier_api_id)
-        
-        # 5. Recupero internal_reference dell'ordine per generare i riferimenti
-        internal_reference = order_data.internal_reference or str(order_id)
-        
-        # 6. Genera numeric e alphanumeric reference (stessa logica della creazione)
-        # Usa order_id come fallback invece di timestamp per garantire consistenza
-        try:
-            numeric_ref = int(internal_reference) if internal_reference and internal_reference.isdigit() else None
-        except (ValueError, AttributeError):
-            numeric_ref = None
-        
-        if numeric_ref is None:
-            # Use order_id as fallback for consistency with creation
-            numeric_ref = order_id
-        
-        alphanumeric_ref = internal_reference or str(numeric_ref)
-        
-        # 7. Costruisci payload di cancellazione
-        delete_payload = self.brt_mapper.build_delete_request(
-            brt_config=brt_config,
-            numeric_reference=numeric_ref,
-            alphanumeric_reference=alphanumeric_ref
-        )
-        
-        # 8. Esegui cancellazione
+
+        # 5. Stessi riferimenti della create: id_shipping / "BRT" + id_shipping
+        id_shipping = order_data.id_shipping
+        if not id_shipping:
+            raise BusinessRuleException(
+                f"Order {order_id} has no shipping assigned. Cannot cancel BRT shipment.",
+                details={"order_id": order_id},
+            )
+
         logger.info(f"Cancelling BRT shipment for order {order_id}")
-        delete_response = await self.brt_client.cancel_shipment(
-            payload=delete_payload,
+        delete_response = await self._delete_brt_shipment(
+            brt_config=brt_config,
             credentials=credentials,
-            brt_config=brt_config
+            id_shipping=id_shipping,
+            order_id=order_id,
         )
         
-        # 9. Se arriviamo qui, la cancellazione è riuscita
+        # 8. Se arriviamo qui, la cancellazione è riuscita
         # _check_brt_response_errors() nel client ha già gestito tutti gli errori
         # Estrai informazioni dalla risposta per il risultato
         delete_result = delete_response.get("deleteResponse", {})
@@ -494,7 +522,7 @@ class BrtShipmentService(IBrtShipmentService):
         severity = execution_message.get("severity", "SUCCESS")
         message = execution_message.get("message", "Shipment cancelled successfully")
         
-        # 10. Aggiorna lo stato della shipping a 11 (Annullato)
+        # 9. Aggiorna lo stato della shipping a 11 (Annullato)
         self.shipping_repository.update_shipping_to_cancelled_state(order_data.id_shipping)
         
         logger.info(f"BRT shipment cancelled successfully for order {order_id}. Code: {code}, Message: {message}")

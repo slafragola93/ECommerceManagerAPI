@@ -190,11 +190,7 @@ class BrtMapper:
         if hasattr(receiver_address, 'email') and receiver_address.email:
             email = str(receiver_address.email)
         
-        # Use id_shipping for unique sender references to avoid conflicts with BRT
-        # numericSenderReference: id_shipping (e.g., 10)
-        # alphanumericSenderReference: "BRT" + id_shipping (e.g., "BRT10")
-        numeric_ref = id_shipping
-        alphanumeric_ref = f"BRT{id_shipping}"
+        numeric_ref, alphanumeric_ref = self.sender_references(id_shipping)
         
         # Calculate number of parcels: use explicit count if provided, otherwise use len(packages)
         if number_of_parcels is not None:
@@ -309,23 +305,31 @@ class BrtMapper:
         logger.debug(f"BRT Confirm Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
         return payload
     
+    @staticmethod
+    def sender_references(id_shipping: int) -> tuple[int, str]:
+        """Same BRT sender refs used by create, confirm and delete.
+
+        numericSenderReference: id_shipping (e.g. 79103)
+        alphanumericSenderReference: "BRT" + id_shipping (e.g. "BRT79103")
+        """
+        return id_shipping, f"BRT{id_shipping}"
+
     def build_delete_request(
         self,
         brt_config: BrtConfiguration,
-        numeric_reference: int,
-        alphanumeric_reference: str
+        id_shipping: int,
     ) -> Dict[str, Any]:
         """
         Build BRT delete shipment request payload
         
         Args:
             brt_config: BRT configuration
-            numeric_reference: Numeric sender reference
-            alphanumeric_reference: Alphanumeric sender reference
+            id_shipping: Shipping PK used as sender reference (must match create)
             
         Returns:
             BRT delete payload dict
         """
+        numeric_reference, alphanumeric_reference = self.sender_references(id_shipping)
         payload = {
             "account": {
                 "userID": str(brt_config.api_user),

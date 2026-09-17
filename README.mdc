@@ -4,6 +4,17 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-16) — Fix annullo/rigenerazione LDV BRT
+
+L'annullo BRT usava `internal_reference` / `id_order`, la create usa `id_shipping` / `BRT{id_shipping}`. BRT rispondeva `-151` (non trovata). La LDV restava attiva: i retry di create fallivano con `-64 Shipment already done`.
+
+- Create e delete condividono `BrtMapper.sender_references(id_shipping)`.
+- Se create riceve `-64`, annulla la LDV esistente e ritenta una volta.
+
+Su un ordine già bloccato (es. 69149) basta ritentare **Genera LDV**.
+
+---
+
 ## Ultime modifiche (2026-09-15) — Step 10 ottimizzazione FiscalDocument (`includes_shipping`)
 
 `includes_shipping` **non** è derivabile da `shipping`. Si tiene. Nessuna Alembic, JSON invariato.
