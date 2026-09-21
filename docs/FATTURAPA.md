@@ -685,8 +685,8 @@ Handoff FE: [`docs/FE_HANDOFF_PURCHASE_INVOICES.md`](./FE_HANDOFF_PURCHASE_INVOI
 1. Legge `fatturapa.api_key` da `app_configurations`
 2. Chiama feed POOL REST (ATOM/XML)
 3. Filtra `Direzione=Acquisto` + tipi ricezione
-4. Scarica XML, parse header + `DettaglioLinee`
-5. Persiste con idempotenza su `(identificativo_sdi, nome_file)`
+4. Scarica XML in memoria, parse header + `DettaglioLinee`
+5. Persiste con idempotenza su `(identificativo_sdi, nome_file)` (`xml_content` in DB, nessun dump su disco)
 
 **Scheduler (lifespan `main.py`):**
 

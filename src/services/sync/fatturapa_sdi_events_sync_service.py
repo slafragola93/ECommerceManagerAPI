@@ -54,7 +54,7 @@ class FatturaPASdiEventsSyncService:
                         stats["entries_skipped"] += 1
                         continue
                     stats["entries_processed"] += 1
-                    xml_content, _path = await self._pool._download_file(entry)
+                    xml_content = await self._pool._download_file(entry)
                     result = self.persist_notification(
                         xml_content=xml_content,
                         nome_file=entry.get("NomeFile"),

@@ -1,293 +1,0 @@
-0Ä	*ÜHÜ˜†Ä0Ä10	`ÜHe0Ä	*ÜHÜ˜†Ä$ÄÇË<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet type="text/xsl" href="fatturapa_v1.2.xsl" ?>
-<p:FatturaElettronica versione="FPR12" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
-xmlns:p="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2"
-xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-xsi:schemaLocation="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2 fatturaordinaria_v1.2.xsd ">
-<FatturaElettronicaHeader>
-<DatiTrasmissione>
-  <IdTrasmittente>
-<IdPaese>IT</IdPaese>
-<IdCodice>11036210158</IdCodice>
-</IdTrasmittente>
-<ProgressivoInvio>1027106</ProgressivoInvio>
-<FormatoTrasmissione>FPR12</FormatoTrasmissione>
-<CodiceDestinatario>TULURSB</CodiceDestinatario>
-<ContattiTrasmittente>
-<Telefono>0813614614</Telefono>
-<Email>CREDITI.MEGAWATT@PEC-ELEXITALIA.IT</Email>
-</ContattiTrasmittente>
-<PECDestinatario>WEBMARKET@LEGPEC.IT</PECDestinatario>
-</DatiTrasmissione>
-<CedentePrestatore>
-<DatiAnagrafici>
-<IdFiscaleIVA>
-<IdPaese>IT</IdPaese>
-<IdCodice>059074912ÇË10</IdCodice>
-</IdFiscaleIVA>
-<Anagrafica>
-<Denominazione>MEGAWATT S.P.A.</Denominazione>
-</Anagrafica>
-<RegimeFiscale>RF01</RegimeFiscale>
-</DatiAnagrafici>
-<Sede>
-<Indirizzo>VIA CIRCUMVALLAZIONE ESTERNA DI NAPOLI, 89</Indirizzo>
-<CAP>80026</CAP>
-<Comune>CASORIA</Comune>
-<Provincia>NA</Provincia>
-<Nazione>IT</Nazione>
-</Sede>
-<IscrizioneREA>
-<Ufficio>NA</Ufficio>
-<NumeroREA>783835</NumeroREA>
-<CapitaleSociale>10050000.00</CapitaleSociale>
-<SocioUnico>SM</SocioUnico>
-<StatoLiquidazione>LN</StatoLiquidazione>
-</IscrizioneREA>
-<Contatti>
-<Telefono>0813614614</Telefono>
-<Fax>0813614666</Fax>
-<Email>CREDITI.MEGAWATT@PEC-ELEXITALIA.IT</Email>
-</Contatti>
-</CedentePrestatore>
-<CessionarioCommittente>
-<DatiAnagrafici>
-<IdFiscaleIVA>
-<IdPaese>IT</IdPaese>
-<IdCodice>08632861210</IdCodice>
-</IdFiscaleIVA>
-<Anagrafica>
-<Denominazione>WEB MARKET S.R.L.</Denominazione>
-</Anagrafica>
-</DatiAnagrafici>
-<Sede>
-<Indirizzo>Corso Vittorio Emanuele, 110&#47;5</Indirizzo>
-<CAP>80121</CAP>
-<Comune>Napoli</CÇËomune>
-<Provincia>NA</Provincia>
-<Nazione>IT</Nazione>
-</Sede>
-</CessionarioCommittente>
-</FatturaElettronicaHeader>
-<FatturaElettronicaBody>
-<DatiGenerali>
-<DatiGeneraliDocumento>
-<TipoDocumento>TD04</TipoDocumento>
-<Divisa>EUR</Divisa>
-<Data>2026-09-14</Data>
-<Numero>4525/R1</Numero>
-<ImportoTotaleDocumento>228.25</ImportoTotaleDocumento>
-<Causale>Reso da clienti</Causale>
-</DatiGeneraliDocumento>
-</DatiGenerali>
-<DatiBeniServizi>
-<DettaglioLinee>
-<NumeroLinea>1</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>BAMCMAGNCER</CodiceValore>
-</CodiceArticolo>
-<Descrizione>TH&#47;GALLEGG. SIL. UNIV. 3&#47;8M M</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>4.7600</PrezzoUnitario>
-<PrezzoTotale>4.7600</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>BAMCMAGNCER</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Note Riga</TiÇËpoDato>
-<RiferimentoTesto>Rif.Ns.Doc.043693 del 05 08 26</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>2</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>BAMCPLAC2TN</CodiceValore>
-</CodiceArticolo>
-<Descrizione>TH&#47;PLACCA COM ABS B.CA  VEGA</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>6.7720</PrezzoUnitario>
-<PrezzoTotale>6.7720</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>BAMCPLAC2TN</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Note Riga</TipoDato>
-<RiferimentoTesto>Rif.Ns.Doc.043693 del 05 08 26</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>3</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>URM1096&#47;507</CodiceValore>
-</CodiceArticolo>
-<Descrizione>AHD 5M 2.8-12MM AF VANDAL DOÇËM</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>33.5200</PrezzoUnitario>
-<PrezzoTotale>33.5200</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>UTD1096 507</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Note Riga</TipoDato>
-<RiferimentoTesto>Rif.Ns.Doc.038947 del 14 07 26</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>4</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>LGIPWFMDD202.</CodiceValore>
-</CodiceArticolo>
-<Descrizione>MODULO WIFI LG</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>26.4000</PrezzoUnitario>
-<PrezzoTotale>26.4000</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>LGEPWFMDD202.ENCXCO</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<ÇËTipoDato>Note Riga</TipoDato>
-<RiferimentoTesto>Rif.Ns.Doc.043114 del 03 08 26</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>5</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>FIS521762</CodiceValore>
-</CodiceArticolo>
-<Descrizione>STAFFA KLIMA STRONG CM 56 &gt;18</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>8.4760</PrezzoUnitario>
-<PrezzoTotale>8.4760</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>FIS00521762</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Note Riga</TipoDato>
-<RiferimentoTesto>Rif.Ns.Doc.044856 del 13 08 26</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>6</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>HAIAAC0X0E00</CodiceValore>
-</CodiceArticolo>
-<Descrizione>12000&#47;3ÇË,5KW UI GEOS R</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>36.0000</PrezzoUnitario>
-<PrezzoTotale>36.0000</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>HAIAAC0X0E00</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Note Riga</TipoDato>
-<RiferimentoTesto>Rif.Ns.Doc.042310 del 30 07 26</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>7</NumeroLinea>
-<CodiceArticolo>
-<CodiceTipo>Codice Articolo</CodiceTipo>
-<CodiceValore>HISAS35MR0BW</CodiceValore>
-</CodiceArticolo>
-<Descrizione>12000&#47;3,5KW UE WINGS      RID1</Descrizione>
-<Quantita>1.00</Quantita>
-<UnitaMisura>PZ</UnitaMisura>
-<PrezzoUnitario>67.8600</PrezzoUnitario>
-<PrezzoTotale>67.8600</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Cod.Metel</TipoDato>
-<RiferimentoTesto>HISAS35MR0BW</RiferimentoTesto>
-</AltriDatiGestionalÇËi>
-<AltriDatiGestionali>
-<TipoDato>Note Riga</TipoDato>
-<RiferimentoTesto>Rif.Ns.Doc.043123 del 03 08 26</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Nota Doc.</TipoDato>
-<RiferimentoTesto>Codice IBAN IT68M0200805364000500068572</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Nota Doc.</TipoDato>
-<RiferimentoTesto>Rif Vs.DDT Num.400    del 19 08 26</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Nota Doc.</TipoDato>
-<RiferimentoTesto>Motivazione    : reso</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Nota Doc.</TipoDato>
-<RiferimentoTesto>Numero Righe Stampate : 7</RiferimentoTesto>
-</AltriDatiGestionali>
-<AltriDatiGestionali>
-<TipoDato>Nota Doc.</TipoDato>
-<RiferimentoTesto>Spese Raee      3,3000</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DettaglioLinee>
-<NumeroLinea>8</NumeroLinea>
-<TipoCessionePrestazione>AC</TipoCessionePrestazione>
-<Descrizione>Spese Raee<ÇJ/Descrizione>
-<Quantita>1.00</Quantita>
-<PrezzoUnitario>3.3000</PrezzoUnitario>
-<PrezzoTotale>3.3000</PrezzoTotale>
-<AliquotaIVA>22.00</AliquotaIVA>
-<AltriDatiGestionali>
-<TipoDato>Dest.Div.</TipoDato>
-<RiferimentoTesto>Idem</RiferimentoTesto>
-</AltriDatiGestionali>
-</DettaglioLinee>
-<DatiRiepilogo>
-<AliquotaIVA>22.00</AliquotaIVA>
-<ImponibileImporto>187.09</ImponibileImporto>
-<Imposta>41.16</Imposta>
-<EsigibilitaIVA>I</EsigibilitaIVA>
-</DatiRiepilogo>
-</DatiBeniServizi>
-<DatiPagamento>
-<CondizioniPagamento>TP02</CondizioniPagamento>
-<DettaglioPagamento>
-<ModalitaPagamento>MP05</ModalitaPagamento>
-<DataScadenzaPagamento>2026-10-31</DataScadenzaPagamento>
-<ImportoPagamento>228.25</ImportoPagamento>
-<IBAN>IT30W0306939845100000007485</IBAN>
- </DettaglioPagamento>
-</DatiPagamento>
-    </FatturaElettronicaBody>
-</p:FatturaElettronica>
-      †Ä0ÇN0Ç6†;ë4“Êiçj_˝e¢¬2%0	*ÜHÜ˜ 0Å∫10	UIT10UPonte San Pietro10U
-Actalis S.p.A.10UaVATIT-033585209671)0'U Qualified Trust Service Provider100.U'Actalis EU Qualified Certificates CA G10250519074919Z270529074819Z0ÅŸ10	UIT10U
-	Metel srl10UaVATIT-1103621015810UDirettore Generale10UCasanova10U*Giorgio10UTINIT-CSNGRG65D26B30M10UGiorgio Casanova10U.WSREF-725247230529250Ç"0	*ÜHÜ˜ Ç 0Ç
-Ç •w™i·N1 ¥ﬂåË∑¨@kLz¡0C›^
-»”ﬁ
-√'®<±µ,ME∏Ìgæ=„∂∏=_éÂ”ﬁ¸7Àá∏xù0\Ô™£ P¶xcãh∆¡);!P◊ÙûtŸÙ˙9¬3*ﬁÀ‚ã	…·=Ö ƒCπöﬂ˛¬™ÏLDª.`1Içt#€âõè¶üπ“mÙm¸≈ ≠R’í⁄Xﬁ)=Cug—ÌÌ-4Z∑€ÔpW¢·iB’Ga-!¸í¿óR#Ì,w˘¨?FGë∫ÙÏ$epyr`Ö∫4lΩ‰_ôœƒç¶–}jﬂKç~=Óv’{Ó9»«åaÎ?'˝G	Êàés
-á]œ`q £Ç-0Ç)0U#0Äÿ∑Òñsñ“i:A<.E9nÅ˛û0ÅÖ+y0w0;+0Ü/http://cacert.actalis.it/certs/actalis-eidas-g108+0Ü,http://ocsp08.actalis.it/va/actalis-eidas-g10U0Åinfo@actalis.it0Ç'U Ç0Ç0	 ãÏ@0Ç+Å
-0Å¯0D+8https://www.actalis.it/repository/actalis-qualif-cps.pdf0ÅØ+0Å¢ÅüIl presente certificato √® valido solo per firme apposte con procedura automatica. The certificate may only be used for unattended/automatic digital signature.0+L0Å≈+Å∏0Åµ0 éF0 éF0 éF0Åë éF0ÅÜ0A;https://www.actalis.it/repository/actalis-qualif-pds-it.pdfit0A;https://www.actalis.it/repository/actalis-qualif-pds-en.pdfen0@U90705†3†1Ü/http://crl08.actalis.it/va/actalis-eidas-g1/crl0U5ÂîÁo≤\JC˚ZHöï◊0Uˇ@0	*ÜHÜ˜ Ç H¨Gπ1Ê¯6⁄ªïê≤¢ï∞1Ñ(%‹Ò•¥˙\∂¥Ì¬ê›ëü®∏Kôê¿4Níª≠ h-]‰¨˘v‚S‹¢$çf¥óﬂßI¨*÷zÁDŸ˙;¨?Ik‡*1ûM À"àƒçfNóo›;π%§·LaÇß¢ûà,ØdÉízîı…Jl±ÌD˜®º‹¢3ÿ|239M7ñjÒú|ﬂ˘Á#R#º
-N5J[Z k°ºÙ~ÈÄÚØTeƒá`ÁR9 `µŸµ£∞U¬ï)‚Åvå≈\.9·+Ì§–Hß›»bc¥ã∫)”d }¨[á¢òØl+kµ\≠•Û¨‡Ho2hí±◊˚|¿?aı¥Hg“‘9Ö{,≥Údœ;óz∞Sxl®uVöò¬∂æ'¶EQ s2û»≥ˆÀ#©p™€∂ﬂm∆O˚SwD√$Ué§)¢‚ı”;
-c\Ûg ©"Ï<Ò}…XRBFiﬂÀƒK∆
-4–L«t±ä≤!r>‘Ä5ŸÀTuò>	∂§Õj±ÚPSã∞’Fäî;Pîd≤≠€ôùcﬁ¿¬∞í∞˘L∞OI¢PÈ¸X›8M¬Q·Ò≥*Nf.Ê,√˙jˆˇñ/£%N—≥=ÕéÏ2˝œâä^Êœ4pRenÓœ7@_˜P@±óõí)ˇr¿RÉ  1Ç0Ç{0Åœ0Å∫10	UIT10UPonte San Pietro10U
-Actalis S.p.A.10UaVATIT-033585209671)0'U Qualified Trust Service Provider100.U'Actalis EU Qualified Certificates CA G1;ë4“Êiçj_˝e¢¬2%0	`ÜHe†ÇÇ0	*ÜHÜ˜	1	*ÜHÜ˜0	*ÜHÜ˜	1260915083417Z0/	*ÜHÜ˜	1" ö„0"⁄˙>k‚l=#⁄W ÃEön*Cií/J)«e∞ó©0Ç*ÜHÜ˜	/1Ç0Ç 0Å˝0Å˙ ©î—&C?ávÄ¬:c{∑ØõìUq3*»ïjH}>0Å’0Å¿§ÅΩ0Å∫10	UIT10UPonte San Pietro10U
-Actalis S.p.A.10UaVATIT-033585209671)0'U Qualified Trust Service Provider100.U'Actalis EU Qualified Certificates CA G1;ë4“Êiçj_˝e¢¬2%0	*ÜHÜ˜ Ç E≈%¶Õ“ å}Ãu∫+èEhtﬁ* Ù&ééÑ¡E©I<p›“‚ö@+Ñã§‚‹ç˚∞hk–ó)˘'LÌ∞rüƒcÇA◊lwËö∆ ï0f ı"ﬂß+ƒª6Øçö0j¨[£âfQÊMéô;‚ù}YÁÁ∫ôo;¶/n{8–cR∞Ví‹|2êF€`DøFb≈†óÖZá∞´v«∆q›U"c∆ÏkÒÍo∫1∫ÅÚM7Öòˆ¡I,1ø£≠˝ÆgW\Û”	çÆΩåF˜QÏ¡6yÓÑ¯B∏ÜSî5Mö‚f[J>Ω[#ê8í~ˆ’æΩ—Éµ0bæﬁZ=	Ú=Å‰      

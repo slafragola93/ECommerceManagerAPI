@@ -6,7 +6,7 @@ Questo servizio si occupa di:
 2. Chiamare l'API FatturaPA per ottenere il feed POOL
 3. Parsare il feed XML/ATOM
 4. Filtrare i documenti di acquisto e tipi utili (es. 'Ricezione')
-5. Scaricare i file XML/P7M
+5. Scaricare i file XML/P7M in memoria
 6. Salvare nel database con idempotenza
 7. Opzionalmente marcare come consumate le righe nel POOL
 """
@@ -35,9 +35,8 @@ class FatturaPAPoolSyncService:
     DATA_NS = {'d': 'http://schemas.microsoft.com/ado/2007/08/dataservices'}
     
     def __init__(
-        self, 
-        db: Session, 
-        download_dir: Optional[str] = None,
+        self,
+        db: Session,
         timeout: int = 60
     ):
         """
@@ -45,20 +44,12 @@ class FatturaPAPoolSyncService:
         
         Args:
             db: Sessione database SQLAlchemy
-            download_dir: Directory dove salvare i file scaricati (default: fatture_download/)
             timeout: Timeout per le richieste HTTP in secondi
         """
         self.db = db
         self.config_repo = AppConfigurationRepository(db)
         self.invoice_repo = PurchaseInvoiceSyncRepository(db)
         self.timeout = timeout
-        
-        # Directory download (default: fatture_download/)
-        self.download_dir = download_dir or os.path.join(
-            os.getcwd(), 
-            'fatture_download'
-        )
-        os.makedirs(self.download_dir, exist_ok=True)
         
         # Recupera API key da configurazione
         self.api_key = self._get_api_key()
@@ -165,12 +156,11 @@ class FatturaPAPoolSyncService:
                         stats['entries_skipped'] += 1
                         continue
                     
-                    # Scarica il file XML/P7M
-                    file_content, file_path = await self._download_file(entry)
+                    # Scarica il file XML/P7M in memoria (persistito in xml_content)
+                    file_content = await self._download_file(entry)
                     if file_content:
                         stats['entries_downloaded'] += 1
                         entry['xml_content'] = file_content
-                        entry['file_path'] = file_path
                     
                     # Salva nel database (header + righe da XML)
                     invoice_data, details = self._prepare_invoice_data(entry)
@@ -392,25 +382,22 @@ class FatturaPAPoolSyncService:
         
         return True
     
-    async def _download_file(
-        self, 
-        entry: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str]]:
+    async def _download_file(self, entry: Dict[str, Any]) -> Optional[str]:
         """
-        Scarica il file XML/P7M dal campo URI
-        
+        Scarica il file XML/P7M dal campo URI in memoria.
+
         Args:
             entry: Dati dell'entry contenente il campo URI
-        
+
         Returns:
-            Tuple (contenuto_file, path_locale)
+            Contenuto del file come stringa, o None se il download fallisce
         """
         uri = entry.get('URI', '')
         nome_file = entry.get('NomeFile', 'unknown.xml')
         
         if not uri:
             logger.warning(f"URI mancante per file {nome_file}")
-            return None, None
+            return None
         
         try:
             logger.debug(f"Download file: {nome_file} da {uri[:50]}...")
@@ -418,24 +405,21 @@ class FatturaPAPoolSyncService:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(uri)
                 response.raise_for_status()
-                
-                # Salva il file localmente
-                file_path = os.path.join(self.download_dir, nome_file)
-                with open(file_path, 'wb') as f:
-                    f.write(response.content)
-                
-                # Ritorna sia il contenuto che il path
-                content = response.text if nome_file.endswith('.xml') else response.content.decode('utf-8', errors='ignore')
-                
-                logger.debug(f"File scaricato: {file_path}")
-                return content, file_path
+
+                content = (
+                    response.text
+                    if nome_file.endswith('.xml')
+                    else response.content.decode('utf-8', errors='ignore')
+                )
+                logger.debug(f"File scaricato in memoria: {nome_file}")
+                return content
                 
         except httpx.HTTPError as e:
             logger.error(f"Errore HTTP nel download file {nome_file}: {e}")
-            return None, None
+            return None
         except Exception as e:
             logger.error(f"Errore generico nel download file {nome_file}: {e}")
-            return None, None
+            return None
     
     def _prepare_invoice_data(
         self, entry: Dict[str, Any]
@@ -456,7 +440,7 @@ class FatturaPAPoolSyncService:
             'tipo': entry.get('Tipo', ''),
             'blob_uri': entry.get('URI', ''),
             'xml_content': entry.get('xml_content'),
-            'file_path': entry.get('file_path'),
+            'file_path': None,
             'partition_key': entry.get('PartitionKey', ''),
             'row_key': entry.get('RowKey', ''),
             'etag': entry.get('ETag', ''),

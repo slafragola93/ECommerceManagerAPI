@@ -4,6 +4,20 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-21) — Sync POOL FatturaPA senza dump su disco
+
+Il download XML/P7M dal POOL (fatture acquisto + notifiche SDI) resta in memoria e viene persistito in DB (`xml_content` / `payload`). Non crea più `fatture_download/` nella cwd.
+
+- `FatturaPAPoolSyncService._download_file` ritorna solo il contenuto; niente `os.makedirs` / write.
+- Colonna `file_path` su `fatture_acquisto_sync` invariata (nullable): i record nuovi la lasciano `null`. Nessuna Alembic.
+- Cartella eventuale già presente: si può cancellare a mano; è in `.gitignore`.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/sync/test_fatturapa_sdi_events_sync.py tests/unit/services/test_purchase_invoice_service.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-17) — Migration Alembic versionate + limite bootstrap da zero
 
 `alembic/versions` e `alembic.ini` erano in `.gitignore` dal commit `f486fc9`: solo 1 migration su 87 era tracciata in git. Un deploy da `git clone` avrebbe perso la catena di revisioni (`alembic upgrade head` → `Can't locate revision`). Versionate tutte, `.gitignore` corretto.
@@ -503,7 +517,7 @@ Consultazione documenti **ricevuti dai fornitori** via POOL FatturaPA (TD01 + TD
 |-------|-----------|
 | API | `/api/v1/purchase-invoices` — lista, dettaglio+`details`, XML, `PATCH .../payment`, `POST .../sync` |
 | RBAC | modulo `purchase_invoices` |
-| Scheduler | `FATTURAPA_POOL_SYNC_ENABLED` / `INTERVAL_SECONDS=900` (lifespan `main.py`) |
+| Scheduler | `FATTURAPA_POOL_SYNC_ENABLED` / `INTERVAL_SECONDS=900` (lifespan `main.py`); XML solo in DB, no cartella `fatture_download/` |
 | DB | colonne consultazione/pagamento su `fatture_acquisto_sync` + tabella `fatture_acquisto_sync_details` |
 | Migration | `python scripts/migrations/alter_fatture_acquisto_sync_consultation_payment.py` |
 | Auth module | `python scripts/init_auth_data.py` |
