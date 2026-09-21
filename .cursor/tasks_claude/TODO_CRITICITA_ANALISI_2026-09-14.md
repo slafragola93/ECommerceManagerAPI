@@ -15,20 +15,22 @@
 
 ## 🟠 Sicurezza — da rivedere
 
-- [ ] Endpoint "Admin only" in `src/main.py` **senza alcuna auth reale**: `DELETE /api/v1/cache`, `POST /api/v1/cache/reset`, `GET /api/v1/cache/stats`, `/metrics`. Aggiungere dependency di autenticazione/autorizzazione.
-- [ ] CORS incoerente in `src/main.py`:
-  - lista `origins` (righe ~342-352) definita ma mai usata (dead code);
-  - handler globale `OPTIONS /{full_path:path}` (riga ~697) risponde `Access-Control-Allow-Origin: "*"` **+** `Access-Control-Allow-Credentials: "true"` — combo che i browser rifiutano ed è disallineata dalla `CORSMiddleware` reale (che whitelista solo 4 origin).
-- [ ] 64 blocchi `except Exception`/`except:` silenziosi in 32 file (18 solo in `preventivo_service.py`) — rischio errori mascherati. Da rivedere almeno nei path critici (fatturazione, pagamenti, spedizioni).
-- [ ] `requirements.txt` con versioni datate (FastAPI 0.110.1, starlette 0.37.2, cryptography 42.0.5, python-jose 3.3.0, PyYAML 6.0.1). Girare `pip-audit` o `safety check`, priorità su `python-jose`/`cryptography` (reggono il JWT).
+> **Verificato 2026-09-17**: i primi due punti erano già risolti (probabilmente nel commit `2a8f757`), mai segnati. Gli altri due restano aperti, invariati.
+
+- [x] ~~Endpoint "Admin only" in `src/main.py` **senza alcuna auth reale**~~ **RISOLTO.** Tutti e 4 (`/metrics`, `DELETE /api/v1/cache`, `POST /api/v1/cache/reset`, `GET /api/v1/cache/stats`) ora hanno `Depends(require_admin)`, verificato che richiede JWT valido + ruolo `full_crud`.
+- [x] ~~CORS incoerente in `src/main.py`~~ **RISOLTO.** Nessuna lista `origins` morta, nessun handler `OPTIONS /{full_path:path}` globale — resta solo il `CORSMiddleware` reale con whitelist di 4 origin.
+- [ ] **Ancora aperto**: ~65 blocchi `except Exception`/`except:` silenziosi in `src/` — conteggio invariato rispetto al 14/09. Da rivedere almeno nei path critici (fatturazione, pagamenti, spedizioni).
+- [ ] **Ancora aperto**: `requirements.txt` invariato — stesse versioni datate (FastAPI 0.110.1, starlette 0.37.2, cryptography 42.0.5, python-jose 3.3.0, PyYAML 6.0.1). Girare `pip-audit` o `safety check`, priorità su `python-jose`/`cryptography` (reggono il JWT).
 
 ---
 
 ## 🟡 Manutenibilità / architettura
 
-- [ ] File monolitici da valutare per uno split: `fatturapa_validator.py` (1993 righe), `preventivo_service.py` (1798 righe), `main.py` (842 righe — spostare endpoint cache/metrics/health in un router dedicato).
-- [ ] Doppio meccanismo di startup in `main.py`: `lifespan` (moderno) + `@app.on_event("startup")` deprecato che chiama `Base.metadata.create_all(bind=engine)` ad ogni avvio insieme ad Alembic → rischio drift schema/migration. Valutare rimozione del `create_all` a favore delle sole migration.
-- [ ] Cartella `.git` orfana in `src/repository/.git` (non è un submodule, nessun `.gitmodules`). Non rompe nulla ma è fuorviante — valutare rimozione.
+> **Verificato 2026-09-17**: tutti e 3 i punti restano aperti.
+
+- [ ] **Ancora aperto**: file monolitici — `fatturapa_validator.py` ora 1983 righe (era 1993, lieve calo per la rimozione del debug code), `preventivo_service.py` invariato a 1798 righe, `main.py` ora 816 righe (era 842). Nessuno split fatto.
+- [ ] **Ancora aperto e confermato**: doppio meccanismo di startup in `main.py` — `lifespan` (riga 195) **e** `@app.on_event("startup")` deprecato (riga 686) che chiama `Base.metadata.create_all(bind=engine)`, insieme ad Alembic → stesso rischio di drift discusso e documentato oggi in README.mdc (voce 2026-09-17) durante il lavoro sulle migration.
+- [ ] **Ancora aperto**: cartella `.git` orfana in `src/repository/.git`, confermata presente. Non rompe nulla ma è fuorviante — valutare rimozione.
 
 ---
 
