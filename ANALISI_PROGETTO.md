@@ -1076,6 +1076,7 @@ CRUD standard: GET `/`, GET `/{id}`, POST `/`, PUT `/{id}`, DELETE `/{id}`
 | Metodo | Path | Funzione |
 |---|---|---|
 | POST | `/invoices` | `create_invoice` |
+| POST | `/invoices/bulk-create` | `bulk_create_invoices` — snapshot pending per lista ordini (max 100; esito `successful`/`failed`; no XML/SDI; `ALREADY_INVOICED` se già fatturato) |
 | GET | `/invoices/order/{id_order}` | `get_invoices_by_order` |
 | GET | `/invoices/export` | `export_invoices` — bulk Excel (`fmt=xlsx`) o ZIP XML FatturaPA (`fmt=xml`); PDF solo singolo |
 | POST | `/credit-notes` | `create_credit_note` |

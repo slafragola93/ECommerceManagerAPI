@@ -199,6 +199,65 @@ class InvoiceCreateSchema(BaseModel):
         }
 
 
+class BulkInvoiceCreateRequestSchema(BaseModel):
+    """Richiesta creazione massiva fatture da lista ordini."""
+
+    order_ids: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Lista di ID ordini (max 100) per cui creare le fatture",
+    )
+
+    @field_validator("order_ids")
+    @classmethod
+    def validate_order_ids(cls, v: List[int]) -> List[int]:
+        if any(oid is None or oid <= 0 for oid in v):
+            raise ValueError("Ogni order_id deve essere un intero > 0")
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "order_ids": [101, 102, 103],
+            }
+        }
+
+
+class BulkInvoiceCreateSuccess(BaseModel):
+    """Esito positivo creazione fattura in bulk."""
+
+    order_id: int
+    id_fiscal_document: int
+    document_number: Optional[str] = None
+    status: Optional[str] = None
+
+
+class BulkInvoiceCreateError(BaseModel):
+    """Errore creazione fattura in bulk per un singolo ordine."""
+
+    order_id: int
+    error_type: str = Field(
+        ...,
+        description=(
+            "ALREADY_INVOICED | NOT_FOUND | BUSINESS_RULE_ERROR | "
+            "VALIDATION_ERROR | UNKNOWN_ERROR"
+        ),
+    )
+    error_message: str
+
+
+class BulkInvoiceCreateResponseSchema(BaseModel):
+    """Risposta creazione massiva fatture."""
+
+    successful: List[BulkInvoiceCreateSuccess] = Field(default_factory=list)
+    failed: List[BulkInvoiceCreateError] = Field(default_factory=list)
+    summary: dict = Field(
+        ...,
+        description="Riepilogo: total, successful_count, failed_count",
+    )
+
+
 class InvoiceResponseSchema(DocumentQuickStatusSchema):
     """Schema risposta documento fiscale attivo (fattura TD01 / nota di credito TD04).
 

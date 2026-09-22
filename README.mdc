@@ -4,6 +4,29 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-22) — Bulk create fatture da lista ordini
+
+Nuovo endpoint `POST /api/v1/fiscal_documents/invoices/bulk-create` per generare fatture (solo snapshot `pending`, senza XML/SDI) dagli ordini selezionati in lista.
+
+| Metodo | Path | Note |
+|--------|------|------|
+| POST | `/api/v1/fiscal_documents/invoices/bulk-create` | Body `{ "order_ids": [...] }` — max 100; response `successful`/`failed`/`summary` |
+| POST | `/api/v1/fiscal_documents/invoices` | Singolo — resta l’unico percorso per **re-emissione** |
+
+- Body: `{ "order_ids": [101, 102, ...] }` — max 100, dedup automatico
+- Response 200: `successful` / `failed` / `summary` (stesso pattern delle LDV bulk)
+- Ordini già fatturati → `ALREADY_INVOICED` (re-emissione resta solo su `POST /invoices` singolo)
+- Permesso: `fiscal_documents:create`
+
+Handoff FE: [`.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_create.md`](.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_create.md)  
+Dettaglio API: [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §4 bulk-create · Flusso contabilità: [`docs/FLUSSO_FATTURAPA_CONTABILITA.md`](docs/FLUSSO_FATTURAPA_CONTABILITA.md)
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/test_bulk_create_invoices.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-21) — PDF fattura: Totale IVA solo merce
 
 Nel PDF di fattura/NC (`GET /api/v1/fiscal_documents/{id}/pdf`) **Totale IVA** (riquadro e colonna Tot.IVA) è solo l'IVA merce: `products_total_price_with_tax − products_total_price_net`. La spedizione resta IVA inclusa (`shipping_total_price_with_tax` / `price_tax_incl`); **Imp.Spese** in tabella aliquote è 0,00; **Totale imponibile** è solo merce. XML/FatturaPA invariato (lì l'IVA spedizione resta legittima).
@@ -1314,6 +1337,7 @@ Dopo deploy: eseguire `python scripts/setup_initial.py` (o inserire manualmente 
 | GET | `/api/v1/fiscal_documents/invoices/order/{id_order}` | `InvoiceResponseSchema[]` arricchito |
 | GET | `/api/v1/fiscal_documents/{id}` | `InvoiceResponseSchema` se `document_type=invoice` o `credit_note`, altrimenti schema generico |
 | POST | `/api/v1/fiscal_documents/invoices` | `InvoiceResponseSchema` arricchito dopo creazione |
+| POST | `/api/v1/fiscal_documents/invoices/bulk-create` | `BulkInvoiceCreateResponseSchema` — lista ordini, max 100 (vedi Ultime modifiche 2026-09-22) |
 
 ### Response `InvoiceResponseSchema`
 

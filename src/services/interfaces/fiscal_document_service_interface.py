@@ -9,6 +9,9 @@ from src.models.fiscal_document_detail import FiscalDocumentDetail
 from src.models.order import Order
 from src.schemas.return_schema import ReturnCreateSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 from src.schemas.fiscal_document_schema import (
+    BulkInvoiceCreateError,
+    BulkInvoiceCreateResponseSchema,
+    BulkInvoiceCreateSuccess,
     CreditNoteEligibleLinesResponseSchema,
     InvoicePatchResponseSchema,
     InvoiceUpdateSchema,
@@ -21,6 +24,13 @@ class IFiscalDocumentService(IBaseService):
     @abstractmethod
     async def create_invoice(self, id_order: int) -> FiscalDocument:
         """Crea una fattura elettronica FatturaPA per un ordine"""
+        pass
+
+    @abstractmethod
+    async def bulk_create_invoices(
+        self, order_ids: List[int], user: dict = None
+    ) -> BulkInvoiceCreateResponseSchema:
+        """Crea fatture in blocco per una lista di ordini (esito per-ordine)."""
         pass
 
     @abstractmethod

@@ -1,7 +1,7 @@
 # FatturaPA — Flusso operativo (riassunto per Contabilità)
 
 **Sistema:** Elettronew · **Formato:** FatturaPA FPR12 · **Intermediario:** FatturaPA.com  
-**Versione documento:** 2026-07-20
+**Versione documento:** 2026-09-22
 
 ---
 
@@ -44,6 +44,8 @@ ORDINE PRONTO
 | **Cosa salva** | Righe ordine, prezzi, IVA, spedizione (snapshot) |
 | **Status risultante** | `pending` |
 | **Chi** | Operatore gestionale (permesso creazione fatture) |
+| **Singolo** | `POST /api/v1/fiscal_documents/invoices` — consente anche re-emissione |
+| **Bulk (lista ordini)** | `POST /api/v1/fiscal_documents/invoices/bulk-create` — max 100 ordini; se già fatturato → errore `ALREADY_INVOICED` (niente re-emissione); non genera XML né invia SDI |
 
 **Prima di procedere, verificare sull’ordine:**
 

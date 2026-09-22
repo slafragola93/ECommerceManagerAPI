@@ -32,6 +32,8 @@ from src.schemas.fiscal_document_schema import (
     FiscalDocumentSdiStatusSchema,
     SdiEventsSyncResultSchema,
     SdiNotificationItemSchema,
+    BulkInvoiceCreateRequestSchema,
+    BulkInvoiceCreateResponseSchema,
 )
 from src.services.pdf.fiscal_document_pdf_builder import build_fiscal_document_pdf_buffer
 from src.services.external.fatturapa_pec_gate import pec_gate_error
@@ -192,6 +194,41 @@ async def create_invoice(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
+
+
+@router.post(
+    "/invoices/bulk-create",
+    response_model=BulkInvoiceCreateResponseSchema,
+    status_code=status.HTTP_200_OK,
+    summary="Crea fatture in blocco da lista ordini",
+)
+async def bulk_create_invoices(
+    request: BulkInvoiceCreateRequestSchema = Body(
+        ...,
+        examples={
+            "selezione_ordini": {
+                "summary": "Ordini selezionati dalla lista",
+                "value": {"order_ids": [101, 102, 103]},
+            },
+        },
+    ),
+    user: dict = user_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "create")),
+):
+    """
+    Crea fatture elettroniche (snapshot `pending`) per una lista di ordini.
+
+    - Non genera XML né invia allo SDI (come `POST /invoices`).
+    - Ordini già fatturati → `failed` con `ALREADY_INVOICED` (re-emissione solo sul singolo).
+    - Ogni ordine è indipendente: gli errori non bloccano gli altri.
+    - Max 100 `order_ids`; i duplicati vengono deduplicati.
+    - HTTP 200 anche se tutti falliscono (esito in `successful` / `failed` / `summary`).
+    """
+    return await fiscal_service.bulk_create_invoices(
+        order_ids=request.order_ids,
+        user=user,
+    )
 
 
 @router.get(

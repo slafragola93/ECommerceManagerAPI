@@ -14,10 +14,11 @@ Documenti correlati:
 | [fatturapa_riassunto_piano.md](../.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md) | Normativa, formato XML, ciclo SDI, piano fasi |
 | [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md) | Gap analysis P0–P3, checklist go-live |
 | [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md) | Handoff FE — contratto `InvoiceDetail` v3 |
+| [prompt_FE_fatture_bulk_create.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_create.md) | Handoff FE — genera fatture in blocco da lista ordini |
 | [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
-**Aggiornato:** 2026-09-14
+**Aggiornato:** 2026-09-22
 
 ---
 
@@ -26,6 +27,7 @@ Documenti correlati:
 ```text
 1. Configurare company_info + electronic_invoicing + fatturapa in app_configurations
 2. POST /api/v1/fiscal_documents/invoices            → pending
+   (oppure POST /invoices/bulk-create { order_ids } → pending per N ordini; no re-emissione)
 3. POST /api/v1/fiscal_documents/{id}/generate-xml    → generated (o 422: correggere in pending)
 4. POST /api/v1/fiscal_documents/{id}/send-to-sdi     → { "send_to_sdi": true } (UploadStop)
 5. GET  /api/v1/fiscal_documents/{id}/sdi-status      ← ricevute SdI (RC/NS/MC/…)
@@ -130,6 +132,7 @@ Per fattura elettronica (`is_electronic=true`):
 |------------|---------------|
 | GET lista / dettaglio fattura | `fiscal_documents:read` |
 | POST creazione fattura / NC | `fiscal_documents:create` |
+| POST bulk-create fatture | `fiscal_documents:create` |
 | POST generate-xml, send-to-sdi, PATCH status / PATCH fattura | `fiscal_documents:update` |
 | DELETE documento (solo `pending`) | `fiscal_documents:delete` |
 | GET PDF singola | `fiscal_documents:read` |
@@ -179,6 +182,63 @@ Totali: `total_price_*` (documento), `products_total_*` (merce), `shipping_total
 `includes_shipping` resta: non è sostituibile da `shipping` (logistica ordine). NC senza spedizione su ordine spedito → embed `shipping` presente, flag `false`.
 
 Handoff FE: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md)
+
+---
+
+### POST `/api/v1/fiscal_documents/invoices/bulk-create`
+
+Crea snapshot fiscali (`status=pending`) per una lista di ordini selezionati. **Non genera XML** né invia allo SDI. Stesso comportamento del POST singolo, con esito per-ordine.
+
+Permesso: `fiscal_documents:create`.
+
+#### Body
+
+| Campo | Obbligatorio | Validazione |
+|-------|--------------|-------------|
+| `order_ids` | **Sì** | lista di `int > 0`, `min_length=1`, `max_length=100` |
+
+```json
+{ "order_ids": [101, 102, 103] }
+```
+
+Duplicati: deduplicati preservando l'ordine (processati una sola volta).
+
+#### Regole per-ordine
+
+Ogni ordine è indipendente. HTTP **200** anche se tutti falliscono.
+
+| `error_type` | Quando |
+|---|---|
+| `ALREADY_INVOICED` | esiste già una fattura → **non** re-emette (re-emissione solo su `POST /invoices` singolo) |
+| `NOT_FOUND` | ordine inesistente |
+| `BUSINESS_RULE_ERROR` | percorso corrispettivi (ricevuta e/o reso) |
+| `VALIDATION_ERROR` | indirizzo fatturazione mancante / altri errori di validazione |
+| `UNKNOWN_ERROR` | eccezione inattesa |
+
+#### Response
+
+```json
+{
+  "successful": [
+    {
+      "order_id": 101,
+      "id_fiscal_document": 8801,
+      "document_number": "000123",
+      "status": "pending"
+    }
+  ],
+  "failed": [
+    {
+      "order_id": 102,
+      "error_type": "ALREADY_INVOICED",
+      "error_message": "Ordine già fatturato: usare la re-emissione sul singolo ordine"
+    }
+  ],
+  "summary": { "total": 2, "successful_count": 1, "failed_count": 1 }
+}
+```
+
+Handoff FE: [prompt_FE_fatture_bulk_create.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_create.md)
 
 ---
 
@@ -314,6 +374,8 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 
 | Obiettivo | Metodo | Path | Note |
 |-----------|--------|------|------|
+| Creare fattura (**singolo** ordine) | `POST` | `/invoices` | Snapshot `pending`; consente re-emissione |
+| Creare fatture (**bulk** da lista ordini) | `POST` | `/invoices/bulk-create` | Max 100; `ALREADY_INVOICED` se già fatturato; no XML/SDI |
 | Generare XML FatturaPA (**singolo** doc) | `POST` | `/{id}/generate-xml` | `status=generated`, errori **422**. Dopo NS usare `retry-send` |
 | Eliminare XML (loop KO) | `POST` | `/{id}/reset-xml` | Torna `pending`; vieta se SdI già evaso |
 | Caricare / inviare a SDI via API | `POST` | `/{id}/send-to-sdi` | `{ "send_to_sdi": true }` = upload + SdI (`UploadStop`) |

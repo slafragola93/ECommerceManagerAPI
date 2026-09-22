@@ -18,6 +18,9 @@ from src.models.shipping import Shipping
 from src.models.tax import Tax
 from src.schemas.return_schema import ReturnCreateSchema, ReturnDocumentResponseSchema, ReturnDetailResponseSchema, ReturnResponseSchema, ReturnUpdateSchema, ReturnDetailUpdateSchema
 from src.schemas.fiscal_document_schema import (
+    BulkInvoiceCreateError,
+    BulkInvoiceCreateResponseSchema,
+    BulkInvoiceCreateSuccess,
     CreditNoteEligibleLinesResponseSchema,
     InvoiceExportFiltersSchema,
     InvoiceExportFormatSchema,
@@ -126,7 +129,124 @@ class FiscalDocumentService(IFiscalDocumentService):
             raise
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della fattura: {str(e)}")
-    
+
+    async def bulk_create_invoices(
+        self, order_ids: List[int], user: dict = None
+    ) -> BulkInvoiceCreateResponseSchema:
+        """
+        Crea fatture in blocco per ordini selezionati.
+
+        Solo snapshot pending (come POST /invoices). Non genera XML né invia SDI.
+        Ordini già fatturati → failed ALREADY_INVOICED (re-emissione solo sul singolo).
+        Ogni ordine è indipendente: un fallimento non blocca gli altri.
+        """
+        unique_ids = list(dict.fromkeys(order_ids))
+        successful: List[BulkInvoiceCreateSuccess] = []
+        failed: List[BulkInvoiceCreateError] = []
+        order_svc = OrderDocumentService(self._session)
+
+        logger.info(
+            "Starting bulk invoice creation for %s orders (%s unique)",
+            len(order_ids),
+            len(unique_ids),
+        )
+
+        for order_id in unique_ids:
+            try:
+                order = (
+                    self._session.query(Order)
+                    .filter(Order.id_order == order_id)
+                    .first()
+                )
+                if not order:
+                    failed.append(
+                        BulkInvoiceCreateError(
+                            order_id=order_id,
+                            error_type="NOT_FOUND",
+                            error_message=f"Ordine {order_id} non trovato",
+                        )
+                    )
+                    continue
+
+                if order_svc.check_order_invoiced(order_id):
+                    failed.append(
+                        BulkInvoiceCreateError(
+                            order_id=order_id,
+                            error_type="ALREADY_INVOICED",
+                            error_message=(
+                                "Ordine già fatturato: usare la re-emissione "
+                                "sul singolo ordine"
+                            ),
+                        )
+                    )
+                    continue
+
+                invoice = await self.create_invoice(id_order=order_id, user=user)
+                successful.append(
+                    BulkInvoiceCreateSuccess(
+                        order_id=order_id,
+                        id_fiscal_document=invoice.id_fiscal_document,
+                        document_number=invoice.document_number,
+                        status=invoice.status,
+                    )
+                )
+            except BusinessRuleException as e:
+                self._session.rollback()
+                failed.append(
+                    BulkInvoiceCreateError(
+                        order_id=order_id,
+                        error_type="BUSINESS_RULE_ERROR",
+                        error_message=str(e),
+                    )
+                )
+                logger.warning(
+                    "Order %s: BUSINESS_RULE_ERROR - %s", order_id, e
+                )
+            except ValidationException as e:
+                self._session.rollback()
+                failed.append(
+                    BulkInvoiceCreateError(
+                        order_id=order_id,
+                        error_type="VALIDATION_ERROR",
+                        error_message=str(e),
+                    )
+                )
+                logger.warning(
+                    "Order %s: VALIDATION_ERROR - %s", order_id, e
+                )
+            except Exception as e:
+                self._session.rollback()
+                failed.append(
+                    BulkInvoiceCreateError(
+                        order_id=order_id,
+                        error_type="UNKNOWN_ERROR",
+                        error_message=str(e),
+                    )
+                )
+                logger.error(
+                    "Order %s: UNKNOWN_ERROR - %s",
+                    order_id,
+                    e,
+                    exc_info=True,
+                )
+
+        summary = {
+            "total": len(unique_ids),
+            "successful_count": len(successful),
+            "failed_count": len(failed),
+        }
+        logger.info(
+            "Bulk invoice creation completed: %s successful, %s failed out of %s",
+            summary["successful_count"],
+            summary["failed_count"],
+            summary["total"],
+        )
+        return BulkInvoiceCreateResponseSchema(
+            successful=successful,
+            failed=failed,
+            summary=summary,
+        )
+
     @emit_event_on_success(
         event_type=EventType.DOCUMENT_CREATED,
         data_extractor=extract_credit_note_created_data,
