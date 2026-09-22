@@ -97,10 +97,10 @@ def _minimal_context(locale="it", n_details=2, tax_note=None):
             "merchandise_net": merchandise,
             "shipping_incl": 37.99,
             "shipping_excl": 31.14,
-            "taxable_total": merchandise + 31.14,
+            "taxable_total": merchandise,
             "collection_fee": 0.0,
             "merchandise_gross": merchandise * 1.22,
-            "total_vat": merchandise * 0.22 + 6.85,
+            "total_vat": merchandise * 0.22,
             "misc_fee": 0.0,
             "doc_total": merchandise * 1.22 + 37.99,
             "total_weight": 80.546,
@@ -110,7 +110,7 @@ def _minimal_context(locale="it", n_details=2, tax_note=None):
             {
                 "rate": 22.0 if locale == "it" else 0.0,
                 "merchandise": merchandise,
-                "shipping": 31.14,
+                "shipping": 0.0,
                 "vat": merchandise * 0.22 if locale == "it" else 0.0,
             }
         ],
@@ -241,7 +241,7 @@ class TestFiscalDocumentPDFLayout:
         ]
         ctx["totals"]["merchandise_net"] = 2065.57
         ctx["totals"]["total_discount"] = 500.0
-        ctx["totals"]["taxable_total"] = 2065.57 + 31.14
+        ctx["totals"]["taxable_total"] = 2065.57
         out = FiscalDocumentPDFLayout.render_document(ctx)
         text = _pdf_text(out)
         assert "500,00" in text
@@ -407,7 +407,7 @@ class TestFiscalDocumentPDFService:
         assert out[:4] == b"%PDF"
 
     def test_vat_summary_uses_detail_rate_not_zero_when_shipping_22(self):
-        """Regressione fattura 000016/ordine 69057: merce snapshot 22% + spedizione 22% → un bucket."""
+        """Regressione fattura 000016/ordine 69057: merce snapshot 22% → un bucket; IVA solo merce."""
         svc = FiscalDocumentPDFService()
         fiscal = SimpleNamespace(total_price_with_tax=2816.965)
         order = SimpleNamespace(
@@ -427,35 +427,23 @@ class TestFiscalDocumentPDFService:
             }
         ]
 
-        class _TaxRepo:
-            def get_percentage_by_id(self, id_tax):
-                return 22.0 if id_tax == 217 else 0.0
+        totals, vat_summary = svc._compute_totals(
+            fiscal_document=fiscal,
+            order=order,
+            details=details,
+            db=None,
+        )
 
-        class _DB:
-            pass
-
-        # monkeypatch TaxRepository via local import path used in _compute_totals
-        import src.services.pdf.fiscal_document_pdf_service as mod
-        from unittest.mock import patch
-
-        with patch(
-            "src.repository.tax_repository.TaxRepository",
-            return_value=_TaxRepo(),
-        ):
-            totals, vat_summary = svc._compute_totals(
-                fiscal_document=fiscal,
-                order=order,
-                details=details,
-                db=_DB(),
-            )
-
+        merchandise_vat = 2244.24 * 0.22
         assert len(vat_summary) == 1
         assert vat_summary[0]["rate"] == 22.0
         assert vat_summary[0]["merchandise"] == pytest.approx(2244.24)
-        assert vat_summary[0]["shipping"] == pytest.approx(64.75)
-        assert vat_summary[0]["vat"] == pytest.approx(507.9778)
+        assert vat_summary[0]["shipping"] == pytest.approx(0.0)
+        assert vat_summary[0]["vat"] == pytest.approx(merchandise_vat)
         assert totals["doc_total"] == pytest.approx(2816.965)
-        assert totals["total_vat"] == pytest.approx(507.9778)
+        assert totals["total_vat"] == pytest.approx(merchandise_vat)
+        assert totals["taxable_total"] == pytest.approx(2244.24)
+        assert totals["shipping_incl"] == pytest.approx(79.0)
 
     def test_partial_credit_note_uses_document_totals_not_order(self):
         """NC parziale: totali PDF da fiscal_document, non da ordine completo."""
@@ -487,30 +475,109 @@ class TestFiscalDocumentPDFService:
             }
         ]
 
-        class _TaxRepo:
-            def get_percentage_by_id(self, id_tax):
-                return 22.0 if id_tax == 217 else 0.0
-
-        from unittest.mock import patch
-
-        with patch(
-            "src.repository.tax_repository.TaxRepository",
-            return_value=_TaxRepo(),
-        ):
-            totals, vat_summary = svc._compute_totals(
-                fiscal_document=fiscal,
-                order=order,
-                details=details,
-                db=object(),
-            )
+        totals, vat_summary = svc._compute_totals(
+            fiscal_document=fiscal,
+            order=order,
+            details=details,
+            db=None,
+        )
 
         assert totals["merchandise_net"] == pytest.approx(5.44)
         assert totals["merchandise_gross"] == pytest.approx(6.64)
         assert totals["shipping_excl"] == pytest.approx(26.22)
         assert totals["shipping_incl"] == pytest.approx(31.99)
-        assert totals["taxable_total"] == pytest.approx(31.66)
+        assert totals["taxable_total"] == pytest.approx(5.44)
+        assert totals["total_vat"] == pytest.approx(1.20)
         assert totals["doc_total"] == pytest.approx(38.63)
         assert totals["total_weight"] == pytest.approx(0.095)
         assert len(vat_summary) == 1
         assert vat_summary[0]["merchandise"] == pytest.approx(5.44)
-        assert vat_summary[0]["shipping"] == pytest.approx(26.22)
+        assert vat_summary[0]["shipping"] == pytest.approx(0.0)
+        assert vat_summary[0]["vat"] == pytest.approx(1.20)
+
+    def test_invoice_000025_vat_is_merchandise_only(self):
+        """Fattura 000025 / ordine 69151: Totale IVA = 3,31 (solo merce), spese 5,98 lorde."""
+        svc = FiscalDocumentPDFService()
+        fiscal = SimpleNamespace(
+            document_type="invoice",
+            includes_shipping=True,
+            products_total_price_net=15.05,
+            products_total_price_with_tax=18.36,
+            total_price_net=19.95,
+            total_price_with_tax=24.34,
+        )
+        order = SimpleNamespace(
+            products_total_price_net=15.05,
+            total_price_with_tax=24.34,
+            total_weight=1.0,
+            shipments=SimpleNamespace(
+                price_tax_excl=4.90,
+                price_tax_incl=5.98,
+                id_tax=217,
+            ),
+        )
+        details = [
+            {
+                "product_qty": 1,
+                "unit_price_net": 5.44,
+                "total_price_net": 5.44,
+                "vat_rate": 22.0,
+            },
+            {
+                "product_qty": 1,
+                "unit_price_net": 9.61,
+                "total_price_net": 9.61,
+                "vat_rate": 22.0,
+            },
+        ]
+
+        totals, vat_summary = svc._compute_totals(
+            fiscal_document=fiscal,
+            order=order,
+            details=details,
+            db=None,
+        )
+
+        assert totals["shipping_incl"] == pytest.approx(5.98)
+        assert totals["merchandise_net"] == pytest.approx(15.05)
+        assert totals["taxable_total"] == pytest.approx(15.05)
+        assert totals["merchandise_gross"] == pytest.approx(18.36)
+        assert totals["total_vat"] == pytest.approx(3.31)
+        assert totals["doc_total"] == pytest.approx(24.34)
+        assert totals["doc_total"] == pytest.approx(
+            totals["merchandise_gross"] + totals["shipping_incl"]
+        )
+        assert len(vat_summary) == 1
+        assert vat_summary[0]["merchandise"] == pytest.approx(15.05)
+        assert vat_summary[0]["shipping"] == pytest.approx(0.0)
+        assert vat_summary[0]["vat"] == pytest.approx(3.31)
+
+
+class TestInvoicePdfVatDisplay:
+    def test_layout_shows_merchandise_vat_not_shipping_vat(self):
+        """PDF 000025: 3,31 in Totale IVA / Tot.IVA; niente 4,39; spese 5,98."""
+        ctx = _minimal_context("it", n_details=2)
+        ctx["totals"] = {
+            "merchandise_net": 15.05,
+            "shipping_incl": 5.98,
+            "shipping_excl": 4.90,
+            "taxable_total": 15.05,
+            "collection_fee": 0.0,
+            "merchandise_gross": 18.36,
+            "total_vat": 3.31,
+            "misc_fee": 0.0,
+            "doc_total": 24.34,
+            "total_weight": 1.0,
+            "total_discount": 0.0,
+        }
+        ctx["vat_summary"] = [
+            {"rate": 22.0, "merchandise": 15.05, "shipping": 0.0, "vat": 3.31}
+        ]
+        text = _pdf_text(FiscalDocumentPDFLayout.render_document(ctx))
+        assert "3,31" in text
+        assert "5,98" in text
+        assert "24,34" in text
+        assert "15,05" in text
+        assert "18,36" in text
+        assert "4,39" not in text
+        assert "4,90" not in text

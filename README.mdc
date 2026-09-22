@@ -4,6 +4,20 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-21) — PDF fattura: Totale IVA solo merce
+
+Nel PDF di fattura/NC (`GET /api/v1/fiscal_documents/{id}/pdf`) **Totale IVA** (riquadro e colonna Tot.IVA) è solo l'IVA merce: `products_total_price_with_tax − products_total_price_net`. La spedizione resta IVA inclusa (`shipping_total_price_with_tax` / `price_tax_incl`); **Imp.Spese** in tabella aliquote è 0,00; **Totale imponibile** è solo merce. XML/FatturaPA invariato (lì l'IVA spedizione resta legittima).
+
+Caso 000025 / ordine 69151: Spese 5,98 · IVA 3,31 · documento 24,34 (= 18,36 + 5,98).
+
+Niente payload extra dal FE. Rigenerare il PDF sullo stesso id (il template legge lo snapshot).
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/pdf/test_fiscal_document_pdf_layout.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-21) — Sync POOL FatturaPA senza dump su disco
 
 Il download XML/P7M dal POOL (fatture acquisto + notifiche SDI) resta in memoria e viene persistito in DB (`xml_content` / `payload`). Non crea più `fatture_download/` nella cwd.

@@ -263,6 +263,14 @@ class FiscalDocumentPDFService(BasePDFService):
         details: List[Dict[str, Any]],
         db,
     ) -> tuple:
+        """
+        Totali e riparto IVA per il PDF (layout display).
+
+        Totale IVA / Tot.IVA / imponibile = solo merce
+        (products_total_price_with_tax − products_total_price_net).
+        Spese trasporto = lordo IVA inclusa. Imp.Spese in tabella = 0.
+        Non modifica XML/FatturaPA.
+        """
         is_credit_note = getattr(fiscal_document, "document_type", None) == "credit_note"
         includes_shipping_flag = getattr(fiscal_document, "includes_shipping", None)
         if is_credit_note:
@@ -289,42 +297,34 @@ class FiscalDocumentPDFService(BasePDFService):
 
         shipping_excl = 0.0
         shipping_incl = 0.0
-        shipping_vat_rate = 0.0
 
         shipping = None
         if includes_shipping:
-            if doc_total_net is not None and products_total_net is not None:
-                shipping_excl = max(
-                    0.0,
-                    self._as_float(doc_total_net) - self._as_float(products_total_net),
-                )
+            # Lordo: shipping_total_price_with_tax (snapshot) o price_tax_incl.
+            # Non usare il netto come Spese trasporto.
             if doc_total_with_tax is not None and products_total_with_tax is not None:
                 shipping_incl = max(
                     0.0,
                     self._as_float(doc_total_with_tax)
                     - self._as_float(products_total_with_tax),
                 )
+            if doc_total_net is not None and products_total_net is not None:
+                shipping_excl = max(
+                    0.0,
+                    self._as_float(doc_total_net) - self._as_float(products_total_net),
+                )
 
             if order and getattr(order, "shipments", None):
                 shipping = order.shipments
             if shipping:
-                if not shipping_excl:
-                    shipping_excl = self._as_float(shipping.price_tax_excl)
                 if not shipping_incl:
                     shipping_incl = self._as_float(shipping.price_tax_incl)
-                if getattr(shipping, "id_tax", None) and db:
-                    from src.repository.tax_repository import TaxRepository
+                if not shipping_excl:
+                    shipping_excl = self._as_float(shipping.price_tax_excl)
 
-                    tax_repo = TaxRepository(db)
-                    shipping_vat_rate = self._as_float(
-                        tax_repo.get_percentage_by_id(shipping.id_tax)
-                    )
-                    if shipping_vat_rate and not shipping_incl and shipping_excl:
-                        shipping_incl = shipping_excl * (
-                            1 + shipping_vat_rate / 100.0
-                        )
-
-        # Raggruppa IVA per aliquota (merce)
+        # Raggruppa IVA per aliquota: solo merce.
+        # La spedizione è già in riquadro come importo IVA inclusa (shipping_incl);
+        # non entra nel riparto PDF (Imp.Spese=0). XML/FatturaPA resta invariato.
         buckets: Dict[float, Dict[str, float]] = {}
         for d in details:
             rate = self._as_float(d.get("vat_rate"), 0)
@@ -339,37 +339,29 @@ class FiscalDocumentPDFService(BasePDFService):
             buckets[rate]["merchandise"] += net
             buckets[rate]["vat"] += net * (rate / 100.0)
 
-        # Assegna spese trasporto all'aliquota spedizione (o prima aliquota)
-        if shipping_excl:
-            ship_rate = shipping_vat_rate
-            if ship_rate not in buckets:
-                buckets[ship_rate] = {
-                    "rate": ship_rate,
-                    "merchandise": 0.0,
-                    "shipping": 0.0,
-                    "vat": 0.0,
-                }
-            buckets[ship_rate]["shipping"] += shipping_excl
-            buckets[ship_rate]["vat"] += shipping_excl * (ship_rate / 100.0)
+        merchandise_vat_from_lines = sum(r["vat"] for r in buckets.values())
+
+        if products_total_with_tax is not None:
+            merchandise_gross = self._as_float(products_total_with_tax)
+            total_vat = max(0.0, merchandise_gross - merchandise_net)
+        else:
+            merchandise_gross = merchandise_net + merchandise_vat_from_lines
+            total_vat = merchandise_vat_from_lines
+
+        # Un solo bucket merce: allinea Tot.IVA tabella allo snapshot (es. 3,31)
+        merchandise_buckets = [b for b in buckets.values() if b["merchandise"]]
+        if len(merchandise_buckets) == 1 and products_total_with_tax is not None:
+            merchandise_buckets[0]["vat"] = total_vat
 
         vat_summary = sorted(buckets.values(), key=lambda r: r["rate"])
-        total_vat = sum(r["vat"] for r in vat_summary)
 
-        taxable_total = merchandise_net + shipping_excl
+        # Imponibile PDF = solo merce (non merce + netto spedizione)
+        taxable_total = merchandise_net
         doc_total = self._as_float(doc_total_with_tax)
         if not doc_total and order:
             doc_total = self._as_float(order.total_price_with_tax)
         if not doc_total:
-            doc_total = taxable_total + total_vat
-
-        if products_total_with_tax is not None:
-            merchandise_gross = self._as_float(products_total_with_tax)
-        else:
-            merchandise_gross = merchandise_net + sum(
-                self._as_float(d.get("total_price_net"), 0)
-                * (self._as_float(d.get("vat_rate"), 0) / 100.0)
-                for d in details
-            )
+            doc_total = merchandise_gross + shipping_incl
 
         total_weight = 0.0
         if is_credit_note:
