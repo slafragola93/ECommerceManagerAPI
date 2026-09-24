@@ -4,6 +4,70 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-23) — Home ElettroNext: filtri lettura
+
+Due query param opzionali per alimentare i contatori della home senza endpoint nuovi né cambio dei JSON di risposta.
+
+| Endpoint | Parametri nuovi | Uso home |
+|----------|-----------------|----------|
+| `GET /api/v1/fiscal_documents/` | `sdi_status` (uguaglianza esatta) | Scartati SDI: `?sdi_status=scartata&limit=1` → `total` |
+| `GET /api/v1/shippings/` | `id_carrier_api`, `date_from`, `date_to` | Spedizioni oggi per corriere; `date_to` = fine giornata inclusiva |
+
+- `date_to` su shippings usa `time.max` (come fiscal_documents), distinto dalla mezzanotte di `GET /orders/`
+- Lista e `total` shippings condividono gli stessi filtri
+- Mappa completa dato→endpoint: [`.cursor/tasks_claude/BACKLOG_UNIFICATO.md`](.cursor/tasks_claude/BACKLOG_UNIFICATO.md) voce **BE-HOME-READ**
+- Spec filtri lista fiscali: [`docs/FATTURAPA.md`](docs/FATTURAPA.md)
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/repository/test_fiscal_document_list_filters.py tests/integration/api/v1/test_shippings_get.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-22) — Fattura create parziale / residuo / riemissione
+
+`POST /api/v1/fiscal_documents/invoices` allineato al modello NC: `is_partial`, `items`, `include_shipping`. Niente endpoint nuovo, niente PATCH.
+
+| Modo | Body | Snapshot |
+|------|------|----------|
+| Residuo (default) | `{ "id_order" }` | Qty ancora fatturabili (ordine − resi − già fatturate) |
+| Parziale | `is_partial=true` + `items` non vuoti | Solo quelle qty (≤ residuo); 422 se items assenti |
+| Riemissione | `items` senza `is_partial` | Snapshot esplicito, senza tetto residuo |
+
+- Canone = `items` (come NC); extra FE (`is_electronic`, …) ignorati
+- Bulk-create invariato: solo residuo pieno, `ALREADY_INVOICED` se già fatturato
+- Spec: [`.cursor/tasks_claude/fatturazione/prompt_BE_fatture_create_partial.md`](.cursor/tasks_claude/fatturazione/prompt_BE_fatture_create_partial.md)
+- Dettaglio: [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §4
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/schemas/test_invoice_create_schema.py tests/unit/repository/test_fiscal_document_create_invoice.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-22) — Bulk invio SDI (facade)
+
+Nuovo endpoint `POST /api/v1/fiscal_documents/send-to-sdi/bulk`: il FE passa un array di `id_fiscal_document`, il BE riesegue per ciascuno il flusso Upload FatturaPA.com (l’intermediario non supporta upload multiplo in una call).
+
+| Metodo | Path | Note |
+|--------|------|------|
+| POST | `/api/v1/fiscal_documents/send-to-sdi/bulk` | Body `{ "ids": [...], "send_to_sdi": true }` — max **25**; response `successful`/`failed`/`summary` |
+| POST | `/api/v1/fiscal_documents/{id}/send-to-sdi` | Singolo (invariato) |
+| POST | `/api/v1/fiscal_documents/{id}/retry-send` | Solo NS — **non** nel bulk |
+
+- Prerequisito: XML già generato (niente auto `generate-xml`)
+- Se API send disabilitata e `send_to_sdi=true` → 400 sull’intero request
+- Permesso: `fiscal_documents:update`
+
+Handoff FE: [`.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_send_sdi.md`](.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_send_sdi.md)  
+Dettaglio: [`docs/FATTURAPA.md`](docs/FATTURAPA.md) §6 bulk send-to-sdi
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/test_bulk_send_to_sdi.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-22) — Bulk create fatture da lista ordini
 
 Nuovo endpoint `POST /api/v1/fiscal_documents/invoices/bulk-create` per generare fatture (solo snapshot `pending`, senza XML/SDI) dagli ordini selezionati in lista.

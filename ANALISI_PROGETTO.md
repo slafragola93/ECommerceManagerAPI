@@ -1077,6 +1077,7 @@ CRUD standard: GET `/`, GET `/{id}`, POST `/`, PUT `/{id}`, DELETE `/{id}`
 |---|---|---|
 | POST | `/invoices` | `create_invoice` |
 | POST | `/invoices/bulk-create` | `bulk_create_invoices` — snapshot pending per lista ordini (max 100; esito `successful`/`failed`; no XML/SDI; `ALREADY_INVOICED` se già fatturato) |
+| POST | `/send-to-sdi/bulk` | `bulk_send_to_sdi` — facade N cicli Upload (max 25; XML già generato; no retry-send) |
 | GET | `/invoices/order/{id_order}` | `get_invoices_by_order` |
 | GET | `/invoices/export` | `export_invoices` — bulk Excel (`fmt=xlsx`) o ZIP XML FatturaPA (`fmt=xml`); PDF solo singolo |
 | POST | `/credit-notes` | `create_credit_note` |

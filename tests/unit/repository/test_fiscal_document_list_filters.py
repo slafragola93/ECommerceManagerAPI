@@ -1,6 +1,7 @@
 """Test filtri lista GET documenti fiscali (paese consegna, range date)."""
 from datetime import datetime
 from decimal import Decimal
+from typing import Optional
 
 import pytest
 
@@ -21,12 +22,14 @@ def _seed_invoice(
     *,
     emission_date: datetime,
     status: str = "issued",
+    sdi_status: Optional[str] = None,
 ) -> FiscalDocument:
     invoice = FiscalDocument(
         document_type="invoice",
         id_order=order.id_order,
         status=status,
         is_electronic=True,
+        sdi_status=sdi_status,
         date_add=emission_date,
         total_price_net=Decimal("100.00"),
         total_price_with_tax=Decimal("122.00"),
@@ -133,6 +136,47 @@ class TestFiscalDocumentListFiltersRepository:
         )
         assert len(rows) == 1
         assert rows[0].id_fiscal_document == target.id_fiscal_document
+
+    def test_filter_by_sdi_status(self, db_session, fiscal_repo):
+        tax = seed_tax(db_session)
+        order_scartata, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="ord-scartata",
+            order_date=datetime(2026, 3, 1),
+        )
+        order_consegnata, _ = seed_paid_order(
+            db_session,
+            tax,
+            reference="ord-consegnata",
+            order_date=datetime(2026, 3, 2),
+        )
+        inv_scartata = _seed_invoice(
+            db_session,
+            order_scartata,
+            emission_date=datetime(2026, 3, 5),
+            sdi_status="scartata",
+        )
+        _seed_invoice(
+            db_session,
+            order_consegnata,
+            emission_date=datetime(2026, 3, 6),
+            sdi_status="consegnata",
+        )
+
+        rows = fiscal_repo.get_fiscal_documents(
+            document_type="invoice",
+            sdi_status="scartata",
+        )
+        assert len(rows) == 1
+        assert rows[0].id_fiscal_document == inv_scartata.id_fiscal_document
+        assert rows[0].sdi_status == "scartata"
+
+        total = fiscal_repo.count_fiscal_documents(
+            document_type="invoice",
+            sdi_status="scartata",
+        )
+        assert total == 1
 
 
 class TestFiscalDocumentListFiltersSchema:

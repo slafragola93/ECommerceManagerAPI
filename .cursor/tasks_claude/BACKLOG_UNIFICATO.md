@@ -352,6 +352,46 @@ Handler AS400 caso NOK: niente rollback, ordine resta in stato 2.
 
 ## 🟡 PRIORITÀ MEDIA — Da pianificare
 
+### BE-HOME-READ — Home ElettroNext: lettura su endpoint esistenti (+ filtri minimi)
+
+**Tipo:** Feature backend (sola lettura)
+**Scope:** Backend (+ handoff FE)
+**PC:** `webmarke22`
+**Priorità:** Media
+**Stato:** Filtri minimi ✅ (2026-09-23); mappa dato→endpoint sotto
+
+**Vincoli:** nessun endpoint aggregato nuovo, nessuna tabella/migrazione, nessuna logica permessi nuova. Contratti di risposta invariati; solo query param opzionali.
+
+**Filtri aggiunti (2026-09-23):**
+- `GET /api/v1/fiscal_documents/?sdi_status=` — uguaglianza esatta; home scartati: `sdi_status=scartata&limit=1` → `total`
+- `GET /api/v1/shippings/?id_carrier_api=&date_from=&date_to=` — `date_to` = fine giornata inclusiva (`time.max`); lista e `total` allineati
+
+**Mappa home (conteggi: `limit=1` + `total` dove disponibile):**
+
+| Dato | Endpoint | Parametri | Pronto |
+|------|----------|-----------|--------|
+| Ordini di oggi | `GET /orders/` | `date_from=oggi`, `date_to=domani` (mezzanotte) | sì |
+| Ordini da fatturare | `GET /orders/` | `has_invoice=false` (± `is_invoice_requested`) | sì |
+| Doc. fiscali per `status` | `GET /fiscal_documents/` | `status=` (pending\|generated\|uploaded\|sent\|error) | sì |
+| Doc. per `fatturapa_status` | — | calcolato in `lifecycle`; no filtro | no (conteggio) |
+| Doc. scartati SDI | `GET /fiscal_documents/` | `sdi_status=scartata` | sì (dopo filtro) |
+| Clienti UE VIES | — | VIES solo su ordine; `null` ≠ da verificare | no |
+| Resi aperti/da chiudere | `GET /orders/returns/` | solo totale tutti i resi; no filtro stato | no |
+| Corrispettivi oggi/mese | `GET /corrispettivi/giorno/riepilogo`, `/riepilogo` | year/month/day; live | sì |
+| Ultima sync PrestaShop | — | status `not_implemented`; no datetime persistito | no |
+| Ultimi 7 ordini + stato fiscale | `GET /orders/` | `limit=7&order_by=date_add&order_direction=desc`; solo `has_invoice` | parziale |
+| Ultimi 7 doc. fiscali | `GET /fiscal_documents/` | `limit=7` (date_add DESC) | sì |
+| Magazzino in prep. / pronti | `GET /orders/` | `order_states_ids=1` / `=2` | sì |
+| Magazzino da preparare / bloccati | — | nessuno stato/flag con quel nome | no |
+| Spedizioni oggi per corriere | `GET /shippings/` | `id_carrier_api` + `date_from`/`date_to`=oggi | sì (dopo filtri) |
+| Etichette da stampare / resi in arrivo | — | nessuna lista/colonna | no |
+
+**Test:** `tests/unit/repository/test_fiscal_document_list_filters.py`, `tests/integration/api/v1/test_shippings_get.py`
+
+**Fuori scope (richiede conferma):** timestamp ultima sync (scrivere in `app_configurations` + body di `/sync/prestashop/status`); filtro `fatturapa_status`; `has_tracking`; stati reso aperti.
+
+---
+
 ### BE-ALIQ-06/07/08 — Completamento serie aliquote (residuo)
 
 **Tipo:** Feature / Debito tecnico

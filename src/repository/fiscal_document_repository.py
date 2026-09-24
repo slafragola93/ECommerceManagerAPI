@@ -52,100 +52,286 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             raise ValueError("Indirizzo di fatturazione non trovato")
         return address
     
-    def create_invoice(self, id_order: int) -> FiscalDocument:
+    def _invoiced_qty_by_order_detail(self, id_order: int) -> Dict[int, float]:
+        """Somma product_qty già fatturate per id_order_detail sull'ordine."""
+        rows = (
+            self._session.query(
+                FiscalDocumentDetail.id_order_detail,
+                func.sum(FiscalDocumentDetail.product_qty).label("qty"),
+            )
+            .join(
+                FiscalDocument,
+                FiscalDocument.id_fiscal_document
+                == FiscalDocumentDetail.id_fiscal_document,
+            )
+            .filter(
+                FiscalDocument.id_order == id_order,
+                FiscalDocument.document_type == "invoice",
+            )
+            .group_by(FiscalDocumentDetail.id_order_detail)
+            .all()
+        )
+        return {
+            int(r.id_order_detail): float(r.qty or 0)
+            for r in rows
+            if r.id_order_detail is not None
+        }
+
+    def _returned_qty_by_order_detail(self, id_order: int) -> Dict[int, float]:
+        """Somma qty già rese per id_order_detail."""
+        returned: Dict[int, float] = {}
+        for item in self.get_items_returned_by_order(id_order):
+            oid = item.get("id_order_detail")
+            if oid is None:
+                continue
+            returned[int(oid)] = returned.get(int(oid), 0.0) + float(
+                item.get("quantity_returned") or 0
+            )
+        return returned
+
+    def _remaining_billable_qty(
+        self,
+        od: OrderDetail,
+        invoiced: Dict[int, float],
+        returned: Dict[int, float],
+    ) -> float:
+        product_qty = float(od.product_qty or 0)
+        return (
+            product_qty
+            - returned.get(od.id_order_detail, 0.0)
+            - invoiced.get(od.id_order_detail, 0.0)
+        )
+
+    def _shipping_already_invoiced(self, id_order: int) -> bool:
+        """True se esiste una fattura dell'ordine con includes_shipping=True."""
+        return (
+            self._session.query(FiscalDocument.id_fiscal_document)
+            .filter(
+                FiscalDocument.id_order == id_order,
+                FiscalDocument.document_type == "invoice",
+                FiscalDocument.includes_shipping.is_(True),
+            )
+            .first()
+            is not None
+        )
+
+    def _build_invoice_detail_row(
+        self, od: OrderDetail, quantity: float
+    ) -> Dict[str, Any]:
+        """Prezzi/sconti da order_detail scalati sulla qty richiesta."""
+        unit_price_net = float(od.unit_price_net or od.product_price or 0.0)
+        unit_price_with_tax = float(od.unit_price_with_tax or 0.0)
+        quantity = float(quantity)
+        original_qty = float(od.product_qty or 0)
+
+        if unit_price_with_tax == 0.0 and unit_price_net > 0 and od.id_tax:
+            tax = self._tax_repository.get_tax_by_id(od.id_tax)
+            tax_percentage = (
+                float(tax.percentage) if tax and tax.percentage is not None else None
+            )
+            if tax_percentage is not None:
+                unit_price_with_tax = calculate_price_with_tax(
+                    unit_price_net, tax_percentage, quantity=1
+                )
+            else:
+                unit_price_with_tax = unit_price_net
+
+        total_base = unit_price_net * quantity
+
+        if od.reduction_percent and float(od.reduction_percent) > 0:
+            reduction_percent = float(od.reduction_percent)
+            sconto = calculate_amount_with_percentage(total_base, reduction_percent)
+            total_price_net = total_base - sconto
+        elif od.reduction_amount and float(od.reduction_amount) > 0 and original_qty > 0:
+            # sconto a importo fisso proporzionale alla qty fatturata
+            reduction_amount = float(od.reduction_amount) * (quantity / original_qty)
+            total_price_net = total_base - reduction_amount
+        else:
+            total_price_net = total_base
+
+        total_price_with_tax = total_price_net
+        if od.id_tax:
+            tax = self._tax_repository.get_tax_by_id(od.id_tax)
+            tax_percentage = (
+                float(tax.percentage) if tax and tax.percentage is not None else None
+            )
+            if tax_percentage is not None:
+                total_price_with_tax = calculate_price_with_tax(
+                    total_price_net, tax_percentage, quantity=1
+                )
+
+        return {
+            "id_order_detail": od.id_order_detail,
+            "quantity": quantity,
+            "rda": od.rda,
+            "unit_price_net": unit_price_net,
+            "unit_price_with_tax": unit_price_with_tax,
+            "total_price_net": total_price_net,
+            "total_price_with_tax": total_price_with_tax,
+            "id_tax": od.id_tax,
+        }
+
+    def _resolve_invoice_line_specs(
+        self,
+        id_order: int,
+        order_details: List[OrderDetail],
+        is_partial: bool,
+        items: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Risolve le righe da snapshotare.
+
+        A — residuo: is_partial falso e items vuoto/omesso
+        B — parziale: is_partial + items (qty ≤ residuo)
+        C — riemissione: items valorizzato, is_partial non true (niente tetto residuo)
+        """
+        od_map = {od.id_order_detail: od for od in order_details}
+        has_items = bool(items)
+        invoiced = self._invoiced_qty_by_order_detail(id_order)
+        returned = self._returned_qty_by_order_detail(id_order)
+
+        # C — riemissione esplicita
+        if has_items and not is_partial:
+            specs: List[Dict[str, Any]] = []
+            for item in items:
+                id_od = item.get("id_order_detail")
+                qty = float(item.get("quantity") or 0)
+                if id_od not in od_map:
+                    raise ValueError(
+                        f"OrderDetail {id_od} non appartiene all'ordine {id_order}"
+                    )
+                if qty <= 0:
+                    raise ValueError(
+                        f"Quantità da fatturare ({qty}) deve essere > 0 "
+                        f"per l'articolo {id_od}"
+                    )
+                specs.append(self._build_invoice_detail_row(od_map[id_od], qty))
+            return specs
+
+        # B — parziale
+        if is_partial and has_items:
+            specs = []
+            for item in items:
+                id_od = item.get("id_order_detail")
+                qty = float(item.get("quantity") or 0)
+                if id_od not in od_map:
+                    raise ValueError(
+                        f"OrderDetail {id_od} non appartiene all'ordine {id_order}"
+                    )
+                remaining = self._remaining_billable_qty(
+                    od_map[id_od], invoiced, returned
+                )
+                if qty <= 0:
+                    raise ValueError(
+                        f"Quantità da fatturare ({qty}) deve essere > 0 "
+                        f"per l'articolo {id_od}"
+                    )
+                if qty > remaining + 1e-9:
+                    raise ValueError(
+                        f"Quantità da fatturare ({qty}) superiore alla quantità "
+                        f"residua ({remaining}) per l'articolo {id_od}"
+                    )
+                specs.append(self._build_invoice_detail_row(od_map[id_od], qty))
+            return specs
+
+        # A — residuo (default)
+        specs = []
+        for od in order_details:
+            remaining = self._remaining_billable_qty(od, invoiced, returned)
+            if remaining > 1e-9:
+                specs.append(self._build_invoice_detail_row(od, remaining))
+        return specs
+
+    def create_invoice(
+        self,
+        id_order: int,
+        is_partial: bool = False,
+        items: Optional[List[Dict[str, Any]]] = None,
+        include_shipping: Optional[bool] = None,
+    ) -> FiscalDocument:
         """
         Crea una nuova fattura elettronica FatturaPA per un ordine.
 
+        Modi:
+        - A (default): snapshot sul residuo fatturabile
+        - B (is_partial): solo le coppie items (qty ≤ residuo)
+        - C (items senza is_partial): riemissione esplicita senza tetto residuo
+
         Le fatture sono sempre trasmesse via SDI (is_electronic=True).
         """
-        # Verifica che l'ordine esista
         order = self._session.query(Order).filter(Order.id_order == id_order).first()
         if not order:
             raise ValueError(f"Ordine {id_order} non trovato")
 
         self._get_required_invoice_address(order)
-        document_number = self._get_next_electronic_number('invoice')
+
+        if include_shipping is None:
+            include_shipping = False if is_partial else True
+
+        order_details = (
+            self._session.query(OrderDetail)
+            .filter(OrderDetail.id_order == id_order)
+            .all()
+        )
+
+        line_specs = self._resolve_invoice_line_specs(
+            id_order, order_details, is_partial, items
+        )
+
+        shipping_already = self._shipping_already_invoiced(id_order)
+        can_include_shipping = bool(include_shipping) and not shipping_already
+        if can_include_shipping and order.id_shipping:
+            shipping = (
+                self._session.query(Shipping)
+                .filter(Shipping.id_shipping == order.id_shipping)
+                .first()
+            )
+            # solo se costo ordine > 0
+            if not shipping or (
+                float(shipping.price_tax_incl or 0) <= 0
+                and float(shipping.price_tax_excl or 0) <= 0
+            ):
+                can_include_shipping = False
+        elif can_include_shipping and not order.id_shipping:
+            can_include_shipping = False
+
+        if not line_specs and not can_include_shipping:
+            raise ValueError(
+                "Niente da fatturare: residuo prodotti e spedizione già "
+                "esauriti o non richiesti"
+            )
+
+        document_number = self._get_next_electronic_number("invoice")
         progressivo_invio = self._get_next_progressivo_invio()
 
         invoice = FiscalDocument(
-            document_type='invoice',
-            tipo_documento_fe='TD01',
+            document_type="invoice",
+            tipo_documento_fe="TD01",
             id_order=id_order,
-            id_store=order.id_store,  # Porta id_store dall'ordine
+            id_store=order.id_store,
             document_number=document_number,
             progressivo_invio=progressivo_invio,
             is_electronic=True,
-            status='pending',
-            includes_shipping=True,  # Le fatture includono sempre le spese di spedizione
-            total_price_with_tax=order.total_price_with_tax  # Verrà aggiornato dopo aver creato i dettagli
+            status="pending",
+            includes_shipping=can_include_shipping,
+            total_price_with_tax=order.total_price_with_tax,
         )
-        
+
         self._session.add(invoice)
-        self._session.flush()  # Per ottenere id_fiscal_document
-        
-        # Crea fiscal_document_details per ogni order_detail dell'ordine
-        order_details = self._session.query(OrderDetail).filter(
-            OrderDetail.id_order == id_order
-        ).all()
-                
-        for od in order_details:
-            # Usa i nuovi campi se disponibili, altrimenti calcola da product_price per retrocompatibilità
-            # Converti Decimal in float per evitare errori di tipo
-            unit_price_net = float(od.unit_price_net or od.product_price or 0.0)
-            unit_price_with_tax = float(od.unit_price_with_tax or 0.0)
-            quantity = int(od.product_qty or 0)
-            
-            # Se unit_price_with_tax non è disponibile, calcolalo da unit_price_net usando id_tax
-            if unit_price_with_tax == 0.0 and unit_price_net > 0 and od.id_tax:
-                tax = self._tax_repository.get_tax_by_id(od.id_tax)
-                tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
-                if tax_percentage is not None:
-                    tax_percentage = float(tax_percentage)
-                    unit_price_with_tax = calculate_price_with_tax(unit_price_net, tax_percentage, quantity=1)
-                else:
-                    unit_price_with_tax = unit_price_net  # Fallback se tax non trovata
-            
-            # Calcola total_price_net applicando gli sconti
-            total_base = unit_price_net * quantity
-            
-            # Applica sconti
-            if od.reduction_percent and od.reduction_percent > 0:
-                reduction_percent = float(od.reduction_percent)
-                sconto = calculate_amount_with_percentage(total_base, reduction_percent)
-                total_price_net = total_base - sconto
-            elif od.reduction_amount and od.reduction_amount > 0:
-                reduction_amount = float(od.reduction_amount)
-                total_price_net = total_base - reduction_amount
-            else:
-                total_price_net = total_base
-            
-            # Calcola total_price_with_tax usando la percentuale di id_tax
-            total_price_with_tax = total_price_net
-            if od.id_tax:
-                tax = self._tax_repository.get_tax_by_id(od.id_tax)
-                tax_percentage = float(tax.percentage) if tax and tax.percentage is not None else None
-                if tax_percentage is not None:
-                    tax_percentage = float(tax_percentage)
-                    total_price_with_tax = calculate_price_with_tax(total_price_net, tax_percentage, quantity=1)
-            
-            # IMPORTANTE:
-            # - unit_price_net: prezzo unitario ORIGINALE (no sconto, senza IVA)
-            # - unit_price_with_tax: prezzo unitario ORIGINALE (no sconto, con IVA)
-            # - total_price_net: totale riga SCONTATO (unit_price_net × qty - sconto), SENZA IVA
-            # - total_price_with_tax: totale riga SCONTATO con IVA = total_price_net × (1 + tax_percentage/100)
-            
+        self._session.flush()
+
+        for spec in line_specs:
             detail = FiscalDocumentDetail(
                 id_fiscal_document=invoice.id_fiscal_document,
-                id_order_detail=od.id_order_detail,
-                product_qty=quantity,
-                rda=od.rda,
-                unit_price_net=unit_price_net,  # Prezzo originale senza sconto, senza IVA
-                unit_price_with_tax=unit_price_with_tax,  # Prezzo originale senza sconto, con IVA
-                total_price_net=total_price_net,  # Totale con sconto applicato, senza IVA
-                total_price_with_tax=total_price_with_tax,  # Totale con sconto applicato, con IVA
-                id_tax=od.id_tax
+                id_order_detail=spec["id_order_detail"],
+                product_qty=spec["quantity"],
+                rda=spec.get("rda"),
+                unit_price_net=spec["unit_price_net"],
+                unit_price_with_tax=spec["unit_price_with_tax"],
+                total_price_net=spec["total_price_net"],
+                total_price_with_tax=spec["total_price_with_tax"],
+                id_tax=spec.get("id_tax"),
             )
-            
             self._session.add(detail)
 
         self._session.flush()
@@ -153,13 +339,13 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         self._session.refresh(invoice)
 
         return invoice
-    
+
     def get_invoice_by_order(self, id_order: int) -> Optional[FiscalDocument]:
         """Recupera la prima fattura di un ordine (deprecato, usare get_invoices_by_order)"""
         return self._session.query(FiscalDocument).filter(
             and_(
                 FiscalDocument.id_order == id_order,
-                FiscalDocument.document_type == 'invoice'
+                FiscalDocument.document_type == "invoice",
             )
         ).first()
     
@@ -837,6 +1023,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         document_type: Optional[str] = None,
         is_electronic: Optional[bool] = None,
         status: Optional[str] = None,
+        sdi_status: Optional[str] = None,
         delivery_country_iso: Optional[str] = None,
         date_add_from: Optional[datetime] = None,
         date_add_to: Optional[datetime] = None,
@@ -867,6 +1054,9 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         if status:
             query = query.filter(FiscalDocument.status == status)
 
+        if sdi_status:
+            query = query.filter(FiscalDocument.sdi_status == sdi_status)
+
         if delivery_country_iso:
             query = query.filter(
                 func.upper(CountryDelivery.iso_code) == delivery_country_iso.upper()
@@ -885,6 +1075,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         document_type: Optional[str] = None,
         is_electronic: Optional[bool] = None,
         status: Optional[str] = None,
+        sdi_status: Optional[str] = None,
         delivery_country_iso: Optional[str] = None,
         date_add_from: Optional[datetime] = None,
         date_add_to: Optional[datetime] = None,
@@ -894,6 +1085,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             document_type=document_type,
             is_electronic=is_electronic,
             status=status,
+            sdi_status=sdi_status,
             delivery_country_iso=delivery_country_iso,
             date_add_from=date_add_from,
             date_add_to=date_add_to,
@@ -906,6 +1098,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
         document_type: Optional[str] = None,
         is_electronic: Optional[bool] = None,
         status: Optional[str] = None,
+        sdi_status: Optional[str] = None,
         delivery_country_iso: Optional[str] = None,
         date_add_from: Optional[datetime] = None,
         date_add_to: Optional[datetime] = None,
@@ -919,6 +1112,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
             document_type: Filtra per tipo ('invoice', 'credit_note')
             is_electronic: Filtra per elettronici/non elettronici
             status: Filtra per status
+            sdi_status: Filtra per esito AdE (uguaglianza esatta)
             delivery_country_iso: ISO paese consegna ordine collegato
             date_add_from: Data emissione minima (inclusiva)
             date_add_to: Data emissione massima (inclusiva, fine giornata)
@@ -928,6 +1122,7 @@ class FiscalDocumentRepository(BaseRepository[FiscalDocument, int], IFiscalDocum
                 document_type=document_type,
                 is_electronic=is_electronic,
                 status=status,
+                sdi_status=sdi_status,
                 delivery_country_iso=delivery_country_iso,
                 date_add_from=date_add_from,
                 date_add_to=date_add_to,

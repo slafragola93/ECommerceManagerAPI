@@ -27,25 +27,42 @@ class ShippingRepository(BaseRepository[Shipping, int], IShippingRepository):
     def get_all(self, **filters) -> List[Shipping]:
         """Ottiene tutte le entità con filtri opzionali"""
         try:
-            query = self._session.query(self._model_class).order_by(desc(Shipping.id_shipping))
-            
+            query = self._build_list_query(**filters)
+
             # Paginazione
             page = filters.get('page', 1)
             limit = filters.get('limit', 100)
             offset = self.get_offset(limit, page)
-            
-            return query.offset(offset).limit(limit).all()
+
+            return query.order_by(desc(Shipping.id_shipping)).offset(offset).limit(limit).all()
         except Exception as e:
             raise InfrastructureException(f"Database error retrieving {self._model_class.__name__} list: {str(e)}")
     
     def get_count(self, **filters) -> int:
         """Conta le entità con filtri opzionali"""
         try:
-            query = self._session.query(self._model_class)
-            return query.count()
+            return self._build_list_query(**filters).count()
         except Exception as e:
             raise InfrastructureException(f"Database error counting {self._model_class.__name__}: {str(e)}")
-    
+
+    def _build_list_query(self, **filters):
+        """Query lista spedizioni: supporta id_carrier_api, date_from, date_to."""
+        query = self._session.query(self._model_class)
+
+        id_carrier_api = filters.get("id_carrier_api")
+        if id_carrier_api is not None:
+            query = query.filter(Shipping.id_carrier_api == id_carrier_api)
+
+        date_from = filters.get("date_from")
+        if date_from is not None:
+            query = query.filter(Shipping.date_add >= date_from)
+
+        date_to = filters.get("date_to")
+        if date_to is not None:
+            query = query.filter(Shipping.date_add <= date_to)
+
+        return query
+
     def get_by_name(self, name: str) -> Optional[Shipping]:
         """Ottiene un shipping per nome (case insensitive)"""
         try:

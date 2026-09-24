@@ -34,6 +34,8 @@ from src.schemas.fiscal_document_schema import (
     SdiNotificationItemSchema,
     BulkInvoiceCreateRequestSchema,
     BulkInvoiceCreateResponseSchema,
+    BulkSendToSdiRequestSchema,
+    BulkSendToSdiResponseSchema,
 )
 from src.services.pdf.fiscal_document_pdf_builder import build_fiscal_document_pdf_buffer
 from src.services.external.fatturapa_pec_gate import pec_gate_error
@@ -44,6 +46,10 @@ from src.services.external.fatturapa_sdi_resend import (
     reset_xml_block_reason,
     retry_send_block_reason,
     send_to_sdi_block_reason,
+)
+from src.services.external.fatturapa_upload_finalize import (
+    FatturaPAUploadError,
+    finalize_fatturapa_upload,
 )
 
 router = APIRouter(prefix="/api/v1/fiscal_documents", tags=["Fiscal Documents"])
@@ -110,40 +116,15 @@ def _pec_gate_response(error: dict):
 
 
 def _finalize_fatturapa_upload(repo, db, id_fiscal_document, stop_result, send_to_sdi: bool):
-    import json
-
-    if stop_result.get("status") == "error":
-        repo.update_fiscal_document_status(
-            id_fiscal_document=id_fiscal_document,
-            status="error",
-            upload_result=json.dumps(stop_result) if stop_result else None,
+    """Wrapper router: finalize + serialize lista; UploadError → HTTP 500."""
+    try:
+        doc = finalize_fatturapa_upload(
+            repo, id_fiscal_document, stop_result, send_to_sdi
         )
-        error_message = stop_result.get("message", "Upload Stop fallito")
+    except FatturaPAUploadError as e:
         raise HTTPException(
-            status_code=500, detail=f"Errore upload a FatturaPA: {error_message}"
-        )
-
-    final_status = "sent" if send_to_sdi else "uploaded"
-    doc = repo.update_fiscal_document_status(
-        id_fiscal_document=id_fiscal_document,
-        status=final_status,
-        upload_result=json.dumps(stop_result) if stop_result else None,
-    )
-
-    if send_to_sdi:
-        from src.events.core.event import Event, EventType
-        from src.events.runtime import emit_event
-
-        emit_event(
-            Event(
-                event_type=EventType.FISCAL_DOCUMENT_SENT_TO_SDI.value,
-                data={
-                    "id_fiscal_document": id_fiscal_document,
-                    "status": final_status,
-                },
-                metadata={},
-            )
-        )
+            status_code=500, detail=f"Errore upload a FatturaPA: {e.message}"
+        ) from e
 
     from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
 
@@ -157,41 +138,75 @@ async def create_invoice(
     invoice_data: InvoiceCreateSchema = Body(
         ...,
         examples={
-            "fattura_elettronica": {
-                "summary": "Fattura elettronica FatturaPA",
-                "description": "Crea una fattura elettronica da trasmettere via SDI (cliente IT o UE/VIES).",
+            "residuo": {
+                "summary": "Fattura sul residuo (default)",
+                "description": "Snapshot di tutte le qty ancora fatturabili (meno resi e già fatturate).",
+                "value": {"id_order": 12345},
+            },
+            "parziale": {
+                "summary": "Fattura parziale",
+                "description": "Solo le righe/qty indicate; include_shipping default false.",
                 "value": {
                     "id_order": 12345,
-                }
+                    "is_partial": True,
+                    "include_shipping": False,
+                    "items": [{"id_order_detail": 456, "quantity": 2.0}],
+                },
             },
-        }
+            "riemissione": {
+                "summary": "Riemissione esplicita",
+                "description": "items senza is_partial: snapshot esplicito senza tetto residuo.",
+                "value": {
+                    "id_order": 12345,
+                    "items": [
+                        {"id_order_detail": 456, "quantity": 1.0},
+                        {"id_order_detail": 457, "quantity": 3.0},
+                    ],
+                },
+            },
+        },
     ),
     user: dict = user_dependency,
     fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
     _: None = Depends(require_permission("fiscal_documents", "create")),
 ):
     """
-    Crea una nuova fattura elettronica per un ordine
-    
+    Crea una nuova fattura elettronica per un ordine.
+
     ## Regole:
-    - È consentito creare più fatture sullo stesso ordine (re-emissione / integrazioni)
+    - **Residuo (default):** `id_order` solo → qty ancora fatturabili (ordine − resi − già fatturate)
+    - **Parziale:** `is_partial=true` + `items` non vuoti → solo quelle qty (≤ residuo)
+    - **Riemissione:** `items` senza `is_partial` → snapshot esplicito anche se esistono fatture
     - Bloccata se esiste già ricevuta EMESSA o reso (percorso corrispettivi)
-    - Le fatture sono sempre elettroniche (`is_electronic=true`, tipo TD01)
-    - L'indirizzo di fatturazione deve esistere (IT o UE estero/VIES)
-    - Viene generato automaticamente un numero sequenziale FatturaPA
+    - Sempre elettronica (`is_electronic=true`, TD01); numerazione FatturaPA automatica
     """
-    from src.core.exceptions import BaseApplicationException
+    from src.core.exceptions import BaseApplicationException, ValidationException
+    from fastapi.responses import JSONResponse
 
     try:
+        items = None
+        if invoice_data.items:
+            items = [
+                {
+                    "id_order_detail": item.id_order_detail,
+                    "quantity": item.quantity,
+                }
+                for item in invoice_data.items
+            ]
         invoice = await fiscal_service.create_invoice(
             id_order=invoice_data.id_order,
+            is_partial=invoice_data.is_partial,
+            items=items,
+            include_shipping=invoice_data.include_shipping,
             user=user,
         )
         return await fiscal_service.get_invoice_response_by_id(invoice.id_fiscal_document)
+    except ValidationException as e:
+        return JSONResponse(status_code=422, content=e.to_dict())
     except BaseApplicationException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore interno: {str(e)}")
 
@@ -713,6 +728,13 @@ async def get_fiscal_documents(
     document_type: Optional[str] = Query(None, description="Filtra per tipo (invoice, credit_note)"),
     is_electronic: Optional[bool] = Query(None, description="Filtra per elettronici/non elettronici"),
     status: Optional[str] = Query(None, description="Filtra per status"),
+    sdi_status: Optional[str] = Query(
+        None,
+        description=(
+            "Filtra per esito AdE (uguaglianza esatta): "
+            "consegnata|scartata|mancata_consegna|accettata|rifiutata|decorrenza_termini|inviata"
+        ),
+    ),
     delivery_country_iso: Optional[str] = Query(
         None,
         min_length=2,
@@ -736,6 +758,7 @@ async def get_fiscal_documents(
     - `document_type`: 'invoice' o 'credit_note'
     - `is_electronic`: true/false
     - `status`: pending, generated, uploaded, sent, error
+    - `sdi_status`: consegnata, scartata, mancata_consegna, accettata, rifiutata, decorrenza_termini, inviata
     - `delivery_country_iso`: ISO paese **consegna** dell'ordine collegato
     - `date_add_from` / `date_add_to`: range data emissione (`date_add`)
     """
@@ -743,6 +766,7 @@ async def get_fiscal_documents(
         document_type=document_type,
         is_electronic=is_electronic,
         status=status,
+        sdi_status=sdi_status,
         delivery_country_iso=delivery_country_iso,
         date_add_from=date_add_from,
         date_add_to=date_add_to,
@@ -767,6 +791,7 @@ async def get_fiscal_documents(
         document_type=filters.document_type,
         is_electronic=filters.is_electronic,
         status=filters.status,
+        sdi_status=filters.sdi_status,
         delivery_country_iso=filters.delivery_country_iso,
         date_add_from=date_from,
         date_add_to=date_to,
@@ -777,6 +802,7 @@ async def get_fiscal_documents(
         document_type=filters.document_type,
         is_electronic=filters.is_electronic,
         status=filters.status,
+        sdi_status=filters.sdi_status,
         delivery_country_iso=filters.delivery_country_iso,
         date_add_from=date_from,
         date_add_to=date_to,
@@ -994,6 +1020,47 @@ async def update_status(
     from src.services.documents.fiscal_list_serializer import serialize_fiscal_documents
 
     return serialize_fiscal_documents(db, [doc])[0]
+
+
+@router.post(
+    "/send-to-sdi/bulk",
+    response_model=BulkSendToSdiResponseSchema,
+    status_code=status.HTTP_200_OK,
+    summary="Invia documenti fiscali a SDI in blocco (facade)",
+)
+async def bulk_send_to_sdi(
+    request: BulkSendToSdiRequestSchema = Body(
+        ...,
+        examples={
+            "selezione_lista": {
+                "summary": "Documenti selezionati dalla lista fatture",
+                "value": {"ids": [8801, 8802, 8803], "send_to_sdi": True},
+            },
+        },
+    ),
+    user: dict = user_dependency,
+    fiscal_service: IFiscalDocumentService = Depends(get_fiscal_document_service),
+    _: None = Depends(require_permission("fiscal_documents", "update")),
+):
+    """
+    Facade: per ogni id riesegue il flusso di ``POST /{id}/send-to-sdi``
+    verso FatturaPA.com (UploadStart1 → blob → UploadStop).
+
+    - Richiede XML già generato (niente auto generate-xml).
+    - Max 25 id; duplicati deduplicati.
+    - HTTP 200 con esito per-documento anche se tutti falliscono.
+    - ``retry-send`` (NS) resta solo sul singolo documento.
+    - Se ``FATTURAPA_SDI_API_SEND_ENABLED`` è off e ``send_to_sdi=true`` → 400.
+    """
+    api_send_off = api_sdi_send_disabled_reason(request.send_to_sdi)
+    if api_send_off:
+        raise HTTPException(status_code=400, detail=api_send_off)
+
+    return await fiscal_service.bulk_send_to_sdi(
+        ids=request.ids,
+        send_to_sdi=request.send_to_sdi,
+    )
+
 
 @router.post("/{id_fiscal_document}/send-to-sdi", response_model=FiscalDocumentResponseSchema)
 async def send_to_sdi(

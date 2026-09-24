@@ -14,8 +14,14 @@ class IFiscalDocumentRepository(IRepository[FiscalDocument, int]):
     """Interface per la repository dei documenti fiscali"""
     
     @abstractmethod
-    def create_invoice(self, id_order: int) -> FiscalDocument:
-        """Crea una fattura elettronica FatturaPA per un ordine"""
+    def create_invoice(
+        self,
+        id_order: int,
+        is_partial: bool = False,
+        items: Optional[List[Dict[str, Any]]] = None,
+        include_shipping: Optional[bool] = None,
+    ) -> FiscalDocument:
+        """Crea una fattura elettronica FatturaPA (residuo / parziale / riemissione)."""
         pass
     
     @abstractmethod

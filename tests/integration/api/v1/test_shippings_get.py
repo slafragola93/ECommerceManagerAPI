@@ -164,6 +164,60 @@ class TestGetAllShippings:
             )
             assert isinstance(item["id_shipping"], int)
 
+    def test_filter_by_carrier_and_date_returns_total_one(
+        self, admin_full_crud_client, db_session
+    ):
+        """Home: spedizioni di oggi per corriere — date_to fine giornata inclusiva."""
+        from datetime import datetime
+
+        today = datetime(2026, 9, 23, 12, 0, 0)
+        yesterday = datetime(2026, 9, 22, 12, 0, 0)
+
+        shipping_today = Shipping(
+            id_carrier_api=7,
+            id_shipping_state=1,
+            weight=0.0,
+            price_tax_incl=0.0,
+            price_tax_excl=0.0,
+            date_add=today,
+        )
+        shipping_yesterday = Shipping(
+            id_carrier_api=7,
+            id_shipping_state=1,
+            weight=0.0,
+            price_tax_incl=0.0,
+            price_tax_excl=0.0,
+            date_add=yesterday,
+        )
+        shipping_other_carrier = Shipping(
+            id_carrier_api=99,
+            id_shipping_state=1,
+            weight=0.0,
+            price_tax_incl=0.0,
+            price_tax_excl=0.0,
+            date_add=today,
+        )
+        db_session.add_all([shipping_today, shipping_yesterday, shipping_other_carrier])
+        db_session.commit()
+
+        response = admin_full_crud_client.get(
+            "/api/v1/shippings/",
+            params={
+                "page": 1,
+                "limit": 1,
+                "id_carrier_api": 7,
+                "date_from": "2026-09-23",
+                "date_to": "2026-09-23",
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.text
+        body = response.json()
+        assert body["total"] == 1
+        assert len(body["shippings"]) == 1
+        assert body["shippings"][0]["id_shipping"] == shipping_today.id_shipping
+        assert body["shippings"][0]["id_carrier_api"] == 7
+
 
 @pytest.mark.integration
 class TestCreateShipping:

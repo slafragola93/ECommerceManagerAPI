@@ -15,6 +15,7 @@ Documenti correlati:
 | [fatturapa_backlog_implementazione.md](../.cursor/tasks_claude/fatturaPa/fatturapa_backlog_implementazione.md) | Gap analysis P0–P3, checklist go-live |
 | [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md) | Handoff FE — contratto `InvoiceDetail` v3 |
 | [prompt_FE_fatture_bulk_create.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_create.md) | Handoff FE — genera fatture in blocco da lista ordini |
+| [prompt_FE_fatture_bulk_send_sdi.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_send_sdi.md) | Handoff FE — invio SDI in blocco (facade) |
 | [`prompt_FE_nota_credito_parziale.md`](../.cursor/tasks_claude/fatturazione/prompt_FE_nota_credito_parziale.md) | Handoff FE — modale NC parziale |
 | [FE_HANDOFF_TAX_ELECTRONIC_CODE.md](./FE_HANDOFF_TAX_ELECTRONIC_CODE.md) | Mapping `Tax.electronic_code` → tag `<Natura>` |
 
@@ -134,6 +135,7 @@ Per fattura elettronica (`is_electronic=true`):
 | POST creazione fattura / NC | `fiscal_documents:create` |
 | POST bulk-create fatture | `fiscal_documents:create` |
 | POST generate-xml, send-to-sdi, PATCH status / PATCH fattura | `fiscal_documents:update` |
+| POST bulk send-to-sdi | `fiscal_documents:update` |
 | DELETE documento (solo `pending`) | `fiscal_documents:delete` |
 | GET PDF singola | `fiscal_documents:read` |
 | GET export bulk (`/invoices/export`) | `fiscal_documents:read` |
@@ -145,33 +147,63 @@ Per fattura elettronica (`is_electronic=true`):
 ### POST `/api/v1/fiscal_documents/invoices`
 
 Crea uno snapshot fiscale dell'ordine. **Non genera XML** né invia allo SDI.
+Permesso: `fiscal_documents:create`.
 
-#### Body (unici campi accettati)
+#### Body
 
 | Campo | Obbligatorio | Default | Validazione |
 |-------|--------------|---------|-------------|
 | `id_order` | **Sì** | — | `int > 0` |
-| `is_electronic` | No | `true` | `bool` |
+| `is_partial` | No | `false` | Se `true` → `items` obbligatorio non vuoto (**422**) |
+| `items` | Se `is_partial=true` | omesso | `[{ id_order_detail, quantity }]` — `quantity > 0` |
+| `include_shipping` | No | `true` se non parziale; `false` se parziale | Se spedizione già fatturata → non inclusa |
+| `is_electronic` / extra FE | — | ignorati | Schema `extra=ignore` (es. `emitter_country_iso`, `invoice_flow`) |
+
+Canone campo righe = **`items`** (come NC). Non accettare `order_line_items`.
 
 ```json
-{ "id_order": 12345, "is_electronic": true }
+{ "id_order": 12345 }
 ```
 
 ```json
-{ "id_order": 12345, "is_electronic": false }
+{
+  "id_order": 12345,
+  "is_partial": true,
+  "include_shipping": false,
+  "items": [{ "id_order_detail": 456, "quantity": 2.0 }]
+}
 ```
+
+```json
+{
+  "id_order": 12345,
+  "items": [
+    { "id_order_detail": 456, "quantity": 1.0 },
+    { "id_order_detail": 457, "quantity": 3.0 }
+  ]
+}
+```
+
+#### Tre modi
+
+| Modo | Request | Snapshot |
+|------|---------|----------|
+| **A — Residuo** | `id_order` solo (`is_partial` omesso/false, `items` omesso/`[]`) | Qty fatturabili: `product_qty − resi − già in fatture`. Spedizione se non già attribuita |
+| **B — Parziale** | `is_partial=true` + `items` non vuoti | Solo le coppie indicate; ogni qty `≤ residuo` altrimenti **422** |
+| **C — Riemissione** | `items` valorizzato, `is_partial` non true | Snapshot esplicito; **niente** tetto residuo (anche se esistono fatture) |
 
 #### Regole business
 
-- L'ordine deve esistere.
-- È consentito creare **più fatture** sullo stesso ordine (re-emissione / integrazioni).
-- Se `is_electronic=true`: `address_invoice` deve essere **IT**.
-- Auto-impostati: `document_type=invoice`, `tipo_documento_fe=TD01`, `includes_shipping=true`, numerazione sequenziale elettronica, `status=pending` (elettronica) o `issued` (non elettronica).
-- Righe: copia da tutti gli `order_details` in `fiscal_document_details` con ricalcolo totali.
+- L'ordine deve esistere; indirizzo di fatturazione obbligatorio.
+- Bloccata se percorso corrispettivi (ricevuta EMESSA e/o reso).
+- Auto-impostati: `document_type=invoice`, `tipo_documento_fe=TD01`, `is_electronic=true`, `status=pending`, numerazione FatturaPA.
+- Totali e `includes_shipping` calcolati **solo** dallo snapshot persistito.
+- `is_partial` è solo discriminante request: **non** compare nel JSON response delle fatture.
+- Errori qty / riga aliena / residuo esaurito → **HTTP 422**.
 
 #### Response
 
-`InvoiceResponseSchema` **v3 arricchito** (stesso shape del GET dettaglio): documento fiscale + embed ordine (`customer`, `address_invoice`, `payment`, `shipping`, `order_details[]` snapshot). **Non refetchare l'ordine** dopo il POST.
+`InvoiceResponseSchema` **v3 arricchito** (stesso shape del GET dettaglio): documento fiscale + embed ordine (`customer`, `address_invoice`, `payment`, `shipping`, `order_details[]` snapshot). **Non refetchare l'ordine** dopo il POST. `order_details` = qty/prezzi **fatturati**, non righe live ordine.
 
 Campi solo-NC (`credit_note_reason`, `is_partial`, `id_fiscal_document_ref`) sono **omessi** dal JSON delle fatture.
 
@@ -181,13 +213,14 @@ Totali: `total_price_*` (documento), `products_total_*` (merce), `shipping_total
 
 `includes_shipping` resta: non è sostituibile da `shipping` (logistica ordine). NC senza spedizione su ordine spedito → embed `shipping` presente, flag `false`.
 
-Handoff FE: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md)
+Handoff FE create parziale: [prompt_BE_fatture_create_partial.md](../.cursor/tasks_claude/fatturazione/prompt_BE_fatture_create_partial.md) · Allineamento v3: [prompt_FE_fatture_V3_ALIGN.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_V3_ALIGN.md)
 
 ---
 
 ### POST `/api/v1/fiscal_documents/invoices/bulk-create`
 
-Crea snapshot fiscali (`status=pending`) per una lista di ordini selezionati. **Non genera XML** né invia allo SDI. Stesso comportamento del POST singolo, con esito per-ordine.
+Crea snapshot fiscali (`status=pending`) per una lista di ordini selezionati. **Non genera XML** né invia allo SDI.
+Comportamento = modo **A (residuo)** del POST singolo: **niente** `items` per-ordine. Ordini già fatturati → `ALREADY_INVOICED` (riemissione/parziale solo su `POST /invoices` singolo).
 
 Permesso: `fiscal_documents:create`.
 
@@ -310,7 +343,8 @@ Aggiorna una fattura in stato **`pending`** (header commerciale + righe snapshot
 | GET | `/{id_fiscal_document}/details-with-products` | `CreditNoteEligibleLinesResponseSchema` | Modale NC parziale (qty residue, spedizione) |
 | GET | `/` | `FiscalDocumentListResponseSchema` | Lista **minimal** (senza embed). Include `sdi_status`, `order_payment_name` |
 
-Query lista: `page`, `limit`, `document_type`, `is_electronic`, `status`.
+Query lista: `page`, `limit`, `document_type`, `is_electronic`, `status`, `sdi_status`, `delivery_country_iso`, `date_add_from`, `date_add_to`.
+Filtro `sdi_status`: uguaglianza esatta sull’esito AdE persistito (`consegnata|scartata|mancata_consegna|accettata|rifiutata|decorrenza_termini|inviata`); un valore per chiamata (home: `?sdi_status=scartata&limit=1` → `total`).
 
 Campi lista per badge FE (batch, no N+1): `order_payment_name` / `id_order_payment` da `orders.id_payment` (fallback ultimo `order_payments` pagato); `sdi_status` dal documento; `id_customer`, `customer_name`, `is_payed`, `order_shipped` (`id_shipping` valorizzato). Stati FatturaPA/mail/SDI overlay: solo `lifecycle` (`fatturapa_*`, `mail_*`, `identificativo_sdi` flat omessi).
 
@@ -379,6 +413,7 @@ Filtro ordini fatturati: `GET /api/v1/orders?has_invoice=true` — vedi [has_inv
 | Generare XML FatturaPA (**singolo** doc) | `POST` | `/{id}/generate-xml` | `status=generated`, errori **422**. Dopo NS usare `retry-send` |
 | Eliminare XML (loop KO) | `POST` | `/{id}/reset-xml` | Torna `pending`; vieta se SdI già evaso |
 | Caricare / inviare a SDI via API | `POST` | `/{id}/send-to-sdi` | `{ "send_to_sdi": true }` = upload + SdI (`UploadStop`) |
+| Inviare a SDI (**bulk** facade) | `POST` | `/send-to-sdi/bulk` | Max 25 id; N cicli Upload; XML già generato; no retry-send |
 | Reinvio API dopo NS | `POST` | `/{id}/retry-send` | Nuovo `progressivo_invio` + XML + `UploadStop` |
 | Esito SDI + storico notifiche | `GET` | `/{id}/sdi-status` | RC/MC/NS/NE/DT — distinto da `status` workflow |
 | Sync manuale notifiche SDI | `POST` | `/sdi-events/sync` | Oltre al job di polling |
@@ -451,6 +486,58 @@ Le chiamate HTTP verso FatturaPA.com ritentano fino a 3 volte su timeout/rete/42
 **Operativo attuale:** `FATTURAPA_SDI_API_SEND_ENABLED=true` (default).  
 `send_to_sdi=true` chiama `UploadStop` (FatturaPA.com inoltra allo SdI). `send_to_sdi=false` = solo deposito (`UploadStop1`).  
 Per spegnere l’invio API: `FATTURAPA_SDI_API_SEND_ENABLED=false`.
+
+### POST `/api/v1/fiscal_documents/send-to-sdi/bulk`
+
+Facade sync: per ogni `id_fiscal_document` riesegue lo stesso flusso del singolo verso FatturaPA.com (`UploadStart1` → blob → `UploadStop`/`UploadStop1`). L’intermediario **non** accetta un array di file in una sola call.
+
+**Permesso:** `fiscal_documents:update`
+
+#### Body
+
+| Campo | Obbligatorio | Default | Validazione |
+|-------|--------------|---------|-------------|
+| `ids` | **Sì** | — | lista `int > 0`, min 1, max **25** |
+| `send_to_sdi` | No | `true` | `true` = UploadStop; `false` = UploadStop1 |
+
+```json
+{ "ids": [8801, 8802], "send_to_sdi": true }
+```
+
+Duplicati: deduplicati. HTTP **200** con esito per-documento anche se tutti falliscono.  
+Se `FATTURAPA_SDI_API_SEND_ENABLED=false` e `send_to_sdi=true` → **400** sull’intero request (come il singolo).
+
+Prerequisiti per-documento (stessi del singolo): XML presente, elettronico, stato inviabile, gate PEC. **Niente** auto `generate-xml`. **Niente** `retry-send` (NS resta sul singolo).
+
+#### Response
+
+```json
+{
+  "successful": [
+    { "id_fiscal_document": 8801, "status": "sent", "sdi_status": null }
+  ],
+  "failed": [
+    {
+      "id_fiscal_document": 8802,
+      "error_type": "XML_MISSING",
+      "error_message": "XML non ancora generato. Chiamare prima /generate-xml"
+    }
+  ],
+  "summary": { "total": 2, "successful_count": 1, "failed_count": 1 }
+}
+```
+
+| `error_type` | Quando |
+|---|---|
+| `NOT_FOUND` | id inesistente |
+| `XML_MISSING` | manca XML/filename |
+| `NOT_ELECTRONIC` | non elettronico |
+| `BLOCKED` | `send_to_sdi_block_reason` (già sent, scartata→retry, stato non ammesso) |
+| `PEC_GATE` | XXXXXXX senza PEC |
+| `UPLOAD_ERROR` | UploadStart/Stop fallito |
+| `UNKNOWN_ERROR` | eccezione inattesa |
+
+Handoff FE: [prompt_FE_fatture_bulk_send_sdi.md](../.cursor/tasks_claude/fatturazione/prompt_FE_fatture_bulk_send_sdi.md)
 
 ### POST `/{id_fiscal_document}/retry-send`
 

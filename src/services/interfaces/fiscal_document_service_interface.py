@@ -12,6 +12,9 @@ from src.schemas.fiscal_document_schema import (
     BulkInvoiceCreateError,
     BulkInvoiceCreateResponseSchema,
     BulkInvoiceCreateSuccess,
+    BulkSendToSdiError,
+    BulkSendToSdiResponseSchema,
+    BulkSendToSdiSuccess,
     CreditNoteEligibleLinesResponseSchema,
     InvoicePatchResponseSchema,
     InvoiceUpdateSchema,
@@ -22,8 +25,15 @@ class IFiscalDocumentService(IBaseService):
     """Interface per il servizio dei documenti fiscali"""
     
     @abstractmethod
-    async def create_invoice(self, id_order: int) -> FiscalDocument:
-        """Crea una fattura elettronica FatturaPA per un ordine"""
+    async def create_invoice(
+        self,
+        id_order: int,
+        is_partial: bool = False,
+        items: Optional[List[dict]] = None,
+        include_shipping: Optional[bool] = None,
+        user: dict = None,
+    ) -> FiscalDocument:
+        """Crea una fattura elettronica FatturaPA (residuo / parziale / riemissione)."""
         pass
 
     @abstractmethod
@@ -31,6 +41,13 @@ class IFiscalDocumentService(IBaseService):
         self, order_ids: List[int], user: dict = None
     ) -> BulkInvoiceCreateResponseSchema:
         """Crea fatture in blocco per una lista di ordini (esito per-ordine)."""
+        pass
+
+    @abstractmethod
+    async def bulk_send_to_sdi(
+        self, ids: List[int], send_to_sdi: bool = True
+    ) -> BulkSendToSdiResponseSchema:
+        """Invia documenti fiscali a SDI in blocco (facade N cicli Upload)."""
         pass
 
     @abstractmethod

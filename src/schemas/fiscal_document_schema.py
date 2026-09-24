@@ -188,14 +188,75 @@ class CreditNoteEligibleLinesResponseSchema(BaseModel):
 # ==================== SCHEMAS PER FATTURE ====================
 
 class InvoiceCreateSchema(BaseModel):
-    """Schema per creazione fattura (sempre elettronica FatturaPA, is_electronic=True)."""
+    """Schema per creazione fattura (sempre elettronica FatturaPA, is_electronic=True).
+
+    Tre modi:
+    - A (residuo): `is_partial` omesso/false, `items` omesso/`[]` → snap residuo
+    - B (parziale): `is_partial=true` + `items` non vuoti
+    - C (riemissione): `items` valorizzato, `is_partial` non true → snap esplicito senza tetto residuo
+    """
+
     id_order: int = Field(..., gt=0, description="ID dell'ordine")
-    
+    is_partial: bool = Field(
+        False,
+        description="Se True, fattura parziale: items obbligatorio non vuoto",
+    )
+    items: Optional[List[FiscalDocumentDetailSchema]] = Field(
+        None,
+        description=(
+            "Righe da fatturare ({ id_order_detail, quantity }). "
+            "Obbligatorio e non vuoto se is_partial=true. "
+            "Se valorizzato con is_partial=false → riemissione esplicita."
+        ),
+    )
+    include_shipping: Optional[bool] = Field(
+        None,
+        description=(
+            "Se includere spese di spedizione. "
+            "Default: false se is_partial, true altrimenti."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def resolve_shipping_and_require_items_when_partial(self):
+        if self.include_shipping is None:
+            self.include_shipping = False if self.is_partial else True
+        if self.is_partial and not self.items:
+            raise ValueError(
+                "Per una fattura parziale (is_partial=true) indicare items non vuoti"
+            )
+        return self
+
     class Config:
+        extra = "ignore"
         json_schema_extra = {
-            "example": {
-                "id_order": 12345,
-            }
+            "examples": [
+                {
+                    "summary": "Fattura sul residuo (default)",
+                    "value": {"id_order": 12345},
+                },
+                {
+                    "summary": "Fattura parziale",
+                    "value": {
+                        "id_order": 12345,
+                        "is_partial": True,
+                        "include_shipping": False,
+                        "items": [
+                            {"id_order_detail": 456, "quantity": 2.0},
+                        ],
+                    },
+                },
+                {
+                    "summary": "Riemissione esplicita",
+                    "value": {
+                        "id_order": 12345,
+                        "items": [
+                            {"id_order_detail": 456, "quantity": 1.0},
+                            {"id_order_detail": 457, "quantity": 3.0},
+                        ],
+                    },
+                },
+            ]
         }
 
 
@@ -664,6 +725,13 @@ class FiscalDocumentListFiltersSchema(BaseModel):
     document_type: Optional[str] = None
     is_electronic: Optional[bool] = None
     status: Optional[str] = None
+    sdi_status: Optional[str] = Field(
+        None,
+        description=(
+            "Esito AdE persistito (uguaglianza esatta): "
+            "consegnata|scartata|mancata_consegna|accettata|rifiutata|decorrenza_termini|inviata"
+        ),
+    )
     delivery_country_iso: Optional[str] = Field(
         None,
         min_length=2,
@@ -915,6 +983,69 @@ def resolve_send_to_sdi_flag(payload: SendToSdiSchema | bool | None) -> bool:
     if isinstance(payload, bool):
         return payload
     return bool(payload.send_to_sdi)
+
+
+class BulkSendToSdiRequestSchema(BaseModel):
+    """Richiesta invio massivo a SDI (facade: N cicli Upload verso FatturaPA.com)."""
+
+    ids: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=25,
+        description="Lista di id_fiscal_document (max 25)",
+    )
+    send_to_sdi: bool = Field(
+        True,
+        description="True = UploadStop (invio SDI); False = UploadStop1 (solo upload)",
+    )
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, v: List[int]) -> List[int]:
+        if any(i is None or i <= 0 for i in v):
+            raise ValueError("Ogni id deve essere un intero > 0")
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "ids": [8801, 8802, 8803],
+                "send_to_sdi": True,
+            }
+        }
+
+
+class BulkSendToSdiSuccess(BaseModel):
+    """Esito positivo invio SDI in bulk."""
+
+    id_fiscal_document: int
+    status: Optional[str] = None
+    sdi_status: Optional[str] = None
+
+
+class BulkSendToSdiError(BaseModel):
+    """Errore invio SDI in bulk per un singolo documento."""
+
+    id_fiscal_document: int
+    error_type: str = Field(
+        ...,
+        description=(
+            "NOT_FOUND | XML_MISSING | NOT_ELECTRONIC | BLOCKED | "
+            "PEC_GATE | API_DISABLED | UPLOAD_ERROR | UNKNOWN_ERROR"
+        ),
+    )
+    error_message: str
+
+
+class BulkSendToSdiResponseSchema(BaseModel):
+    """Risposta invio massivo a SDI."""
+
+    successful: List[BulkSendToSdiSuccess] = Field(default_factory=list)
+    failed: List[BulkSendToSdiError] = Field(default_factory=list)
+    summary: dict = Field(
+        ...,
+        description="Riepilogo: total, successful_count, failed_count",
+    )
 
 
 class SdiNotificationItemSchema(BaseModel):

@@ -21,6 +21,9 @@ from src.schemas.fiscal_document_schema import (
     BulkInvoiceCreateError,
     BulkInvoiceCreateResponseSchema,
     BulkInvoiceCreateSuccess,
+    BulkSendToSdiError,
+    BulkSendToSdiResponseSchema,
+    BulkSendToSdiSuccess,
     CreditNoteEligibleLinesResponseSchema,
     InvoiceExportFiltersSchema,
     InvoiceExportFormatSchema,
@@ -116,17 +119,32 @@ class FiscalDocumentService(IFiscalDocumentService):
         data_extractor=extract_invoice_created_data,
         source="fiscal_document_service.create_invoice"
     )
-    async def create_invoice(self, id_order: int, user: dict = None) -> FiscalDocument:
+    async def create_invoice(
+        self,
+        id_order: int,
+        is_partial: bool = False,
+        items: Optional[List[dict]] = None,
+        include_shipping: Optional[bool] = None,
+        user: dict = None,
+    ) -> FiscalDocument:
         """
         Crea una fattura elettronica FatturaPA per un ordine (is_electronic=True).
 
         Bloccata se l'ordine è già sul percorso corrispettivi (ricevuta e/o reso).
+        Supporta residuo (default), parziale (is_partial+items) e riemissione (items).
         """
         try:
             OrderDocumentService(self._session).ensure_can_create_invoice(id_order)
-            return self._fiscal_document_repository.create_invoice(id_order)
+            return self._fiscal_document_repository.create_invoice(
+                id_order=id_order,
+                is_partial=is_partial,
+                items=items,
+                include_shipping=include_shipping,
+            )
         except BusinessRuleException:
             raise
+        except ValueError as e:
+            raise ValidationException(str(e)) from e
         except Exception as e:
             raise ValidationException(f"Errore nella creazione della fattura: {str(e)}")
 
@@ -242,6 +260,163 @@ class FiscalDocumentService(IFiscalDocumentService):
             summary["total"],
         )
         return BulkInvoiceCreateResponseSchema(
+            successful=successful,
+            failed=failed,
+            summary=summary,
+        )
+
+    async def bulk_send_to_sdi(
+        self, ids: List[int], send_to_sdi: bool = True
+    ) -> BulkSendToSdiResponseSchema:
+        """
+        Facade: per ogni id esegue lo stesso flusso di POST /{id}/send-to-sdi.
+
+        Non auto-genera XML; non gestisce retry-send (NS). Max 25 validato dallo schema.
+        Se FATTURAPA_SDI_API_SEND_ENABLED è off e send_to_sdi=true → 400 a livello router.
+        """
+        from src.services.external.fatturapa_pec_gate import pec_gate_error
+        from src.services.external.fatturapa_sdi_resend import send_to_sdi_block_reason
+        from src.services.external.fatturapa_service import FatturaPAService
+        from src.services.external.fatturapa_upload_finalize import (
+            FatturaPAUploadError,
+            finalize_fatturapa_upload,
+        )
+
+        unique_ids = list(dict.fromkeys(ids))
+        successful: List[BulkSendToSdiSuccess] = []
+        failed: List[BulkSendToSdiError] = []
+        fatturapa = FatturaPAService(self._session)
+        repo = self._fiscal_document_repository
+
+        logger.info(
+            "Starting bulk send-to-sdi for %s docs (%s unique), send_to_sdi=%s",
+            len(ids),
+            len(unique_ids),
+            send_to_sdi,
+        )
+
+        for doc_id in unique_ids:
+            try:
+                doc = repo.get_fiscal_document_by_id(doc_id)
+                if not doc:
+                    failed.append(
+                        BulkSendToSdiError(
+                            id_fiscal_document=doc_id,
+                            error_type="NOT_FOUND",
+                            error_message=f"Documento {doc_id} non trovato",
+                        )
+                    )
+                    continue
+
+                if not doc.is_electronic:
+                    failed.append(
+                        BulkSendToSdiError(
+                            id_fiscal_document=doc_id,
+                            error_type="NOT_ELECTRONIC",
+                            error_message=(
+                                "Il documento non è elettronico, "
+                                "non può essere inviato a FatturaPA"
+                            ),
+                        )
+                    )
+                    continue
+
+                if not doc.xml_content or not doc.filename:
+                    failed.append(
+                        BulkSendToSdiError(
+                            id_fiscal_document=doc_id,
+                            error_type="XML_MISSING",
+                            error_message=(
+                                "XML non ancora generato. "
+                                "Chiamare prima /generate-xml"
+                            ),
+                        )
+                    )
+                    continue
+
+                send_block = send_to_sdi_block_reason(doc)
+                if send_block:
+                    failed.append(
+                        BulkSendToSdiError(
+                            id_fiscal_document=doc_id,
+                            error_type="BLOCKED",
+                            error_message=send_block,
+                        )
+                    )
+                    continue
+
+                if send_to_sdi:
+                    pec_error = pec_gate_error(doc.xml_content)
+                    if pec_error:
+                        failed.append(
+                            BulkSendToSdiError(
+                                id_fiscal_document=doc_id,
+                                error_type="PEC_GATE",
+                                error_message=pec_error.get(
+                                    "message",
+                                    "Invio SDI bloccato: PEC mancante o non valida",
+                                ),
+                            )
+                        )
+                        continue
+
+                stop_result = await fatturapa.upload_fiscal_xml(
+                    doc.filename, doc.xml_content, send_to_sdi=send_to_sdi
+                )
+                updated = finalize_fatturapa_upload(
+                    repo, doc_id, stop_result, send_to_sdi
+                )
+                successful.append(
+                    BulkSendToSdiSuccess(
+                        id_fiscal_document=doc_id,
+                        status=updated.status if updated else None,
+                        sdi_status=getattr(updated, "sdi_status", None)
+                        if updated
+                        else None,
+                    )
+                )
+            except FatturaPAUploadError as e:
+                failed.append(
+                    BulkSendToSdiError(
+                        id_fiscal_document=doc_id,
+                        error_type="UPLOAD_ERROR",
+                        error_message=e.message,
+                    )
+                )
+                logger.warning(
+                    "Doc %s: UPLOAD_ERROR - %s", doc_id, e.message
+                )
+            except Exception as e:
+                try:
+                    self._session.rollback()
+                except Exception:
+                    pass
+                failed.append(
+                    BulkSendToSdiError(
+                        id_fiscal_document=doc_id,
+                        error_type="UNKNOWN_ERROR",
+                        error_message=str(e),
+                    )
+                )
+                logger.error(
+                    "Doc %s: UNKNOWN_ERROR - %s",
+                    doc_id,
+                    e,
+                    exc_info=True,
+                )
+
+        summary = {
+            "total": len(unique_ids),
+            "successful_count": len(successful),
+            "failed_count": len(failed),
+        }
+        logger.info(
+            "Bulk send-to-sdi completed: %s successful, %s failed out of %s",
+            summary["successful_count"],
+            summary["failed_count"],
+            summary["total"],
+        )
+        return BulkSendToSdiResponseSchema(
             successful=successful,
             failed=failed,
             summary=summary,

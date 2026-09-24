@@ -1,6 +1,7 @@
 """
 Shipping Router rifattorizzato seguendo i principi SOLID
 """
+from datetime import date, datetime, time
 from typing import Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, status, Query, Path
@@ -91,19 +92,48 @@ async def get_all_shippings(
     db: db_dependency = None,
     page: int = Query(1, gt=0),
     limit: int = Query(LIMIT_DEFAULT, gt=0, le=MAX_LIMIT),
+    id_carrier_api: Optional[int] = Query(
+        None,
+        gt=0,
+        description="Filtra per carrier API (corriere)",
+    ),
+    date_from: Optional[date] = Query(
+        None,
+        description="Data creazione spedizione da (YYYY-MM-DD), inclusiva su shipments.date_add",
+    ),
+    date_to: Optional[date] = Query(
+        None,
+        description=(
+            "Data creazione spedizione a (YYYY-MM-DD), fine giornata inclusiva "
+            "(time.max, come fiscal_documents)"
+        ),
+    ),
     _: None = Depends(require_permission("shipments", "read")),
 ):
     """
-    Restituisce tutti i shipping con supporto alla paginazione.
+    Restituisce tutti i shipping con supporto alla paginazione e filtri opzionali.
 
     - **page**: La pagina da restituire, per la paginazione dei risultati.
     - **limit**: Il numero massimo di risultati per pagina.
+    - **id_carrier_api**: Filtra per corriere (`shipments.id_carrier_api`).
+    - **date_from** / **date_to**: Range su `shipments.date_add`
+      (`date_to` = fine giornata inclusiva).
     """
-    shippings = await shipping_service.get_shippings(page=page, limit=limit)
+    list_filters = {}
+    if id_carrier_api is not None:
+        list_filters["id_carrier_api"] = id_carrier_api
+    if date_from is not None:
+        list_filters["date_from"] = datetime.combine(date_from, time.min)
+    if date_to is not None:
+        list_filters["date_to"] = datetime.combine(date_to, time.max)
+
+    shippings = await shipping_service.get_shippings(
+        page=page, limit=limit, **list_filters
+    )
     if not shippings:
         raise NotFoundException("Shippings", None)
 
-    total_count = await shipping_service.get_shippings_count()
+    total_count = await shipping_service.get_shippings_count(**list_filters)
 
     return {
         "shippings": _to_shipping_response_list(shippings, db),
