@@ -13,6 +13,7 @@ from datetime import datetime
 from src.core.cache import get_cache_manager
 from src.core.cached import cached
 from src.core.settings import TTL_PRESETS
+from src.core.paths import PRODUCT_IMAGES_ROOT, FALLBACK_PRODUCT_IMAGE
 
 
 class ImageCacheService:
@@ -22,7 +23,7 @@ class ImageCacheService:
     
     def __init__(self):
         self.cache_manager = None
-        self.base_path = Path("media/product_images")
+        self.base_path = PRODUCT_IMAGES_ROOT
     
     async def initialize(self):
         """Inizializza il servizio di cache"""
@@ -46,7 +47,7 @@ class ImageCacheService:
         """
         # Genera il percorso dell'immagine
         image_path = self.base_path / str(platform_id) / f"product_{product_id}.jpg"
-        fallback_path = self.base_path / "fallback" / "product_not_found.jpg"
+        fallback_path = FALLBACK_PRODUCT_IMAGE
         
         # Controlla se l'immagine esiste
         if image_path.exists():

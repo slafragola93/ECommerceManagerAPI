@@ -4,6 +4,67 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-25) — Sync immagini: batch + riparazione img_url fantasma
+
+`POST /api/v1/sync/sync-images` con ~38k prodotti falliva in silenzio (un unico `IN (...)` + `gather` enorme): `success: true` e `products_processed` alti, ma `img_url` restava su path senza file → placeholder 7.26 KB.
+
+Fix:
+- sync a **chunk da 200** (fetch API + download + UPDATE)
+- ripara `img_url` se il file locale manca (fallback o path corretto)
+- response con contatori: `downloaded`, `skipped`, `fallback`, `failed`, `repaired_url`
+
+Dopo restart API: rieseguire sync-images e controllare che `downloaded` / `repaired_url` siano > 0 (non solo `products_processed`).
+
+---
+
+## Ultime modifiche (2026-09-25) — Fix recupero immagini prodotto (404)
+
+Cause tipiche del 404 e correzioni:
+
+1. **Mount `/media` legato alla cwd** — se uvicorn/systemd parte da un’altra directory, i file sotto il repo non sono visibili. Ora il mount e `ImageService` usano path **assoluti** (`src/core/paths.py` → root progetto).
+2. **Download PS senza `ws_key`** — PrestaShop spesso redirige `/api/images/...` verso `/img/p/...` e l’header `Authorization` viene perso → 401/404. Ora la GET immagini passa `ws_key` in query e prova anche i type `small_default` / `home_default` / `medium_default`.
+3. **Fallback assente** — all’avvio viene creato `media/product_images/fallback/product_not_found.jpg` se manca.
+4. **FE su `:4200` che apre `/media/...` sull’origine Angular** — `img_url` è host-rooted (`/media/...`). In dev il browser la risolve su `localhost:4200` → 404. Serve proxy Angular **oppure** prefisso con l’origine API (`http://localhost:8000`).
+
+Esempio `proxy.conf.json` (FE):
+
+```json
+{
+  "/api": { "target": "http://localhost:8000", "secure": false },
+  "/media": { "target": "http://localhost:8000", "secure": false, "changeOrigin": true }
+}
+```
+
+Verifica diretta BE: `http://localhost:8000/media/product_images/1/product_1.jpg` (deve essere 200).  
+Nota: path tipo `product_38184.jpg` con id PrestaShop (origin) sono residui pre-fix; i file validi usano `id_product` locale (in locale tipicamente ≤ ~1k). Rieseguire `POST /api/v1/sync/sync-images?store_id=…`.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/media/test_product_image_paths.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-25) — Fix recupero immagini prodotto
+
+La sync immagini non usa più l’URL friendly pubblico PrestaShop (`{id}-small_default/{slug}.jpg`), che spesso rispondeva non-200 (slug inventato dal nome, tipo immagine assente).
+
+| Aspetto | Comportamento |
+|---------|----------------|
+| Download | `GET /api/images/products/{id_origin}/{id_image}` con sessione Basic Auth dello store (byte binari, senza `output_format=JSON`) |
+| File su disco | `media/product_images/{platform_id}/product_{id_product}.jpg` (id **locale**) |
+| `img_url` in DB | `/media/product_images/{platform_id}/product_{id_product}.jpg` allineato al file; mai `product_{id_origin}` |
+| Esistenza file | Path fisico relativo alla cwd (non `os.path.join(cwd, "/media/...")`) |
+| Cache warm-up | Usa `id_product` locali, non `id_origin` |
+| `id_default_image` | Normalizzato (int / stringa / dict `value`/`id`); vuoto → 0 / fallback |
+
+Endpoint sync invariati: sync prodotti (phase3) e `POST /api/v1/sync/sync-images`.
+
+```powershell
+.\venv\Scripts\python.exe -m pytest tests/unit/services/media/test_product_image_paths.py -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-23) — Home ElettroNext: filtri lettura
 
 Due query param opzionali per alimentare i contatori della home senza endpoint nuovi né cambio dei JSON di risposta.

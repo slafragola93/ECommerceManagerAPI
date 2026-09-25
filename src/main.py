@@ -34,6 +34,7 @@ from src.middleware.error_logging import ErrorLoggingMiddleware, PerformanceLogg
 from src.core.settings import get_cache_settings
 from src.core.container_config import get_configured_container
 from src.core.static_files import CachedStaticFiles
+from src.core.paths import ensure_media_layout
 from src.core.exceptions import (
     BaseApplicationException,
     ValidationException,
@@ -621,20 +622,20 @@ async def general_exception_handler(request: Request, exc: Exception):
     )
 
 # ============================================================================
-# STATIC FILES MOUNT (must be before routers)
+# STATIC FILES MOUNT
+# Path assoluto rispetto alla root del repo (non alla cwd di uvicorn/systemd),
+# altrimenti `/media/...` risponde 404 anche se i file esistono sotto il progetto.
 # ============================================================================
-# Il mount viene fatto in modo incondizionato: se le cartelle non esistono le
-# creiamo qui per evitare che `/media/...` risponda con 404 globali. La sotto
-# cartella `fallback` ospita il placeholder usato dai vari servizi tramite
-# ImageService.FALLBACK_IMG_URL.
 try:
-    media_path = Path("media")
-    fallback_path = media_path / "product_images" / "fallback"
-    fallback_path.mkdir(parents=True, exist_ok=True)
-    app.mount("/media", CachedStaticFiles(directory="media"), name="media")
-    logger.info(f"Media files mounted at /media from directory: {media_path.absolute()}")
+    media_path = ensure_media_layout()
+    app.mount(
+        "/media",
+        CachedStaticFiles(directory=str(media_path)),
+        name="media",
+    )
+    logger.info("Media files mounted at /media from directory: %s", media_path)
 except Exception as e:
-    logger.warning(f"Failed to mount media directory: {str(e)}")
+    logger.warning("Failed to mount media directory: %s", e)
 
 # ============================================================================
 # ROUTERS

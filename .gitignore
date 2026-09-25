@@ -104,3 +104,6 @@ media/*
 
 # Dump locale XML FatturaPA (il sync tiene xml_content in DB)
 fatture_download/
+
+# Alembic config locale (contiene credenziali DB)
+alembic.ini

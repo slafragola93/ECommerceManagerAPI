@@ -127,4 +127,9 @@ class SyncImagesResponseSchema(BaseModel):
     id_store: int
     success: bool = True
     products_processed: int = 0
+    downloaded: int = 0
+    skipped: int = 0
+    fallback: int = 0
+    failed: int = 0
+    repaired_url: int = 0
     message: str = ""

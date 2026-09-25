@@ -30,6 +30,8 @@ from datetime import datetime
 from PIL import Image
 import io
 
+from src.core.paths import PRODUCT_IMAGES_ROOT, ensure_media_layout
+
 
 class ImageService:
     """
@@ -41,14 +43,16 @@ class ImageService:
     # e col file fisico presente in `media/product_images/fallback/product_not_found.jpg`.
     FALLBACK_IMG_URL: str = "/media/product_images/fallback/product_not_found.jpg"
 
-    def __init__(self, base_path: str = "media/product_images"):
+    def __init__(self, base_path: str = None):
         """
         Inizializza il servizio immagini.
         
         Args:
-            base_path: Percorso base per il salvataggio delle immagini
+            base_path: Percorso base per il salvataggio (default: root progetto
+                ``media/product_images``, assoluto — indipendente dalla cwd).
         """
-        self.base_path = Path(base_path)
+        ensure_media_layout()
+        self.base_path = Path(base_path) if base_path else PRODUCT_IMAGES_ROOT
         self.base_path.mkdir(parents=True, exist_ok=True)
         
         # Configura session con connection pooling per performance
@@ -88,6 +92,51 @@ class ImageService:
         self.image_quality = 15
         self.max_image_size = (400, 300)
     
+    def get_physical_image_path(self, platform_id: int, product_id: int) -> Path:
+        """
+        Percorso fisico su disco (relativo alla cwd), senza prefisso URL `/media`.
+
+        Formato: ``media/product_images/{platform_id}/product_{product_id}.jpg``
+        """
+        return self.base_path / str(platform_id) / f"product_{product_id}.jpg"
+
+    def save_image_bytes(
+        self,
+        content: bytes,
+        product_id: int,
+        platform_id: int,
+    ) -> Optional[str]:
+        """
+        Comprime e salva byte già scaricati (es. da API PrestaShop autenticata).
+
+        Args:
+            content: Contenuto binario dell'immagine
+            product_id: ID prodotto locale
+            platform_id: ID piattaforma
+
+        Returns:
+            URL pubblico ``/media/product_images/...`` oppure None se content vuoto
+        """
+        if not content:
+            return None
+        try:
+            platform_dir = self.base_path / str(platform_id)
+            platform_dir.mkdir(parents=True, exist_ok=True)
+            file_path = self.get_physical_image_path(platform_id, product_id)
+            if file_path.exists():
+                return self.generate_local_image_path(platform_id, product_id)
+            compressed = self._compress_image(content)
+            self._write_file_sync(file_path, compressed)
+            return self.generate_local_image_path(platform_id, product_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to save image bytes for product %s platform %s: %s",
+                product_id,
+                platform_id,
+                e,
+            )
+            return None
+
     def download_and_save_image(
         self, 
         image_url: str, 
@@ -95,7 +144,7 @@ class ImageService:
         platform_id: int
     ) -> Optional[str]:
         """
-        Scarica e salva un'immagine da un URL.
+        Scarica e salva un'immagine da un URL pubblico.
         
         Args:
             image_url: URL dell'immagine da scaricare
@@ -103,37 +152,24 @@ class ImageService:
             platform_id: ID della piattaforma
             
         Returns:
-            Percorso relativo dell'immagine salvata o None se il download fallisce
+            URL pubblico dell'immagine salvata o None se il download fallisce
         """
         try:
-            # Crea la struttura delle cartelle
-            platform_dir = self.base_path / str(platform_id)
-            platform_dir.mkdir(exist_ok=True)
-            
-            # Genera il nome del file con formato fisso
-            filename = f"product_{product_id}.jpg"
-            file_path = platform_dir / filename
-            
+            file_path = self.get_physical_image_path(platform_id, product_id)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
             # Controlla se il file esiste già (performance check)
             if file_path.exists():
-                return f"/media/product_images/{platform_id}/{filename}"
+                return self.generate_local_image_path(platform_id, product_id)
             
             # Scarica l'immagine con session ottimizzata.
             # Timeout 10s: 3s era troppo aggressivo e causava molti fallimenti
             # su connessioni lente, lasciando img_url fantasma nel DB.
             response = self.session.get(image_url, timeout=10, stream=True)
             if response.status_code == 200:
-                # Legge tutto il contenuto in memoria
-                content = response.content
-                
-                # Comprimi l'immagine per risparmiare memoria
-                compressed_content = self._compress_image(content)
-                        
-                # Scrive il file
-                self._write_file_sync(file_path, compressed_content)
-                        
-                # Restituisce il percorso relativo
-                return f"/media/product_images/{platform_id}/{filename}"
+                return self.save_image_bytes(
+                    response.content, product_id, platform_id
+                )
             else:
                 print(f"Warning: Failed to download image: HTTP {response.status_code}")
                 return None

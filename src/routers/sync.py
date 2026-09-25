@@ -261,6 +261,11 @@ async def sync_images(
         id_store=id_store,
         success=True,
         products_processed=result.get("products_processed", 0),
+        downloaded=result.get("downloaded", 0),
+        skipped=result.get("skipped", 0),
+        fallback=result.get("fallback", 0),
+        failed=result.get("failed", 0),
+        repaired_url=result.get("repaired_url", 0),
         message=result.get("message", "Image sync completed."),
     )
 
