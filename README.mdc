@@ -4,6 +4,23 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-25) — Valutazione staging: worker e database
+
+Analisi (solo documentazione, nessun cambio codice) per il primo deploy test/staging.
+
+Documento: [`docs/DEPLOY_STAGING_VALUTAZIONE_WORKER_DB.md`](docs/DEPLOY_STAGING_VALUTAZIONE_WORKER_DB.md)
+
+Conclusioni:
+- **1 worker Uvicorn** al go-live (come i runbook). `uvicorn --workers 2` duplica i job e spezza l’SSE.
+- Isolamento operatori/esterni: **due processi con ruoli diversi** (fase 2), non due worker identici.
+- **Restare su MySQL 8.** MariaDB non è drop-in (collation). PostgreSQL è un progetto a parte. Non usare entrambi.
+- I volumi (~600k ordini/clienti, ~1,2M address) non giustificano un cambio di motore; prima indici, pool e misure.
+- Lo stack dei runbook è **pianificato correttamente** per come è scritta l’app oggi (non è lo stack ideale in astratto). Aggiunte in doc: perché le alternative non sono utili (§5) e verifica stack (§6).
+
+Runbook operativo invariato: [`docs/DEPLOY_AMBIENTE_TEST.md`](docs/DEPLOY_AMBIENTE_TEST.md).
+
+---
+
 ## Ultime modifiche (2026-09-25) — Sync immagini: batch + riparazione img_url fantasma
 
 `POST /api/v1/sync/sync-images` con ~38k prodotti falliva in silenzio (un unico `IN (...)` + `gather` enorme): `success: true` e `products_processed` alti, ma `img_url` restava su path senza file → placeholder 7.26 KB.
@@ -2197,6 +2214,8 @@ Backlog unificato allineato allo stato del codice: [`.cursor/tasks_claude/BACKLO
 - [DOCUMENTAZIONE.md](DOCUMENTAZIONE.md) – panoramica e architettura  
 - [QUICK_START.md](QUICK_START.md) – avvio rapido e comandi  
 - [docs/](docs/) – guide specifiche (eventi, plugin, sync, FatturaPA, ecc.)
+- [docs/DEPLOY_AMBIENTE_TEST.md](docs/DEPLOY_AMBIENTE_TEST.md) – runbook Linux staging (1 worker, MySQL 8, Redis)
+- [docs/DEPLOY_STAGING_VALUTAZIONE_WORKER_DB.md](docs/DEPLOY_STAGING_VALUTAZIONE_WORKER_DB.md) – valutazione 2 processi (api/worker) e MySQL vs MariaDB vs PostgreSQL
 - [.cursor/tasks_claude/BACKLOG_UNIFICATO.md](.cursor/tasks_claude/BACKLOG_UNIFICATO.md) – backlog unificato FE+BE (fonte di verità task; riconciliato 2026-06-18)
 - [docs/FATTURAPA.md](docs/FATTURAPA.md) – guida operativa fatturazione elettronica (ciclo attivo, API, VIES, troubleshooting)
 - [.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md](.cursor/tasks_claude/fatturaPa/fatturapa_riassunto_piano.md) – riassunto normativa FatturaPA e piano fasi
