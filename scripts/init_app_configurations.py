@@ -268,6 +268,20 @@ def init_app_configurations():
                 description="Sicurezza",
                 is_encrypted=False
             ),
+            AppConfigurationSchema(
+                category="email_settings",
+                name="enabled",
+                value="false",
+                description="Invio email attivo (true/false)",
+                is_encrypted=False
+            ),
+            AppConfigurationSchema(
+                category="email_settings",
+                name="default_locale",
+                value="en",
+                description="Lingua fallback template",
+                is_encrypted=False
+            ),
             
             # CHIAVE API APP
             AppConfigurationSchema(

@@ -5,7 +5,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
+from src.database import get_db
+
+from src.schemas.email_template_schema import EmailSendDocumentSchema, EmailSendResultSchema
 from src.schemas.ricevuta_schema import (
     RicevutaCreateSchema,
     RicevutaExportFormatSchema,
@@ -15,6 +19,7 @@ from src.schemas.ricevuta_schema import (
     RicevutaStatoSchema,
     RicevutaUpdateSchema,
 )
+from src.services.email.document_mail_service import DocumentMailService
 from src.services.core.wrap import check_authentication
 from src.services.interfaces.ricevuta_service_interface import IRicevutaService
 from src.services.routers.auth_service import get_current_user, require_permission
@@ -213,6 +218,28 @@ async def download_ricevuta_pdf(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/{id_ricevuta}/send-email",
+    response_model=EmailSendResultSchema,
+    status_code=status.HTTP_200_OK,
+    summary="Invia ricevuta al cliente via email",
+)
+@check_authentication
+async def send_ricevuta_email(
+    id_ricevuta: int = Path(..., gt=0),
+    payload: EmailSendDocumentSchema = Body(default=EmailSendDocumentSchema()),
+    user: dict = user_dependency,
+    _: None = update_permission,
+    service: IRicevutaService = Depends(get_ricevuta_service),
+    db: Session = Depends(get_db),
+) -> EmailSendResultSchema:
+    return await DocumentMailService(db).send_ricevuta(
+        id_ricevuta,
+        id_email_template=payload.id_email_template,
+        ricevuta_service=service,
     )
 
 

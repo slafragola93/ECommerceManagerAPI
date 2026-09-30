@@ -13,7 +13,7 @@ plugins:
   as400_validate_order_megawatt:
     enabled: false
   email_notification:
-    enabled: false
+    enabled: true
   platform_state_sync:
     enabled: true
 routes:

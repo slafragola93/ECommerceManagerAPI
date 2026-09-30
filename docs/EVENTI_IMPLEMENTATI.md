@@ -11,7 +11,7 @@ Questo documento elenca tutti gli eventi che sono attualmente **triggerabili** (
 ### 🛒 ORDINI
 | Evento | Valore | Implementato in | Descrizione |
 |--------|--------|-----------------|-------------|
-| `ORDER_STATUS_CHANGED` | `order_status_changed` | `src/services/routers/order_service.py` | Emesso quando cambia lo stato di un ordine |
+| `ORDER_STATUS_CHANGED` | `order_status_changed` | `src/services/routers/order_service.py` | Emesso quando cambia lo stato di un ordine. Plugin `email_notification`: mail cliente solo se nuovo stato = Spediti (id 3). |
 | `ORDER_CREATED` | `order_created` | `src/services/routers/order_service.py` | Emesso quando viene creato un nuovo ordine |
 | `ORDER_DELETED` | `order_deleted` | `src/services/routers/order_service.py` | Emesso quando viene eliminato un ordine (solo se in stato iniziale) |
 

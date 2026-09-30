@@ -37,6 +37,8 @@ from src.schemas.fiscal_document_schema import (
     BulkSendToSdiRequestSchema,
     BulkSendToSdiResponseSchema,
 )
+from src.schemas.email_template_schema import EmailSendDocumentSchema, EmailSendResultSchema
+from src.services.email.document_mail_service import DocumentMailService
 from src.services.pdf.fiscal_document_pdf_builder import build_fiscal_document_pdf_buffer
 from src.services.external.fatturapa_pec_gate import pec_gate_error
 from src.services.external.fatturapa_sdi_resend import (
@@ -1240,4 +1242,22 @@ async def generate_fiscal_document_pdf(
             "Content-Type": "application/pdf",
         },
     )
-        
+
+
+@router.post(
+    "/{id_fiscal_document}/send-email",
+    response_model=EmailSendResultSchema,
+    summary="Invia fattura o nota di credito al cliente via email",
+)
+async def send_fiscal_document_email(
+    id_fiscal_document: int = Path(..., gt=0),
+    payload: EmailSendDocumentSchema = Body(default=EmailSendDocumentSchema()),
+    user: dict = user_dependency,
+    db: Session = db_dependency,
+    _: None = Depends(require_permission("fiscal_documents", "update")),
+):
+    return await DocumentMailService(db).send_fiscal_document(
+        id_fiscal_document,
+        id_email_template=payload.id_email_template,
+    )
+ 

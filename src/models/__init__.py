@@ -41,6 +41,7 @@ from .platform_state_trigger import PlatformStateTrigger
 from .store import Store
 from .company_fiscal_info import CompanyFiscalInfo
 from .ecommerce_order_state import EcommerceOrderState
+from .email_template import EmailTemplate, EmailTemplateTranslation
 
 
 

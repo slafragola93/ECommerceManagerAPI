@@ -119,6 +119,8 @@ APP_CONFIGURATIONS_DATA = [
     ("email_settings", "smtp_server", "Server SMTP", False),
     ("email_settings", "smtp_port", "Porta SMTP", False),
     ("email_settings", "security", "Sicurezza", False),
+    ("email_settings", "enabled", "Invio email attivo (true/false)", False),
+    ("email_settings", "default_locale", "Lingua fallback template", False),
     # order_states
     ("order_states", "is_delivered", "ID stato ordine Consegnato", False),
     # ddt_sender
@@ -171,6 +173,8 @@ def setup_app_configurations(db):
     default_values = {
         ("invoice_pdf", "pre_invoice_disclaimer"): DEFAULT_PRE_INVOICE_DISCLAIMER,
         ("invoice_pdf", "append_tax_normative"): "true",
+        ("email_settings", "enabled"): "false",
+        ("email_settings", "default_locale"): "en",
     }
     for category, name, description, is_encrypted in APP_CONFIGURATIONS_DATA:
         existing = db.query(AppConfiguration).filter(

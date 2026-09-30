@@ -4,6 +4,52 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-29) — Save template: subject/body nel PUT
+
+Il FE salva con `PUT /email-templates/{id}` (200) ma oggetto e corpo non andavano in DB: venivano ignorati se non erano in `translations[]`. Ora il PUT accetta `locale`+`subject`+`body_html` (e mappa/lista `translations`). GET li rimostra in cima e in `translations[]`.
+
+---
+
+## Ultime modifiche (2026-09-29) — PUT traduzione: locale solo nel path
+
+`PUT /email-templates/{id}/translations/{locale}` dava 422 perché lo schema pretenda `locale` anche nel JSON. Il FE mandava correttamente solo `subject`/`body_html`. Ora il body non richiede `locale`.
+
+---
+
+## Ultime modifiche (2026-09-29) — Preview senza traduzioni obbligatorie
+
+Le traduzioni restano opzionali in create/update. `POST .../preview` senza testi salvati risponde 200 (subject/body vuoti), non 404/400. Bozza `subject`/`body_html` nel body è opzionale. `PUT /{id}` può ancora persistire `translations[]` se il FE le manda.
+
+---
+
+## Ultime modifiche (2026-09-29) — Email templates: alias `id` per il FE
+
+`GET/POST /api/v1/email-templates/` ora espone anche `id` (= `id_email_template`). Il FE che usa `template.id` non chiama più `DELETE /email-templates/undefined`. PUT ignora campi extra. Lista resta `{ templates, total }`; `code` duplicato resta 400.
+
+---
+
+## Ultime modifiche (2026-09-29) — Runbook: DB vuoto / produzione
+
+[`docs/DEPLOY_AMBIENTE_TEST.md`](docs/DEPLOY_AMBIENTE_TEST.md): primo ambiente e produzione usano **§4a** (`create_all` + `alembic stamp head` + `setup_initial.py`). Non `alembic upgrade head` su MySQL vuoto. Head atteso dopo lo stamp: `20260929_0001`. I deploy successivi restano `upgrade head`.
+
+---
+
+## Ultime modifiche (2026-09-29) — Email BE (Spediti + documenti)
+
+Invio dal gestionale solo su passaggio ordine a **Spediti** (`id_order_state=3`) e su `POST .../send-email` di fattura, NC e ricevuta. SMTP da `app_configurations.email_settings` (`enabled`, `default_locale` + chiavi già previste). Template e traduzioni in DB, editor via `/api/v1/email-templates/`.
+
+- Guida: [`docs/EMAIL_DOCUMENTI_E_SPEDITI.md`](docs/EMAIL_DOCUMENTI_E_SPEDITI.md)
+- Prompt FE: [`.cursor/tasks_claude/email/prompt_FE_email_spediti_e_documenti.md`](.cursor/tasks_claude/email/prompt_FE_email_spediti_e_documenti.md)
+- Plugin `email_notification` acceso in `config/event_handlers.yaml`
+- Migration: `alembic/versions/20260929_0001_email_templates.py`
+
+```powershell
+alembic upgrade head
+.\venv\Scripts\python.exe -m pytest tests/unit/services/email -v
+```
+
+---
+
 ## Ultime modifiche (2026-09-25) — Valutazione staging: worker e database
 
 Analisi (solo documentazione, nessun cambio codice) per il primo deploy test/staging.

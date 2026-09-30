@@ -25,7 +25,7 @@ Sostituisci i placeholder:
 - Uvicorn su `src.main:app`, porta 8000, **1 solo worker**
 - MySQL 8 `utf8mb4` / InnoDB (servizio esterno, non è nel `docker-compose`)
 - Redis 7 (`CACHE_BACKEND=hybrid`)
-- Dump MySQL **già popolato** (non un database vuoto)
+- MySQL 8: **primo ambiente / produzione = database vuoto** (§4a). Dump già popolato solo se stai **copiando** un ambiente esistente (§4b)
 
 **Consigliato**
 
@@ -40,7 +40,7 @@ Sostituisci i placeholder:
 
 **Non fare**
 
-- `alembic upgrade head` su DB vuoto (29 tabelle core non le crea Alembic) — per un DB vuoto usa la procedura in §4a
+- `alembic upgrade head` su DB **vuoto** (la catena non è ripercorribile da zero). Schema iniziale: §4a (`create_all` + `stamp head`). I deploy successivi, a schema già stampato, usano `upgrade head`
 - `python scripts/setup_initial.py` o `scripts/init_auth_data.py` sul dump (rischio utente `admin`/`admin`)
 - `SEED_EU_VAT_TAXES=1`
 - `--workers 4` come in `run_prod.ps1` (duplica job POOL/SDI/tracking e spezza l’SSE)
@@ -167,9 +167,68 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ---
 
-## 4. MySQL — dump già popolato + migration
+## 4. MySQL — quale percorso
 
-Sul server di **origine** (dev/prod da cui copi i dati):
+| Situazione | Percorso |
+|---|---|
+| **Produzione o primo server** (DB nuovo, nessun dump) | **§4a** — è la procedura ufficiale |
+| Test/staging che **copia** dati da un altro MySQL | **§4b** — import dump, poi `alembic upgrade head` |
+
+Non mescolare: su DB vuoto non lanciare `upgrade head`; su dump popolato non lanciare `setup_initial.py`.
+
+---
+
+### 4a. Database vuoto (produzione e ogni primo deploy)
+
+`alembic upgrade head` **fallisce** su un MySQL senza tabelle. Motivo: Alembic è stato introdotto dopo `Base.metadata.create_all()`. Molte tabelle core (`orders`, `shipments`, `fiscal_documents`, …) non le crea nessuna migration “in cima” alla catena. La baseline `62e4b40e09f9` sta in fondo: su DB vuoto arriva troppo tardi e le revisioni precedenti si rompono.
+
+**Soluzione (non si cambia finché non si fa lo squash della catena):** creare lo schema dai modelli, poi dire ad Alembic “sei già allineato”, senza eseguire le migration storiche.
+
+Procedura (verificata in locale; vale per produzione al go-live):
+
+1. Crea database e utente (stessi `CREATE DATABASE` / `GRANT` di §4b), **senza** importare dump.
+
+2. Con venv attivo e `.env` puntato a quel DB:
+
+   ```bash
+   cd /opt/elettronew/api
+   source venv/bin/activate
+   export PYTHONPATH=/opt/elettronew/api
+   python -c "from src.database import Base, engine; Base.metadata.create_all(bind=engine)"
+   ```
+
+   Crea **tutte** le tabelle dei modelli SQLAlchemy nello stato attuale del codice (incluso `email_templates` / `email_template_translations`). È lo stesso meccanismo di `startup_event()` in `src/main.py`.
+
+   **Non avviare l’app** per creare le tabelle. Il `lifespan` accende tracking, POOL FatturaPA, eventi SDI e sync stati PrestaShop anche con DB vuoto.
+
+3. Allinea Alembic **senza DDL**:
+
+   ```bash
+   alembic stamp head
+   alembic current
+   # atteso (2026-09-29): 20260929_0001
+   # se `alembic heads` mostra un altro id, quello è il head corrente
+   ```
+
+   `stamp` scrive solo `alembic_version`. Da qui in poi i **deploy successivi** sono `git pull` + `alembic upgrade head` (§10).
+
+4. Seed di un DB vuoto (stati ordine/spedizione, `app_configurations` incluse `email_settings.enabled` / `default_locale`, ruoli, admin):
+
+   ```bash
+   python scripts/setup_initial.py
+   ```
+
+   Solo su DB vuoto. **Mai** su un dump.
+
+5. Avvia systemd (§7).
+
+**Backlog:** squash delle migration da `5c44d2400e1d` a `62e4b40e09f9` in una sola revision coerente con i modelli. Fino ad allora ogni ambiente da zero usa §4a, non `upgrade` da zero.
+
+---
+
+### 4b. Dump già popolato + migration
+
+Solo se copi un MySQL **già in uso**. Sul server di **origine**:
 
 ```bash
 mysqldump -u SRC_USER -p --single-transaction --routines --triggers SRC_DB > elettronew_src.sql
@@ -204,48 +263,7 @@ alembic current
 
 Non lanciare `scripts/setup_initial.py` su questo dump. Gli utenti, `app_configurations` e le aliquote arrivano dal dump.
 
-MySQL deve ascoltare solo in rete privata / localhost.
-
----
-
-### 4a. Bootstrap su database vuoto (nuovo ambiente, senza dump)
-
-Questa sottosezione vale solo se l'ambiente **non** parte da un dump popolato (§4), ad esempio un primo deploy su un server nuovo o un ambiente azzerato da zero.
-
-In questo caso `alembic upgrade head` fallisce (vedi §0, "Non fare"): la catena di migration non è ripercorribile da zero, perché diverse migration intermedie modificano tabelle core (es. `shipments`) che storicamente sono state create solo da `Base.metadata.create_all()`, mai da una migration Alembic vera e propria. La migration di baseline che le crea (`62e4b40e09f9`) è in fondo alla catena, non all'inizio, quindi su un DB vuoto arriva troppo tardi.
-
-**Procedura verificata (locale, 2026-09-24)** per bootstrappare un DB vuoto in modo equivalente allo schema attuale:
-
-1. Crea il database vuoto e l'utente (stessi comandi di §4, ma **senza** importare nessun dump).
-
-2. Con venv attivo e `.env` già compilato, puntato al DB vuoto:
-
-   ```bash
-   cd /opt/elettronew/api
-   source venv/bin/activate
-   export PYTHONPATH=/opt/elettronew/api
-   python -c "from src.database import Base, engine; Base.metadata.create_all(bind=engine)"
-   ```
-
-   Crea tutte le tabelle dei modelli nella forma attuale — lo stesso meccanismo già usato da `startup_event()` in `src/main.py`.
-
-   **Non avviare l'app intera per farlo eseguire.** L'avvio completo (`lifespan`) fa partire anche i background task — tracking, sync POOL FatturaPA, eventi SDI, sync stati ordine — che possono chiamare servizi esterni reali anche con DB vuoto. Il comando sopra esegue solo `create_all`, isolato, senza toccare `lifespan`.
-
-3. Allinea Alembic senza eseguire nessuna migration:
-
-   ```bash
-   alembic stamp head
-   alembic current
-   # atteso: 62e4b40e09f9 (head) — o la revision head corrente al momento del deploy
-   ```
-
-   `stamp` scrive solo la revision in `alembic_version`, non esegue DDL.
-
-4. Solo a questo punto avvia l'app normalmente (systemd, §7), così i background task partono con lo schema già pronto.
-
-**Verifica di coerenza (consigliata)**: se hai un altro database di riferimento con schema aggiornato, confronta l'elenco tabelle dei due schemi via `information_schema.TABLES` — devono coincidere a meno di `alembic_version` (assente prima dello `stamp`).
-
-**Nota per il backlog**: la causa di fondo — catena di migration non ripercorribile da zero — andrebbe risolta con una consolidazione (squash) delle migration da `5c44d2400e1d` a `62e4b40e09f9` in un'unica migration coerente con lo schema attuale dei modelli. Non blocca questo deploy (si usa `create_all` + `stamp`), ma va pianificata separatamente: finché non si fa, ogni nuovo ambiente da zero richiede questa procedura invece del normale `alembic upgrade head`.
+MySQL deve ascoltare solo in rete privata / localhost. Se il dump è fermo a `62e4b40e09f9`, `upgrade head` applica le revisioni successive (es. `20260929_0001` per le tabelle email).
 
 ---
 
@@ -421,6 +439,8 @@ alembic upgrade head
 sudo systemctl restart elettronew-api
 curl -sS http://127.0.0.1:8000/api/v1/monitoring/health
 ```
+
+Solo su un DB **già stampato** (§4a passo 3 o dump §4b). Su MySQL vuoto non usare questo blocco: vai a §4a.
 
 Conferma le migration **prima** di `upgrade head` su un dump che condivide dati reali.
 

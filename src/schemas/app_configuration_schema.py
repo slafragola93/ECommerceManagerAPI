@@ -125,6 +125,8 @@ class EmailSettingsSchema(BaseModel):
     smtp_server: Optional[str] = Field(default=None, description="Server SMTP")
     smtp_port: Optional[str] = Field(default=None, description="Porta")
     security: Optional[str] = Field(default=None, description="Sicurezza")
+    enabled: Optional[str] = Field(default=None, description="Invio email attivo (true/false)")
+    default_locale: Optional[str] = Field(default=None, description="Lingua fallback template")
 
 
 class ApiKeysSchema(BaseModel):
