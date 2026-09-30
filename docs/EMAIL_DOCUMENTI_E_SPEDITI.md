@@ -31,7 +31,7 @@ Le traduzioni **non** sono obbligatorie in create/update del template. Preview s
 
 `PUT /email-templates/{id}/translations/{locale}`: `locale` è nel path; body solo `subject`, `body_html`, `body_text` opzionale.
 
-Serve un template **default** attivo per `order_shipped` se la mail su Spediti deve partire. Stesso per i documenti se il FE non passa `id_email_template`.
+Serve un template attivo per `order_shipped` se la mail su Spediti deve partire. Il primo template di un purpose diventa `is_default`. Se il flag manca ma c’è un solo template attivo, l’invio usa quello. Stesso per i documenti se il FE non passa `id_email_template`.
 
 ## Invio documenti
 

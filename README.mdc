@@ -4,6 +4,24 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-09-30) — Mail Spediti: template unico come default
+
+`POST /orders/bulk-status` verso stato 3 emette già l’evento. L’invio falliva con `EmailTemplate not found` se l’unico template `order_shipped` non aveva `is_default`. Ora il primo template di un purpose è default, e se il flag manca ma c’è un solo template attivo viene usato quello.
+
+---
+
+## Ultime modifiche (2026-09-30) — FatturaPA bloccata in test
+
+Questo ambiente non è produzione. La API key FatturaPA.com di produzione è stata rimossa da `app_configurations` (`fatturapa` / `api_key`). Nel `.env` locale:
+
+- `FATTURAPA_SDI_API_SEND_ENABLED=false`
+- `FATTURAPA_POOL_SYNC_ENABLED=false`
+- `FATTURAPA_SDI_EVENTS_SYNC_ENABLED=false`
+
+Non reinserire la chiave di produzione e non riaccendere i flag finché non c’è un account di collaudo.
+
+---
+
 ## Ultime modifiche (2026-09-29) — Save template: subject/body nel PUT
 
 Il FE salva con `PUT /email-templates/{id}` (200) ma oggetto e corpo non andavano in DB: venivano ignorati se non erano in `translations[]`. Ora il PUT accetta `locale`+`subject`+`body_html` (e mappa/lista `translations`). GET li rimostra in cima e in `translations[]`.

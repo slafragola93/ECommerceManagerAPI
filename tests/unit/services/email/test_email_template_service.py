@@ -22,6 +22,33 @@ def _enable_locale(db_session, locale="en"):
     db_session.commit()
 
 
+def test_sole_template_becomes_default_and_is_used_for_send(db_session):
+    service = EmailTemplateService(db_session)
+    created = service.create_template(
+        EmailTemplateCreateSchema(
+            code="shipped_only",
+            name="Spedito",
+            purpose="order_shipped",
+            is_default=False,
+            translations=[
+                EmailTemplateTranslationSchema(
+                    locale="it",
+                    subject="Spedito {{ reference }}",
+                    body_html="<p>Ciao {{ firstname }}</p>",
+                )
+            ],
+        )
+    )
+    assert created.is_default is True
+
+    entity = service.get_template_entity(created.id_email_template)
+    entity.is_default = False
+    db_session.commit()
+
+    found = service.get_default_template("order_shipped")
+    assert found.id_email_template == created.id_email_template
+
+
 def test_create_and_preview_template(db_session):
     _enable_locale(db_session)
     service = EmailTemplateService(db_session)

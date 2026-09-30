@@ -48,13 +48,14 @@ class EmailTemplateService:
                 {"code": data.code},
             )
         allowed = keys_for_purpose(data.purpose)
-        if data.is_default:
+        is_default = bool(data.is_default) or not self._repo.has_default_for_purpose(data.purpose)
+        if is_default:
             self._repo.clear_default_for_purpose(data.purpose)
         template = EmailTemplate(
             code=data.code,
             name=data.name,
             purpose=data.purpose,
-            is_default=data.is_default,
+            is_default=is_default,
             is_active=data.is_active,
             allowed_variables=json.dumps(allowed),
         )

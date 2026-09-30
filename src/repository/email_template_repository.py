@@ -37,15 +37,33 @@ class EmailTemplateRepository(BaseRepository[EmailTemplate, int]):
         return query.order_by(EmailTemplate.id_email_template.desc()).all()
 
     def get_default_for_purpose(self, purpose: str) -> Optional[EmailTemplate]:
-        return (
+        active = (
             self._session.query(EmailTemplate)
             .options(joinedload(EmailTemplate.translations))
             .filter(
                 EmailTemplate.purpose == purpose,
-                EmailTemplate.is_default.is_(True),
                 EmailTemplate.is_active.is_(True),
             )
+            .order_by(EmailTemplate.id_email_template.asc())
+            .all()
+        )
+        unique = {row.id_email_template: row for row in active}
+        flagged = [row for row in unique.values() if row.is_default]
+        if flagged:
+            return flagged[0]
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+        return None
+
+    def has_default_for_purpose(self, purpose: str) -> bool:
+        return (
+            self._session.query(EmailTemplate.id_email_template)
+            .filter(
+                EmailTemplate.purpose == purpose,
+                EmailTemplate.is_default.is_(True),
+            )
             .first()
+            is not None
         )
 
     def clear_default_for_purpose(self, purpose: str, except_id: Optional[int] = None) -> None:
