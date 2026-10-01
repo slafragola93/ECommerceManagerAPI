@@ -62,6 +62,10 @@ class EventType(str, Enum):
     AUTH_LOGIN_SUCCESS = "auth_login_success"
     AUTH_LOGIN_FAILED = "auth_login_failed"
     AUTH_LOGOUT = "auth_logout"
+    AUTH_MFA_SUCCESS = "mfa_success"
+    AUTH_MFA_FAILED = "mfa_failed"
+    AUTH_MFA_ENABLED = "mfa_enabled"
+    AUTH_MFA_DISABLED = "mfa_disabled"
     USER_ROLES_UPDATED = "user_roles_updated"
 
     # ===== FISCAL / DOCUMENTS (audit-sensitive) =====

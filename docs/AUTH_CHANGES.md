@@ -117,6 +117,7 @@ Step intermedio del login con 2FA attivo.
 | `created_at` | DATETIME NOT NULL | |
 | `mfa_method` | ENUM('totp','email') NOT NULL | Metodo usato in questa sessione |
 | `otp_code_hash` | VARCHAR(255) NULL | SHA-256 del codice email (solo se method=email) |
+| `failed_attempts` | INT NOT NULL DEFAULT 0 | Tentativi falliti; lock dopo 5 (migration `20261001_0001`) |
 
 ---
 
@@ -238,26 +239,56 @@ src/models/__init__.py                → aggiornato (importa i nuovi modelli)
 
 ---
 
+## 2FA — implementato (2026-10-01)
+
+Fonte di verità: `users.mfa_method` (`none` | `totp` | `email`).
+
+### Contratto API (`/api/v1/auth`)
+
+| Endpoint | Auth | Descrizione |
+|----------|------|-------------|
+| `POST /login` | — | Senza 2FA: `Token` + `mfa_required=false`. Con 2FA: `MFAChallengeResponse` (`mfa_token`, `mfa_method`, scadenza 5 min) |
+| `POST /mfa/verify` | — | `{ mfa_token, code }` → access + refresh token |
+| `POST /mfa/resend` | — | Solo email; cooldown 60s; nuovo `mfa_token` |
+| `GET /2fa/status` | Bearer | Metodo attivo |
+| `POST /2fa/setup` | Bearer | `{ method: totp\|email }` — TOTP restituisce `otpauth_uri` + segreto una tantum; email invia OTP |
+| `POST /2fa/confirm` | Bearer | Attiva il metodo dopo verifica codice |
+| `POST /2fa/disable` | Bearer | Password + codice; per email invia OTP se manca sessione attiva |
+| `POST /api/v1/users/{id}/2fa/reset` | Bearer + `users.update` | Reset admin senza codice |
+
+### Dettagli tecnici
+
+- Segreto TOTP cifrato a riposo (Fernet da `SECRET_KEY`); mai in JWT/log
+- OTP email: SHA-256 in `otp_code_hash`; invio via `EmailSender` / SMTP app_configurations
+- Sessioni MFA: token opaco + SHA-256; `failed_attempts` → lock a 5; orologio allineato a `datetime.now()`
+- Audit: `auth_logs` + EventBus (`mfa_success`, `mfa_failed`, `mfa_enabled`, `mfa_disabled`)
+- Dipendenza: `pyotp`
+- Migration: `20261001_0001` (`failed_attempts`)
+
+---
+
 ## Prossimi step da implementare
 
 ```
 FASE 2 — Backend logica
-  □ PermissionService.check_permission()
-  □ Riscrivi create_access_token() → JWT snello 30 min
-  □ Riscrivi get_current_user()
-  □ require_permission() come FastAPI Depends
-  □ POST /auth/refresh → rinnova access token
-  □ POST /auth/logout  → revoca refresh token
-  □ POST /auth/mfa/verify → verifica codice 2FA
-  □ POST /2fa/setup    → genera QR code TOTP
-  □ POST /2fa/confirm  → attiva 2FA
+  ☑ PermissionService.check_permission()
+  ☑ Riscrivi create_access_token() → JWT snello 30 min
+  ☑ Riscrivi get_current_user()
+  ☑ require_permission() come FastAPI Depends
+  ☑ POST /auth/refresh → rinnova access token
+  ☑ POST /auth/logout  → revoca refresh token
+  ☑ POST /auth/mfa/verify → verifica codice 2FA
+  ☑ POST /2fa/setup    → genera otpauth_uri TOTP (QR lato FE)
+  ☑ POST /2fa/confirm  → attiva 2FA
+  ☑ GET/PUT /api/v1/users/{id}/permissions
   □ Aggiorna /api/v1/init → restituisce module_permissions
-  □ GET/PUT /api/v1/users/{id}/permissions
   □ GET/POST/DELETE /api/v1/roles
   □ GET /api/v1/modules
   □ Applica require_permission() su ogni router
 
 FASE 3 — Frontend Angular
+  □ Flusso login con MFA challenge (mfa_token → verify)
+  □ Setup 2FA (QR da otpauth_uri / email OTP)
   □ Aggiorna store NgRx Permissions
   □ Sidebar dinamica per can_read
   □ Nascondi bottoni per permesso

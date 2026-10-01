@@ -195,3 +195,61 @@ async def save_user_permissions(
     """
     admin_id = user["id"]
     return permission_service.save_user_permissions(user_id, payload, admin_id)
+
+
+@router.post("/{user_id}/2fa/reset", status_code=status.HTTP_200_OK)
+@check_authentication
+async def reset_user_2fa(
+    user_id: int = Path(gt=0),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_permission("users", "update")),
+):
+    """
+    Reset amministrativo del 2FA (recupero se l'utente perde l'authenticator).
+    Non richiede il codice OTP.
+    """
+    from src.models.user import User
+    from src.services.routers.auth_service import clear_user_mfa, write_auth_log
+    from src.events.core.event import Event, EventType
+    from src.events.runtime import emit_event
+    from src.core.request_context import get_ip_address
+
+    target = db.query(User).filter(User.id_user == user_id).first()
+    if not target:
+        raise NotFoundException("User", user_id)
+
+    previous_method = str(target.mfa_method or "none")
+    clear_user_mfa(target, db)
+
+    write_auth_log(
+        db,
+        event=EventType.AUTH_MFA_DISABLED.value,
+        id_user=target.id_user,
+        ip_address=get_ip_address(),
+        extra_data={
+            "method": previous_method,
+            "reset_by_admin": True,
+            "admin_id": user["id"],
+        },
+    )
+    emit_event(
+        Event(
+            event_type=EventType.AUTH_MFA_DISABLED.value,
+            data={
+                "id_user": target.id_user,
+                "method": previous_method,
+                "reset_by_admin": True,
+                "admin_id": user["id"],
+            },
+            metadata={
+                "actor_id": user["id"],
+                "actor_username": user.get("username"),
+            },
+        )
+    )
+    return {
+        "message": "2FA resettato",
+        "id_user": user_id,
+        "mfa_method": "none",
+    }

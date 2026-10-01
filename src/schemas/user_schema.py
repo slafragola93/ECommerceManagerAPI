@@ -66,6 +66,49 @@ class Token(BaseModel):
     token_type:    str
     current_user:  str
     expires_at:    datetime
+    mfa_required: bool = False
+
+
+class MFAChallengeResponse(BaseModel):
+    """Risposta login quando è richiesto il secondo fattore."""
+    mfa_required: bool = True
+    mfa_token: str
+    mfa_method: str
+    expires_at: datetime
+
+
+class MFAVerifySchema(BaseModel):
+    mfa_token: str
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class MFAResendSchema(BaseModel):
+    mfa_token: str
+
+
+class MFASetupSchema(BaseModel):
+    method: str = Field(..., pattern="^(totp|email)$")
+
+
+class MFAConfirmSchema(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class MFADisableSchema(BaseModel):
+    password: str
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class MFAStatusResponse(BaseModel):
+    mfa_method: str
+    totp_enabled: bool = False
+
+
+class MFASetupResponse(BaseModel):
+    method: str
+    otpauth_uri: Optional[str] = None
+    totp_secret: Optional[str] = None
+    message: Optional[str] = None
 
 
 class ChangePasswordSchema(BaseModel):

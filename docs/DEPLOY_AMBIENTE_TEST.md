@@ -1,7 +1,9 @@
 # Deploy ambiente di test — Elettronew API
 
 Runbook Linux (venv + systemd + MySQL 8 + Redis 7) per il backend FastAPI.
-Codice di riferimento: `origin/master` (include `9fca087`, sync POOL senza dump su disco).
+Codice di riferimento del primo deploy di test: `origin/master` al commit `0553312` (2026-09-30, funzionalità email). Include anche `9fca087` (sync POOL senza dump XML su disco).
+
+Head Alembic invariata: `20260929_0001`. Quel commit non aggiunge migration: le tabelle email sono già nello schema dei modelli.
 
 Sostituisci i placeholder:
 
@@ -44,13 +46,16 @@ Sostituisci i placeholder:
 - `python scripts/setup_initial.py` o `scripts/init_auth_data.py` sul dump (rischio utente `admin`/`admin`)
 - `SEED_EU_VAT_TAXES=1`
 - `--workers 4` come in `run_prod.ps1` (duplica job POOL/SDI/tracking e spezza l’SSE)
-- Lasciare `FATTURAPA_SDI_API_SEND_ENABLED=true` se l’API key FatturaPA è quella di produzione
+- Lasciare `FATTURAPA_SDI_API_SEND_ENABLED=true` (e i flag POOL / eventi SDI) su questo ambiente
+- Copiare in `app_configurations` (`fatturapa` / `api_key`) la API key FatturaPA di produzione: va lasciata vuota
 - Esporre 3306, 6379, 8000 in pubblico
 
 Healthcheck reale: `GET /api/v1/monitoring/health`.
 `GET /health` **non esiste** (è un errore nel Dockerfile).
 
-La key FatturaPA usata dal sync è `app_configurations` (`category=fatturapa`, `name=api_key`), non `FATTURAPA_API_KEY` nel `.env`.
+La key FatturaPA usata dal sync è `app_configurations` (`category=fatturapa`, `name=api_key`), non `FATTURAPA_API_KEY` nel `.env`. Sul primo deploy di test quella riga resta vuota. I tre flag del `.env` restano `false`.
+
+Mail Spediti (commit `0553312`): dopo il seed basta un template attivo con purpose `order_shipped`. Il primo creato diventa `is_default`; se il flag manca ma il template attivo è uno solo, l’invio lo usa comunque. Senza template, il passaggio a stato 3 non manda nulla. SMTP (`email_settings.enabled=true`) solo con host e mittente di test. Guida: [`docs/EMAIL_DOCUMENTI_E_SPEDITI.md`](EMAIL_DOCUMENTI_E_SPEDITI.md).
 
 ---
 
@@ -98,7 +103,7 @@ cd "$APP_DIR"
 git checkout master
 git pull origin master
 git log -1 --oneline
-# deve includere 9fca087 o un commit successivo
+# atteso: 0553312 funzionalità email (o un commit successivo su master)
 ```
 
 ```bash
@@ -138,7 +143,7 @@ REDIS_URL=redis://127.0.0.1:6379/0
 # Se Redis ha requirepass:
 # REDIS_URL=redis://:LA_PASSWORD@127.0.0.1:6379/0
 
-# Stessa API key FatturaPA di produzione? Tieni questi a false.
+# Primo deploy di test: invio e polling FatturaPA spenti. Non usare la key di produzione.
 FATTURAPA_SDI_API_SEND_ENABLED=false
 FATTURAPA_POOL_SYNC_ENABLED=false
 FATTURAPA_SDI_EVENTS_SYNC_ENABLED=false
@@ -156,7 +161,7 @@ Note:
 
 - Se `DB_PASS` contiene `@`, `#`, `/` o `:`, va **URL-encoded** (es. `@` → `%40`). Alembic e SQLAlchemy usano la stessa stringa.
 - `SECRET_KEY` e `CACHE_KEY_SALT` devono essere **nuovi**, non copiati da prod/dev.
-- `FATTURAPA_API_KEY` in `.env` **non** è letta dal sync POOL. Se nel dump c’è la key di produzione, i flag sopra evitano invii e polling.
+- `FATTURAPA_API_KEY` in `.env` **non** è letta dal sync POOL. La chiave vera è `app_configurations` (`fatturapa` / `api_key`) e su questo ambiente va **svuotata**, anche se i flag sono `false`.
 - PrestaShop / FastLDV: compila solo se li testi (`PRESTASHOP_*`, `FASTLDV_API_KEY`).
 
 Genera `SECRET_KEY`:
@@ -263,7 +268,15 @@ alembic current
 
 Non lanciare `scripts/setup_initial.py` su questo dump. Gli utenti, `app_configurations` e le aliquote arrivano dal dump.
 
-MySQL deve ascoltare solo in rete privata / localhost. Se il dump è fermo a `62e4b40e09f9`, `upgrade head` applica le revisioni successive (es. `20260929_0001` per le tabelle email).
+MySQL deve ascoltare solo in rete privata / localhost. Se il dump è fermo a `62e4b40e09f9`, `upgrade head` applica le revisioni successive (es. `20260929_0001` per le tabelle email). Head atteso: `20260929_0001`.
+
+Se il dump contiene la API key FatturaPA di produzione, svuotala **prima** di avviare l’app (i flag del `.env` non sostituiscono la chiave in DB):
+
+```sql
+UPDATE app_configurations
+SET value = ''
+WHERE category = 'fatturapa' AND name = 'api_key';
+```
 
 ---
 
@@ -423,6 +436,7 @@ Checklist:
 5. Nessuna cartella `fatture_download/` creata all’avvio
 6. Se il FE è collegato: niente errore CORS in console
 7. Con i flag di §3, un `POST .../send-to-sdi` con `send_to_sdi=true` deve rispondere **400** (invio SDI spento)
+8. `app_configurations` `fatturapa` / `api_key` vuota (nessuna chiave di produzione)
 
 Il FE di test deve già leggere `lifecycle` e l’endpoint `/xml`. Se è fermo al contratto flat, le schermate fatture si rompono anche con l’API verde.
 

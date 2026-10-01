@@ -13,7 +13,7 @@ class MFAPendingSession(Base):
     expires_at = Column(DateTime, nullable=False)
     used_at    = Column(DateTime, nullable=True)
     ip_address = Column(String(45), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
 
     # metodo 2FA usato in questa sessione
     mfa_method    = Column(
@@ -26,7 +26,9 @@ class MFAPendingSession(Base):
     # NULL se mfa_method = 'totp'
     otp_code_hash = Column(String(255), nullable=True)
 
-    
+    # Tentativi falliti sulla sessione (lock dopo MAX)
+    failed_attempts = Column(Integer, default=0, nullable=False)
+
     # Relazione
     user = relationship('User', back_populates='mfa_pending_sessions')
 
@@ -37,12 +39,12 @@ class MFAPendingSession(Base):
         """
         return (
             self.used_at is None and
-            self.expires_at > datetime.utcnow()
+            self.expires_at > datetime.now()
         )
 
     def consume(self):
         """
         Marca il token come usato.
-        Chiamato dopo la verifica del codice TOTP.
+        Chiamato dopo la verifica del codice TOTP/OTP.
         """
-        self.used_at = datetime.utcnow()
+        self.used_at = datetime.now()

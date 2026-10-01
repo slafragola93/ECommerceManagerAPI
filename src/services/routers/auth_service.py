@@ -1,10 +1,13 @@
 import os
 import secrets
 import hashlib
+import base64
 from datetime import datetime, timedelta
 from typing import Annotated, Literal, Optional
 from functools import wraps
 
+import pyotp
+from cryptography.fernet import Fernet
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -470,6 +473,299 @@ def authorize(roles_permitted: list, permissions_required: list):
 
         return wrapper
     return decorator
+
+
+# ──────────────────────────────────────────────────────────
+# MFA / 2FA
+# ──────────────────────────────────────────────────────────
+
+MFA_TTL_MINUTES = 5
+MFA_MAX_ATTEMPTS = 5
+MFA_RESEND_COOLDOWN_SECONDS = 60
+MFA_OTP_LENGTH = 6
+TOTP_ISSUER = "Elettronew"
+
+
+def _hash_opaque_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def _fernet() -> Fernet:
+    secret = (os.environ.get("SECRET_KEY") or "").encode()
+    digest = hashlib.sha256(secret).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_totp_secret(plain_secret: str) -> str:
+    """Cifra il segreto TOTP a riposo (Fernet da SECRET_KEY)."""
+    return _fernet().encrypt(plain_secret.encode()).decode()
+
+
+def decrypt_totp_secret(cipher_text: str) -> str:
+    """Decifra il segreto TOTP."""
+    return _fernet().decrypt(cipher_text.encode()).decode()
+
+
+def write_auth_log(
+    db: Session,
+    event: str,
+    id_user: Optional[int] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    extra_data: Optional[dict] = None,
+) -> None:
+    """Scrive una riga in auth_logs (audit autenticazione)."""
+    from src.models.auth_log import AuthLog
+
+    db.add(
+        AuthLog(
+            id_user=id_user,
+            event=event,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra_data=extra_data,
+            created_at=datetime.now(),
+        )
+    )
+    db.commit()
+
+
+def user_is_login_eligible(user: User) -> bool:
+    """Utente attivo e non soft-deleted."""
+    if not user or not user.is_active:
+        return False
+    if getattr(user, "deleted_at", None) is not None:
+        return False
+    return True
+
+
+def mfa_is_active(user: User) -> bool:
+    """True se l'utente ha un metodo 2FA attivo sul login."""
+    method = getattr(user, "mfa_method", None) or "none"
+    if isinstance(method, str):
+        return method in ("totp", "email")
+    return str(method) in ("totp", "email")
+
+
+def invalidate_user_mfa_sessions(user_id: int, db: Session) -> None:
+    """Consuma tutte le sessioni MFA ancora aperte dell'utente."""
+    from src.models.mfa_pending_session import MFAPendingSession
+
+    sessions = (
+        db.query(MFAPendingSession)
+        .filter(
+            MFAPendingSession.id_user == user_id,
+            MFAPendingSession.used_at.is_(None),
+        )
+        .all()
+    )
+    now = datetime.now()
+    for session in sessions:
+        session.used_at = now
+    if sessions:
+        db.commit()
+
+
+def create_mfa_pending_session(
+    user_id: int,
+    mfa_method: str,
+    db: Session,
+    ip_address: Optional[str] = None,
+    otp_code: Optional[str] = None,
+) -> tuple:
+    """
+    Crea una sessione MFA intermedia.
+    Restituisce (raw_token, expires_at).
+    """
+    from src.models.mfa_pending_session import MFAPendingSession
+
+    invalidate_user_mfa_sessions(user_id, db)
+
+    raw_token = secrets.token_urlsafe(64)
+    expires_at = datetime.now() + timedelta(minutes=MFA_TTL_MINUTES)
+    otp_hash = _hash_opaque_token(otp_code) if otp_code else None
+
+    session = MFAPendingSession(
+        id_user=user_id,
+        token_hash=_hash_opaque_token(raw_token),
+        expires_at=expires_at,
+        ip_address=ip_address,
+        created_at=datetime.now(),
+        mfa_method=mfa_method,
+        otp_code_hash=otp_hash,
+        failed_attempts=0,
+    )
+    db.add(session)
+    db.commit()
+    return raw_token, expires_at
+
+
+def get_mfa_pending_session(raw_token: str, db: Session):
+    """Carica una sessione MFA valida dal token opaco. Altrimenti None."""
+    from src.models.mfa_pending_session import MFAPendingSession
+
+    token_hash = _hash_opaque_token(raw_token)
+    session = (
+        db.query(MFAPendingSession)
+        .filter(MFAPendingSession.token_hash == token_hash)
+        .first()
+    )
+    if not session or not session.is_valid:
+        return None
+    if (session.failed_attempts or 0) >= MFA_MAX_ATTEMPTS:
+        return None
+    return session
+
+
+def get_latest_valid_email_mfa_session(user_id: int, db: Session):
+    """Ultima sessione email MFA ancora valida (setup/confirm o login)."""
+    from src.models.mfa_pending_session import MFAPendingSession
+
+    session = (
+        db.query(MFAPendingSession)
+        .filter(
+            MFAPendingSession.id_user == user_id,
+            MFAPendingSession.mfa_method == "email",
+            MFAPendingSession.used_at.is_(None),
+            MFAPendingSession.expires_at > datetime.now(),
+        )
+        .order_by(MFAPendingSession.created_at.desc())
+        .first()
+    )
+    if not session:
+        return None
+    if (session.failed_attempts or 0) >= MFA_MAX_ATTEMPTS:
+        return None
+    return session
+
+
+def generate_email_otp() -> str:
+    """OTP numerico a 6 cifre."""
+    upper = 10 ** MFA_OTP_LENGTH
+    return f"{secrets.randbelow(upper):0{MFA_OTP_LENGTH}d}"
+
+
+def verify_email_otp_hash(otp_code_hash: Optional[str], code: str) -> bool:
+    if not otp_code_hash or not code:
+        return False
+    return secrets.compare_digest(otp_code_hash, _hash_opaque_token(code.strip()))
+
+
+def verify_totp_for_user(user: User, code: str) -> bool:
+    if not user.totp_secret or not code:
+        return False
+    try:
+        plain = decrypt_totp_secret(user.totp_secret)
+    except Exception:
+        return False
+    totp = pyotp.TOTP(plain)
+    return bool(totp.verify(code.strip(), valid_window=1))
+
+
+def build_totp_provisioning(user: User, plain_secret: str) -> str:
+    totp = pyotp.TOTP(plain_secret)
+    account = user.email or user.username
+    return totp.provisioning_uri(name=account, issuer_name=TOTP_ISSUER)
+
+
+def issue_session_tokens(
+    user: User,
+    db: Session,
+    ip_address: Optional[str] = None,
+) -> dict:
+    """Emette access_token + refresh_token per un utente autenticato."""
+    from src.models.role import PermissionType
+
+    role = user.roles[0] if user.roles else None
+    role_name = role.name if role else "USER"
+    role_type = role.permission_type.value if role else PermissionType.custom.value
+
+    access_token = create_access_token(
+        username=user.username,
+        user_id=user.id_user,
+        role_name=role_name,
+        role_type=role_type,
+        expires_delta=timedelta(minutes=30),
+    )
+    refresh_token = create_refresh_token(
+        user_id=user.id_user,
+        db=db,
+        device_info=None,
+        ip_address=ip_address,
+    )
+    expires_at = datetime.now() + timedelta(minutes=30)
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "current_user": user.username,
+        "expires_at": expires_at,
+        "mfa_required": False,
+    }
+
+
+def register_mfa_failure(session, db: Session) -> None:
+    """Incrementa failed_attempts; consuma la sessione al tetto."""
+    session.failed_attempts = (session.failed_attempts or 0) + 1
+    if session.failed_attempts >= MFA_MAX_ATTEMPTS:
+        session.consume()
+    db.commit()
+
+
+async def send_mfa_otp_email(db: Session, user: User, code: str) -> None:
+    """Invia OTP 2FA via SMTP configurato. Non logga il codice."""
+    from src.services.email.sender import EmailSender, EmailSendError
+    from src.services.email.settings import (
+        is_email_enabled,
+        load_email_settings,
+        smtp_ready,
+    )
+
+    settings = load_email_settings(db)
+    if not is_email_enabled(settings) or not smtp_ready(settings):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SMTP non configurato o email disabilitate",
+        )
+    if not user.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'utente non ha un indirizzo email",
+        )
+
+    subject = f"{TOTP_ISSUER} — codice di verifica"
+    body_text = (
+        f"Il tuo codice di verifica è: {code}\n"
+        f"Scade in {MFA_TTL_MINUTES} minuti.\n"
+        "Se non hai richiesto questo codice, ignora il messaggio."
+    )
+    body_html = (
+        f"<p>Il tuo codice di verifica è: <strong>{code}</strong></p>"
+        f"<p>Scade in {MFA_TTL_MINUTES} minuti.</p>"
+        "<p>Se non hai richiesto questo codice, ignora il messaggio.</p>"
+    )
+    try:
+        await EmailSender(settings).send(
+            to=user.email,
+            subject=subject,
+            body_html=body_html,
+            body_text=body_text,
+        )
+    except EmailSendError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invio email OTP fallito: {exc}",
+        ) from exc
+
+
+def clear_user_mfa(user: User, db: Session) -> None:
+    """Disattiva completamente il 2FA sull'utente."""
+    user.mfa_method = "none"
+    user.totp_enabled = False
+    user.totp_secret = None
+    invalidate_user_mfa_sessions(user.id_user, db)
+    db.commit()
+
 
 
 # ──────────────────────────────────────────────────────────

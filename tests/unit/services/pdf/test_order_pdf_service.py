@@ -65,6 +65,51 @@ class TestOrderPDFDiscount:
         )
         assert totals["total_discount"] == pytest.approx(500.0)
 
+    def test_compute_totals_adds_order_total_discounts(self):
+        """IT79224: sconto documento 80, righe senza reduction."""
+        order = SimpleNamespace(
+            products_total_price_net=218.77,
+            total_price_net=155.16,
+            total_price_with_tax=206.90,
+            total_discounts=80.0,
+        )
+        details = [
+            SimpleNamespace(
+                product_qty=1,
+                unit_price_net=218.77,
+                product_price=218.77,
+                total_price_net=218.77,
+                reduction_percent=0.0,
+                reduction_amount=0.0,
+            )
+        ]
+        totals = OrderPDFService._compute_totals(
+            order, details, shipping=None, tax_percentages={}
+        )
+        assert totals["total_discount"] == pytest.approx(80.0)
+
+    def test_compute_totals_sums_line_and_order_discount(self):
+        order = SimpleNamespace(
+            products_total_price_net=168.32,
+            total_price_net=170.81,
+            total_price_with_tax=212.97,
+            total_discounts=40.0,
+        )
+        details = [
+            SimpleNamespace(
+                product_qty=1,
+                unit_price_net=208.32,
+                product_price=208.32,
+                total_price_net=168.32,
+                reduction_percent=0.0,
+                reduction_amount=40.0,
+            )
+        ]
+        totals = OrderPDFService._compute_totals(
+            order, details, shipping=None, tax_percentages={}
+        )
+        assert totals["total_discount"] == pytest.approx(80.0)
+
     def test_pdf_shows_amount_not_percent_and_totals_sconto(self):
         svc = OrderPDFService()
         order = SimpleNamespace(
@@ -102,3 +147,40 @@ class TestOrderPDFDiscount:
         assert "Sconto" in text
         # non deve mostrare % equivalente inventata in colonna
         assert "19,49" not in text
+
+    def test_pdf_shows_order_total_discount(self):
+        svc = OrderPDFService()
+        order = SimpleNamespace(
+            id_order=69155,
+            id_origin=0,
+            reference="PRV46",
+            internal_reference="IT79224",
+            date_add=datetime(2026, 9, 30),
+            products_total_price_net=218.77,
+            total_price_net=155.16,
+            total_price_with_tax=206.90,
+            total_discounts=80.0,
+            general_note="",
+        )
+        details = [
+            SimpleNamespace(
+                product_reference="NCO D.IGLU9000FC",
+                product_name="Climatizzatore",
+                product_qty=1,
+                unit_price_net=204.9,
+                product_price=204.9,
+                total_price_net=204.9,
+                reduction_percent=0.0,
+                reduction_amount=0.0,
+                id_tax=None,
+            )
+        ]
+        out = svc.generate_pdf(
+            order=order,
+            order_details=details,
+            company_config=_company(),
+            payment_name="Bonifico",
+        )
+        text = _pdf_text(out)
+        assert "Sconto" in text
+        assert "-80,00" in text or "80,00" in text

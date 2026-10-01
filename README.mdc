@@ -4,6 +4,45 @@ API REST per ordini, resi, documenti fiscali, spedizioni e sincronizzazione e-co
 
 ---
 
+## Ultime modifiche (2026-10-01) — Fix 2FA: migration + ordine OTP
+
+Il 500 su `POST /2fa/confirm` (e setup/login email) era `Unknown column failed_attempts`: migration `20261001_0001` non applicata. Le email multiple: l’OTP partiva **prima** del commit sessione, quindi ogni retry inviava un codice orfano. Ora: `alembic upgrade head` applicato in locale; sessione MFA creata prima dell’invio email.
+
+---
+
+## Ultime modifiche (2026-10-01) — 2FA opzionale (TOTP / OTP email)
+
+Attivato il secondo fattore già modellato in schema (`users.totp_*`, `mfa_pending_sessions`).
+
+- Login senza 2FA invariato (`mfa_required=false`); con 2FA attivo restituisce `mfa_token` (5 min) e richiede `POST /api/v1/auth/mfa/verify`.
+- Setup: `GET/POST /api/v1/auth/2fa/status|setup|confirm|disable`; reset admin `POST /api/v1/users/{id}/2fa/reset`.
+- Segreto TOTP cifrato (Fernet); OTP email via SMTP esistente; lock dopo 5 tentativi.
+- Dipendenza: `pyotp`. Migration Alembic: `20261001_0001` (head). Dettagli: [`docs/AUTH_CHANGES.md`](docs/AUTH_CHANGES.md).
+
+```powershell
+pip install -r requirements.txt
+alembic upgrade head
+pytest tests/unit/services/routers/test_mfa_auth_service.py tests/integration/api/v1/test_auth.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-30) — PDF ordine: sconto documento
+
+La stampa ordine (`GET /api/v1/orders/{id}/pdf`) metteva in **Sconto** solo la somma degli sconti di riga. `orders.total_discounts` (sconto sul documento, es. ordine IT79224 = 80 €) restava a zero. Ora la voce totali è sconti di riga + `total_discounts`, come sul PDF preventivo.
+
+```powershell
+pytest tests/unit/services/pdf/test_order_pdf_service.py -v
+```
+
+---
+
+## Ultime modifiche (2026-09-30) — Runbook primo deploy di test
+
+[`docs/DEPLOY_AMBIENTE_TEST.md`](docs/DEPLOY_AMBIENTE_TEST.md) punta a `origin/master` commit `0553312` (funzionalità email). Head Alembic resta `20260929_0001` (nessuna migration nuova). Sul primo ambiente di test: flag FatturaPA spenti e `app_configurations` `fatturapa` / `api_key` vuota. Per la mail Spediti basta un template `order_shipped` attivo.
+
+---
+
 ## Ultime modifiche (2026-09-30) — Mail Spediti: template unico come default
 
 `POST /orders/bulk-status` verso stato 3 emette già l’evento. L’invio falliva con `EmailTemplate not found` se l’unico template `order_shipped` non aveva `is_default`. Ora il primo template di un purpose è default, e se il flag manca ma c’è un solo template attivo viene usato quello.
@@ -48,7 +87,7 @@ Le traduzioni restano opzionali in create/update. `POST .../preview` senza testi
 
 ## Ultime modifiche (2026-09-29) — Runbook: DB vuoto / produzione
 
-[`docs/DEPLOY_AMBIENTE_TEST.md`](docs/DEPLOY_AMBIENTE_TEST.md): primo ambiente e produzione usano **§4a** (`create_all` + `alembic stamp head` + `setup_initial.py`). Non `alembic upgrade head` su MySQL vuoto. Head atteso dopo lo stamp: `20260929_0001`. I deploy successivi restano `upgrade head`.
+[`docs/DEPLOY_AMBIENTE_TEST.md`](docs/DEPLOY_AMBIENTE_TEST.md): primo ambiente e produzione usano **§4a** (`create_all` + `alembic stamp head` + `setup_initial.py`). Non `alembic upgrade head` su MySQL vuoto. Head atteso dopo lo stamp: `20260929_0001` (ancora valido su `0553312`). I deploy successivi restano `upgrade head`.
 
 ---
 

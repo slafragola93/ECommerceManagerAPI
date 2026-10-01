@@ -562,6 +562,12 @@ class OrderPDFService(BasePDFService):
             _, _, _, line_discount = OrderPDFService._line_amounts(d, 0.0)
             total_discount += line_discount
 
+        # Sconto documento (orders.total_discounts): non è nelle righe.
+        # Stesso criterio del preventivo: si somma agli sconti di riga.
+        doc_discount = float(getattr(order, "total_discounts", None) or 0.0)
+        if doc_discount > 0:
+            total_discount += doc_discount
+
         payment_fee = 0.0
         return {
             "merchandise_net": merchandise_net,
