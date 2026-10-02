@@ -98,9 +98,9 @@ logs/
 # Local development files
 local_settings.py
 
-# Media files and uploads
-media/
-media/*
+# Upload runtime solo nella root (non src/services/media/ né altri package)
+/media/
+/media/*
 
 # Dump locale XML FatturaPA (il sync tiene xml_content in DB)
 fatture_download/
